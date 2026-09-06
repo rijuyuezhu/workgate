@@ -1,8 +1,11 @@
 """Executor composition owner for the long-lived machine process."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..composition.services import (
     RuntimeServiceInstallation,
@@ -11,15 +14,15 @@ from ..composition.services import (
     install_runtime_services,
 )
 from ..config.settings import Settings
-from ..protocol.executor import ExecutorCommand
 from ..remote_worker.dispatch import WorkerDispatcher as LegacyWorkerDispatcher
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from .config import ExecutorConfig, resolve_executor_config
-from .connection import ExecutorConnection
-from .control_client import ExecutorControlClient
-from .hello import build_executor_hello
-from .profile import ExecutorProfileStore, executor_run_lock
 from .search_composition import build_executor_dispatcher_with_search
+
+if TYPE_CHECKING:
+    from ..protocol.executor import ExecutorCommand
+    from .connection import ExecutorConnection
+    from .profile import ExecutorProfileStore
 
 
 @dataclass
@@ -36,8 +39,8 @@ class ExecutorRuntime:
     """Executor-owned terminal bridge and ConPTY live state."""
     dispatcher: LegacyWorkerDispatcher
     """Legacy dispatcher with the migrated Search service already bound."""
-    profile_store: ExecutorProfileStore
-    """Final executor v1 connection profile stored in executor-owned state."""
+    profile_store: ExecutorProfileStore | None
+    """Final v1 profile store, absent for the temporary legacy worker runtime."""
     connection: ExecutorConnection | None = field(default=None, init=False)
     """Live final executor v1 reconnect loop when a final profile exists."""
     _profile_lock: ExitStack | None = field(
@@ -63,8 +66,14 @@ class ExecutorRuntime:
         try:
             await self.terminal_runtime.start()
             terminal_started = True
-            profile = self.profile_store.load()
+            profile_store = self.profile_store
+            profile = None if profile_store is None else profile_store.load()
             if profile is not None:
+                from .connection import ExecutorConnection
+                from .control_client import ExecutorControlClient
+                from .hello import build_executor_hello
+                from .profile import executor_run_lock
+
                 profile_lock.enter_context(
                     executor_run_lock(self.services.state_store)
                 )
@@ -129,9 +138,16 @@ class ExecutorRuntime:
             await self.aclose()
 
 
-def build_executor_runtime(settings: Settings) -> ExecutorRuntime:
+def build_executor_runtime(
+    settings: Settings, *, enable_control_connection: bool = True
+) -> ExecutorRuntime:
     """Construct one executor graph without installing process globals yet."""
     services = build_runtime_services(settings)
+    profile_store = None
+    if enable_control_connection:
+        from .profile import ExecutorProfileStore
+
+        profile_store = ExecutorProfileStore(services.state_store)
     return ExecutorRuntime(
         config=resolve_executor_config(settings),
         legacy_settings=settings,
@@ -140,5 +156,5 @@ def build_executor_runtime(settings: Settings) -> ExecutorRuntime:
         dispatcher=build_executor_dispatcher_with_search(
             settings, services.tool_session_store
         ),
-        profile_store=ExecutorProfileStore(services.state_store),
+        profile_store=profile_store,
     )

@@ -87,7 +87,7 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
 async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from workgate.executor import runtime as runtime_module
+    from workgate.executor import control_client as control_client_module
 
     state_dir = tmp_path / "state"
     workspace = tmp_path / "workspace"
@@ -99,10 +99,11 @@ async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
         executor_id=new_executor_id(),
         credential=new_executor_credential(),
     )
+    assert runtime.profile_store is not None
     runtime.profile_store.save(profile)
     _FakeControlClient.hello_seen = asyncio.Event()
     monkeypatch.setattr(
-        runtime_module, "ExecutorControlClient", _FakeControlClient
+        control_client_module, "ExecutorControlClient", _FakeControlClient
     )
 
     await runtime.start()
@@ -136,7 +137,7 @@ async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
 async def test_executor_runtime_restart_reuses_same_profile_credential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from workgate.executor import runtime as runtime_module
+    from workgate.executor import control_client as control_client_module
 
     settings = Settings(
         workspace_root=tmp_path / "workspace", state_dir=tmp_path / "state"
@@ -147,9 +148,10 @@ async def test_executor_runtime_restart_reuses_same_profile_credential(
         credential=new_executor_credential(),
     )
     seed = build_executor_runtime(settings)
+    assert seed.profile_store is not None
     seed.profile_store.save(profile)
     monkeypatch.setattr(
-        runtime_module, "ExecutorControlClient", _FakeControlClient
+        control_client_module, "ExecutorControlClient", _FakeControlClient
     )
 
     for _ in range(2):
