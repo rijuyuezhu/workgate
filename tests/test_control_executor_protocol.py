@@ -16,6 +16,12 @@ from workgate.protocol.credentials import (
 )
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
 from workgate.protocol.executor import (
+    EXECUTOR_HEARTBEAT_PATH,
+    EXECUTOR_HELLO_PATH,
+    EXECUTOR_PAIR_POLL_PATH,
+    EXECUTOR_PAIR_START_PATH,
+    EXECUTOR_POLL_PATH,
+    EXECUTOR_RESULT_PATH,
     ExecutorCommand,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
@@ -45,6 +51,26 @@ def _decoded_token_bytes(value: str, prefix: str) -> bytes:
     encoded = value.removeprefix(prefix)
     padding = "=" * (-len(encoded) % 4)
     return base64.urlsafe_b64decode(encoded + padding)
+
+
+def test_executor_protocol_v1_paths_are_frozen_under_executor_namespace() -> (
+    None
+):
+    assert {
+        EXECUTOR_PAIR_START_PATH,
+        EXECUTOR_PAIR_POLL_PATH,
+        EXECUTOR_HELLO_PATH,
+        EXECUTOR_HEARTBEAT_PATH,
+        EXECUTOR_POLL_PATH,
+        EXECUTOR_RESULT_PATH,
+    } == {
+        "/executor/v1/pair/start",
+        "/executor/v1/pair/poll",
+        "/executor/v1/hello",
+        "/executor/v1/heartbeat",
+        "/executor/v1/poll",
+        "/executor/v1/result",
+    }
 
 
 def test_protocol_ids_are_url_safe_and_have_required_randomness() -> None:
