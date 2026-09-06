@@ -506,6 +506,10 @@ def test_worker_bundle_keeps_strict_runtime_allowlist():
     assert "workgate/remote_worker/profiles.py" in names
     assert "workgate/remote_worker/state.py" in names
     assert "workgate/remote_worker/worker.py" in names
+    assert "workgate/executor/__init__.py" in names
+    assert "workgate/executor/config.py" in names
+    assert "workgate/executor/runtime.py" in names
+    assert "workgate/executor/search_composition.py" in names
     assert "workgate/audit/__init__.py" in names
     assert "workgate/audit/core.py" in names
     assert "workgate/audit/payloads.py" in names
