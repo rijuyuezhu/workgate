@@ -369,6 +369,8 @@ class ExecutorTransport:
                     "executor credential has been revoked",
                 ),
             )
+            channel.last_activity = None
+            channel.hello = None
             channel.wake.set()
             return record
 

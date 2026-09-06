@@ -268,6 +268,8 @@ async def test_revoke_fences_handoff_and_interrupts_pending_call(
         await caller
     assert interrupted.value.error.code is ProtocolErrorCode.EXECUTOR_REVOKED
     assert await transport.pending_count(executor_id) == 0
+    assert not await transport.is_online(executor_id)
+    assert await transport.inventory(executor_id) is None
 
     with pytest.raises(ExecutorTransportError) as heartbeat:
         await transport.heartbeat(credential)
