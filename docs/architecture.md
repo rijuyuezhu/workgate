@@ -8,6 +8,11 @@ itself a security, packaging, public-surface, or process contract. Ordinary
 internal files may move or split without being added to a central filename
 inventory as long as the dependency and ownership invariants remain true.
 
+!!! note
+    This page describes the architecture currently implemented during the
+    #123 migration. The canonical target contracts for that migration live in
+    [Control/executor architecture](architecture/control-executor.md).
+
 ## Dependency direction
 
 The target application structure separates process entry points, protocol
