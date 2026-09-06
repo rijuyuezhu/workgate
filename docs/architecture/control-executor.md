@@ -86,8 +86,13 @@ The executor atomically persists `control_url`, `executor_id`, and credential in
 its private profile **before** its first authenticated hello. A failed profile
 write sends no hello, so credential delivery can still be retried. First
 successful authenticated hello or pairing expiry clears the transient delivery
-copy. Control restart may instead force a fresh pairing; this rare window does
-not justify durable plaintext credential storage.
+copy. If control restarts after the executor persisted the credential, the
+executor authenticates normally from its profile. Fresh pairing may be needed
+only when credential delivery/profile persistence did not complete before
+process-local delivery state was lost; this rare window does not justify durable
+plaintext credential storage. A pairing client's unauthenticated
+`existing_executor_id` is only a hint; owner approval is authoritative for
+whether an existing executor identity is reused with a replacement credential.
 
 Revocation/replacement is persisted before acknowledgement and fences new work:
 old-bearer polls are woken/rejected, queued work is interrupted, pending callers
@@ -128,6 +133,9 @@ protocol mode: if a valid inventory cannot fit the normal request limit, fail
 explicitly. This keeps absence meaningful. `session.lookup` remains a targeted
 read-only reconciliation operation for ambiguous creation or cwd projection,
 not pagination for hello.
+
+Optional boot metadata is diagnostics only. It is never identity, trust,
+fencing, deduplication, or command-correlation authority.
 
 Presence uses an independent authenticated heartbeat. A saturated executor must
 continue heartbeating even when command capacity is full. Blocking machine work

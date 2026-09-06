@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import base64
 import re
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,11 @@ from workgate.protocol.credentials import (
     executor_credential_verifier,
     new_executor_credential,
 )
-from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
+from workgate.protocol.errors import (
+    ProtocolError,
+    ProtocolErrorCode,
+    ProtocolErrorResponse,
+)
 from workgate.protocol.executor import (
     EXECUTOR_HEARTBEAT_PATH,
     EXECUTOR_HELLO_PATH,
@@ -168,6 +173,8 @@ def test_hello_uses_complete_thin_session_inventory() -> None:
                 session_id=session_id, resolved_workdir="/workspace/project"
             ),
         ),
+        shells=(),
+        jobs=(),
     )
 
     encoded = hello.model_dump(mode="json")
@@ -176,6 +183,27 @@ def test_hello_uses_complete_thin_session_inventory() -> None:
         {"session_id": session_id, "resolved_workdir": "/workspace/project"}
     ]
     assert "executor_id" not in encoded
+
+
+def test_hello_requires_all_authoritative_inventory_fields() -> None:
+    payload = {
+        "protocol_version": EXECUTOR_PROTOCOL_VERSION,
+        "runtime": {"workgate_version": "5.0.0a1"},
+        "sessions": [],
+        "shells": [],
+        "jobs": [],
+    }
+
+    hello = ExecutorHelloRequest.model_validate(payload)
+    assert hello.sessions == ()
+    assert hello.shells == ()
+    assert hello.jobs == ()
+
+    for missing in ("sessions", "shells", "jobs"):
+        with pytest.raises(ValidationError):
+            ExecutorHelloRequest.model_validate(
+                {key: value for key, value in payload.items() if key != missing}
+            )
 
 
 def test_hello_timing_requires_offline_threshold_after_heartbeat() -> None:
@@ -212,22 +240,29 @@ def test_command_envelope_is_minimal_and_executor_identity_is_not_in_body() -> (
         )
 
 
-def test_result_shape_and_unknown_command_error_are_unambiguous() -> None:
+def test_result_shape_and_unknown_command_response_are_unambiguous() -> None:
     command_id = new_command_id()
     success = ExecutorResult(id=command_id, ok=True, result={"stdout": "ok"})
     failure = ExecutorResult(
         id=command_id,
         ok=False,
         error=ProtocolError(
+            code=ProtocolErrorCode.OPERATION_UNSUPPORTED,
+            message="operation is unsupported",
+        ),
+    )
+    unknown = ProtocolErrorResponse(
+        error=ProtocolError(
             code=ProtocolErrorCode.UNKNOWN_COMMAND,
             message="command is no longer pending",
-        ),
+        )
     )
 
     assert success.error is None
     assert failure.result is None
     assert failure.error is not None
-    assert failure.error.code is ProtocolErrorCode.UNKNOWN_COMMAND
+    assert failure.error.code is ProtocolErrorCode.OPERATION_UNSUPPORTED
+    assert unknown.error.code is ProtocolErrorCode.UNKNOWN_COMMAND
 
     with pytest.raises(ValidationError):
         ExecutorResult(id=command_id, ok=False)
@@ -266,27 +301,29 @@ def test_protocol_package_has_no_runtime_or_persistence_imports() -> None:
         "fastapi",
         "httpx",
         "starlette",
-        "workgate.config",
-        "workgate.executors",
-        "workgate.persistence",
-        "workgate.remote",
-        "workgate.remote_worker",
     }
 
-    for path in protocol_dir.glob("*.py"):
+    for path in protocol_dir.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        relative_parts = path.relative_to(protocol_dir).with_suffix("").parts
+        package = ".".join(("workgate", "protocol", *relative_parts[:-1]))
         imports: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imports.update(alias.name for alias in node.names)
-            elif (
-                isinstance(node, ast.ImportFrom)
-                and node.level == 0
-                and node.module
-            ):
-                imports.add(node.module)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    relative = "." * node.level + (node.module or "")
+                    imports.add(resolve_name(relative, package))
+                elif node.module:
+                    imports.add(node.module)
         for imported in imports:
+            assert not (
+                (imported == "workgate" or imported.startswith("workgate."))
+                and imported != "workgate.protocol"
+                and not imported.startswith("workgate.protocol.")
+            ), f"{path} imports Workgate implementation dependency {imported}"
             assert not any(
                 imported == root or imported.startswith(root + ".")
                 for root in forbidden_roots
-            ), f"{path.name} imports forbidden dependency {imported}"
+            ), f"{path} imports forbidden dependency {imported}"

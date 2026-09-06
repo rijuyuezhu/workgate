@@ -68,9 +68,9 @@ class ExecutorHelloRequest(BaseModel):
     workspace_root: str | None = Field(
         default=None, min_length=1, max_length=4096
     )
-    sessions: tuple[SessionInventorySummary, ...] = ()
-    shells: tuple[ShellInventorySummary, ...] = ()
-    jobs: tuple[JobInventorySummary, ...] = ()
+    sessions: tuple[SessionInventorySummary, ...]
+    shells: tuple[ShellInventorySummary, ...]
+    jobs: tuple[JobInventorySummary, ...]
 
 
 class ExecutorHelloResponse(BaseModel):
