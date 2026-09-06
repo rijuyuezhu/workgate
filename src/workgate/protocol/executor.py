@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from .errors import ProtocolError
 from .ids import CommandId, SessionId
 
 EXECUTOR_PROTOCOL_VERSION = 1
@@ -117,15 +116,28 @@ class ExecutorCommand(BaseModel):
     args: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+class OperationError(BaseModel):
+    """Feature-owned operation failure returned inside an executor result."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9_.-]*$",
+    )
+    message: str = Field(min_length=1, max_length=1000)
+
+
 class ExecutorResult(BaseModel):
-    """One success or failure result for the same live command id."""
+    """One success or feature-specific failure for the same live command id."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: CommandId
     ok: bool
     result: JsonValue = None
-    error: ProtocolError | None = None
+    error: OperationError | None = None
 
     @model_validator(mode="after")
     def _match_result_shape(self) -> ExecutorResult:

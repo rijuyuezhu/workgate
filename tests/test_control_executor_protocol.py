@@ -32,6 +32,7 @@ from workgate.protocol.executor import (
     ExecutorHelloResponse,
     ExecutorResult,
     ExecutorRuntimeSummary,
+    OperationError,
     SessionInventorySummary,
 )
 from workgate.protocol.ids import (
@@ -240,15 +241,15 @@ def test_command_envelope_is_minimal_and_executor_identity_is_not_in_body() -> (
         )
 
 
-def test_result_shape_and_unknown_command_response_are_unambiguous() -> None:
+def test_operation_and_protocol_errors_remain_separate() -> None:
     command_id = new_command_id()
     success = ExecutorResult(id=command_id, ok=True, result={"stdout": "ok"})
     failure = ExecutorResult(
         id=command_id,
         ok=False,
-        error=ProtocolError(
-            code=ProtocolErrorCode.OPERATION_UNSUPPORTED,
-            message="operation is unsupported",
+        error=OperationError(
+            code="file_not_found",
+            message="file does not exist",
         ),
     )
     unknown = ProtocolErrorResponse(
@@ -261,8 +262,13 @@ def test_result_shape_and_unknown_command_response_are_unambiguous() -> None:
     assert success.error is None
     assert failure.result is None
     assert failure.error is not None
-    assert failure.error.code is ProtocolErrorCode.OPERATION_UNSUPPORTED
+    assert failure.error.code == "file_not_found"
     assert unknown.error.code is ProtocolErrorCode.UNKNOWN_COMMAND
+
+    with pytest.raises(ValidationError):
+        ProtocolErrorResponse.model_validate(
+            {"error": {"code": "file_not_found", "message": "missing"}}
+        )
 
     with pytest.raises(ValidationError):
         ExecutorResult(id=command_id, ok=False)
@@ -270,9 +276,9 @@ def test_result_shape_and_unknown_command_response_are_unambiguous() -> None:
         ExecutorResult(
             id=command_id,
             ok=True,
-            error=ProtocolError(
-                code=ProtocolErrorCode.EXECUTOR_OFFLINE,
-                message="offline",
+            error=OperationError(
+                code="command_failed",
+                message="command failed",
             ),
         )
 

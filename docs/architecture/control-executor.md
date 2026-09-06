@@ -194,6 +194,11 @@ machine side effect. `unknown_command` is terminal for the uploader: drop the
 result and local correlation rather than retrying forever. Control restart loses
 ordinary queues/Futures and never reconstructs or replays them.
 
+Protocol/endpoint failures use the small shared `ProtocolErrorCode` taxonomy.
+Executor operation failures instead carry a bounded feature-owned string code
+and message (for example `file_not_found`); feature error codes are not promoted
+into a central distributed registry.
+
 ## Session lifecycle
 
 There is one shared `session_id` end-to-end:
