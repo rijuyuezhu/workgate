@@ -8,14 +8,30 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from workgate.protocol import (
-    EXECUTOR_PROTOCOL_VERSION,
+from workgate.protocol import EXECUTOR_PROTOCOL_VERSION
+from workgate.protocol.credentials import (
+    ExecutorTrustRecord,
+    executor_credential_is_trusted,
+    executor_credential_verifier,
+    new_executor_credential,
+)
+from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
+from workgate.protocol.executor import (
     ExecutorCommand,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
     ExecutorRuntimeSummary,
-    ExecutorTrustRecord,
+    SessionInventorySummary,
+)
+from workgate.protocol.ids import (
+    new_command_id,
+    new_device_code,
+    new_executor_id,
+    new_session_id,
+    new_user_code,
+)
+from workgate.protocol.pairing import (
     PairApprovalRequest,
     PairDecision,
     PairingExecutorMetadata,
@@ -23,17 +39,6 @@ from workgate.protocol import (
     PairPollSuccess,
     PairStartRequest,
     PairStartResponse,
-    ProtocolError,
-    ProtocolErrorCode,
-    SessionInventorySummary,
-    executor_credential_is_trusted,
-    executor_credential_verifier,
-    new_command_id,
-    new_device_code,
-    new_executor_credential,
-    new_executor_id,
-    new_session_id,
-    new_user_code,
 )
 
 
@@ -70,19 +75,23 @@ def test_executor_credential_uses_verifier_and_has_no_inactivity_expiry() -> (
     credential = new_executor_credential()
     assert len(_decoded_token_bytes(credential, "wg_exec_")) == 32
     verifier = executor_credential_verifier(credential)
+    thirty_days = 30 * 24 * 60 * 60
     record = ExecutorTrustRecord(
         executor_id=new_executor_id(),
         name="laptop",
         credential_verifier=verifier,
         created_at=1_000.0,
-        last_seen_at=1_000.0,
+        last_seen_at=10_000_000.0 - thirty_days,
     )
 
     assert executor_credential_is_trusted(record, credential)
 
-    thirty_days = 30 * 24 * 60 * 60
-    stale_presence = record.model_copy(
-        update={"last_seen_at": record.created_at - thirty_days}
+    stale_presence = ExecutorTrustRecord(
+        executor_id=record.executor_id,
+        name=record.name,
+        credential_verifier=record.credential_verifier,
+        created_at=record.created_at,
+        last_seen_at=1_000.0,
     )
     assert executor_credential_is_trusted(stale_presence, credential)
 

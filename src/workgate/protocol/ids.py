@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import secrets
 from typing import Annotated
 
@@ -11,7 +10,6 @@ from pydantic import StringConstraints
 _OPAQUE_ID_BYTES = 16
 _DEVICE_CODE_BYTES = 32
 _USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-_USER_CODE_RE = re.compile(r"^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$")
 
 ExecutorId = Annotated[
     str,
@@ -63,6 +61,4 @@ def new_device_code() -> str:
 def new_user_code() -> str:
     """Return a short human pairing code with ambiguous glyphs removed."""
     raw = "".join(secrets.choice(_USER_CODE_ALPHABET) for _ in range(8))
-    code = f"{raw[:4]}-{raw[4:]}"
-    assert _USER_CODE_RE.fullmatch(code)
-    return code
+    return f"{raw[:4]}-{raw[4:]}"
