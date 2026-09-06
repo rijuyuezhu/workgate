@@ -336,7 +336,9 @@ v1 does not require a plugin/factory framework or universal operation metadata.
 The first hosted target is an ordinary Linux VPS behind Caddy/nginx, with
 executors making outbound HTTPS/WSS connections only. No Redis, Postgres, broker,
 object store, or Kubernetes is required. Standalone is the same architecture on
-loopback under a lifecycle-only supervisor.
+loopback under a lifecycle-only supervisor. Plain HTTP executor transport is
+therefore valid only on loopback; a remote executor bearer must never be sent
+over cleartext HTTP.
 
 Optional hosted/Cloudflare work comes only after VPS and standalone are stable
 and must adapt to this core rather than reshape it.

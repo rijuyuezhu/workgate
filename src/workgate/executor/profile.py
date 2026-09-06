@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Literal
@@ -40,6 +41,17 @@ class ExecutorProfile(BaseModel):
             raise ValueError("control_url must not contain query or fragment")
         if parsed.path not in {"", "/"}:
             raise ValueError("control_url must be an origin without a path")
+        if parsed.scheme == "http":
+            host = parsed.hostname.rstrip(".").lower()
+            if host != "localhost":
+                try:
+                    is_loopback = ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    is_loopback = False
+                if not is_loopback:
+                    raise ValueError(
+                        "plain HTTP control_url is allowed only for loopback"
+                    )
         return normalized
 
 

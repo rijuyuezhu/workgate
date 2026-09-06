@@ -73,6 +73,8 @@ def test_executor_profile_reader_bound_covers_writer_state_space(
         "https://control.example/?token=secret",
         "https://control.example/#fragment",
         "https://control.example/base/path",
+        "http://control.example",
+        "http://192.168.1.10:8765",
     ],
 )
 def test_executor_profile_rejects_unsafe_control_urls(url: str) -> None:
@@ -82,6 +84,27 @@ def test_executor_profile_rejects_unsafe_control_urls(url: str) -> None:
             executor_id=new_executor_id(),
             credential=new_executor_credential(),
         )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8765",
+        "http://localhost.:8765",
+        "http://127.0.0.1:8765",
+        "http://127.0.0.2:8765",
+        "http://[::1]:8765",
+        "https://control.example",
+    ],
+)
+def test_executor_profile_accepts_https_or_loopback_http(url: str) -> None:
+    profile = ExecutorProfile(
+        control_url=url,
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+
+    assert profile.control_url == url
 
 
 def test_executor_profile_lock_rejects_duplicate_process_loop(
