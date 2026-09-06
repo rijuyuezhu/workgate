@@ -51,7 +51,7 @@ CRITICAL_FILES = frozenset(
     }
 )
 ADAPTER_PREFIXES = (
-    f"{SOURCE_PREFIX}executors/",
+    f"{SOURCE_PREFIX}control/",
     f"{SOURCE_PREFIX}http/",
     f"{SOURCE_PREFIX}schemas/",
     f"{SOURCE_PREFIX}tools/registry/",

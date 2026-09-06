@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.terminals as terminal_module
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import (
     SCOPE_REMOTE_USE,
     SCOPE_SHELL_EXECUTE,

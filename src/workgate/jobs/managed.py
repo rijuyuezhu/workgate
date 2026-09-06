@@ -223,7 +223,7 @@ def managed_jobs_runtime() -> ManagedJobsRuntime:
     """Return the controller-owned managed Jobs runtime compatibility binding."""
     if _MANAGED_JOBS_RUNTIME is None:
         raise RuntimeError(
-            "managed jobs runtime is not configured; start ControllerRuntime"
+            "managed jobs runtime is not configured; start ControlRuntime"
         )
     return _MANAGED_JOBS_RUNTIME
 

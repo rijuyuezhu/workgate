@@ -6,9 +6,9 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import workgate.executors.mcp.app as mcp_app
+import workgate.control.mcp.app as mcp_app
 from workgate.config.settings import Settings, configure_settings
-from workgate.executors.mcp.session_limits import (
+from workgate.control.mcp.session_limits import (
     McpSessionLimitMiddleware,
 )
 from workgate.http.request_limits import RequestBodyLimitMiddleware
@@ -44,6 +44,18 @@ class _DummySseMcp:
 class _EmptyCatalog:
     def register_mcp(self, mcp, context) -> None:
         del mcp, context
+
+
+def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            mode=settings.mode,
+            host=settings.host,
+            port=settings.port,
+        ),
+        legacy_settings=settings,
+        tool_catalog=tool_catalog,
+    )
 
 
 def _route_paths(app: Starlette) -> list[str]:
@@ -149,7 +161,7 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
         max_http_request_bytes=4321,
         mcp_session_idle_timeout_s=987,
     )
-    runtime = cast(Any, SimpleNamespace(settings=runtime_settings))
+    runtime = cast(Any, _runtime_stub(runtime_settings))
     session_manager = SimpleNamespace(
         stateless=False,
         session_idle_timeout=1,
@@ -193,13 +205,7 @@ def test_build_mcp_uses_runtime_settings_for_transport_security():
         auth_mode="none",
         base_url="https://runtime.example",
     )
-    runtime = cast(
-        Any,
-        SimpleNamespace(
-            settings=runtime_settings,
-            tool_catalog=_EmptyCatalog(),
-        ),
-    )
+    runtime = cast(Any, _runtime_stub(runtime_settings, _EmptyCatalog()))
 
     mcp = mcp_app.build_mcp(runtime=runtime)
 
@@ -214,10 +220,7 @@ def test_build_mcp_uses_runtime_settings_for_transport_security():
 def test_run_mcp_uses_runtime_owned_stdio_transport(monkeypatch):
     settings = Settings(mode="stdio", auth_mode="none")
     configure_settings(settings)
-    runtime = cast(
-        Any,
-        SimpleNamespace(settings=settings, tool_catalog=object()),
-    )
+    runtime = cast(Any, _runtime_stub(settings, object()))
     dummy = _DummyMcp()
     calls = []
 
@@ -229,7 +232,7 @@ def test_run_mcp_uses_runtime_owned_stdio_transport(monkeypatch):
         calls.append(("build", tool_catalog, runtime, own_runtime_lifespan))
         return dummy
 
-    monkeypatch.setattr(mcp_app, "build_controller_runtime", build_runtime)
+    monkeypatch.setattr(mcp_app, "build_control_runtime", build_runtime)
     monkeypatch.setattr(mcp_app, "build_mcp", build)
 
     mcp_app.run_mcp()
@@ -244,10 +247,7 @@ def test_run_mcp_uses_runtime_owned_stdio_transport(monkeypatch):
 def test_run_mcp_stdio_runtime_owns_fastmcp_lifespan(monkeypatch):
     runtime = cast(
         Any,
-        SimpleNamespace(
-            settings=Settings(mode="stdio", auth_mode="none"),
-            tool_catalog=object(),
-        ),
+        _runtime_stub(Settings(mode="stdio", auth_mode="none"), object()),
     )
     dummy = _DummyMcp()
     calls = []
@@ -267,14 +267,14 @@ def test_run_mcp_stdio_runtime_owns_fastmcp_lifespan(monkeypatch):
 def test_run_mcp_http_runtime_is_owned_by_outer_asgi_lifespan(monkeypatch):
     runtime = cast(
         Any,
-        SimpleNamespace(
-            settings=Settings(
+        _runtime_stub(
+            Settings(
                 mode="mcp",
                 auth_mode="none",
                 host="127.0.0.1",
                 port=8765,
             ),
-            tool_catalog=object(),
+            object(),
         ),
     )
     dummy = _DummyMcp()

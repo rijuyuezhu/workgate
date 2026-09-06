@@ -4,8 +4,8 @@ from fastapi import FastAPI
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Route
 
-import workgate.executors.http.app as http_app
-import workgate.executors.mcp.app as mcp_app
+import workgate.control.http.app as http_app
+import workgate.control.mcp.app as mcp_app
 from workgate.config.settings import Settings, configure_settings
 from workgate.http.public_routes import public_http_routes
 from workgate.ui.http.routes import human_ui_routes

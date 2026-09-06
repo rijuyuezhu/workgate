@@ -15,12 +15,12 @@ from tests.helpers import mcp_structured
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import (
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import (
     _add_public_routes_to_mcp_http_app,
     build_mcp,
 )
-from workgate.executors.mcp.transport_security import (
+from workgate.control.mcp.transport_security import (
     transport_security_settings,
 )
 from workgate.oauth.core import service as oauth_service

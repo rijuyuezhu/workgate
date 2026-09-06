@@ -10,7 +10,8 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings
-from workgate.executors.runtime import build_controller_runtime
+from workgate.control.runtime import build_control_runtime
+from workgate.executor.runtime import build_executor_runtime
 from workgate.jobs.managed import (
     ManagedJobsRuntime,
     configure_managed_jobs_runtime,
@@ -31,9 +32,6 @@ from workgate.remote.manager import (
     RemoteManager,
     configure_remote_manager,
     remote_manager,
-)
-from workgate.remote_worker.runtime_composition import (
-    build_worker_runtime,
 )
 from workgate.terminal.runtime import build_terminal_runtime
 from workgate.tool_session import (
@@ -95,7 +93,7 @@ def test_runtime_service_construction_does_not_install_compatibility_globals(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_lifespan_restores_outer_compatibility_bindings(
+async def test_control_runtime_lifespan_restores_outer_compatibility_bindings(
     tmp_path,
 ):
     outer_settings = Settings(
@@ -109,7 +107,7 @@ async def test_controller_runtime_lifespan_restores_outer_compatibility_bindings
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -139,7 +137,7 @@ async def test_controller_runtime_lifespan_restores_outer_compatibility_bindings
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_lifespan_restores_bindings_after_exception(
+async def test_executor_runtime_lifespan_restores_bindings_after_exception(
     tmp_path,
 ):
     outer_settings = Settings(
@@ -153,7 +151,7 @@ async def test_worker_runtime_lifespan_restores_bindings_after_exception(
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_worker_runtime(
+    runtime = build_executor_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "worker-state",
@@ -214,7 +212,7 @@ def test_runtime_service_installation_rolls_back_partial_startup(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_startup_failure_closes_started_bindings(
+async def test_control_runtime_startup_failure_closes_started_bindings(
     tmp_path, monkeypatch
 ):
     outer_settings = Settings(
@@ -228,7 +226,7 @@ async def test_controller_runtime_startup_failure_closes_started_bindings(
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -254,7 +252,7 @@ async def test_controller_runtime_startup_failure_closes_started_bindings(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_remote_binding_failure_closes_remote_manager(
+async def test_control_runtime_remote_binding_failure_closes_remote_manager(
     tmp_path, monkeypatch
 ):
     outer_settings = Settings(
@@ -268,7 +266,7 @@ async def test_controller_runtime_remote_binding_failure_closes_remote_manager(
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -279,7 +277,7 @@ async def test_controller_runtime_remote_binding_failure_closes_remote_manager(
         raise RuntimeError("remote binding failed")
 
     monkeypatch.setattr(
-        "workgate.executors.runtime.configure_remote_manager",
+        "workgate.control.runtime.configure_remote_manager",
         fail_remote_binding,
     )
     try:
@@ -316,9 +314,9 @@ async def test_terminal_start_failure_restores_store_bindings(
         remote_enabled=False,
     )
     runtime = (
-        build_controller_runtime(settings)
+        build_control_runtime(settings)
         if runtime_kind == "controller"
-        else build_worker_runtime(settings)
+        else build_executor_runtime(settings)
     )
 
     async def fail_terminal_start() -> None:
@@ -339,7 +337,7 @@ async def test_terminal_start_failure_restores_store_bindings(
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_cancellation_closes_bindings(tmp_path):
+async def test_executor_runtime_cancellation_closes_bindings(tmp_path):
     outer_settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / "outer-state",
@@ -351,7 +349,7 @@ async def test_worker_runtime_cancellation_closes_bindings(tmp_path):
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_worker_runtime(
+    runtime = build_executor_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "worker-state",
@@ -382,7 +380,7 @@ async def test_worker_runtime_cancellation_closes_bindings(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_owns_and_restores_remote_manager_binding(
+async def test_control_runtime_owns_and_restores_remote_manager_binding(
     tmp_path,
 ):
     outer_settings = Settings(
@@ -395,7 +393,7 @@ async def test_controller_runtime_owns_and_restores_remote_manager_binding(
         state_store=outer_state_store,
     )
     configure_remote_manager(outer_manager)
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -414,14 +412,14 @@ async def test_controller_runtime_owns_and_restores_remote_manager_binding(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_owns_and_restores_ui_and_oauth_bindings(
+async def test_control_runtime_owns_and_restores_ui_and_oauth_bindings(
     tmp_path,
 ) -> None:
     outer = build_human_ui_runtime()
     outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
     previous_oauth = configure_oauth_state(outer_oauth)
     await outer.start()
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -451,11 +449,11 @@ async def test_controller_runtime_owns_and_restores_ui_and_oauth_bindings(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_closes_ui_oauth_remote_and_terminal_in_order(
+async def test_control_runtime_closes_ui_oauth_remote_and_terminal_in_order(
     tmp_path,
     monkeypatch,
 ) -> None:
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -528,7 +526,7 @@ async def test_human_ui_start_failure_rolls_back_controller_dependencies(
     configure_remote_manager(outer_manager)
     await outer_terminal.start()
     await outer_ui.start()
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -590,7 +588,7 @@ async def test_oauth_start_failure_rolls_back_controller_dependencies(
     configure_tool_session_store(outer_session_store)
     configure_remote_manager(outer_manager)
     await outer_terminal.start()
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-state",
@@ -638,9 +636,9 @@ async def test_process_runtimes_own_and_restore_terminal_bindings(
         remote_enabled=False,
     )
     runtime = (
-        build_controller_runtime(settings)
+        build_control_runtime(settings)
         if runtime_kind == "controller"
-        else build_worker_runtime(settings)
+        else build_executor_runtime(settings)
     )
     try:
         assert terminal_bridge._bridge_registry() is outer.bridges
@@ -671,13 +669,13 @@ async def test_process_runtimes_own_and_restore_terminal_bindings(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_owns_and_restores_managed_jobs_binding(
+async def test_control_runtime_owns_and_restores_managed_jobs_binding(
     tmp_path,
 ) -> None:
     outer = ManagedJobsRuntime()
     await outer.start()
     previous = configure_managed_jobs_runtime(outer)
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-jobs-state",
@@ -703,10 +701,10 @@ async def test_controller_runtime_owns_and_restores_managed_jobs_binding(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_managed_jobs_binding_failure_closes_owner(
+async def test_control_runtime_managed_jobs_binding_failure_closes_owner(
     tmp_path, monkeypatch
 ) -> None:
-    runtime = build_controller_runtime(
+    runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "controller-jobs-failure-state",
@@ -718,7 +716,7 @@ async def test_controller_runtime_managed_jobs_binding_failure_closes_owner(
         raise RuntimeError("managed jobs binding failed")
 
     monkeypatch.setattr(
-        "workgate.executors.runtime.configure_managed_jobs_runtime",
+        "workgate.control.runtime.configure_managed_jobs_runtime",
         fail_managed_jobs_binding,
     )
 

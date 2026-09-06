@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 import workgate.ui.http.routes as human_ui_module
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import default_scope
 from workgate.oauth.core.state import (
     OAuthState,

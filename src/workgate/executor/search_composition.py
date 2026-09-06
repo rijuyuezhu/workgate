@@ -1,4 +1,4 @@
-"""Worker-side composition for migrated domain services."""
+"""Executor-side composition for migrated domain services."""
 
 from typing import Any, cast
 
@@ -7,14 +7,19 @@ from ..ops.files import files_config_from_settings
 from ..ops.files_service import FilesService
 from ..ops.search.composition import build_search_service
 from ..ops.search.core import SearchPaths
+from ..remote_worker.dispatch import (
+    WorkerDispatcher as LegacyWorkerDispatcher,
+)
+from ..remote_worker.dispatch import (
+    build_worker_dispatcher as build_legacy_worker_dispatcher,
+)
 from ..tool_session.store import ToolSessionStore
-from .dispatch import WorkerDispatcher, build_worker_dispatcher
 
 
-def build_worker_dispatcher_with_search(
+def build_executor_dispatcher_with_search(
     settings: Settings, store: ToolSessionStore
-) -> WorkerDispatcher:
-    """Bind worker-local Search and Files through the dispatcher seam."""
+) -> LegacyWorkerDispatcher:
+    """Bind executor-local Search and Files through the legacy dispatcher seam."""
     search_service = build_search_service(settings, store, remote=None)
     files_service = FilesService(
         files_config_from_settings(settings), store, remote=None
@@ -79,7 +84,7 @@ def build_worker_dispatcher_with_search(
             str(args["session_id"]), str(args["path"])
         )
 
-    return build_worker_dispatcher(
+    return build_legacy_worker_dispatcher(
         handler_overrides={
             "search": search_handler,
             "list_files": list_files_handler,

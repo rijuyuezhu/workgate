@@ -7,16 +7,16 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executors.search_composition import (
-    build_controller_tool_catalog,
+from workgate.control.search_composition import (
+    build_control_tool_catalog,
+)
+from workgate.executor.search_composition import (
+    build_executor_dispatcher_with_search,
 )
 from workgate.persistence import configure_state_store
 from workgate.remote.manager import (
     RemoteManager,
     configure_remote_manager,
-)
-from workgate.remote_worker.search_composition import (
-    build_worker_dispatcher_with_search,
 )
 from workgate.schemas.result_models.search import (
     GrepSearchOutput,
@@ -57,7 +57,7 @@ async def test_controller_catalog_binds_search_service(tmp_path, monkeypatch):
     (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
     session = services.tool_session_store.create_session(workdir=tmp_path)
 
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         RemoteManager(lambda: settings, state_store=services.state_store),
@@ -123,7 +123,7 @@ async def test_controller_search_remote_wire_uses_owned_manager(
         return {"ok": True, "data": output.model_dump(mode="json")}
 
     monkeypatch.setattr(manager, "call", fake_call)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         manager,
@@ -160,14 +160,14 @@ async def test_controller_search_remote_wire_uses_owned_manager(
 
 
 @pytest.mark.asyncio
-async def test_worker_dispatcher_uses_composed_search_override(
+async def test_executor_dispatcher_uses_composed_search_override(
     tmp_path, monkeypatch
 ):
     if not shutil.which("rg"):
         pytest.skip("missing rg")
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
-    dispatcher = build_worker_dispatcher_with_search(
+    dispatcher = build_executor_dispatcher_with_search(
         settings, services.tool_session_store
     )
     (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
@@ -184,7 +184,9 @@ async def test_worker_dispatcher_uses_composed_search_override(
     import workgate.ops.search as search_ops
 
     async def legacy_search_should_not_run(*_args, **_kwargs):
-        raise AssertionError("worker Search fell back to legacy search_execute")
+        raise AssertionError(
+            "executor Search fell back to legacy search_execute"
+        )
 
     monkeypatch.setattr(
         search_ops, "search_execute", legacy_search_should_not_run

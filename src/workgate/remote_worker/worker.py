@@ -705,11 +705,11 @@ async def run_worker(
 ) -> None:
     """Run one worker process while holding its lifecycle lock."""
     from ..config.settings import Settings
+    from ..executor.runtime import build_executor_runtime
     from .lifecycle import worker_run_lock
-    from .runtime_composition import build_worker_runtime
 
     profile_id = activate_worker_profile(profile_id)
-    runtime = build_worker_runtime(Settings())
+    runtime = build_executor_runtime(Settings())
     lock = (
         worker_run_lock() if profile_id is None else worker_run_lock(profile_id)
     )

@@ -1,4 +1,4 @@
-"""Worker composition owner for the long-lived remote worker process."""
+"""Executor composition owner for the long-lived machine process."""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -11,32 +11,37 @@ from ..composition.services import (
     install_runtime_services,
 )
 from ..config.settings import Settings
+from ..remote_worker.dispatch import WorkerDispatcher as LegacyWorkerDispatcher
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
-from .dispatch import WorkerDispatcher
-from .search_composition import build_worker_dispatcher_with_search
+from .config import ExecutorConfig, resolve_executor_config
+from .search_composition import build_executor_dispatcher_with_search
 
 
 @dataclass
-class WorkerRuntime:
-    """Own the worker's composed services and compatibility lifecycle."""
+class ExecutorRuntime:
+    """Own the executor's composed services and compatibility lifecycle."""
 
-    settings: Settings
-    """Resolved worker-compatible settings for this process."""
+    config: ExecutorConfig
+    """Resolved executor-owned machine authority for new composition code."""
+    legacy_settings: Settings
+    """Temporary monolithic settings bridge for unmigrated components."""
     services: RuntimeServices
-    """Explicit shared state services owned by this worker."""
+    """Explicit shared state services owned by this executor."""
     terminal_runtime: TerminalRuntime
-    """Worker-owned terminal bridge and ConPTY live state."""
-    dispatcher: WorkerDispatcher
-    """Worker dispatcher with the migrated Search service already bound."""
+    """Executor-owned terminal bridge and ConPTY live state."""
+    dispatcher: LegacyWorkerDispatcher
+    """Legacy dispatcher with the migrated Search service already bound."""
     _installation: RuntimeServiceInstallation | None = field(
         default=None, init=False, repr=False
     )
     _closed: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
-        """Install compatibility bindings inside the worker's owning loop."""
+        """Install compatibility bindings inside the executor's owning loop."""
         if self._closed:
-            raise RuntimeError("WorkerRuntime cannot be restarted after close")
+            raise RuntimeError(
+                "ExecutorRuntime cannot be restarted after close"
+            )
         if self._installation is not None:
             return
         installation = install_runtime_services(self.services)
@@ -60,8 +65,8 @@ class WorkerRuntime:
                 installation.close()
 
     @asynccontextmanager
-    async def lifespan(self) -> AsyncGenerator[WorkerRuntime]:
-        """Run the worker ownership scope with deterministic cleanup."""
+    async def lifespan(self) -> AsyncGenerator[ExecutorRuntime]:
+        """Run the executor ownership scope with deterministic cleanup."""
         try:
             await self.start()
             yield self
@@ -69,14 +74,15 @@ class WorkerRuntime:
             await self.aclose()
 
 
-def build_worker_runtime(settings: Settings) -> WorkerRuntime:
-    """Construct one worker graph without installing process globals yet."""
+def build_executor_runtime(settings: Settings) -> ExecutorRuntime:
+    """Construct one executor graph without installing process globals yet."""
     services = build_runtime_services(settings)
-    return WorkerRuntime(
-        settings=settings,
+    return ExecutorRuntime(
+        config=resolve_executor_config(settings),
+        legacy_settings=settings,
         services=services,
         terminal_runtime=build_terminal_runtime(),
-        dispatcher=build_worker_dispatcher_with_search(
+        dispatcher=build_executor_dispatcher_with_search(
             settings, services.tool_session_store
         ),
     )

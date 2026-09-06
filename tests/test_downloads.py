@@ -11,8 +11,8 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp
 from workgate.http.downloads import (
     _token_fingerprint,
     download_routes,

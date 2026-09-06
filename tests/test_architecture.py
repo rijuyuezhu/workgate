@@ -6,27 +6,36 @@ _PROJECT_ROOT = Path(__file__).parents[1]
 _PACKAGE_ROOT = _PROJECT_ROOT / "src" / "workgate"
 _PACKAGE_NAME = "workgate"
 
-# `main` composes only domain CLI registrars. Each HTTP-capable executor consumes
+# `main` composes only domain CLI registrars. Each HTTP-capable control adapter consumes
 # exactly one shared Human UI route-composition contract.
-_ALLOWED_HTTP_EXECUTOR_UI_IMPORTS = frozenset(
+_ALLOWED_HTTP_CONTROL_UI_IMPORTS = frozenset(
     {
         (
-            "workgate.executors.http.app",
+            "workgate.control.http.app",
             "workgate.ui.http.routes",
         ),
     }
 )
-_ALLOWED_MCP_EXECUTOR_UI_IMPORTS = frozenset(
+_ALLOWED_MCP_CONTROL_UI_IMPORTS = frozenset(
     {
         (
-            "workgate.executors.mcp.app",
+            "workgate.control.mcp.app",
             "workgate.ui.http.routes",
         ),
     }
 )
-_ALLOWED_NON_EXECUTOR_TO_EXECUTOR_IMPORTS = frozenset(
+_ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
     {
-        ("workgate.main", "workgate.executors.cli"),
+        ("workgate.main", "workgate.control.cli"),
+    }
+)
+_ALLOWED_EXECUTOR_TO_LEGACY_REMOTE_WORKER_IMPORTS = frozenset(
+    {
+        ("workgate.executor.runtime", "workgate.remote_worker.dispatch"),
+        (
+            "workgate.executor.search_composition",
+            "workgate.remote_worker.dispatch",
+        ),
     }
 )
 _ALLOWED_RELEASE_IMPORTS = frozenset(
@@ -168,48 +177,78 @@ def test_main_cli_stays_a_thin_composition_root() -> None:
     )
 
 
-def test_executor_imports_match_explicit_process_composition() -> None:
+def test_control_imports_match_explicit_process_composition() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if target.startswith(f"{_PACKAGE_NAME}.executors.")
-        and not importer.startswith(f"{_PACKAGE_NAME}.executors.")
+        if target.startswith(f"{_PACKAGE_NAME}.control.")
+        and not importer.startswith(f"{_PACKAGE_NAME}.control.")
     )
 
-    assert actual == _ALLOWED_NON_EXECUTOR_TO_EXECUTOR_IMPORTS
+    assert actual == _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS
 
 
-def test_mcp_executor_has_only_the_explicit_ui_route_dependency() -> None:
+def test_final_control_executor_roots_are_explicit() -> None:
+    assert (_PACKAGE_ROOT / "control").is_dir()
+    assert (_PACKAGE_ROOT / "executor").is_dir()
+    assert not (_PACKAGE_ROOT / "executors").exists()
+
+
+def test_control_does_not_depend_on_executor_composition() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.executors.mcp")
+        if importer.startswith(f"{_PACKAGE_NAME}.control")
+        and target.startswith(f"{_PACKAGE_NAME}.executor")
+    )
+
+    assert actual == frozenset()
+
+
+def test_executor_legacy_remote_worker_imports_are_explicit_migration_debt() -> (
+    None
+):
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.executor")
+        and target.startswith(f"{_PACKAGE_NAME}.remote_worker")
+    )
+
+    assert actual == _ALLOWED_EXECUTOR_TO_LEGACY_REMOTE_WORKER_IMPORTS
+
+
+def test_mcp_control_has_only_the_explicit_ui_route_dependency() -> None:
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.control.mcp")
         and (
             target.startswith(f"{_PACKAGE_NAME}.server.")
             or target.startswith(f"{_PACKAGE_NAME}.ui.")
         )
     )
 
-    assert actual == _ALLOWED_MCP_EXECUTOR_UI_IMPORTS
+    assert actual == _ALLOWED_MCP_CONTROL_UI_IMPORTS
 
 
-def test_http_executor_has_only_the_explicit_ui_route_dependency() -> None:
+def test_http_control_has_only_the_explicit_ui_route_dependency() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.executors.http")
+        if importer.startswith(f"{_PACKAGE_NAME}.control.http")
         and (
             target.startswith(f"{_PACKAGE_NAME}.server.")
             or target.startswith(f"{_PACKAGE_NAME}.ui.")
         )
     )
 
-    assert actual == _ALLOWED_HTTP_EXECUTOR_UI_IMPORTS
+    assert actual == _ALLOWED_HTTP_CONTROL_UI_IMPORTS
 
 
-def test_http_infrastructure_does_not_depend_on_executors_or_ui() -> None:
+def test_http_infrastructure_does_not_depend_on_control_or_ui() -> None:
     forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.executors.",
+        f"{_PACKAGE_NAME}.control.",
         f"{_PACKAGE_NAME}.server.",
         f"{_PACKAGE_NAME}.ui.",
     )
@@ -225,7 +264,7 @@ def test_http_infrastructure_does_not_depend_on_executors_or_ui() -> None:
 
 def test_telemetry_does_not_depend_on_ui_or_transport_adapters() -> None:
     forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.executors.",
+        f"{_PACKAGE_NAME}.control.",
         f"{_PACKAGE_NAME}.http.",
         f"{_PACKAGE_NAME}.server.",
         f"{_PACKAGE_NAME}.ui.",
@@ -240,9 +279,9 @@ def test_telemetry_does_not_depend_on_ui_or_transport_adapters() -> None:
     assert actual == frozenset()
 
 
-def test_ui_core_does_not_depend_on_executors_or_http_adapters() -> None:
+def test_ui_core_does_not_depend_on_control_or_http_adapters() -> None:
     forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.executors.",
+        f"{_PACKAGE_NAME}.control.",
         f"{_PACKAGE_NAME}.server.",
     )
     actual = frozenset(
@@ -256,12 +295,12 @@ def test_ui_core_does_not_depend_on_executors_or_http_adapters() -> None:
     assert actual == frozenset()
 
 
-def test_ui_http_does_not_depend_on_executors() -> None:
+def test_ui_http_does_not_depend_on_control() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
         if importer.startswith(f"{_PACKAGE_NAME}.ui.http")
-        and target.startswith(f"{_PACKAGE_NAME}.executors.")
+        and target.startswith(f"{_PACKAGE_NAME}.control.")
     )
 
     assert actual == frozenset()
@@ -269,7 +308,7 @@ def test_ui_http_does_not_depend_on_executors() -> None:
 
 def test_terminal_does_not_depend_on_transports_or_ui() -> None:
     forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.executors.",
+        f"{_PACKAGE_NAME}.control.",
         f"{_PACKAGE_NAME}.http.",
         f"{_PACKAGE_NAME}.server.",
         f"{_PACKAGE_NAME}.ui.",
@@ -286,7 +325,7 @@ def test_terminal_does_not_depend_on_transports_or_ui() -> None:
 
 def test_audit_does_not_depend_on_delivery_or_terminal_layers() -> None:
     forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.executors.",
+        f"{_PACKAGE_NAME}.control.",
         f"{_PACKAGE_NAME}.http.",
         f"{_PACKAGE_NAME}.server.",
         f"{_PACKAGE_NAME}.terminal.",
@@ -304,7 +343,7 @@ def test_audit_does_not_depend_on_delivery_or_terminal_layers() -> None:
 
 def test_patch_mechanics_stay_below_delivery_layers() -> None:
     forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.executors.",
+        f"{_PACKAGE_NAME}.control.",
         f"{_PACKAGE_NAME}.http.",
         f"{_PACKAGE_NAME}.server.",
         f"{_PACKAGE_NAME}.ui.",

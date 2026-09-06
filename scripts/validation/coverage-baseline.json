@@ -75,52 +75,52 @@
       "num_statements": 142,
       "percent_covered": 92.857143
     },
-    "src/workgate/executors/http/app.py": {
+    "src/workgate/control/http/app.py": {
       "num_branches": 2,
       "num_statements": 41,
       "percent_covered": 100.0
     },
-    "src/workgate/executors/http/errors.py": {
+    "src/workgate/control/http/errors.py": {
       "num_branches": 0,
       "num_statements": 20,
       "percent_covered": 95.0
     },
-    "src/workgate/executors/http/invocations.py": {
+    "src/workgate/control/http/invocations.py": {
       "num_branches": 0,
       "num_statements": 19,
       "percent_covered": 100.0
     },
-    "src/workgate/executors/http/tool_routes.py": {
+    "src/workgate/control/http/tool_routes.py": {
       "num_branches": 12,
       "num_statements": 55,
       "percent_covered": 100.0
     },
-    "src/workgate/executors/mcp/__init__.py": {
+    "src/workgate/control/mcp/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
       "percent_covered": 100.0
     },
-    "src/workgate/executors/mcp/app.py": {
+    "src/workgate/control/mcp/app.py": {
       "num_branches": 16,
       "num_statements": 72,
       "percent_covered": 92.045455
     },
-    "src/workgate/executors/mcp/instructions.py": {
+    "src/workgate/control/mcp/instructions.py": {
       "num_branches": 0,
       "num_statements": 1,
       "percent_covered": 100.0
     },
-    "src/workgate/executors/mcp/session_limits.py": {
+    "src/workgate/control/mcp/session_limits.py": {
       "num_branches": 14,
       "num_statements": 42,
       "percent_covered": 94.642857
     },
-    "src/workgate/executors/mcp/transport_security.py": {
+    "src/workgate/control/mcp/transport_security.py": {
       "num_branches": 12,
       "num_statements": 38,
       "percent_covered": 90.0
     },
-    "src/workgate/executors/mcp/watchdogs.py": {
+    "src/workgate/control/mcp/watchdogs.py": {
       "num_branches": 16,
       "num_statements": 59,
       "percent_covered": 92.0
@@ -879,7 +879,7 @@
       "src/workgate/tools/local_handlers.py"
     ],
     "adapter_prefixes": [
-      "src/workgate/executors/",
+      "src/workgate/control/",
       "src/workgate/http/",
       "src/workgate/schemas/",
       "src/workgate/tools/registry/",

@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
-from workgate.executors.mcp.instructions import SERVER_INSTRUCTIONS
+from workgate.control.mcp.app import build_mcp
+from workgate.control.mcp.instructions import SERVER_INSTRUCTIONS
 from workgate.tools.catalog import build_tool_catalog
 from workgate.tools.declarative import DeclarativeToolRegistry
 from workgate.utils.serialization import to_jsonable

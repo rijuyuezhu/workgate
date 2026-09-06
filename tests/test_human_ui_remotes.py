@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 
 import workgate.ui.http.remotes as remotes_module
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executors.http.app import build_http_app
-from workgate.executors.runtime import build_controller_runtime
+from workgate.control.http.app import build_http_app
+from workgate.control.runtime import build_control_runtime
 from workgate.oauth.core.scopes import SCOPE_REMOTE_USE, SCOPE_SHELL_READ
 from workgate.oauth.protocol.token_codec import issue_access_token
 from workgate.schemas.result_models.remote import (
@@ -86,7 +86,7 @@ def test_http_app_installs_public_worker_routes_when_remote_enabled(
         auth_mode="oauth",
         remote_enabled=True,
     )
-    runtime = build_controller_runtime(get_settings())
+    runtime = build_control_runtime(get_settings())
     with TestClient(
         build_http_app(runtime=runtime),
         base_url=BASE_URL,

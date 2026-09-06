@@ -148,23 +148,24 @@ direction explicit when adding features or moving code:
 - `config`, `schemas`, and small `utils` modules provide dependency-leaf
   settings, contracts, serialization, and filesystem primitives.
 - `agent_bridge`, `remote`, `remote_worker`, and `tool_session` own their domain
-  state and protocols. Source-only worker modules must remain usable without the
-  controller's full dependency stack.
+  state and protocols. Legacy source-only remote-worker modules must remain usable
+  without the control process's full dependency stack.
 - `ops` implements transport-neutral use cases. It may use domain services and
-  schemas, but it must not depend on HTTP, MCP, or Human UI adapters.
+  schemas, but it must not depend on HTTP, MCP, or Human UI delivery adapters.
 - `tools` owns public tool contracts, discovery, metadata, and registration.
-- `http` owns executor-neutral Starlette/ASGI infrastructure shared by REST and
-  MCP-over-HTTP. It must not import an executor or Human UI implementation.
-- `executors/mcp` owns MCP composition, MCP-specific middleware, and stdio or
+- `http` owns delivery-adapter-neutral Starlette/ASGI infrastructure shared by
+  REST and MCP-over-HTTP. It must not import `workgate.control` or Human UI
+  implementations.
+- `control/mcp` owns MCP composition, MCP-specific middleware, and stdio or
   MCP-over-HTTP runtime selection.
-- `executors/http` owns REST tool routes, REST error and timeout policy, and the
+- `control/http` owns REST tool routes, REST error and timeout policy, and the
   runnable FastAPI application.
-- `ui/http` owns Human UI HTTP and WebSocket adapters. The REST executor may
+- `ui/http` owns Human UI HTTP and WebSocket adapters. The REST control adapter may
   import only its explicit route-composition contract; lower layers must not
-  import executors or UI delivery adapters. The obsolete `server` package has
-  been removed and must not be restored.
-- `main` is the process-composition entry point and is allowed to select
-  executors.
+  import control delivery adapters or UI delivery adapters. The obsolete `server`
+  package has been removed and must not be restored.
+- `main` is the thin argparse composition root; `control/cli.py` selects the
+  configured control delivery mode.
 
 The canonical OpenTUI executable names live in `ui/contracts.py`. After changing
 that contract, run `uv run python scripts/generation/generate-tui-executable-contract.py` to

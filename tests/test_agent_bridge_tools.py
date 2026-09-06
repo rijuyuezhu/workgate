@@ -8,7 +8,7 @@ from tests.helpers import mcp_text
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.tools.registry import agent as tools_module
 
 

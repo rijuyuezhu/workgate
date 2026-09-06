@@ -18,7 +18,7 @@ from ...remote.http import remote_routes
 from ...remote.transfer_gateway import build_transfer_gateway_router
 from ...tools.catalog import ToolCatalog, build_tool_catalog
 from ...ui.http.routes import human_ui_routes
-from ..runtime import ControllerRuntime, build_controller_runtime
+from ..runtime import ControlRuntime, build_control_runtime
 from .errors import install_error_handlers
 from .tool_routes import (
     install_tool_cache_control_middleware,
@@ -63,8 +63,8 @@ def _install_public_routes(app: FastAPI, settings: Settings) -> list[BaseRoute]:
     return [*documentation_routes, *installed_routes]
 
 
-def _controller_runtime_lifespan(runtime: ControllerRuntime):
-    """Build the REST host lifespan for one controller runtime owner."""
+def _control_runtime_lifespan(runtime: ControlRuntime):
+    """Build the REST host lifespan for one control runtime owner."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
@@ -77,10 +77,12 @@ def _controller_runtime_lifespan(runtime: ControllerRuntime):
 def build_http_app(
     *,
     tool_catalog: ToolCatalog | None = None,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
 ) -> FastAPI:
     """Construct the authenticated REST API from one explicit tool catalog."""
-    settings = runtime.settings if runtime is not None else get_settings()
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     catalog = tool_catalog or (
         runtime.tool_catalog
         if runtime is not None
@@ -91,9 +93,7 @@ def build_http_app(
         title="workgate REST API",
         version=__version__,
         lifespan=(
-            _controller_runtime_lifespan(runtime)
-            if runtime is not None
-            else None
+            _control_runtime_lifespan(runtime) if runtime is not None else None
         ),
     )
 
@@ -114,14 +114,18 @@ def build_http_app(
 def run_http(
     *,
     tool_catalog: ToolCatalog | None = None,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
 ) -> None:
-    """Run the REST HTTP server with one controller runtime owner."""
-    settings = runtime.settings if runtime is not None else get_settings()
+    """Run the REST HTTP server with one control runtime owner."""
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     validate_public_oauth_configuration(settings)
-    active_runtime = runtime or build_controller_runtime(settings)
+    active_runtime = runtime or build_control_runtime(settings)
     app = build_http_app(
         tool_catalog=tool_catalog,
         runtime=active_runtime,
     )
-    uvicorn.run(app, host=settings.host, port=settings.port)
+    uvicorn.run(
+        app, host=active_runtime.config.host, port=active_runtime.config.port
+    )

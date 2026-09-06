@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient
 from starlette.types import Message, Receive, Scope, Send
 
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp, build_mcp_http_app
-from workgate.executors.mcp.session_limits import (
+from workgate.control.mcp.app import build_mcp, build_mcp_http_app
+from workgate.control.mcp.session_limits import (
     McpSessionLimitMiddleware,
 )
 

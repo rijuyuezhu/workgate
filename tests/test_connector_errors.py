@@ -4,7 +4,7 @@ import pytest
 
 from tests.helpers import mcp_structured
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.tools.registry import (
     workspace_connector as workspace_connector_tools,
 )

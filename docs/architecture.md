@@ -15,17 +15,18 @@ inventory as long as the dependency and ownership invariants remain true.
 
 ## Dependency direction
 
-The target application structure separates process entry points, protocol
-executors, shared HTTP infrastructure, Human UI behavior, transport-neutral
+The target application structure separates process entry points, control delivery
+adapters, shared HTTP infrastructure, Human UI behavior, transport-neutral
 operations, and domain services:
 
 ```text
 workgate/
   main.py                 argparse root and command registration
-  executors/
-    mcp/                   MCP executor and MCP-only middleware
-    http/                  REST/tool HTTP executor
-  http/                    executor-neutral ASGI and HTTP infrastructure
+  control/
+    mcp/                   MCP control-plane adapter and middleware
+    http/                  REST/tool HTTP control-plane adapter
+  executor/                executor composition root and resolved machine config
+  http/                    transport-neutral ASGI and HTTP infrastructure
   ui/
     ...                    transport-neutral Human UI core and runtimes
     http/                  Human UI HTTP adapters and routes
@@ -37,16 +38,19 @@ workgate/
   schemas/                 shared cross-domain contracts
   config/                  settings and configuration surface
   agent_bridge/            external agent capability domain
-  remote/                  controller-side remote-worker domain
-  remote_worker/           trimmed uv-managed worker runtime
+  remote/                  legacy control-side remote-worker domain
+  remote_worker/           legacy machine implementation migration source
   tool_session/            explicit local/remote workspace session state
   utils/                   small dependency-leaf technical primitives
 ```
 
-The MCP and REST/tool HTTP executors live in their final `executors/mcp` and
-`executors/http` packages. Human UI delivery adapters live in `ui/http`, and
-executor-neutral ASGI infrastructure lives in `http`. The obsolete `server`
-package has been removed and must not be restored.
+MCP and REST/tool HTTP delivery adapters live under `control`. The executor
+process composition owner lives under `executor`; the remaining
+`remote_worker` modules are explicit migration sources until machine
+implementations move under that root in later control/executor refactor PRs.
+Human UI delivery adapters live in `ui/http`, and transport-neutral ASGI
+infrastructure lives in `http`. The obsolete `executors` and `server` packages
+have been removed and must not be restored.
 
 The package root is frozen to `__init__.py`, `main.py`, `errors.py`, and
 `version.py`. Every other implementation must live in an explicitly owned
@@ -57,13 +61,13 @@ General rules:
 - `main.py` owns only the root argparse parser and composes domain-owned CLI
   registration functions. Command modules load settings and invoke their own
   runtime handlers; `main.py` must not inspect `sys.argv` or import runtime apps.
-- Executors may compose tools, OAuth, remote services, shared HTTP
+- Control delivery adapters may compose tools, OAuth, remote services, shared HTTP
   infrastructure, and UI route contributions.
-- `http` must not import an executor or Human UI implementation.
-- UI core must not import an executor. `ui/http` may depend on UI core and
+- `http` must not import control delivery adapters or Human UI implementations.
+- UI core must not import control delivery adapters. `ui/http` may depend on UI core and
   transport-neutral operations and domain services.
 - `ops`, `tools`, `schemas`, domain packages, and worker code must not import
-  executors or UI HTTP adapters. A module moves into `tools/{ops,schemas}` only
+  control delivery adapters or UI HTTP adapters. A module moves into `tools/{ops,schemas}` only
   after its complete consumer graph is tool-owned; shared UI, worker, remote,
   release, terminal, or infrastructure contracts remain in an explicit shared
   domain until separately extracted. Every remaining top-level `ops` family has
@@ -87,7 +91,7 @@ Global `--version` remains an argparse version action. Settings flags follow the
 command that consumes them, for example `workgate server --mode mcp` and
 `workgate tui --port 8765`.
 
-The controller runtime is entered by the transport host, not by domain code.
+The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
 it through the outer Starlette lifespan that also owns the SDK session manager.
 MCP stdio instead uses FastMCP's low-level server lifespan because stdio has one
@@ -96,21 +100,29 @@ MCP stdio instead uses FastMCP's low-level server lifespan because stdio has one
 so those public runner paths retain the same ownership invariant. The process
 runtime must not be attached to FastMCP's low-level lifespan for MCP-over-HTTP:
 the SDK enters it once per MCP session, which is a narrower lifecycle than the
-controller process.
+control process.
+
+`ControlRuntime` and `ExecutorRuntime` each expose a frozen role-specific
+configuration snapshot. Newly migrated root decisions read those views: control
+owns server/auth/UI/state/admission policy, while executor owns workspace,
+path/command policy, machine concurrency, and executable paths. Both runtimes
+temporarily retain a clearly named `legacy_settings` bridge for components that
+still consume the monolithic `Settings`; that bridge is migration debt, not a
+shared-authority contract.
 
 `RemoteManager` follows the same ownership rule. The module no longer constructs
-a process singleton at import time. `ControllerRuntime` constructs one manager,
-starts its loop-owned enrollment lock and durable worker queues in the controller
+a process singleton at import time. `ControlRuntime` constructs one manager,
+starts its loop-owned enrollment lock and durable worker queues in the control
 lifespan, stops admission during close, and cancels pending remote calls and
 long-poll waiters before the shared store bindings are restored. A reversible
-non-owning compatibility pointer remains only for legacy controller consumers;
+non-owning compatibility pointer remains only for legacy control consumers;
 migrated domains receive the manager's narrow capabilities explicitly.
 
-Managed background Jobs are controller-owned rather than module-owned.
-`ControllerRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
+Managed background Jobs are control-owned rather than module-owned.
+`ControlRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
 asyncio tasks, and cross-process liveness leases are scoped to that owner. The
-`session_copy` managed handler is registered explicitly during controller
-composition, while remote worker executors do not construct a managed Jobs owner
+`session_copy` managed handler is registered explicitly during control
+composition, while legacy remote-worker runtimes do not construct a managed Jobs owner
 because their tracked jobs are shell-backed. Shutdown stops managed-job
 admission and cancels/awaits owned tasks before UI, OAuth, remote, terminal, or
 shared-store teardown, so cancellation can commit `stopped` (or durably journal
@@ -118,7 +130,7 @@ the deferred store update) before its lease is released. The remaining
 compatibility binding is reversible and non-owning.
 
 Terminal live state is similarly process-owned rather than module-owned.
-`ControllerRuntime` and `WorkerRuntime` each construct a fresh `TerminalRuntime`.
+`ControlRuntime` and `ExecutorRuntime` each construct a fresh `TerminalRuntime`.
 Its bridge and ConPTY registries bind async work to the owning event loop and
 stop admission together during shutdown. Raw bridge operations are cancelled
 and bridge timers/process attachments are closed before ConPTY sessions are
@@ -135,41 +147,41 @@ Rejected alternatives:
 - defining all parsers and handlers in `main.py`: it couples the entry point to
   every runtime and makes command ownership unclear.
 
-## `executors/mcp`: MCP protocol executor
+## `control/mcp`: MCP control delivery adapter
 
-The `executors/mcp` package owns framework-specific MCP composition and runtime
+The `control/mcp` package owns framework-specific MCP composition and runtime
 policy. It converts transport-neutral tool registries and shared services into a
 FastMCP server, then runs that server over stdio or wraps the MCP SDK's ASGI app
 for HTTP delivery. The HTTP wrapper installs the same `ui/http` routes used by
-the REST executor before the catch-all MCP mount. The browser shell and assets
+the REST control adapter before the catch-all MCP mount. The browser shell and assets
 remain public, while Human UI APIs retain OAuth or trusted-loopback TUI checks.
 
 Allowed dependencies include tools, operations, OAuth adapters, remote route
-contributions, the shared `ui/http/routes.py` route contract, executor-neutral
+contributions, the shared `ui/http/routes.py` route contract, delivery-adapter-neutral
 `http` infrastructure, audit recording, and MCP SDK types. Lower-level packages
-must not import this executor. `executors/cli.py`
+must not import this control adapter. `control/cli.py`
 selects and invokes it after argparse dispatch; `main.py` imports only that registrar.
 
 Rejected ownership alternatives:
 
-- `server/mcp`: “server” obscures that this is one selectable executor beside
-  REST/tool HTTP execution and Human UI delivery.
+- `server/mcp`: “server” obscures that this is one selectable control adapter beside
+  REST/tool HTTP delivery and Human UI delivery.
 - `http`: stdio execution, FastMCP registration, MCP sessions, and MCP tool
-  wrappers are protocol-executor concerns, not shared HTTP infrastructure.
+  wrappers are MCP delivery-adapter concerns, not shared HTTP infrastructure.
 - `tools`: tool declarations are transport-neutral; FastMCP registration and
   MCP-specific presentation must depend on tools, not the reverse.
 
-## `executors/http`: REST/tool HTTP executor
+## `control/http`: REST/tool HTTP control adapter
 
-The `executors/http` package owns the FastAPI application that exposes local tool
+The `control/http` package owns the FastAPI application that exposes local tool
 registries as REST endpoints. It defines the REST error representation, applies
 tool-route timeout and cache policy, records HTTP-routed tool invocations, and
 composes public route contributions and authentication into one runnable app.
 
 Allowed dependencies include tools, operations, OAuth adapters, remote route
-contributions, executor-neutral `http` infrastructure, framework-specific
+contributions, delivery-adapter-neutral `http` infrastructure, framework-specific
 FastAPI/Starlette types, and the explicit `ui.http.routes.human_ui_routes`
-composition contract. Lower-level packages must not import this executor.
+composition contract. Lower-level packages must not import this control adapter.
 
 Rejected ownership alternatives:
 
@@ -178,40 +190,40 @@ Rejected ownership alternatives:
 - top-level `http`: generic request limits, health, and download response
   mechanics are shared; REST tool registration and error envelopes are not.
 - `tools`: REST route generation consumes transport-neutral tool registries;
-  putting it in `tools` would make the domain layer own a specific executor.
-- `ui/http`: the executor consumes UI route contributions, but it also runs
+  putting it in `tools` would make the domain layer own a specific delivery adapter.
+- `ui/http`: the REST control adapter consumes UI route contributions, but it also runs
   correctly without Human UI and owns all non-UI REST tool behavior.
 
-## `http`: executor-neutral HTTP infrastructure
+## `http`: delivery-adapter-neutral HTTP infrastructure
 
-The `http` package contains ASGI and HTTP behavior needed by more than one
-executor. It does not decide which executor runs and does not own REST tools,
+The `http` package contains ASGI and HTTP behavior needed by more than one control
+delivery adapter. It does not decide which adapter runs and does not own REST tools,
 MCP protocol behavior, OAuth business rules, remote-worker business logic, or
 Human UI workflows.
 
 Allowed dependencies include configuration contracts, audit recording,
 transport-neutral operations, version reporting, and Starlette ASGI types.
-The package must not import `executors` or UI modules, and no removed `server`
+The package must not import `workgate.control` or UI modules, and no removed `server`
 namespace may be reintroduced as an intermediary.
 
 `tests/test_http_route_parity.py` locks the shared `/healthz`, `/readyz`,
 `/version`, and `/download/{token}` route signatures, order, installation, and
-public-matcher classification across both REST and MCP-over-HTTP executors.
+public-matcher classification across both REST and MCP-over-HTTP control adapters.
 
 Rejected ownership alternatives:
 
 - `server/shared`: the name ties reusable HTTP infrastructure to an overloaded
-  server package and hides that the code is protocol-executor neutral.
+  server package and hides that the code is delivery-adapter neutral.
 - `utils`: these modules expose concrete Starlette/ASGI contracts and HTTP
   semantics; they are not general-purpose technical helpers.
-- `executors/http` or `executors/mcp`: both executors consume the behavior, so
-  either location would reverse the other executor's dependency direction.
+- `control/http` or `control/mcp`: both control adapters consume the behavior, so
+  either location would reverse the other adapter's dependency direction.
 
 
 ## `ops`: shared transport-neutral operations
 
 The `ops` package is the shared application-operation layer. These modules back
-public tools, but they also serve remote worker executors, Human UI adapters, generic
+public tools, but they also serve legacy remote-worker execution, Human UI adapters, generic
 HTTP routes, remote transfer services, the job runtime, or other operation
 families. Consequently, importing them from `tools` would reverse dependency
 direction: shared runtimes would depend on the public tool-registration layer.
@@ -220,15 +232,15 @@ area for unaudited moves. Shared operation families stay here while they have
 real consumers across tools, workers, UI/HTTP, remote services, Jobs, or other
 domains. Tool-only families may move behind the tool layer only when their
 complete production consumer graph becomes tool-specific. Search and Files are
-examples of explicit service composition within this shared layer: controller
-and worker construction pass narrow stores/config/callables into the domain
+examples of explicit service composition within this shared layer: control
+and executor construction pass narrow stores/config/callables into the domain
 service rather than making the service depend on a process runtime object.
 
 Rejected ownership alternatives:
 
-- moving the complete `ops/` tree under `tools/ops`: this would make workers,
+- moving the complete `ops/` tree under `tools/ops`: this would make executor-side code,
   UI/HTTP adapters, remote services, and the job runtime depend on public tool
-  ownership and would require bundling controller-only `tools` code on workers.
+  ownership and would require bundling control-only `tools` code on executors.
 - treating top-level `ops` as unfinished migration: architecture tests require
   each shared top-level operation family to retain both its public registry consumer
   and a genuine non-registry consumer. A family may move only after that shared use
@@ -243,16 +255,16 @@ The `jobs` package owns durable tracked-job state and execution that must work
 independently of public tool registration. The worker-required subset is included
 in the trimmed worker bundle and may depend on shell operations, session state, configuration,
 audit recording, private-file primitives, and shared job result contracts. It
-must not import `tools`, executors, UI adapters, or controller-only remote
-orchestration.
+must not import `tools`, control delivery adapters, UI adapters, or control-only
+remote orchestration.
 
 Rejected ownership alternatives:
 
 - `ops/jobs.py`: the old module mixed shared persistence/runner behavior with the
-  public controller-side job companion, preventing a truthful single owner for
+  public control-side job companion, preventing a truthful single owner for
   the `job` tool family.
-- `tools/ops/jobs.py`: only controller-side local/remote result orchestration
-  belongs there; moving the runtime would force worker executors and process
+- `tools/ops/jobs.py`: only control-side local/remote result orchestration
+  belongs there; moving the runtime would force executor processes and process
   entrypoints to depend on the tool-registration layer.
 - `utils`: job state, lifecycle, and recovery form a cohesive domain rather than
   small dependency-leaf helpers.
@@ -273,8 +285,8 @@ Rejected ownership alternatives:
 - matching `tools/registry/*.py`: registration adapts operations to declarative
   tool metadata; combining implementation and schemas into registry adapters
   would erase the operation/contract boundary.
-- trimmed worker bundle: workers execute shared job runtime actions but do
-  not import controller-side public-tool orchestration, so migrated `tools/` files
+- trimmed legacy worker bundle: the executor-side runtime executes shared job actions but does
+  not import control-side public-tool orchestration, so migrated `tools/` files
   must not be included incidentally by operation or schema wildcards.
 
 ## `tool_session`: explicit workspace-session state
@@ -308,7 +320,7 @@ Rejected ownership alternatives:
 
 The `telemetry` package collects best-effort runtime observations without
 choosing how they are displayed. It may depend on configuration and operating
-system APIs, but it must not import UI projections, protocol executors, HTTP
+system APIs, but it must not import UI projections, control delivery adapters, HTTP
 adapters, audit presentation, or remote-controller services.
 
 Rejected ownership alternatives:
@@ -323,8 +335,8 @@ Rejected ownership alternatives:
 ## `ui`: transport-neutral Human UI core
 
 The `ui` package owns Human UI view models, native-client runtime contracts, and
-UI-specific security behavior. UI core must not import protocol executors or
-HTTP route adapters. Controller and remote-worker adapters may invoke UI
+UI-specific security behavior. UI core must not import control delivery adapters or
+HTTP route adapters. Control and legacy remote-worker adapters may invoke UI
 core capabilities when serving a Human UI, but those capabilities remain
 internal rather than public tools.
 
@@ -383,8 +395,8 @@ Rejected ownership alternatives:
 - top-level `ui_static`: the name exposed package mechanics without expressing
   that these files belong exclusively to the Human UI product surface.
 - `ui/http/static`: HTTP adapters serve the files, but the same assets are UI
-  product resources packaged independently of any specific executor.
-- `executors/http`: the REST executor composes routes and middleware; it must not
+  product resources packaged independently of any specific control delivery adapter.
+- `control/http`: the REST control adapter composes routes and middleware; it must not
   own browser presentation resources.
 
 ### `ui/http`: Human UI delivery adapters
@@ -392,15 +404,15 @@ Rejected ownership alternatives:
 The `ui/http` package owns Starlette request parsing, authorization checks,
 response normalization, route composition, and WebSocket delivery for the Human
 UI. It may consume transport-neutral UI core and domain capabilities, but it must
-not depend on either protocol executor. The REST executor consumes only
+not depend on either control delivery adapter. The REST control adapter consumes only
 `ui.http.routes.human_ui_routes` during application composition; no intermediate
 `server` namespace remains.
 
 Rejected ownership alternatives:
 
 - `server/http`: that path mixed one product surface with a generic “server”
-  namespace and obscured the separation between MCP and REST executors.
-- `executors/http`: the executor assembles middleware and route contributions;
+  namespace and obscured the separation between MCP and REST control adapters.
+- `control/http`: the REST control adapter assembles middleware and route contributions;
   it should not own Human UI feature adapters or static assets.
 - transport-neutral `ui` core modules: Starlette requests, responses, scopes, and
   WebSockets are delivery details and must not leak into reusable UI contracts.
@@ -410,9 +422,9 @@ Rejected ownership alternatives:
 ## `terminal`: interactive terminal backends and lifecycle
 
 The `terminal` package owns terminal-emulation backends and the bounded lifecycle
-operations needed by local tools, remote worker executors, and Human UI adapters. It
+operations needed by local tools, legacy remote-worker execution, and Human UI adapters. It
 may depend on configuration, audit, schemas, and low-level operation helpers, but
-it must not depend on protocol executors, HTTP route adapters, or UI presentation.
+it must not depend on control delivery adapters, HTTP route adapters, or UI presentation.
 
 Rejected ownership alternatives:
 
@@ -434,7 +446,7 @@ that session's colocated log; events without a session remain global-only. The
 global log remains authoritative for payload-object retention, while local logs
 provide direct per-session reads without re-scanning unrelated records. Audit may
 consume configuration, persistence primitives, tool-session identity, redaction,
-and the current payload store, but it must not depend on protocol executors, HTTP
+and the current payload store, but it must not depend on control delivery adapters, HTTP
 route adapters, Human UI presentation, or terminal implementations.
 
 Rejected ownership alternatives:
@@ -444,7 +456,7 @@ Rejected ownership alternatives:
   like supported public APIs.
 - `utils`: audit policy includes redaction, retention, event semantics, payload
   references, and public query behavior rather than generic serialization.
-- `executors` or `ui/http`: those layers emit and present audit events, but the
+- `control` delivery adapters or `ui/http`: those layers emit and present audit events, but the
   same event store is shared across every delivery surface.
 
 ## Patch operation ownership
@@ -499,7 +511,7 @@ Rejected ownership alternatives:
 ## `release`: artifact construction and verification
 
 The `release` package owns build-time artifact assembly and validation. It is
-outside runtime execution paths and must not depend on executors, HTTP adapters,
+outside runtime execution paths and must not depend on control delivery adapters, HTTP adapters,
 terminal runtime state, remote workers, or tool operations. Its only project-local
 dependency is the dependency-leaf OpenTUI filename contract in `ui/contracts.py`.
 

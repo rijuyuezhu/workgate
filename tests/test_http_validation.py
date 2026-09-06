@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 
 
 def test_http_missing_required_argument_returns_validation_error(

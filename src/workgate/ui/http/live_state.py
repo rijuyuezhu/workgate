@@ -366,7 +366,7 @@ def human_ui_runtime() -> HumanUiRuntime:
     runtime = _HUMAN_UI_RUNTIME
     if runtime is None:
         raise RuntimeError(
-            "Human UI runtime is not configured; start ControllerRuntime"
+            "Human UI runtime is not configured; start ControlRuntime"
         )
     return runtime
 

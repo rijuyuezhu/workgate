@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
-import workgate.executors.http.tool_routes as http_tool_routes_module
+import workgate.control.http.tool_routes as http_tool_routes_module
 import workgate.ops.shell as shell_ops
 from tests.helpers import (
     mcp_structured,
@@ -19,8 +19,8 @@ from tests.helpers import (
     python_shell_command as _python_shell_command,
 )
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp
 from workgate.ops.shell import (
     SHELL_TIMEOUT_CLEANUP_GRACE_S,
     _shared_tail_bytes,

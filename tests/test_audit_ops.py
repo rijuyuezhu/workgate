@@ -167,7 +167,7 @@ async def test_audit_tail_remote_maps_session_filter_and_forwards_detail(
 def test_http_audit_tail_enforces_read_and_full_scopes(monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
-    from workgate.executors.http.app import build_http_app
+    from workgate.control.http.app import build_http_app
     from workgate.oauth.core.scopes import (
         SCOPE_AUDIT_FULL,
         SCOPE_AUDIT_READ,

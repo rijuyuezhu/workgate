@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 import workgate.ui.http.files as ui_files_module
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import (
     SCOPE_SHELL_READ,
     SCOPE_SHELL_WRITE,

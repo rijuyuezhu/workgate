@@ -5,16 +5,16 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executors.search_composition import (
-    build_controller_tool_catalog,
+from workgate.control.search_composition import (
+    build_control_tool_catalog,
+)
+from workgate.executor.search_composition import (
+    build_executor_dispatcher_with_search,
 )
 from workgate.persistence import configure_state_store
 from workgate.remote.manager import (
     RemoteManager,
     configure_remote_manager,
-)
-from workgate.remote_worker.search_composition import (
-    build_worker_dispatcher_with_search,
 )
 from workgate.tool_session import configure_tool_session_store
 from workgate.tools.registry.files import FileToolRegistry
@@ -64,7 +64,7 @@ async def test_controller_files_and_read_use_explicit_service_without_ambient_fa
     services = _configure_runtime_services(settings)
     (tmp_path / "demo.txt").write_text("alpha\nbeta\n", encoding="utf-8")
     session = services.tool_session_store.create_session(workdir=tmp_path)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         RemoteManager(lambda: settings, state_store=services.state_store),
@@ -137,7 +137,7 @@ async def test_controller_files_remote_wire_uses_owned_manager(
         }
 
     monkeypatch.setattr(manager, "call", fake_call)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings, services.tool_session_store, manager
     )
     file_registry = _registry(catalog, FileToolRegistry)
@@ -163,12 +163,12 @@ async def test_controller_files_remote_wire_uses_owned_manager(
 
 
 @pytest.mark.asyncio
-async def test_worker_dispatcher_uses_composed_files_and_read_overrides(
+async def test_executor_dispatcher_uses_composed_files_and_read_overrides(
     tmp_path, monkeypatch
 ):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
-    dispatcher = build_worker_dispatcher_with_search(
+    dispatcher = build_executor_dispatcher_with_search(
         settings, services.tool_session_store
     )
     (tmp_path / "demo.txt").write_text("alpha\nbeta\n", encoding="utf-8")
@@ -186,7 +186,7 @@ async def test_worker_dispatcher_uses_composed_files_and_read_overrides(
     import workgate.ops.read as read_ops
 
     async def legacy_files_should_not_run(*_args, **_kwargs):
-        raise AssertionError("worker Files fell back to legacy dispatch")
+        raise AssertionError("executor Files fell back to legacy dispatch")
 
     async def legacy_read_should_not_run(*_args, **_kwargs):
         raise AssertionError("worker Read fell back to legacy read_execute")
@@ -218,12 +218,12 @@ async def test_worker_dispatcher_uses_composed_files_and_read_overrides(
 
 
 @pytest.mark.asyncio
-async def test_worker_dispatcher_composed_file_mutations_cover_all_handlers(
+async def test_executor_dispatcher_composed_file_mutations_cover_all_handlers(
     tmp_path, monkeypatch
 ):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
-    dispatcher = build_worker_dispatcher_with_search(
+    dispatcher = build_executor_dispatcher_with_search(
         settings, services.tool_session_store
     )
     session = await dispatcher.execute(
@@ -292,7 +292,7 @@ async def test_bound_file_registry_handlers_delegate_to_injected_service(
 ):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         RemoteManager(lambda: settings, state_store=services.state_store),
