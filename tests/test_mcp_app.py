@@ -55,6 +55,7 @@ def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
         ),
         legacy_settings=settings,
         tool_catalog=tool_catalog,
+        executor_transport=object(),
     )
 
 

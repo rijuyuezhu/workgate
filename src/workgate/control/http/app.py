@@ -20,6 +20,7 @@ from ...tools.catalog import ToolCatalog, build_tool_catalog
 from ...ui.http.routes import human_ui_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from .errors import install_error_handlers
+from .executor_routes import executor_routes
 from .tool_routes import (
     install_tool_cache_control_middleware,
     install_tools_timeout_middleware,
@@ -46,11 +47,21 @@ def _fastapi_documentation_routes(app: FastAPI) -> list[BaseRoute]:
     ]
 
 
-def _install_public_routes(app: FastAPI, settings: Settings) -> list[BaseRoute]:
+def _install_public_routes(
+    app: FastAPI,
+    settings: Settings,
+    *,
+    runtime: ControlRuntime | None = None,
+) -> list[BaseRoute]:
     """Install public non-tool routes for the REST app. It returns public routes for oauth usage."""
     documentation_routes = _fastapi_documentation_routes(app)
     installed_routes = [
         *public_http_routes(settings, readyz_include_workspace_root=False),
+        *(
+            executor_routes(runtime.executor_transport)
+            if runtime is not None
+            else ()
+        ),
         *(remote_routes() if settings.remote_enabled else ()),
         *(
             build_transfer_gateway_router()
@@ -99,7 +110,7 @@ def build_http_app(
 
     install_error_handlers(app)
     install_tools_timeout_middleware(app, catalog)
-    public_routes = _install_public_routes(app, settings)
+    public_routes = _install_public_routes(app, settings, runtime=runtime)
     register_http_tool_routes(app, catalog)
     ui_routes, ui_public_routes = human_ui_routes(settings)
     app.router.routes.extend(ui_routes)

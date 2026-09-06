@@ -274,6 +274,10 @@ class Settings(BaseSettings):
     )
     """Comma-separated path denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled."""
 
+    # Executor transport.
+    executor_max_pending_commands: int = Field(default=64, ge=1)
+    """Maximum queued or offered ordinary commands retained per executor."""
+
     # Remote workers.
     remote_enabled: bool = True
     """Enable remote worker routes and MCP tools."""

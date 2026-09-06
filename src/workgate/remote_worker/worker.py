@@ -718,7 +718,9 @@ async def run_worker(
 
     profile_id = activate_worker_profile(profile_id)
     resolved_workdir = _prepare_worker_runtime_settings(workdir, profile_id)
-    runtime = build_executor_runtime(Settings())
+    runtime = build_executor_runtime(
+        Settings(), enable_control_connection=False
+    )
     lock = (
         worker_run_lock() if profile_id is None else worker_run_lock(profile_id)
     )

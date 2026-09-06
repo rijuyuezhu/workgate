@@ -18,6 +18,8 @@ class ControlConfig:
     resolved_base_url: str
     auth_mode: Literal["none", "oauth"]
     ui_enabled: bool
+    executor_max_pending_commands: int
+
     remote_enabled: bool
     remote_max_pending_jobs: int
     max_agent_sessions: int
@@ -34,6 +36,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         resolved_base_url=settings.resolved_base_url,
         auth_mode=settings.auth_mode,
         ui_enabled=settings.ui_enabled,
+        executor_max_pending_commands=settings.executor_max_pending_commands,
         remote_enabled=settings.remote_enabled,
         remote_max_pending_jobs=settings.remote_max_pending_jobs,
         max_agent_sessions=settings.max_agent_sessions,
