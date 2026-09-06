@@ -10,7 +10,14 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
 from ...protocol.errors import ProtocolErrorCode, ProtocolErrorResponse
-from ...protocol.executor import ExecutorHelloRequest, ExecutorResult
+from ...protocol.executor import (
+    EXECUTOR_HEARTBEAT_PATH,
+    EXECUTOR_HELLO_PATH,
+    EXECUTOR_POLL_PATH,
+    EXECUTOR_RESULT_PATH,
+    ExecutorHelloRequest,
+    ExecutorResult,
+)
 from ..executor_transport import ExecutorTransport, ExecutorTransportError
 
 
@@ -90,8 +97,8 @@ def executor_routes(transport: ExecutorTransport) -> list[BaseRoute]:
         return Response(status_code=204)
 
     return [
-        Route("/executor/v1/hello", hello, methods=["POST"]),
-        Route("/executor/v1/heartbeat", heartbeat, methods=["POST"]),
-        Route("/executor/v1/poll", poll, methods=["POST"]),
-        Route("/executor/v1/result", result, methods=["POST"]),
+        Route(EXECUTOR_HELLO_PATH, hello, methods=["POST"]),
+        Route(EXECUTOR_HEARTBEAT_PATH, heartbeat, methods=["POST"]),
+        Route(EXECUTOR_POLL_PATH, poll, methods=["POST"]),
+        Route(EXECUTOR_RESULT_PATH, result, methods=["POST"]),
     ]
