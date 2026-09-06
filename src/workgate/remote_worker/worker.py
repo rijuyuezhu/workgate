@@ -294,6 +294,21 @@ def _configure_worker_runtime_env(
     os.environ["WORKGATE_ALLOW_FULL_CONTROL"] = "true"
 
 
+def _prepare_worker_runtime_settings(
+    workdir: str | None, profile_id: str | None = None
+) -> str:
+    """Resolve worker paths before constructing a settings snapshot."""
+    resolved_workdir = str(Path(workdir or os.getcwd()).expanduser().resolve())
+    if profile_id is None:
+        _configure_worker_runtime_env(resolved_workdir)
+    else:
+        _configure_worker_runtime_env(resolved_workdir, profile_id)
+    from ..config.settings import clear_settings_cache
+
+    clear_settings_cache()
+    return resolved_workdir
+
+
 def _read_worker_identity(
     server: str | None = None,
     requested_name: str | None = None,
@@ -575,14 +590,7 @@ async def _enroll_or_resume_worker(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Enroll or resume one identity and persist it without entering the poll loop."""
     profile_id = activate_worker_profile(profile_id)
-    resolved_workdir = str(Path(workdir or os.getcwd()).expanduser().resolve())
-    if profile_id is None:
-        _configure_worker_runtime_env(resolved_workdir)
-    else:
-        _configure_worker_runtime_env(resolved_workdir, profile_id)
-    from ..config.settings import clear_settings_cache
-
-    clear_settings_cache()
+    resolved_workdir = _prepare_worker_runtime_settings(workdir, profile_id)
     server = server.rstrip("/")
     register_payload = {
         "invite": invite,
@@ -709,6 +717,7 @@ async def run_worker(
     from .lifecycle import worker_run_lock
 
     profile_id = activate_worker_profile(profile_id)
+    resolved_workdir = _prepare_worker_runtime_settings(workdir, profile_id)
     runtime = build_executor_runtime(Settings())
     lock = (
         worker_run_lock() if profile_id is None else worker_run_lock(profile_id)
@@ -720,7 +729,7 @@ async def run_worker(
                     server,
                     invite,
                     name,
-                    workdir,
+                    resolved_workdir,
                     execute_tool=runtime.dispatcher.execute,
                 )
             else:
@@ -728,7 +737,7 @@ async def run_worker(
                     server,
                     invite,
                     name,
-                    workdir,
+                    resolved_workdir,
                     profile_id,
                     execute_tool=runtime.dispatcher.execute,
                 )

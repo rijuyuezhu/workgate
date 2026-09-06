@@ -10,6 +10,7 @@ import pytest
 import workgate.remote_worker.lifecycle as lifecycle
 import workgate.remote_worker.worker as worker
 from workgate.config.settings import clear_settings_cache
+from workgate.executor.config import resolve_executor_config
 from workgate.remote.manager import RemoteManager, RemoteWorker, _utc
 
 
@@ -33,6 +34,7 @@ def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "false")
     monkeypatch.delenv("WORKGATE_WORKER_MANAGED", raising=False)
     monkeypatch.delenv("WORKGATE_WORKER_LOCK_HANDLE", raising=False)
     clear_settings_cache()
@@ -247,7 +249,15 @@ async def test_run_worker_locks_before_enrollment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _configure(tmp_path, monkeypatch)
+    bundle_runtime = tmp_path / "bundle-runtime"
+    workspace = tmp_path / "executor-workspace"
+    bundle_runtime.mkdir()
+    workspace.mkdir()
+    monkeypatch.chdir(bundle_runtime)
+    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    clear_settings_cache()
     events: list[str] = []
+    executor_workspace_roots: list[Path] = []
 
     @contextmanager
     def fake_lock():
@@ -272,15 +282,23 @@ async def test_run_worker_locks_before_enrollment(
 
     fake_runtime.lifespan = lambda: RuntimeScope()
 
+    def fake_build(settings):
+        executor_workspace_roots.append(
+            resolve_executor_config(settings).workspace_root
+        )
+        return fake_runtime
+
     monkeypatch.setattr(lifecycle, "worker_run_lock", fake_lock)
     monkeypatch.setattr(worker, "_run_worker_locked", fake_locked)
     monkeypatch.setattr(
-        "workgate.executor.runtime.build_executor_runtime",
-        lambda _settings: fake_runtime,
+        "workgate.executor.runtime.build_executor_runtime", fake_build
     )
 
-    await worker.run_worker("https://controller.test", "invite")
+    await worker.run_worker(
+        "https://controller.test", "invite", workdir=str(workspace)
+    )
 
+    assert executor_workspace_roots == [workspace.resolve()]
     assert events == [
         "lock-enter",
         "runtime-enter",
