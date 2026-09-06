@@ -271,13 +271,14 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
     assert calls == [("stdio", True)]
 
 
-def test_server_handler_dispatches_executor_modes(monkeypatch):
+def test_server_handler_dispatches_control_modes(monkeypatch):
     calls = []
     mode = "http"
-    runtime = object()
+    runtime = argparse.Namespace(config=argparse.Namespace(mode=mode))
 
     def settings_from_args(_args, *, configure):
         assert configure is True
+        runtime.config.mode = mode
         return argparse.Namespace(mode=mode)
 
     monkeypatch.setattr(server_cli, "settings_from_args", settings_from_args)

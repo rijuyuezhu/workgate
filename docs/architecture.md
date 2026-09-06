@@ -22,10 +22,11 @@ operations, and domain services:
 ```text
 workgate/
   main.py                 argparse root and command registration
-  executors/
-    mcp/                   MCP executor and MCP-only middleware
-    http/                  REST/tool HTTP executor
-  http/                    executor-neutral ASGI and HTTP infrastructure
+  control/
+    mcp/                   MCP control-plane adapter and middleware
+    http/                  REST/tool HTTP control-plane adapter
+  executor/                executor composition root and resolved machine config
+  http/                    transport-neutral ASGI and HTTP infrastructure
   ui/
     ...                    transport-neutral Human UI core and runtimes
     http/                  Human UI HTTP adapters and routes
@@ -37,16 +38,19 @@ workgate/
   schemas/                 shared cross-domain contracts
   config/                  settings and configuration surface
   agent_bridge/            external agent capability domain
-  remote/                  controller-side remote-worker domain
-  remote_worker/           trimmed uv-managed worker runtime
+  remote/                  legacy control-side remote-worker domain
+  remote_worker/           legacy machine implementation migration source
   tool_session/            explicit local/remote workspace session state
   utils/                   small dependency-leaf technical primitives
 ```
 
-The MCP and REST/tool HTTP executors live in their final `executors/mcp` and
-`executors/http` packages. Human UI delivery adapters live in `ui/http`, and
-executor-neutral ASGI infrastructure lives in `http`. The obsolete `server`
-package has been removed and must not be restored.
+MCP and REST/tool HTTP delivery adapters live under `control`. The executor
+process composition owner lives under `executor`; the remaining
+`remote_worker` modules are explicit migration sources until machine
+implementations move under that root in later control/executor refactor PRs.
+Human UI delivery adapters live in `ui/http`, and transport-neutral ASGI
+infrastructure lives in `http`. The obsolete `executors` and `server` packages
+have been removed and must not be restored.
 
 The package root is frozen to `__init__.py`, `main.py`, `errors.py`, and
 `version.py`. Every other implementation must live in an explicitly owned
@@ -87,7 +91,7 @@ Global `--version` remains an argparse version action. Settings flags follow the
 command that consumes them, for example `workgate server --mode mcp` and
 `workgate tui --port 8765`.
 
-The controller runtime is entered by the transport host, not by domain code.
+The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
 it through the outer Starlette lifespan that also owns the SDK session manager.
 MCP stdio instead uses FastMCP's low-level server lifespan because stdio has one
@@ -96,20 +100,28 @@ MCP stdio instead uses FastMCP's low-level server lifespan because stdio has one
 so those public runner paths retain the same ownership invariant. The process
 runtime must not be attached to FastMCP's low-level lifespan for MCP-over-HTTP:
 the SDK enters it once per MCP session, which is a narrower lifecycle than the
-controller process.
+control process.
+
+`ControlRuntime` and `ExecutorRuntime` each expose a frozen role-specific
+configuration snapshot. New composition code reads those views: control owns
+server/auth/UI/state/admission policy, while executor owns workspace,
+path/command policy, machine concurrency, and executable paths. Both runtimes
+temporarily retain a clearly named `legacy_settings` bridge for components that
+still consume the monolithic `Settings`; that bridge is migration debt, not a
+shared-authority contract.
 
 `RemoteManager` follows the same ownership rule. The module no longer constructs
 a process singleton at import time. `ControlRuntime` constructs one manager,
-starts its loop-owned enrollment lock and durable worker queues in the controller
+starts its loop-owned enrollment lock and durable worker queues in the control
 lifespan, stops admission during close, and cancels pending remote calls and
 long-poll waiters before the shared store bindings are restored. A reversible
-non-owning compatibility pointer remains only for legacy controller consumers;
+non-owning compatibility pointer remains only for legacy control consumers;
 migrated domains receive the manager's narrow capabilities explicitly.
 
-Managed background Jobs are controller-owned rather than module-owned.
+Managed background Jobs are control-owned rather than module-owned.
 `ControlRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
 asyncio tasks, and cross-process liveness leases are scoped to that owner. The
-`session_copy` managed handler is registered explicitly during controller
+`session_copy` managed handler is registered explicitly during control
 composition, while remote worker executors do not construct a managed Jobs owner
 because their tracked jobs are shell-backed. Shutdown stops managed-job
 admission and cancels/awaits owned tasks before UI, OAuth, remote, terminal, or

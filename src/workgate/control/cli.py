@@ -25,7 +25,7 @@ def run_server_from_args(args: argparse.Namespace) -> None:
     """Load settings and launch the selected control server adapter."""
     settings = settings_from_args(args, configure=True)
     runtime = build_control_runtime(settings)
-    match settings.mode:
+    match runtime.config.mode:
         case "http":
             run_http(runtime=runtime)
         case "mcp" | "stdio":
@@ -35,4 +35,4 @@ def run_server_from_args(args: argparse.Namespace) -> None:
                 "mode=both is reserved; run separate mcp/http processes for now"
             )
         case _:
-            raise SystemExit(f"Unsupported mode: {settings.mode}")
+            raise SystemExit(f"Unsupported mode: {runtime.config.mode}")

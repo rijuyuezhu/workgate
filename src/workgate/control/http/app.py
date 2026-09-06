@@ -80,7 +80,9 @@ def build_http_app(
     runtime: ControlRuntime | None = None,
 ) -> FastAPI:
     """Construct the authenticated REST API from one explicit tool catalog."""
-    settings = runtime.settings if runtime is not None else get_settings()
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     catalog = tool_catalog or (
         runtime.tool_catalog
         if runtime is not None
@@ -115,11 +117,15 @@ def run_http(
     runtime: ControlRuntime | None = None,
 ) -> None:
     """Run the REST HTTP server with one control runtime owner."""
-    settings = runtime.settings if runtime is not None else get_settings()
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     validate_public_oauth_configuration(settings)
     active_runtime = runtime or build_control_runtime(settings)
     app = build_http_app(
         tool_catalog=tool_catalog,
         runtime=active_runtime,
     )
-    uvicorn.run(app, host=settings.host, port=settings.port)
+    uvicorn.run(
+        app, host=active_runtime.config.host, port=active_runtime.config.port
+    )

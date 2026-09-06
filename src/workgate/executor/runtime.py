@@ -16,14 +16,17 @@ from ..remote_worker.search_composition import (
     build_worker_dispatcher_with_search,
 )
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
+from .config import ExecutorConfig, resolve_executor_config
 
 
 @dataclass
 class ExecutorRuntime:
     """Own the executor's composed services and compatibility lifecycle."""
 
-    settings: Settings
-    """Resolved legacy settings bridge for this executor process."""
+    config: ExecutorConfig
+    """Resolved executor-owned machine authority for new composition code."""
+    legacy_settings: Settings
+    """Temporary monolithic settings bridge for unmigrated components."""
     services: RuntimeServices
     """Explicit shared state services owned by this executor."""
     terminal_runtime: TerminalRuntime
@@ -77,7 +80,8 @@ def build_executor_runtime(settings: Settings) -> ExecutorRuntime:
     """Construct one executor graph without installing process globals yet."""
     services = build_runtime_services(settings)
     return ExecutorRuntime(
-        settings=settings,
+        config=resolve_executor_config(settings),
+        legacy_settings=settings,
         services=services,
         terminal_runtime=build_terminal_runtime(),
         dispatcher=build_worker_dispatcher_with_search(

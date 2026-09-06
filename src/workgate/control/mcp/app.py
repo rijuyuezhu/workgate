@@ -47,7 +47,9 @@ def build_mcp(
     own_runtime_lifespan: bool = False,
 ) -> FastMCP:
     """Create the MCP server and register one explicit local tool catalog."""
-    settings = runtime.settings if runtime is not None else get_settings()
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     catalog = tool_catalog or (
         runtime.tool_catalog
         if runtime is not None
@@ -92,7 +94,7 @@ def _add_public_routes_to_mcp_http_app(
     active_settings = (
         settings
         if settings is not None
-        else runtime.settings
+        else runtime.legacy_settings
         if runtime is not None
         else get_settings()
     )
@@ -141,7 +143,7 @@ def _build_authenticated_mcp_http_app(
     active_settings = (
         settings
         if settings is not None
-        else runtime.settings
+        else runtime.legacy_settings
         if runtime is not None
         else get_settings()
     )
@@ -173,7 +175,9 @@ def build_mcp_http_app(
     runtime: ControlRuntime | None = None,
 ) -> Starlette:
     """Use the MCP SDK's HTTP app and add local public routes/auth."""
-    settings = runtime.settings if runtime is not None else get_settings()
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     if hasattr(mcp, "streamable_http_app"):
         inner: Starlette = mcp.streamable_http_app()
         session_manager = getattr(mcp, "_session_manager", None)
@@ -215,19 +219,26 @@ def run_mcp(
     runtime: ControlRuntime | None = None,
 ) -> None:
     """Start MCP with one control runtime owner over stdio or HTTP."""
-    settings = runtime.settings if runtime is not None else get_settings()
-    if settings.mode != "stdio":
-        validate_public_oauth_configuration(settings)
+    settings = (
+        runtime.legacy_settings if runtime is not None else get_settings()
+    )
     active_runtime = runtime or build_control_runtime(settings)
+    mode = active_runtime.config.mode
+    if mode != "stdio":
+        validate_public_oauth_configuration(settings)
     mcp = build_mcp(
         tool_catalog=tool_catalog,
         runtime=active_runtime,
-        own_runtime_lifespan=settings.mode == "stdio",
+        own_runtime_lifespan=mode == "stdio",
     )
 
-    if settings.mode == "stdio":
+    if mode == "stdio":
         # stdio mode talks directly to the parent process; no HTTP app is needed.
         mcp.run(transport="stdio")
     else:
         app = build_mcp_http_app(mcp, runtime=active_runtime)
-        uvicorn.run(app, host=settings.host, port=settings.port)
+        uvicorn.run(
+            app,
+            host=active_runtime.config.host,
+            port=active_runtime.config.port,
+        )

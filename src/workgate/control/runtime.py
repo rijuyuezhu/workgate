@@ -27,6 +27,7 @@ from ..remote.manager import (
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
+from .config import ControlConfig, resolve_control_config
 from .search_composition import build_control_tool_catalog
 
 
@@ -34,8 +35,10 @@ from .search_composition import build_control_tool_catalog
 class ControlRuntime:
     """Own the control's composed services and compatibility lifecycle."""
 
-    settings: Settings
-    """Resolved server settings for this control process."""
+    config: ControlConfig
+    """Resolved control-owned authority for new composition code."""
+    legacy_settings: Settings
+    """Temporary monolithic settings bridge for unmigrated components."""
     services: RuntimeServices
     """Explicit shared state services owned by this runtime."""
     managed_jobs_runtime: ManagedJobsRuntime
@@ -245,7 +248,8 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     human_ui_runtime = build_human_ui_runtime(remote_manager.call)
     oauth_state = build_oauth_state(settings.state_dir)
     return ControlRuntime(
-        settings=settings,
+        config=resolve_control_config(settings),
+        legacy_settings=settings,
         services=services,
         managed_jobs_runtime=managed_jobs_runtime,
         remote_manager=remote_manager,
