@@ -71,7 +71,7 @@ def load_persisted_clients(
     path = store.layout.oauth_clients_path
     try:
         with store.transaction(path):
-            payload = store.read_json(path, max_bytes=4 * 1024 * 1024)
+            payload = store.read_json(path)
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             f"Unable to read OAuth client registry: {path}"

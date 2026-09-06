@@ -45,7 +45,9 @@ def _session_record(
     )
 
 
-def test_control_state_restores_trust_and_session_facts(tmp_path: Path) -> None:
+def test_control_state_restores_trust_and_session_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = _store(tmp_path)
     first = ControlState(store)
     first.start()
@@ -59,11 +61,20 @@ def test_control_state_restores_trust_and_session_facts(tmp_path: Path) -> None:
     assert first.snapshot_executors() == {}
     assert first.snapshot_sessions() == {}
 
+    read_limits: list[int | None] = []
+    original_read_json = store.read_json
+
+    def observe_read(path: Path, *, max_bytes: int | None = None):
+        read_limits.append(max_bytes)
+        return original_read_json(path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(store, "read_json", observe_read)
     restored = ControlState(store)
     restored.start()
 
     assert restored.snapshot_executors() == {trust.executor_id: trust}
     assert restored.snapshot_sessions() == {session.session_id: session}
+    assert read_limits == [None, None]
 
 
 def test_executor_trust_persists_only_verifier_and_explicit_revocation(

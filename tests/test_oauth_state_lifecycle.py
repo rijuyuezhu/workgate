@@ -59,7 +59,9 @@ async def test_oauth_state_loads_closes_and_rejects_restart(tmp_path) -> None:
         state.start()
 
 
-def test_oauth_state_uses_explicit_state_store_authority(tmp_path) -> None:
+def test_oauth_state_uses_explicit_state_store_authority(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     legacy_state_dir = tmp_path / "legacy-state"
     owned_state_dir = tmp_path / "owned-state"
     store = FileStateStore(lambda: owned_state_dir)
@@ -71,10 +73,19 @@ def test_oauth_state_uses_explicit_state_store_authority(tmp_path) -> None:
     )
     persist_approved_clients({approved.client_id: approved}, state_store=store)
 
+    read_limits: list[int | None] = []
+    original_read_json = store.read_json
+
+    def observe_read(path, *, max_bytes: int | None = None):
+        read_limits.append(max_bytes)
+        return original_read_json(path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(store, "read_json", observe_read)
     state = OAuthState(legacy_state_dir, state_store=store)
 
     assert state.start() == 1
     assert state.clients == {approved.client_id: approved}
+    assert read_limits == [None]
     assert store.layout.oauth_clients_path.exists()
     assert not client_store_path(state_dir=legacy_state_dir).exists()
 

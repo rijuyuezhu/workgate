@@ -19,7 +19,6 @@ from ..protocol.credentials import ExecutorCredentialVerifier
 from ..protocol.ids import ExecutorId, SessionId
 
 _REGISTRY_VERSION = 1
-_MAX_REGISTRY_BYTES = 4 * 1024 * 1024
 Timestamp = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
@@ -153,9 +152,7 @@ class ControlState:
     def _load_executors(self) -> dict[str, ExecutorTrustRecord]:
         path = self.state_store.layout.control_executors_path
         with self.state_store.transaction(path):
-            payload = self.state_store.read_json(
-                path, max_bytes=_MAX_REGISTRY_BYTES
-            )
+            payload = self.state_store.read_json(path)
         rows = self._registry_rows(payload, field="executors", path=path)
         records: dict[str, ExecutorTrustRecord] = {}
         try:
@@ -175,9 +172,7 @@ class ControlState:
     def _load_sessions(self) -> dict[str, ControlSessionRecord]:
         path = self.state_store.layout.control_sessions_path
         with self.state_store.transaction(path):
-            payload = self.state_store.read_json(
-                path, max_bytes=_MAX_REGISTRY_BYTES
-            )
+            payload = self.state_store.read_json(path)
         rows = self._registry_rows(payload, field="sessions", path=path)
         records: dict[str, ControlSessionRecord] = {}
         try:
