@@ -147,6 +147,20 @@ async def test_admission_counts_queued_and_offered_correlations(
 
 
 @pytest.mark.asyncio
+async def test_queued_timeout_removes_command_before_offer(
+    tmp_path: Path,
+) -> None:
+    transport, _, executor_id, credential = _running_transport(tmp_path)
+    await _mark_online(transport, credential)
+
+    with pytest.raises(TimeoutError):
+        await transport.call(executor_id, "shell.run", timeout_s=0)
+
+    assert await transport.pending_count(executor_id) == 0
+    assert await transport.poll(credential) is None
+
+
+@pytest.mark.asyncio
 async def test_queued_cancellation_removes_command_before_offer(
     tmp_path: Path,
 ) -> None:
