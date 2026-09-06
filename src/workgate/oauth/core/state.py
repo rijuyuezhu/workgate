@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from threading import RLock
 
+from ...persistence import FileStateStore, StateStore
 from .client_store import load_persisted_clients
 from .models import AuthCode, OAuthClient
 
@@ -11,8 +12,11 @@ from .models import AuthCode, OAuthClient
 class OAuthState:
     """Own process-local OAuth clients, authorization codes, and their locks."""
 
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(
+        self, state_dir: Path, *, state_store: StateStore | None = None
+    ) -> None:
         self.state_dir = state_dir
+        self.state_store = state_store or FileStateStore(lambda: state_dir)
         self.clients: dict[str, OAuthClient] = {}
         self.codes: dict[str, AuthCode] = {}
         self.client_lock = RLock()
@@ -35,7 +39,7 @@ class OAuthState:
         with self.client_lock:
             staged_clients = dict(self.clients)
             loaded = load_persisted_clients(
-                staged_clients, state_dir=self.state_dir
+                staged_clients, state_store=self.state_store
             )
             self.clients.clear()
             self.clients.update(staged_clients)
@@ -86,6 +90,8 @@ def oauth_state() -> OAuthState:
     return _OAUTH_STATE
 
 
-def build_oauth_state(state_dir: Path) -> OAuthState:
+def build_oauth_state(
+    state_dir: Path, *, state_store: StateStore | None = None
+) -> OAuthState:
     """Construct OAuth live state without installing process compatibility bindings."""
-    return OAuthState(state_dir)
+    return OAuthState(state_dir, state_store=state_store)

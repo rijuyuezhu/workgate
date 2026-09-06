@@ -56,7 +56,7 @@ def _s256_challenge(verifier: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _oauth_state_owner(tmp_path):
-    state = OAuthState(tmp_path / ".oauth-state")
+    state = OAuthState(tmp_path / ".state")
     previous = configure_oauth_state(state)
     try:
         yield state
@@ -914,7 +914,8 @@ def test_oauth_client_approval_rolls_back_when_persistence_fails(
         created_at=10,
     )
 
-    def fail_persistence(_clients) -> None:
+    def fail_persistence(_clients, *, state_store=None) -> None:
+        assert state_store is oauth_state().state_store
         raise OSError("disk unavailable")
 
     monkeypatch.setattr(

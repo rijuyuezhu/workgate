@@ -17,6 +17,7 @@ from workgate.oauth.core.state import (
     configure_oauth_state,
     oauth_state,
 )
+from workgate.persistence import FileStateStore
 
 
 @pytest.mark.asyncio
@@ -56,6 +57,26 @@ async def test_oauth_state_loads_closes_and_rejects_restart(tmp_path) -> None:
     await state.aclose()
     with pytest.raises(RuntimeError, match="cannot be restarted"):
         state.start()
+
+
+def test_oauth_state_uses_explicit_state_store_authority(tmp_path) -> None:
+    legacy_state_dir = tmp_path / "legacy-state"
+    owned_state_dir = tmp_path / "owned-state"
+    store = FileStateStore(lambda: owned_state_dir)
+    approved = OAuthClient(
+        client_id="approved",
+        redirect_uris=["https://client.example/callback"],
+        created_at=10,
+        approved_at=20,
+    )
+    persist_approved_clients({approved.client_id: approved}, state_store=store)
+
+    state = OAuthState(legacy_state_dir, state_store=store)
+
+    assert state.start() == 1
+    assert state.clients == {approved.client_id: approved}
+    assert store.layout.oauth_clients_path.exists()
+    assert not client_store_path(state_dir=legacy_state_dir).exists()
 
 
 def test_oauth_state_start_load_is_transactional(tmp_path) -> None:
