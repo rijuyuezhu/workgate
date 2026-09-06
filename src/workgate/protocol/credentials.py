@@ -7,9 +7,7 @@ import hmac
 import secrets
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-
-from .ids import ExecutorId
+from pydantic import StringConstraints
 
 _CREDENTIAL_BYTES = 32
 _VERIFIER_PREFIX = "sha256:"
@@ -22,19 +20,6 @@ ExecutorCredentialVerifier = Annotated[
     str,
     StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
 ]
-
-
-class ExecutorTrustRecord(BaseModel):
-    """Minimal durable trust fact; presence metadata never expires trust."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    executor_id: ExecutorId
-    name: str = Field(min_length=1, max_length=80)
-    credential_verifier: ExecutorCredentialVerifier
-    created_at: float = Field(ge=0)
-    revoked_at: float | None = Field(default=None, ge=0)
-    last_seen_at: float | None = Field(default=None, ge=0)
 
 
 def new_executor_credential() -> str:
@@ -57,9 +42,12 @@ def executor_credential_matches(credential: str, verifier: str) -> bool:
 
 
 def executor_credential_is_trusted(
-    record: ExecutorTrustRecord, credential: str
+    credential: str,
+    verifier: str,
+    *,
+    revoked_at: float | None,
 ) -> bool:
-    """Authenticate against durable trust without any inactivity expiry."""
-    return record.revoked_at is None and executor_credential_matches(
-        credential, record.credential_verifier
+    """Authenticate a bearer; inactivity metadata is intentionally irrelevant."""
+    return revoked_at is None and executor_credential_matches(
+        credential, verifier
     )

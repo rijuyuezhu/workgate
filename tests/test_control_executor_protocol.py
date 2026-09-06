@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from workgate.protocol import EXECUTOR_PROTOCOL_VERSION
 from workgate.protocol.credentials import (
-    ExecutorTrustRecord,
     executor_credential_is_trusted,
     executor_credential_verifier,
     new_executor_credential,
@@ -75,29 +74,16 @@ def test_executor_credential_uses_verifier_and_has_no_inactivity_expiry() -> (
     credential = new_executor_credential()
     assert len(_decoded_token_bytes(credential, "wg_exec_")) == 32
     verifier = executor_credential_verifier(credential)
-    thirty_days = 30 * 24 * 60 * 60
-    record = ExecutorTrustRecord(
-        executor_id=new_executor_id(),
-        name="laptop",
-        credential_verifier=verifier,
-        created_at=1_000.0,
-        last_seen_at=10_000_000.0 - thirty_days,
+
+    # Trust has no `now` or `last_seen_at` input: seven days, thirty days, or
+    # months offline cannot expire a credential by themselves.
+    assert executor_credential_is_trusted(credential, verifier, revoked_at=None)
+    assert not executor_credential_is_trusted(
+        credential, verifier, revoked_at=2_000.0
     )
-
-    assert executor_credential_is_trusted(record, credential)
-
-    stale_presence = ExecutorTrustRecord(
-        executor_id=record.executor_id,
-        name=record.name,
-        credential_verifier=record.credential_verifier,
-        created_at=record.created_at,
-        last_seen_at=1_000.0,
+    assert not executor_credential_is_trusted(
+        new_executor_credential(), verifier, revoked_at=None
     )
-    assert executor_credential_is_trusted(stale_presence, credential)
-
-    revoked = record.model_copy(update={"revoked_at": 2_000.0})
-    assert not executor_credential_is_trusted(revoked, credential)
-    assert not executor_credential_is_trusted(record, new_executor_credential())
 
 
 def test_pairing_models_keep_human_code_separate_from_device_secret() -> None:
