@@ -6,9 +6,9 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-import workgate.executors.mcp.app as mcp_app
+import workgate.control.mcp.app as mcp_app
 from workgate.config.settings import Settings, configure_settings
-from workgate.executors.mcp.session_limits import (
+from workgate.control.mcp.session_limits import (
     McpSessionLimitMiddleware,
 )
 from workgate.http.request_limits import RequestBodyLimitMiddleware
@@ -229,7 +229,7 @@ def test_run_mcp_uses_runtime_owned_stdio_transport(monkeypatch):
         calls.append(("build", tool_catalog, runtime, own_runtime_lifespan))
         return dummy
 
-    monkeypatch.setattr(mcp_app, "build_controller_runtime", build_runtime)
+    monkeypatch.setattr(mcp_app, "build_control_runtime", build_runtime)
     monkeypatch.setattr(mcp_app, "build_mcp", build)
 
     mcp_app.run_mcp()

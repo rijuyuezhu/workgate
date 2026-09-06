@@ -9,7 +9,7 @@ import workgate.ui.dashboard as dashboard_module
 import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.dashboard as ui_dashboard_module
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import SCOPE_REMOTE_USE, SCOPE_SHELL_READ
 from workgate.oauth.protocol.token_codec import issue_access_token
 from workgate.remote_worker.dispatch import execute_worker_tool

@@ -3,7 +3,7 @@
 import argparse
 
 from .agent_bridge.cli import register_mcp_cli
-from .executors.cli import register_server_cli
+from .control.cli import register_server_cli
 from .jobs.cli import register_job_runner_cli
 from .remote_worker.cli import register_worker_cli
 from .ui.cli import register_tui_cli

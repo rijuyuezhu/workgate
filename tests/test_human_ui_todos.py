@@ -15,7 +15,7 @@ import workgate.ops.utils.remote_session as remote_session_module
 import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.todos as ui_todos_module
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import (
     SCOPE_REMOTE_USE,
     SCOPE_SHELL_READ,

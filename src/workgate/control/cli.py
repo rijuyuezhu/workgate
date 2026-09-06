@@ -1,4 +1,4 @@
-"""Command-line registration for the selectable server executors."""
+"""Command-line registration for the control server adapters."""
 
 import argparse
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 from ..config.cli import register_config_and_setting_args, settings_from_args
 from .http.app import run_http
 from .mcp.app import run_mcp
-from .runtime import build_controller_runtime
+from .runtime import build_control_runtime
 
 
 def register_server_cli(subparsers: Any) -> argparse.ArgumentParser:
@@ -22,9 +22,9 @@ def register_server_cli(subparsers: Any) -> argparse.ArgumentParser:
 
 
 def run_server_from_args(args: argparse.Namespace) -> None:
-    """Load settings and launch the selected server executor."""
+    """Load settings and launch the selected control server adapter."""
     settings = settings_from_args(args, configure=True)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
     match settings.mode:
         case "http":
             run_http(runtime=runtime)

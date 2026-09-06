@@ -99,7 +99,7 @@ the SDK enters it once per MCP session, which is a narrower lifecycle than the
 controller process.
 
 `RemoteManager` follows the same ownership rule. The module no longer constructs
-a process singleton at import time. `ControllerRuntime` constructs one manager,
+a process singleton at import time. `ControlRuntime` constructs one manager,
 starts its loop-owned enrollment lock and durable worker queues in the controller
 lifespan, stops admission during close, and cancels pending remote calls and
 long-poll waiters before the shared store bindings are restored. A reversible
@@ -107,7 +107,7 @@ non-owning compatibility pointer remains only for legacy controller consumers;
 migrated domains receive the manager's narrow capabilities explicitly.
 
 Managed background Jobs are controller-owned rather than module-owned.
-`ControllerRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
+`ControlRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
 asyncio tasks, and cross-process liveness leases are scoped to that owner. The
 `session_copy` managed handler is registered explicitly during controller
 composition, while remote worker executors do not construct a managed Jobs owner
@@ -118,7 +118,7 @@ the deferred store update) before its lease is released. The remaining
 compatibility binding is reversible and non-owning.
 
 Terminal live state is similarly process-owned rather than module-owned.
-`ControllerRuntime` and `WorkerRuntime` each construct a fresh `TerminalRuntime`.
+`ControlRuntime` and `WorkerRuntime` each construct a fresh `TerminalRuntime`.
 Its bridge and ConPTY registries bind async work to the owning event loop and
 stop admission together during shutdown. Raw bridge operations are cancelled
 and bridge timers/process attachments are closed before ConPTY sessions are

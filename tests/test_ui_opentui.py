@@ -9,7 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import workgate.ui.http.opentui as opentui
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.ui.http.live_state import (
     build_human_ui_runtime,
     configure_human_ui_runtime,

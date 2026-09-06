@@ -5,12 +5,12 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-import workgate.executors.http.app as http_app
-import workgate.executors.mcp.app as mcp_app
+import workgate.control.http.app as http_app
+import workgate.control.mcp.app as mcp_app
 from workgate.config.settings import Settings, configure_settings
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import build_mcp, build_mcp_http_app
-from workgate.executors.runtime import build_controller_runtime
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp, build_mcp_http_app
+from workgate.control.runtime import build_control_runtime
 from workgate.persistence import (
     FileStateStore,
     configure_state_store,
@@ -46,7 +46,7 @@ def _assert_outer_is_restored(outer_state_store, outer_session_store) -> None:
     assert get_tool_session_store() is outer_session_store
 
 
-def test_rest_http_host_owns_controller_runtime_lifespan(tmp_path):
+def test_rest_http_host_owns_control_runtime_lifespan(tmp_path):
     settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / "runtime-state",
@@ -56,7 +56,7 @@ def test_rest_http_host_owns_controller_runtime_lifespan(tmp_path):
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
     try:
         app = build_http_app(runtime=runtime)
         _assert_outer_is_restored(outer_state_store, outer_session_store)
@@ -85,7 +85,7 @@ def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
         port=8765,
     )
     configure_settings(settings)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
     catalog = runtime.tool_catalog
     app = object()
     calls = []
@@ -98,7 +98,7 @@ def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
         calls.append(("build", kwargs))
         return app
 
-    monkeypatch.setattr(http_app, "build_controller_runtime", build_runtime)
+    monkeypatch.setattr(http_app, "build_control_runtime", build_runtime)
     monkeypatch.setattr(http_app, "build_http_app", build)
     monkeypatch.setattr(
         http_app.uvicorn,
@@ -145,7 +145,7 @@ async def test_stdio_fastmcp_server_run_lifespan_owns_controller_runtime(
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
     try:
         mcp = build_mcp(
             runtime=runtime,
@@ -173,7 +173,7 @@ async def test_mcp_http_sessions_do_not_own_process_runtime(tmp_path):
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
     try:
         mcp = build_mcp(runtime=runtime)
 
@@ -194,7 +194,7 @@ def test_mcp_http_host_owns_controller_runtime_once(tmp_path):
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
     try:
         mcp = build_mcp(runtime=runtime)
         app = build_mcp_http_app(mcp, runtime=runtime)
@@ -220,7 +220,7 @@ def test_mcp_http_inner_startup_failure_closes_controller_runtime(tmp_path):
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
-    runtime = build_controller_runtime(settings)
+    runtime = build_control_runtime(settings)
 
     @asynccontextmanager
     async def failing_sdk_lifespan(

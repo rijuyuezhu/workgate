@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import _add_public_routes_to_mcp_http_app
+from workgate.control.mcp.app import _add_public_routes_to_mcp_http_app
 from workgate.oauth.core import service as oauth_service
 from workgate.oauth.core.models import OAuthClient
 from workgate.oauth.core.requests import RegistrationRequest

@@ -7,8 +7,8 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executors.search_composition import (
-    build_controller_tool_catalog,
+from workgate.control.search_composition import (
+    build_control_tool_catalog,
 )
 from workgate.persistence import configure_state_store
 from workgate.remote.manager import (
@@ -57,7 +57,7 @@ async def test_controller_catalog_binds_search_service(tmp_path, monkeypatch):
     (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
     session = services.tool_session_store.create_session(workdir=tmp_path)
 
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         RemoteManager(lambda: settings, state_store=services.state_store),
@@ -123,7 +123,7 @@ async def test_controller_search_remote_wire_uses_owned_manager(
         return {"ok": True, "data": output.model_dump(mode="json")}
 
     monkeypatch.setattr(manager, "call", fake_call)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         manager,

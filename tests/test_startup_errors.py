@@ -10,6 +10,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 import workgate.ops.shell as shell_ops
 import workgate.terminal.conpty as conpty
 from workgate.config.settings import clear_settings_cache
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp
 from workgate.errors import (
     PathNotFoundError,
     ShellExecutableNotFoundError,
@@ -18,8 +20,6 @@ from workgate.errors import (
     tool_error_payload,
     workspace_path_not_found_error,
 )
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import build_mcp
 from workgate.ops.session import session_start_execute
 from workgate.ops.utils.path import resolve_path
 from workgate.ops.utils.remote_session import _remote_result_data

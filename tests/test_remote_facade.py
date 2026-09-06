@@ -10,7 +10,7 @@ import workgate.remote.service as remote_service
 import workgate.tools.ops.jobs as job_ops
 from tests.helpers import mcp_structured
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.tool_session.store import get_tool_session_store
 
 

@@ -790,7 +790,7 @@ async def test_mcp_search_facade_returns_grounded_results(
     tmp_path, monkeypatch
 ):
     from tests.helpers import mcp_structured
-    from workgate.executors.mcp.app import build_mcp
+    from workgate.control.mcp.app import build_mcp
 
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")

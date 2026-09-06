@@ -16,7 +16,7 @@ from workgate.audit import (
     audit_tool_call_start,
 )
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.http.app import build_http_app
+from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import (
     SCOPE_AUDIT_FULL,
     SCOPE_AUDIT_READ,

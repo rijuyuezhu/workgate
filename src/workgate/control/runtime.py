@@ -1,4 +1,4 @@
-"""Controller composition owner for long-lived server processes."""
+"""Control composition owner for long-lived server processes."""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -27,29 +27,29 @@ from ..remote.manager import (
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
-from .search_composition import build_controller_tool_catalog
+from .search_composition import build_control_tool_catalog
 
 
 @dataclass
-class ControllerRuntime:
-    """Own the controller's composed services and compatibility lifecycle."""
+class ControlRuntime:
+    """Own the control's composed services and compatibility lifecycle."""
 
     settings: Settings
-    """Resolved server settings for this controller process."""
+    """Resolved server settings for this control process."""
     services: RuntimeServices
     """Explicit shared state services owned by this runtime."""
     managed_jobs_runtime: ManagedJobsRuntime
-    """Controller-owned managed background-job tasks, handlers, and leases."""
+    """Control-owned managed background-job tasks, handlers, and leases."""
     remote_manager: RemoteManager
-    """Controller-owned live remote-worker control-plane state."""
+    """Control-owned live remote-worker control-plane state."""
     terminal_runtime: TerminalRuntime
-    """Controller-owned terminal bridge and ConPTY live state."""
+    """Control-owned terminal bridge and ConPTY live state."""
     human_ui_runtime: HumanUiRuntime
-    """Controller-owned Human UI terminal and remote-file live state."""
+    """Control-owned Human UI terminal and remote-file live state."""
     oauth_state: OAuthState
-    """Controller-owned dynamic-client and authorization-code live state."""
+    """Control-owned dynamic-client and authorization-code live state."""
     tool_catalog: ToolCatalog
-    """Controller tool catalog with the migrated Search service already bound."""
+    """Control tool catalog with the migrated Search service already bound."""
     _installation: RuntimeServiceInstallation | None = field(
         default=None, init=False, repr=False
     )
@@ -76,9 +76,7 @@ class ControllerRuntime:
     async def start(self) -> None:
         """Install compatibility bindings inside the owning async lifespan."""
         if self._closed:
-            raise RuntimeError(
-                "ControllerRuntime cannot be restarted after close"
-            )
+            raise RuntimeError("ControlRuntime cannot be restarted after close")
         if self._installation is not None:
             return
         installation = install_runtime_services(self.services)
@@ -222,8 +220,8 @@ class ControllerRuntime:
             raise terminal_error
 
     @asynccontextmanager
-    async def lifespan(self) -> AsyncGenerator[ControllerRuntime]:
-        """Run the controller ownership scope with deterministic cleanup."""
+    async def lifespan(self) -> AsyncGenerator[ControlRuntime]:
+        """Run the control ownership scope with deterministic cleanup."""
         try:
             await self.start()
             yield self
@@ -231,8 +229,8 @@ class ControllerRuntime:
             await self.aclose()
 
 
-def build_controller_runtime(settings: Settings) -> ControllerRuntime:
-    """Construct one controller graph without installing process globals yet."""
+def build_control_runtime(settings: Settings) -> ControlRuntime:
+    """Construct one control graph without installing process globals yet."""
     services = build_runtime_services(settings)
     managed_jobs_runtime = ManagedJobsRuntime()
     from ..ops.utils.session_copy import session_copy_managed_job_registration
@@ -246,7 +244,7 @@ def build_controller_runtime(settings: Settings) -> ControllerRuntime:
     terminal_runtime = build_terminal_runtime()
     human_ui_runtime = build_human_ui_runtime(remote_manager.call)
     oauth_state = build_oauth_state(settings.state_dir)
-    return ControllerRuntime(
+    return ControlRuntime(
         settings=settings,
         services=services,
         managed_jobs_runtime=managed_jobs_runtime,
@@ -254,7 +252,7 @@ def build_controller_runtime(settings: Settings) -> ControllerRuntime:
         terminal_runtime=terminal_runtime,
         human_ui_runtime=human_ui_runtime,
         oauth_state=oauth_state,
-        tool_catalog=build_controller_tool_catalog(
+        tool_catalog=build_control_tool_catalog(
             settings,
             services.tool_session_store,
             remote_manager,

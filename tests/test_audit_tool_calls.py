@@ -6,8 +6,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from tests.helpers import mcp_text
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp
 
 
 def _audit_records(path):

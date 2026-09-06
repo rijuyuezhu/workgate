@@ -6,7 +6,7 @@ import pytest
 from mcp.shared.auth import OAuthToken
 
 import workgate.agent_bridge.cli as agent_cli
-import workgate.executors.cli as server_cli
+import workgate.control.cli as server_cli
 import workgate.jobs.cli as jobs_cli
 import workgate.main as cli
 import workgate.ui.cli as tui_cli
@@ -283,7 +283,7 @@ def test_server_handler_dispatches_executor_modes(monkeypatch):
     monkeypatch.setattr(server_cli, "settings_from_args", settings_from_args)
     monkeypatch.setattr(
         server_cli,
-        "build_controller_runtime",
+        "build_control_runtime",
         lambda _settings: runtime,
     )
     monkeypatch.setattr(

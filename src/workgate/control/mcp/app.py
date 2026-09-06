@@ -23,7 +23,7 @@ from ...tools.catalog import ToolCatalog, build_tool_catalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
 from ...ui.http.routes import human_ui_routes
-from ..runtime import ControllerRuntime, build_controller_runtime
+from ..runtime import ControlRuntime, build_control_runtime
 from .instructions import SERVER_INSTRUCTIONS
 from .session_limits import McpSessionLimitMiddleware
 from .transport_security import transport_security_settings
@@ -43,7 +43,7 @@ def _make_read_only_tool_annotations() -> ToolAnnotations:
 def build_mcp(
     *,
     tool_catalog: ToolCatalog | None = None,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
     own_runtime_lifespan: bool = False,
 ) -> FastMCP:
     """Create the MCP server and register one explicit local tool catalog."""
@@ -86,7 +86,7 @@ def _add_public_routes_to_mcp_http_app(
     mcp_app: Starlette,
     *,
     settings: Settings | None = None,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
 ) -> tuple[Starlette, list[BaseRoute]]:
     """Serve health/OAuth routes directly and send everything else to MCP."""
     active_settings = (
@@ -135,7 +135,7 @@ def _build_authenticated_mcp_http_app(
     session_manager: object | None = None,
     mcp_path: str = "/mcp",
     settings: Settings | None = None,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
 ) -> Starlette:
     """Add resource limits and OAuth protection around the MCP HTTP app."""
     active_settings = (
@@ -170,7 +170,7 @@ def _build_authenticated_mcp_http_app(
 def build_mcp_http_app(
     mcp: FastMCP,
     *,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
 ) -> Starlette:
     """Use the MCP SDK's HTTP app and add local public routes/auth."""
     settings = runtime.settings if runtime is not None else get_settings()
@@ -212,13 +212,13 @@ def build_mcp_http_app(
 def run_mcp(
     *,
     tool_catalog: ToolCatalog | None = None,
-    runtime: ControllerRuntime | None = None,
+    runtime: ControlRuntime | None = None,
 ) -> None:
-    """Start MCP with one controller runtime owner over stdio or HTTP."""
+    """Start MCP with one control runtime owner over stdio or HTTP."""
     settings = runtime.settings if runtime is not None else get_settings()
     if settings.mode != "stdio":
         validate_public_oauth_configuration(settings)
-    active_runtime = runtime or build_controller_runtime(settings)
+    active_runtime = runtime or build_control_runtime(settings)
     mcp = build_mcp(
         tool_catalog=tool_catalog,
         runtime=active_runtime,

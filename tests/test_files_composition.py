@@ -5,8 +5,8 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executors.search_composition import (
-    build_controller_tool_catalog,
+from workgate.control.search_composition import (
+    build_control_tool_catalog,
 )
 from workgate.persistence import configure_state_store
 from workgate.remote.manager import (
@@ -64,7 +64,7 @@ async def test_controller_files_and_read_use_explicit_service_without_ambient_fa
     services = _configure_runtime_services(settings)
     (tmp_path / "demo.txt").write_text("alpha\nbeta\n", encoding="utf-8")
     session = services.tool_session_store.create_session(workdir=tmp_path)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         RemoteManager(lambda: settings, state_store=services.state_store),
@@ -137,7 +137,7 @@ async def test_controller_files_remote_wire_uses_owned_manager(
         }
 
     monkeypatch.setattr(manager, "call", fake_call)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings, services.tool_session_store, manager
     )
     file_registry = _registry(catalog, FileToolRegistry)
@@ -292,7 +292,7 @@ async def test_bound_file_registry_handlers_delegate_to_injected_service(
 ):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
-    catalog = build_controller_tool_catalog(
+    catalog = build_control_tool_catalog(
         settings,
         services.tool_session_store,
         RemoteManager(lambda: settings, state_store=services.state_store),

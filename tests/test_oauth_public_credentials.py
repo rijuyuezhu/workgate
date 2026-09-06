@@ -5,8 +5,8 @@ from typing import Literal
 
 import pytest
 
-import workgate.executors.http.app as http_app
-import workgate.executors.mcp.app as mcp_app
+import workgate.control.http.app as http_app
+import workgate.control.mcp.app as mcp_app
 from workgate.config.settings import Settings, configure_settings
 from workgate.oauth.core.security import (
     MIN_OAUTH_SIGNING_SECRET_BYTES,

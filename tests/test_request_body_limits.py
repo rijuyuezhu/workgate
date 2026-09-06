@@ -15,8 +15,8 @@ from workgate.config.settings import (
     clear_settings_cache,
     configure_settings,
 )
-from workgate.executors.http.app import build_http_app
-from workgate.executors.mcp.app import build_mcp_http_app
+from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp_http_app
 from workgate.http.request_limits import (
     RequestBodyLimitMiddleware,
 )

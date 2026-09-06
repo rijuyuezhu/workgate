@@ -7,7 +7,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent
 
 import workgate.ops.image as image_ops
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.tool_session.store import get_tool_session_store
 
 PNG_BYTES = base64.b64decode(

@@ -1138,6 +1138,6 @@ def remote_manager() -> RemoteManager:
     """Return the controller-owned manager through the compatibility seam."""
     if _REMOTE_MANAGER is None:
         raise RuntimeError(
-            "remote manager is not configured; start ControllerRuntime"
+            "remote manager is not configured; start ControlRuntime"
         )
     return _REMOTE_MANAGER

@@ -2,7 +2,7 @@ import pytest
 
 from tests.helpers import mcp_structured
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.tool_session.selectors import parse_read_target
 
 

@@ -6,7 +6,7 @@ import workgate.ops.bash as shell_ops
 import workgate.ops.session as session_ops
 from tests.helpers import mcp_structured, python_shell_command
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.schemas.result_models.jobs import JobStartOutput
 from workgate.schemas.result_models.shell import (
     RunShellCommandOutput,

@@ -1,4 +1,4 @@
-"""Controller-side composition for migrated domain services."""
+"""Control-side composition for migrated domain services."""
 
 from ..config.settings import Settings
 from ..ops.files import files_config_from_settings
@@ -14,12 +14,12 @@ from ..tools.registry.read import ReadToolRegistry
 from ..tools.registry.search import SearchToolRegistry
 
 
-def build_controller_tool_catalog(
+def build_control_tool_catalog(
     settings: Settings,
     store: ToolSessionStore,
     remote_manager: RemoteManager,
 ) -> ToolCatalog:
-    """Bind migrated controller domains through the Phase 2 catalog seam."""
+    """Bind migrated control domains through the Phase 2 catalog seam."""
 
     async def call_remote_search(binding, tool, args):
         return await call_remote_session_tool(

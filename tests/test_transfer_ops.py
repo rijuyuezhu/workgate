@@ -15,7 +15,7 @@ import workgate.ops.transfer as transfer_ops
 import workgate.remote_worker.http_transfer as worker_http_transfer
 import workgate.tools.registry.transfer as transfer_registry
 from workgate.config.settings import clear_settings_cache
-from workgate.executors.mcp.app import build_mcp
+from workgate.control.mcp.app import build_mcp
 from workgate.ops.transfer import (
     transfer_abort_write,
     transfer_alloc_temp_path,

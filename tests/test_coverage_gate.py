@@ -82,7 +82,7 @@ def _policy() -> dict[str, Any]:
             "src/workgate/tools/local_handlers.py",
         ],
         "adapter_prefixes": [
-            "src/workgate/executors/",
+            "src/workgate/control/",
             "src/workgate/http/",
             "src/workgate/schemas/",
             "src/workgate/tools/registry/",
