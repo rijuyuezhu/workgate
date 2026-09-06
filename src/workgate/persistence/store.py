@@ -142,6 +142,21 @@ class StateLayout:
         return self.root / "oauth-clients.json"
 
     @property
+    def control_dir(self) -> Path:
+        """Return the directory containing final control-owned durable state."""
+        return self.root / "control"
+
+    @property
+    def control_executors_path(self) -> Path:
+        """Return the durable executor trust registry path."""
+        return self.control_dir / "executors.json"
+
+    @property
+    def control_sessions_path(self) -> Path:
+        """Return the durable control session registry path."""
+        return self.control_dir / "sessions.json"
+
+    @property
     def oauth_signing_secret_path(self) -> Path:
         """Return the persisted OAuth JWT signing secret path."""
         return self.root / "oauth-jwt-secret"

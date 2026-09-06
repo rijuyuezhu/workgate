@@ -1,14 +1,13 @@
 """Persistent storage for locally approved OAuth clients."""
 
 import json
-import os
 from collections.abc import Mapping, MutableMapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from ...config.settings import get_settings
-from ...persistence import StateLayout
+from ...persistence import FileStateStore, StateLayout, StateStore
 from .models import OAuthClient
 
 CLIENT_STORE_FILENAME = "oauth-clients.json"
@@ -19,6 +18,15 @@ def client_store_path(*, state_dir: Path | None = None) -> Path:
     """Return the configured persistent OAuth client registry path."""
     root = get_settings().state_dir if state_dir is None else state_dir
     return StateLayout(root).oauth_clients_path
+
+
+def _state_store(
+    *, state_store: StateStore | None, state_dir: Path | None
+) -> StateStore:
+    if state_store is not None:
+        return state_store
+    root = get_settings().state_dir if state_dir is None else state_dir
+    return FileStateStore(lambda: root)
 
 
 def _decode_client(raw: object) -> OAuthClient:
@@ -53,18 +61,23 @@ def _decode_client(raw: object) -> OAuthClient:
 
 
 def load_persisted_clients(
-    clients: MutableMapping[str, OAuthClient], *, state_dir: Path | None = None
+    clients: MutableMapping[str, OAuthClient],
+    *,
+    state_store: StateStore | None = None,
+    state_dir: Path | None = None,
 ) -> int:
     """Merge persisted approved clients into one explicit in-memory registry."""
-    path = client_store_path(state_dir=state_dir)
-    if not path.exists():
-        return 0
+    store = _state_store(state_store=state_store, state_dir=state_dir)
+    path = store.layout.oauth_clients_path
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with store.transaction(path):
+            payload = store.read_json(path)
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             f"Unable to read OAuth client registry: {path}"
         ) from exc
+    if payload is None:
+        return 0
     if (
         not isinstance(payload, dict)
         or payload.get("version") != CLIENT_STORE_VERSION
@@ -90,11 +103,14 @@ def load_persisted_clients(
 
 
 def persist_approved_clients(
-    clients: Mapping[str, OAuthClient], *, state_dir: Path | None = None
+    clients: Mapping[str, OAuthClient],
+    *,
+    state_store: StateStore | None = None,
+    state_dir: Path | None = None,
 ) -> None:
     """Atomically write locally approved clients to disk."""
-    path = client_store_path(state_dir=state_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    store = _state_store(state_store=state_store, state_dir=state_dir)
+    path = store.layout.oauth_clients_path
     approved_clients = (
         clients[key]
         for key in sorted(clients)
@@ -104,13 +120,5 @@ def persist_approved_clients(
         "version": CLIENT_STORE_VERSION,
         "clients": [asdict(client) for client in approved_clients],
     }
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    with store.transaction(path):
+        store.write_json(path, payload)

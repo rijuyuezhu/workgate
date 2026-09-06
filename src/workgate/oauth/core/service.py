@@ -445,7 +445,9 @@ def _approve_client(
             int(time.time()) if now is None else now,
         )
         try:
-            persist_approved_clients(current.clients)
+            persist_approved_clients(
+                current.clients, state_store=current.state_store
+            )
         except OSError:
             client.approved_at = None
             raise
