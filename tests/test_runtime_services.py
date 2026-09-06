@@ -137,7 +137,7 @@ async def test_control_runtime_lifespan_restores_outer_compatibility_bindings(
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_lifespan_restores_bindings_after_exception(
+async def test_executor_runtime_lifespan_restores_bindings_after_exception(
     tmp_path,
 ):
     outer_settings = Settings(
@@ -212,7 +212,7 @@ def test_runtime_service_installation_rolls_back_partial_startup(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_startup_failure_closes_started_bindings(
+async def test_control_runtime_startup_failure_closes_started_bindings(
     tmp_path, monkeypatch
 ):
     outer_settings = Settings(
@@ -252,7 +252,7 @@ async def test_controller_runtime_startup_failure_closes_started_bindings(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_remote_binding_failure_closes_remote_manager(
+async def test_control_runtime_remote_binding_failure_closes_remote_manager(
     tmp_path, monkeypatch
 ):
     outer_settings = Settings(
@@ -337,7 +337,7 @@ async def test_terminal_start_failure_restores_store_bindings(
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_cancellation_closes_bindings(tmp_path):
+async def test_executor_runtime_cancellation_closes_bindings(tmp_path):
     outer_settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / "outer-state",
@@ -380,7 +380,7 @@ async def test_worker_runtime_cancellation_closes_bindings(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_owns_and_restores_remote_manager_binding(
+async def test_control_runtime_owns_and_restores_remote_manager_binding(
     tmp_path,
 ):
     outer_settings = Settings(
@@ -412,7 +412,7 @@ async def test_controller_runtime_owns_and_restores_remote_manager_binding(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_owns_and_restores_ui_and_oauth_bindings(
+async def test_control_runtime_owns_and_restores_ui_and_oauth_bindings(
     tmp_path,
 ) -> None:
     outer = build_human_ui_runtime()
@@ -449,7 +449,7 @@ async def test_controller_runtime_owns_and_restores_ui_and_oauth_bindings(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_closes_ui_oauth_remote_and_terminal_in_order(
+async def test_control_runtime_closes_ui_oauth_remote_and_terminal_in_order(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -669,7 +669,7 @@ async def test_process_runtimes_own_and_restore_terminal_bindings(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_owns_and_restores_managed_jobs_binding(
+async def test_control_runtime_owns_and_restores_managed_jobs_binding(
     tmp_path,
 ) -> None:
     outer = ManagedJobsRuntime()
@@ -701,7 +701,7 @@ async def test_controller_runtime_owns_and_restores_managed_jobs_binding(
 
 
 @pytest.mark.asyncio
-async def test_controller_runtime_managed_jobs_binding_failure_closes_owner(
+async def test_control_runtime_managed_jobs_binding_failure_closes_owner(
     tmp_path, monkeypatch
 ) -> None:
     runtime = build_control_runtime(

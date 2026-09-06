@@ -261,10 +261,10 @@ orchestration.
 Rejected ownership alternatives:
 
 - `ops/jobs.py`: the old module mixed shared persistence/runner behavior with the
-  public controller-side job companion, preventing a truthful single owner for
+  public control-side job companion, preventing a truthful single owner for
   the `job` tool family.
-- `tools/ops/jobs.py`: only controller-side local/remote result orchestration
-  belongs there; moving the runtime would force worker executors and process
+- `tools/ops/jobs.py`: only control-side local/remote result orchestration
+  belongs there; moving the runtime would force executor processes and process
   entrypoints to depend on the tool-registration layer.
 - `utils`: job state, lifecycle, and recovery form a cohesive domain rather than
   small dependency-leaf helpers.
@@ -285,8 +285,8 @@ Rejected ownership alternatives:
 - matching `tools/registry/*.py`: registration adapts operations to declarative
   tool metadata; combining implementation and schemas into registry adapters
   would erase the operation/contract boundary.
-- trimmed worker bundle: workers execute shared job runtime actions but do
-  not import controller-side public-tool orchestration, so migrated `tools/` files
+- trimmed legacy worker bundle: executors execute shared job runtime actions but do
+  not import control-side public-tool orchestration, so migrated `tools/` files
   must not be included incidentally by operation or schema wildcards.
 
 ## `tool_session`: explicit workspace-session state
@@ -336,7 +336,7 @@ Rejected ownership alternatives:
 
 The `ui` package owns Human UI view models, native-client runtime contracts, and
 UI-specific security behavior. UI core must not import protocol executors or
-HTTP route adapters. Controller and remote-worker adapters may invoke UI
+HTTP route adapters. Control and legacy remote-worker adapters may invoke UI
 core capabilities when serving a Human UI, but those capabilities remain
 internal rather than public tools.
 

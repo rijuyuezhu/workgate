@@ -133,7 +133,7 @@ def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
 
 
 @pytest.mark.asyncio
-async def test_stdio_fastmcp_server_run_lifespan_owns_controller_runtime(
+async def test_stdio_fastmcp_server_run_lifespan_owns_control_runtime(
     tmp_path,
 ):
     settings = Settings(
@@ -184,7 +184,7 @@ async def test_mcp_http_sessions_do_not_own_process_runtime(tmp_path):
         configure_state_store(None)
 
 
-def test_mcp_http_host_owns_controller_runtime_once(tmp_path):
+def test_mcp_http_host_owns_control_runtime_once(tmp_path):
     settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / "runtime-state",
@@ -210,7 +210,7 @@ def test_mcp_http_host_owns_controller_runtime_once(tmp_path):
         configure_state_store(None)
 
 
-def test_mcp_http_inner_startup_failure_closes_controller_runtime(tmp_path):
+def test_mcp_http_inner_startup_failure_closes_control_runtime(tmp_path):
     settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / "runtime-state",
