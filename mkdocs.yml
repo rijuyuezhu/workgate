@@ -77,7 +77,9 @@ nav:
       - MCP server instructions: reference/instructions.md
   - Security: security.md
   - Troubleshooting: troubleshooting.md
-  - Architecture: architecture.md
+  - Architecture:
+      - Current implementation: architecture.md
+      - Control/executor target: architecture/control-executor.md
   - Development: development.md
   - Maintenance:
       - Fork and upstream differences: maintenance/fork-upstream-differences.md
