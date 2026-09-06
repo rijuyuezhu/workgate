@@ -28,6 +28,7 @@ from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .config import ControlConfig, resolve_control_config
+from .executor_transport import ExecutorTransport
 from .search_composition import build_control_tool_catalog
 from .state import ControlState
 
@@ -44,6 +45,8 @@ class ControlRuntime:
     """Explicit shared state services owned by this runtime."""
     control_state: ControlState
     """Restart-critical durable control facts backed by the shared state store."""
+    executor_transport: ExecutorTransport
+    """Process-local ordinary RPC queues, presence, polls, and result waiters."""
     managed_jobs_runtime: ManagedJobsRuntime
     """Control-owned managed background-job tasks, handlers, and leases."""
     remote_manager: RemoteManager
@@ -94,11 +97,14 @@ class ControlRuntime:
         oauth_started = False
         oauth_bound = False
         human_ui_started = False
+        executor_transport_started = False
         previous_managed_jobs_runtime: ManagedJobsRuntime | None = None
         previous_remote_manager: RemoteManager | None = None
         previous_oauth_state: OAuthState | None = None
         try:
             self.control_state.start()
+            self.executor_transport.start()
+            executor_transport_started = True
             await self.managed_jobs_runtime.start()
             managed_jobs_started = True
             previous_managed_jobs_runtime = configure_managed_jobs_runtime(
@@ -157,10 +163,14 @@ class ControlRuntime:
                                                 await self.managed_jobs_runtime.aclose()
                                         finally:
                                             try:
-                                                self.control_state.close()
+                                                if executor_transport_started:
+                                                    await self.executor_transport.aclose()
                                             finally:
-                                                installation.close()
-                                                self._closed = True
+                                                try:
+                                                    self.control_state.close()
+                                                finally:
+                                                    installation.close()
+                                                    self._closed = True
             raise
         self._installation = installation
         self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
@@ -217,10 +227,13 @@ class ControlRuntime:
                 self._remote_binding_installed = False
                 self._previous_remote_manager = None
             try:
-                self.control_state.close()
+                await self.executor_transport.aclose()
             finally:
-                if installation is not None:
-                    installation.close()
+                try:
+                    self.control_state.close()
+                finally:
+                    if installation is not None:
+                        installation.close()
         if managed_jobs_error is not None:
             raise managed_jobs_error
         if human_ui_error is not None:
@@ -245,7 +258,12 @@ class ControlRuntime:
 def build_control_runtime(settings: Settings) -> ControlRuntime:
     """Construct one control graph without installing process globals yet."""
     services = build_runtime_services(settings)
+    config = resolve_control_config(settings)
     control_state = ControlState(services.state_store)
+    executor_transport = ExecutorTransport(
+        control_state,
+        max_pending_commands=config.executor_max_pending_commands,
+    )
     managed_jobs_runtime = ManagedJobsRuntime()
     from ..ops.utils.session_copy import session_copy_managed_job_registration
 
@@ -261,10 +279,11 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         settings.state_dir, state_store=services.state_store
     )
     return ControlRuntime(
-        config=resolve_control_config(settings),
+        config=config,
         legacy_settings=settings,
         services=services,
         control_state=control_state,
+        executor_transport=executor_transport,
         managed_jobs_runtime=managed_jobs_runtime,
         remote_manager=remote_manager,
         terminal_runtime=terminal_runtime,
