@@ -108,6 +108,20 @@ def test_control_session_record_rejects_legacy_routing_identity() -> None:
             )
 
 
+def test_control_state_rejects_session_rebinding(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    state = ControlState(store)
+    state.start()
+    original = _session_record(new_executor_id())
+    state.put_session(original)
+    rebound = original.model_copy(update={"executor_id": new_executor_id()})
+
+    with pytest.raises(ValueError, match="binding cannot change"):
+        state.put_session(rebound)
+
+    assert state.snapshot_sessions() == {original.session_id: original}
+
+
 def test_control_state_write_failure_does_not_publish_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

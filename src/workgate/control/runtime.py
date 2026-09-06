@@ -29,6 +29,7 @@ from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .config import ControlConfig, resolve_control_config
 from .search_composition import build_control_tool_catalog
+from .state import ControlState
 
 
 @dataclass
@@ -41,6 +42,8 @@ class ControlRuntime:
     """Temporary monolithic settings bridge for unmigrated components."""
     services: RuntimeServices
     """Explicit shared state services owned by this runtime."""
+    control_state: ControlState
+    """Restart-critical durable control facts backed by the shared state store."""
     managed_jobs_runtime: ManagedJobsRuntime
     """Control-owned managed background-job tasks, handlers, and leases."""
     remote_manager: RemoteManager
@@ -95,6 +98,7 @@ class ControlRuntime:
         previous_remote_manager: RemoteManager | None = None
         previous_oauth_state: OAuthState | None = None
         try:
+            self.control_state.start()
             await self.managed_jobs_runtime.start()
             managed_jobs_started = True
             previous_managed_jobs_runtime = configure_managed_jobs_runtime(
@@ -152,8 +156,11 @@ class ControlRuntime:
                                             if managed_jobs_started:
                                                 await self.managed_jobs_runtime.aclose()
                                         finally:
-                                            installation.close()
-                                            self._closed = True
+                                            try:
+                                                self.control_state.close()
+                                            finally:
+                                                installation.close()
+                                                self._closed = True
             raise
         self._installation = installation
         self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
@@ -209,8 +216,11 @@ class ControlRuntime:
                 configure_remote_manager(self._previous_remote_manager)
                 self._remote_binding_installed = False
                 self._previous_remote_manager = None
-            if installation is not None:
-                installation.close()
+            try:
+                self.control_state.close()
+            finally:
+                if installation is not None:
+                    installation.close()
         if managed_jobs_error is not None:
             raise managed_jobs_error
         if human_ui_error is not None:
@@ -235,6 +245,7 @@ class ControlRuntime:
 def build_control_runtime(settings: Settings) -> ControlRuntime:
     """Construct one control graph without installing process globals yet."""
     services = build_runtime_services(settings)
+    control_state = ControlState(services.state_store)
     managed_jobs_runtime = ManagedJobsRuntime()
     from ..ops.utils.session_copy import session_copy_managed_job_registration
 
@@ -246,11 +257,14 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     )
     terminal_runtime = build_terminal_runtime()
     human_ui_runtime = build_human_ui_runtime(remote_manager.call)
-    oauth_state = build_oauth_state(settings.state_dir)
+    oauth_state = build_oauth_state(
+        settings.state_dir, state_store=services.state_store
+    )
     return ControlRuntime(
         config=resolve_control_config(settings),
         legacy_settings=settings,
         services=services,
+        control_state=control_state,
         managed_jobs_runtime=managed_jobs_runtime,
         remote_manager=remote_manager,
         terminal_runtime=terminal_runtime,

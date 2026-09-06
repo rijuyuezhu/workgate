@@ -27,7 +27,7 @@ CLIENT_NAME = "Reusable public client"
 @pytest.fixture(autouse=True)
 def _reset_oauth_state(tmp_path):
     clear_settings_cache()
-    state = build_oauth_state(tmp_path / "oauth-owner")
+    state = build_oauth_state(tmp_path / ".state")
     previous = configure_oauth_state(state)
     try:
         yield

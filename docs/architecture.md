@@ -110,6 +110,15 @@ temporarily retain a clearly named `legacy_settings` bridge for components that
 still consume the monolithic `Settings`; that bridge is migration debt, not a
 shared-authority contract.
 
+`ControlRuntime` also owns one `ControlState` backed by the same synchronous
+`StateStore` used by the existing durable domains. It restores final executor
+trust/revocation and control session binding/lifecycle facts before live actors
+start; executor bearer plaintext and presence are not part of that registry.
+Approved OAuth clients use that same store, while authorization codes remain in
+the process-local `OAuthState`. Human UI connection/session registries and other
+ordinary live coordination are likewise rebuilt empty after control restart;
+this persistence seam is intentionally not a command database or workflow log.
+
 `RemoteManager` follows the same ownership rule. The module no longer constructs
 a process singleton at import time. `ControlRuntime` constructs one manager,
 starts its loop-owned enrollment lock and durable worker queues in the control

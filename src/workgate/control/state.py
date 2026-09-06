@@ -136,6 +136,12 @@ class ControlState:
         """Durably publish one control session lifecycle mutation."""
         with self._lock:
             self._require_started()
+            current = self._sessions.get(record.session_id)
+            if (
+                current is not None
+                and current.executor_id != record.executor_id
+            ):
+                raise ValueError("session executor binding cannot change")
             candidate = {**self._sessions, record.session_id: record}
             self._write_sessions(candidate)
             self._sessions = candidate
