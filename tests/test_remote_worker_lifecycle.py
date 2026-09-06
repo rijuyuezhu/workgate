@@ -275,7 +275,7 @@ async def test_run_worker_locks_before_enrollment(
     monkeypatch.setattr(lifecycle, "worker_run_lock", fake_lock)
     monkeypatch.setattr(worker, "_run_worker_locked", fake_locked)
     monkeypatch.setattr(
-        "workgate.remote_worker.runtime_composition.build_worker_runtime",
+        "workgate.executor.runtime.build_executor_runtime",
         lambda _settings: fake_runtime,
     )
 

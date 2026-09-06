@@ -118,7 +118,7 @@ the deferred store update) before its lease is released. The remaining
 compatibility binding is reversible and non-owning.
 
 Terminal live state is similarly process-owned rather than module-owned.
-`ControlRuntime` and `WorkerRuntime` each construct a fresh `TerminalRuntime`.
+`ControlRuntime` and `ExecutorRuntime` each construct a fresh `TerminalRuntime`.
 Its bridge and ConPTY registries bind async work to the owning event loop and
 stop admission together during shutdown. Raw bridge operations are cancelled
 and bridge timers/process attachments are closed before ConPTY sessions are

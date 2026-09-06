@@ -179,6 +179,23 @@ def test_control_imports_match_explicit_process_composition() -> None:
     assert actual == _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS
 
 
+def test_final_control_executor_roots_are_explicit() -> None:
+    assert (_PACKAGE_ROOT / "control").is_dir()
+    assert (_PACKAGE_ROOT / "executor").is_dir()
+    assert not (_PACKAGE_ROOT / "executors").exists()
+
+
+def test_control_does_not_depend_on_executor_composition() -> None:
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.control")
+        and target.startswith(f"{_PACKAGE_NAME}.executor")
+    )
+
+    assert actual == frozenset()
+
+
 def test_mcp_control_has_only_the_explicit_ui_route_dependency() -> None:
     actual = frozenset(
         (importer, target)

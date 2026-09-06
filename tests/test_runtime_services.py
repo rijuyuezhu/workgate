@@ -11,6 +11,7 @@ from workgate.composition.services import (
 )
 from workgate.config.settings import Settings
 from workgate.control.runtime import build_control_runtime
+from workgate.executor.runtime import build_executor_runtime
 from workgate.jobs.managed import (
     ManagedJobsRuntime,
     configure_managed_jobs_runtime,
@@ -31,9 +32,6 @@ from workgate.remote.manager import (
     RemoteManager,
     configure_remote_manager,
     remote_manager,
-)
-from workgate.remote_worker.runtime_composition import (
-    build_worker_runtime,
 )
 from workgate.terminal.runtime import build_terminal_runtime
 from workgate.tool_session import (
@@ -153,7 +151,7 @@ async def test_worker_runtime_lifespan_restores_bindings_after_exception(
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_worker_runtime(
+    runtime = build_executor_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "worker-state",
@@ -318,7 +316,7 @@ async def test_terminal_start_failure_restores_store_bindings(
     runtime = (
         build_control_runtime(settings)
         if runtime_kind == "controller"
-        else build_worker_runtime(settings)
+        else build_executor_runtime(settings)
     )
 
     async def fail_terminal_start() -> None:
@@ -351,7 +349,7 @@ async def test_worker_runtime_cancellation_closes_bindings(tmp_path):
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_worker_runtime(
+    runtime = build_executor_runtime(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "worker-state",
@@ -640,7 +638,7 @@ async def test_process_runtimes_own_and_restore_terminal_bindings(
     runtime = (
         build_control_runtime(settings)
         if runtime_kind == "controller"
-        else build_worker_runtime(settings)
+        else build_executor_runtime(settings)
     )
     try:
         assert terminal_bridge._bridge_registry() is outer.bridges
