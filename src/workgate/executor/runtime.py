@@ -11,12 +11,10 @@ from ..composition.services import (
     install_runtime_services,
 )
 from ..config.settings import Settings
-from ..remote_worker.dispatch import WorkerDispatcher
-from ..remote_worker.search_composition import (
-    build_worker_dispatcher_with_search,
-)
+from ..remote_worker.dispatch import WorkerDispatcher as LegacyWorkerDispatcher
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from .config import ExecutorConfig, resolve_executor_config
+from .search_composition import build_executor_dispatcher_with_search
 
 
 @dataclass
@@ -31,7 +29,7 @@ class ExecutorRuntime:
     """Explicit shared state services owned by this executor."""
     terminal_runtime: TerminalRuntime
     """Executor-owned terminal bridge and ConPTY live state."""
-    dispatcher: WorkerDispatcher
+    dispatcher: LegacyWorkerDispatcher
     """Legacy dispatcher with the migrated Search service already bound."""
     _installation: RuntimeServiceInstallation | None = field(
         default=None, init=False, repr=False
@@ -84,7 +82,7 @@ def build_executor_runtime(settings: Settings) -> ExecutorRuntime:
         legacy_settings=settings,
         services=services,
         terminal_runtime=build_terminal_runtime(),
-        dispatcher=build_worker_dispatcher_with_search(
+        dispatcher=build_executor_dispatcher_with_search(
             settings, services.tool_session_store
         ),
     )

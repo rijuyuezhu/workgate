@@ -29,6 +29,15 @@ _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
         ("workgate.main", "workgate.control.cli"),
     }
 )
+_ALLOWED_EXECUTOR_TO_LEGACY_REMOTE_WORKER_IMPORTS = frozenset(
+    {
+        ("workgate.executor.runtime", "workgate.remote_worker.dispatch"),
+        (
+            "workgate.executor.search_composition",
+            "workgate.remote_worker.dispatch",
+        ),
+    }
+)
 _ALLOWED_RELEASE_IMPORTS = frozenset(
     {
         (
@@ -194,6 +203,19 @@ def test_control_does_not_depend_on_executor_composition() -> None:
     )
 
     assert actual == frozenset()
+
+
+def test_executor_legacy_remote_worker_imports_are_explicit_migration_debt() -> (
+    None
+):
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.executor")
+        and target.startswith(f"{_PACKAGE_NAME}.remote_worker")
+    )
+
+    assert actual == _ALLOWED_EXECUTOR_TO_LEGACY_REMOTE_WORKER_IMPORTS
 
 
 def test_mcp_control_has_only_the_explicit_ui_route_dependency() -> None:
