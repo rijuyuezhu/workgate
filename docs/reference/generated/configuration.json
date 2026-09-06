@@ -1558,6 +1558,26 @@
             "code": ".ssh/id_rsa,.ssh/id_ed25519,.env,secrets,credentials,.git/config"
           },
           "Comma-separated path denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled."
+        ],
+        [
+          {
+            "code": "executor_max_pending_commands"
+          },
+          {
+            "lines": [
+              {
+                "code": "--executor-max-pending-commands"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_EXECUTOR_MAX_PENDING_COMMANDS"
+          },
+          "integer",
+          {
+            "code": "64"
+          },
+          "Maximum queued or offered ordinary commands retained per executor."
         ]
       ]
     },
@@ -3037,6 +3057,19 @@
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "CSV or YAML list",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--executor-max-pending-commands",
+      "default": 64,
+      "default_display": "64",
+      "description": "Maximum queued or offered ordinary commands retained per executor.",
+      "env": "WORKGATE_EXECUTOR_MAX_PENDING_COMMANDS",
+      "name": "executor_max_pending_commands",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
       "unset_cli": null
     },
     {

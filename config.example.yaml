@@ -188,6 +188,8 @@ path_denylist:
   - "secrets"
   - "credentials"
   - ".git/config"
+# Maximum queued or offered ordinary commands retained per executor.
+executor_max_pending_commands: 64
 
 # Remote workers.
 # Enable remote worker routes and MCP tools.
