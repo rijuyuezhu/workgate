@@ -214,6 +214,66 @@ async def test_revoked_credential_quiesces_instead_of_reconnect_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transient_result_upload_retries_without_reexecuting_command() -> (
+    None
+):
+    command = ExecutorCommand(id=new_command_id(), op="test.echo")
+    result_accepted = asyncio.Event()
+    executed = 0
+
+    class FakeClient(_BaseFakeClient):
+        poll_calls = 0
+        results: list[ExecutorResult] = []
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return command
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            self.results.append(result)
+            if len(self.results) == 1:
+                raise ExecutorControlError("temporary result upload failure")
+            result_accepted.set()
+
+    def execute(offered: ExecutorCommand) -> dict[str, str]:
+        nonlocal executed
+        executed += 1
+        return {"id": offered.id}
+
+    async def yielding_sleep(delay: float) -> None:
+        await asyncio.sleep(0)
+
+    client = FakeClient()
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=execute,
+        max_concurrent_commands=1,
+        sleep=yielding_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(result_accepted.wait(), timeout=0.5)
+        assert executed == 1
+        assert len(client.results) == 2
+        assert client.results[0] == client.results[1]
+    finally:
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
 async def test_unknown_command_is_terminal_for_result_upload() -> None:
     command = ExecutorCommand(id=new_command_id(), op="test.echo")
     result_attempted = asyncio.Event()
