@@ -131,6 +131,22 @@ class ControlState:
             self._executors = candidate
             return validated
 
+    def rename_executor(
+        self, executor_id: str, *, name: str
+    ) -> ExecutorTrustRecord:
+        """Persist a friendly-name mutation without changing trust authority."""
+        with self._lock:
+            self._require_started()
+            current = self._executors.get(executor_id)
+            if current is None:
+                raise KeyError(executor_id)
+            updated = current.model_copy(update={"name": name})
+            validated = ExecutorTrustRecord.model_validate(updated.model_dump())
+            candidate = {**self._executors, executor_id: validated}
+            self._write_executors(candidate)
+            self._executors = candidate
+            return validated
+
     def put_session(self, record: ControlSessionRecord) -> None:
         """Durably publish one control session lifecycle mutation."""
         with self._lock:

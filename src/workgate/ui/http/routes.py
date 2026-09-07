@@ -284,6 +284,7 @@ def human_ui_routes(
         return [], []
     ui_path = settings.ui_path
     public_routes: list[BaseRoute] = [
+        Route("/pair", ui_index, methods=["GET"]),
         Route(ui_path, ui_index, methods=["GET"]),
         Route(ui_path + "/", ui_index, methods=["GET"]),
         Route(ui_path + "/callback", ui_index, methods=["GET"]),
