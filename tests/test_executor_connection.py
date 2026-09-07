@@ -36,6 +36,14 @@ def _policy() -> ExecutorHelloResponse:
     )
 
 
+def _reconnect_policy() -> ExecutorHelloResponse:
+    return ExecutorHelloResponse(
+        heartbeat_interval_s=100,
+        offline_after_s=300,
+        poll_timeout_s=1,
+    )
+
+
 def _protocol_error(
     code: ProtocolErrorCode, *, status: int
 ) -> ExecutorControlError:
@@ -51,6 +59,69 @@ class _BaseFakeClient:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class _ScriptedReconnectClient(_BaseFakeClient):
+    def __init__(
+        self, poll_outcomes: tuple[ExecutorControlError | None, ...]
+    ) -> None:
+        self._poll_outcomes = poll_outcomes
+        self.recovered = asyncio.Event()
+        self.hello_calls = 0
+        self.poll_calls = 0
+
+    async def hello(
+        self, message: ExecutorHelloRequest
+    ) -> ExecutorHelloResponse:
+        self.hello_calls += 1
+        return _reconnect_policy()
+
+    async def heartbeat(self) -> None:
+        return None
+
+    async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+        self.poll_calls += 1
+        index = self.poll_calls - 1
+        if index < len(self._poll_outcomes):
+            outcome = self._poll_outcomes[index]
+            if outcome is not None:
+                raise outcome
+            return None
+        self.recovered.set()
+        await asyncio.Event().wait()
+        return None
+
+    async def submit_result(self, result: ExecutorResult) -> None:
+        raise AssertionError("no result should be submitted")
+
+
+async def _exercise_reconnect(
+    poll_outcomes: tuple[ExecutorControlError | None, ...],
+) -> tuple[_ScriptedReconnectClient, list[float]]:
+    retry_sleeps: list[float] = []
+
+    async def controlled_sleep(delay: float) -> None:
+        if delay == 100.0:
+            await asyncio.Event().wait()
+        retry_sleeps.append(delay)
+        await asyncio.sleep(0)
+
+    client = _ScriptedReconnectClient(poll_outcomes)
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        sleep=controlled_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(client.recovered.wait(), timeout=0.5)
+        assert connection.owner_action_error is None
+        return client, retry_sleeps
+    finally:
+        await connection.aclose()
 
 
 @pytest.mark.asyncio
@@ -173,6 +244,50 @@ async def test_transient_poll_failure_reconnects_with_fresh_hello_without_replay
         assert connection.active_command_count == 0
     finally:
         await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_temporary_duplicate_poll_overload_retries_without_owner_action() -> (
+    None
+):
+    client, retry_sleeps = await _exercise_reconnect(
+        (
+            ExecutorControlError("ambiguous old poll network failure"),
+            _protocol_error(ProtocolErrorCode.EXECUTOR_OVERLOADED, status=409),
+        )
+    )
+
+    assert client.hello_calls == 3
+    assert client.poll_calls == 3
+    assert retry_sleeps == [0.5, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_repeated_poll_failures_keep_backoff_across_successful_hello() -> (
+    None
+):
+    client, retry_sleeps = await _exercise_reconnect(
+        tuple(
+            ExecutorControlError("temporary poll network failure")
+            for _ in range(3)
+        )
+    )
+
+    assert client.hello_calls == 4
+    assert client.poll_calls == 4
+    assert retry_sleeps == [0.5, 1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_successful_poll_resets_reconnect_backoff_streak() -> None:
+    transient = ExecutorControlError("temporary poll network failure")
+    client, retry_sleeps = await _exercise_reconnect(
+        (transient, transient, None, transient)
+    )
+
+    assert client.hello_calls == 4
+    assert client.poll_calls == 5
+    assert retry_sleeps == [0.5, 1.0, 0.5]
 
 
 @pytest.mark.asyncio

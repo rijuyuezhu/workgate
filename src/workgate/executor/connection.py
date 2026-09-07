@@ -127,14 +127,26 @@ class ExecutorConnection:
         """Reconnect indefinitely until shutdown or a profile/credential failure."""
         attempt = 0
         while not self._stop.is_set() and self._owner_action_error is None:
+            # Hello proves auth/protocol compatibility, not that long-poll delivery is
+            # healthy enough to reset the reconnect failure streak.
+            delivery_progress = asyncio.Event()
             try:
                 policy = await self._client.hello(self._hello_factory())
-                attempt = 0
-                await self._run_connected(policy)
+                await self._run_connected(
+                    policy, delivery_progress=delivery_progress
+                )
             except ExecutorControlError as exc:
-                if not exc.retryable:
+                reconnectable = (
+                    exc.retryable
+                    or exc.code is ProtocolErrorCode.EXECUTOR_OVERLOADED
+                )
+                if exc.requires_owner_action or not reconnectable:
                     self._require_owner_action(exc)
                     break
+                # A duplicate-poll 409 is request-level non-retryable but can be a
+                # transient reconnect overlap while control's previous poll unwinds.
+                if delivery_progress.is_set():
+                    attempt = 0
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
 
@@ -157,12 +169,18 @@ class ExecutorConnection:
         self._command_tasks.clear()
         await self._client.aclose()
 
-    async def _run_connected(self, policy: ExecutorHelloResponse) -> None:
+    async def _run_connected(
+        self,
+        policy: ExecutorHelloResponse,
+        *,
+        delivery_progress: asyncio.Event,
+    ) -> None:
         heartbeat = asyncio.create_task(
             self._heartbeat_loop(policy), name="workgate-executor-heartbeat"
         )
         poll = asyncio.create_task(
-            self._poll_loop(policy), name="workgate-executor-poll"
+            self._poll_loop(policy, delivery_progress=delivery_progress),
+            name="workgate-executor-poll",
         )
         owner_action = asyncio.create_task(self._owner_action.wait())
         stop = asyncio.create_task(self._stop.wait())
@@ -197,12 +215,20 @@ class ExecutorConnection:
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
 
-    async def _poll_loop(self, policy: ExecutorHelloResponse) -> None:
+    async def _poll_loop(
+        self,
+        policy: ExecutorHelloResponse,
+        *,
+        delivery_progress: asyncio.Event,
+    ) -> None:
         while not self._stop.is_set() and self._owner_action_error is None:
             await self._wait_for_capacity()
             if self._stop.is_set() or self._owner_action_error is not None:
                 return
             command = await self._client.poll(timeout_s=policy.poll_timeout_s)
+            # A completed poll, including a normal 204/no-command response, proves
+            # the delivery path is making progress and may reset reconnect backoff.
+            delivery_progress.set()
             if command is None:
                 continue
             task = asyncio.create_task(
