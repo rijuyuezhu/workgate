@@ -23,6 +23,7 @@ from ...tools.catalog import ToolCatalog, build_tool_catalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
 from ...ui.http.routes import human_ui_routes
+from ..http.executor_routes import executor_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from .instructions import SERVER_INSTRUCTIONS
 from .session_limits import McpSessionLimitMiddleware
@@ -115,6 +116,11 @@ def _add_public_routes_to_mcp_http_app(
         *public_http_routes(
             active_settings,
             readyz_include_workspace_root=False,
+        ),
+        *(
+            executor_routes(runtime.executor_transport)
+            if runtime is not None
+            else ()
         ),
         *(remote_routes() if active_settings.remote_enabled else ()),
         *(

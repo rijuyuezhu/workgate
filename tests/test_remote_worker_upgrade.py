@@ -568,6 +568,7 @@ def test_worker_bundle_imports_without_checkout_fallback(tmp_path):
     dependencies = sorted({paths["purelib"], paths["platlib"]})
     modules = [
         "workgate.remote_worker.__main__",
+        "workgate.executor.runtime",
         "workgate.audit",
         "workgate.telemetry.system",
         "workgate.ui.dashboard",

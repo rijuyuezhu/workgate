@@ -15,6 +15,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
         port=9876,
         command_denylist=["shutdown"],
         path_denylist=[".env"],
+        executor_max_pending_commands=17,
     )
 
     control = resolve_control_config(settings)
@@ -23,6 +24,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     assert control.host == "127.0.0.2"
     assert control.port == 9876
     assert control.state_dir == settings.state_dir.resolve(strict=False)
+    assert control.executor_max_pending_commands == 17
     assert not hasattr(control, "workspace_root")
     assert not hasattr(control, "command_denylist")
     assert not hasattr(control, "shell_executable")
@@ -36,6 +38,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     assert not hasattr(executor, "port")
     assert not hasattr(executor, "auth_mode")
     assert not hasattr(executor, "state_dir")
+    assert not hasattr(executor, "executor_max_pending_commands")
 
 
 def test_role_configs_snapshot_legacy_settings(tmp_path: Path) -> None:

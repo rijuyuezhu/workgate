@@ -157,6 +157,21 @@ class StateLayout:
         return self.control_dir / "sessions.json"
 
     @property
+    def executor_dir(self) -> Path:
+        """Return the directory containing final executor-owned durable state."""
+        return self.root / "executor"
+
+    @property
+    def executor_profile_path(self) -> Path:
+        """Return the private final executor connection profile."""
+        return self.executor_dir / "profile.json"
+
+    @property
+    def executor_run_lock_path(self) -> Path:
+        """Return the cross-process single-instance executor profile lock."""
+        return self.executor_dir / "profile.lock"
+
+    @property
     def oauth_signing_secret_path(self) -> Path:
         """Return the persisted OAuth JWT signing secret path."""
         return self.root / "oauth-jwt-secret"

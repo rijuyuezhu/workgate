@@ -392,6 +392,11 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "command_denylist", "Safety and resource limits", metavar="CSV"
     ),
     SettingSpec("path_denylist", "Safety and resource limits", metavar="CSV"),
+    SettingSpec(
+        "executor_max_pending_commands",
+        "Safety and resource limits",
+        metavar="COUNT",
+    ),
     SettingSpec("remote_enabled", "Remote workers"),
     SettingSpec("remote_invite_ttl_s", "Remote workers", metavar="SECONDS"),
     SettingSpec("remote_poll_timeout_s", "Remote workers", metavar="SECONDS"),

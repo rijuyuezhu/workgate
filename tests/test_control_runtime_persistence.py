@@ -1,8 +1,10 @@
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from workgate.config.settings import Settings
+from workgate.control.executor_transport import ExecutorTransportClosedError
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ControlSessionRecord, ExecutorTrustRecord
 from workgate.oauth.core.client_store import persist_approved_clients
@@ -10,6 +12,10 @@ from workgate.oauth.core.models import AuthCode, OAuthClient
 from workgate.protocol.credentials import (
     executor_credential_verifier,
     new_executor_credential,
+)
+from workgate.protocol.executor import (
+    ExecutorHelloRequest,
+    ExecutorRuntimeSummary,
 )
 from workgate.protocol.ids import new_executor_id, new_session_id
 
@@ -32,12 +38,11 @@ async def test_control_runtime_restores_only_durable_product_facts(
     await first.start()
     executor_id = new_executor_id()
     session_id = new_session_id()
+    credential = new_executor_credential()
     trust = ExecutorTrustRecord(
         executor_id=executor_id,
         name="laptop",
-        credential_verifier=executor_credential_verifier(
-            new_executor_credential()
-        ),
+        credential_verifier=executor_credential_verifier(credential),
         created_at=10,
     )
     session = ControlSessionRecord(
@@ -76,8 +81,24 @@ async def test_control_runtime_restores_only_durable_product_facts(
     )
     marker = first.human_ui_runtime.terminal_connections.reserve(4)
     assert marker is not None
+    await first.executor_transport.hello(
+        credential,
+        ExecutorHelloRequest(
+            runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            sessions=(),
+            shells=(),
+            jobs=(),
+        ),
+    )
+    pending_call = asyncio.create_task(
+        first.executor_transport.call(executor_id, "shell.run")
+    )
+    await asyncio.sleep(0)
+    assert await first.executor_transport.pending_count(executor_id) == 1
 
     await first.aclose()
+    with pytest.raises(ExecutorTransportClosedError):
+        await pending_call
 
     assert first.control_state.snapshot_executors() == {}
     assert first.control_state.snapshot_sessions() == {}
@@ -95,6 +116,9 @@ async def test_control_runtime_restores_only_durable_product_facts(
         assert second.oauth_state.codes == {}
         assert second.human_ui_runtime.terminal_connections.active_count() == 0
         assert second.human_ui_runtime.remote_files.snapshot() == ()
+        assert await second.executor_transport.pending_count(executor_id) == 0
+        assert not await second.executor_transport.is_online(executor_id)
+        assert await second.executor_transport.inventory(executor_id) is None
     finally:
         await second.aclose()
 

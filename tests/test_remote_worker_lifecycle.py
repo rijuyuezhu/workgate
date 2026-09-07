@@ -258,6 +258,7 @@ async def test_run_worker_locks_before_enrollment(
     clear_settings_cache()
     events: list[str] = []
     executor_workspace_roots: list[Path] = []
+    control_connection_flags: list[bool] = []
 
     @contextmanager
     def fake_lock():
@@ -282,10 +283,11 @@ async def test_run_worker_locks_before_enrollment(
 
     fake_runtime.lifespan = lambda: RuntimeScope()
 
-    def fake_build(settings):
+    def fake_build(settings, *, enable_control_connection=True):
         executor_workspace_roots.append(
             resolve_executor_config(settings).workspace_root
         )
+        control_connection_flags.append(enable_control_connection)
         return fake_runtime
 
     monkeypatch.setattr(lifecycle, "worker_run_lock", fake_lock)
@@ -299,6 +301,7 @@ async def test_run_worker_locks_before_enrollment(
     )
 
     assert executor_workspace_roots == [workspace.resolve()]
+    assert control_connection_flags == [False]
     assert events == [
         "lock-enter",
         "runtime-enter",
