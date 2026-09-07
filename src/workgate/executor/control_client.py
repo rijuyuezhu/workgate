@@ -77,6 +77,9 @@ class ExecutorControlClient:
             base_url=profile.control_url,
             headers={"Authorization": f"Bearer {profile.credential}"},
             follow_redirects=False,
+            # Plain HTTP is valid only for loopback profiles; never let a
+            # process-global HTTP_PROXY route that bearer off the machine.
+            trust_env=profile.control_url.startswith("https://"),
         )
 
     async def aclose(self) -> None:

@@ -52,6 +52,37 @@ def _client(
     return ExecutorControlClient(profile, client=http), http
 
 
+def test_executor_control_client_uses_env_proxy_only_for_https(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructor_args: list[dict[str, object]] = []
+
+    class FakeHttpClient:
+        async def aclose(self) -> None:
+            return None
+
+    def fake_async_client(**kwargs: object) -> FakeHttpClient:
+        constructor_args.append(kwargs)
+        return FakeHttpClient()
+
+    monkeypatch.setattr(
+        "workgate.executor.control_client.httpx.AsyncClient", fake_async_client
+    )
+
+    loopback = ExecutorProfile(
+        control_url="http://127.0.0.1:8765",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    remote = _profile()
+
+    ExecutorControlClient(loopback)
+    ExecutorControlClient(remote)
+
+    assert constructor_args[0]["trust_env"] is False
+    assert constructor_args[1]["trust_env"] is True
+
+
 @pytest.mark.asyncio
 async def test_executor_control_client_uses_v1_paths_and_persisted_bearer() -> (
     None
