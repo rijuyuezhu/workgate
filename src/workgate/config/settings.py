@@ -277,6 +277,10 @@ class Settings(BaseSettings):
     # Executor transport.
     executor_max_pending_commands: int = Field(default=64, ge=1)
     """Maximum queued or offered ordinary commands retained per executor."""
+    executor_pairing_max_pending: int = Field(default=32, ge=1, le=1024)
+    """Maximum live process-local executor pairing attempts admitted by control."""
+    executor_pairing_ttl_s: int = Field(default=600, ge=60, le=24 * 3600)
+    """Lifetime in seconds for one process-local executor pairing attempt."""
 
     # Remote workers.
     remote_enabled: bool = True

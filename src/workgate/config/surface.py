@@ -397,6 +397,16 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "Safety and resource limits",
         metavar="COUNT",
     ),
+    SettingSpec(
+        "executor_pairing_max_pending",
+        "Safety and resource limits",
+        metavar="COUNT",
+    ),
+    SettingSpec(
+        "executor_pairing_ttl_s",
+        "Safety and resource limits",
+        metavar="SECONDS",
+    ),
     SettingSpec("remote_enabled", "Remote workers"),
     SettingSpec("remote_invite_ttl_s", "Remote workers", metavar="SECONDS"),
     SettingSpec("remote_poll_timeout_s", "Remote workers", metavar="SECONDS"),
