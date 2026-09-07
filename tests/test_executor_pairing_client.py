@@ -100,6 +100,33 @@ async def test_pairing_client_uses_public_pair_routes_and_parses_pending() -> (
 
 
 @pytest.mark.asyncio
+async def test_pairing_client_rejects_malformed_success_payloads() -> None:
+    device_code = new_device_code()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    http = httpx.AsyncClient(
+        base_url="https://control.test",
+        transport=httpx.MockTransport(handler),
+    )
+    client = ExecutorPairingClient("https://control.test", client=http)
+    try:
+        with pytest.raises(
+            ExecutorControlError,
+            match="invalid pair-start response",
+        ):
+            await client.start(PairStartRequest(requested_name="laptop"))
+        with pytest.raises(
+            ExecutorControlError,
+            match="invalid pair-poll response",
+        ):
+            await client.poll(device_code)
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.asyncio
 async def test_wait_for_pairing_retries_only_pending() -> None:
     device_code = new_device_code()
     started = PairStartResponse(

@@ -58,6 +58,21 @@ def _hello_response() -> ExecutorHelloResponse:
     )
 
 
+def test_run_async_reports_command_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def fail() -> None:
+        raise RuntimeError("control unavailable")
+
+    with pytest.raises(SystemExit) as caught:
+        executor_cli._run_async(fail())
+
+    assert caught.value.code == 1
+    assert capsys.readouterr().err == (
+        "Status: executor command failed: control unavailable\n"
+    )
+
+
 def test_root_parser_exposes_final_executor_connect_and_run() -> None:
     connect = _build_parser().parse_args(
         ["executor", "connect", "https://control.test", "--name", "Laptop"]
@@ -70,6 +85,34 @@ def test_root_parser_exposes_final_executor_connect_and_run() -> None:
     run = _build_parser().parse_args(["executor", "run"])
     assert run.command == "executor"
     assert run.executor_command == "run"
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_existing_profile_for_different_control_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(tmp_path)
+    store = _store(tmp_path)
+    existing = _profile("https://first-control.test")
+    ExecutorProfileStore(store).save(existing)
+
+    class PairingMustNotStart:
+        def __init__(self, _control_url: str) -> None:
+            raise AssertionError(
+                "mismatched profile unexpectedly started pairing"
+            )
+
+    monkeypatch.setattr(
+        executor_cli, "settings_from_args", lambda *_a, **_k: settings
+    )
+    monkeypatch.setattr(executor_cli, "get_state_store", lambda: store)
+    monkeypatch.setattr(
+        executor_cli, "ExecutorPairingClient", PairingMustNotStart
+    )
+
+    with pytest.raises(RuntimeError, match="different control URL"):
+        await executor_cli._connect(_args("https://second-control.test"))
 
 
 @pytest.mark.asyncio

@@ -366,3 +366,73 @@ def test_remote_rename_and_revoke_dispatch_and_audit(monkeypatch, tmp_path):
         json={"machine": "edge-a"},
     )
     assert unsupported.status_code == 400
+
+
+def test_remote_inventory_rejects_invalid_or_excessive_machine_lists(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+
+    class InvalidInventory:
+        def model_dump(self, *, mode: str) -> dict[str, Any]:
+            assert mode == "json"
+            return {"machines": "not-a-list", "counts": {}}
+
+    monkeypatch.setattr(
+        remotes_module,
+        "list_remote_machines",
+        lambda: InvalidInventory(),
+    )
+    invalid = client.get("/api/ui/remotes")
+    assert invalid.status_code == 500
+    assert invalid.json()["error"] == "RemoteInventoryUnavailable"
+
+    class ExcessiveInventory:
+        def model_dump(self, *, mode: str) -> dict[str, Any]:
+            assert mode == "json"
+            return {
+                "machines": [{}] * (remotes_module.UI_REMOTE_MAX_MACHINES + 1),
+                "counts": {},
+            }
+
+    monkeypatch.setattr(
+        remotes_module,
+        "list_remote_machines",
+        lambda: ExcessiveInventory(),
+    )
+    excessive = client.get("/api/ui/remotes")
+    assert excessive.status_code == 500
+    assert excessive.json()["error"] == "RemoteInventoryUnavailable"
+
+
+def test_remote_actions_validate_body_and_mask_backend_failures(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+
+    non_object = client.post("/api/ui/remotes/revoke", json=["edge-a"])
+    assert non_object.status_code == 400
+    assert non_object.json()["error"] == "ValueError"
+
+    invalid_schema = client.post(
+        "/api/ui/remotes/rename",
+        json={"machine": "edge-a", "new_name": "edge-b", "extra": True},
+    )
+    assert invalid_schema.status_code == 400
+    assert invalid_schema.json()["error"] == "ValueError"
+
+    def fail_rename(machine: str, new_name: str) -> RemoteRenameMachineOutput:
+        del machine, new_name
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(remotes_module, "rename_remote_machine", fail_rename)
+    failed = client.post(
+        "/api/ui/remotes/rename",
+        json={"machine": "edge-a", "new_name": "edge-b"},
+    )
+    assert failed.status_code == 500
+    assert failed.json() == {
+        "ok": False,
+        "error": "RemoteMutationUnavailable",
+        "message": "Remote worker operation failed",
+    }
