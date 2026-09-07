@@ -2,7 +2,6 @@ import base64
 import contextlib
 import hashlib
 import json
-import os
 import re
 import secrets
 import shutil
@@ -24,7 +23,7 @@ from playwright.sync_api import (
     expect,
 )
 
-from tests.e2e_helpers import PROJECT_ROOT, SRC_ROOT, free_tcp_port, server_env
+from tests.e2e_helpers import PROJECT_ROOT, free_tcp_port, server_env
 from workgate.oauth.core.scopes import default_scope
 from workgate.ui.contracts import POSIX_TUI_EXECUTABLE_NAME
 from workgate.ui.session import (
@@ -90,36 +89,12 @@ def _wait_for_http_ready(base_url: str, process: subprocess.Popen[Any]) -> None:
     raise AssertionError(f"server did not become ready at {base_url}")
 
 
-def _worker_env(workspace: Path, tmux_tmpdir: Path) -> dict[str, str]:
-    env = os.environ.copy()
-    pythonpath = str(SRC_ROOT)
-    if env.get("PYTHONPATH"):
-        pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
-    env.update(
-        {
-            "PYTHONPATH": pythonpath,
-            "TMUX_TMPDIR": str(tmux_tmpdir),
-            "WORKGATE_WORKSPACE_ROOT": str(workspace),
-            "WORKGATE_STATE_DIR": str(workspace / ".workgate"),
-            "WORKGATE_WORKER_STATE_DIR": str(workspace / ".workgate-worker"),
-            "WORKGATE_AUTH_MODE": "none",
-            "WORKGATE_AGENT_BRIDGE_ENABLED": "false",
-            "WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S": "5",
-            "WORKGATE_RUN_SHELL_MAX_TIMEOUT_S": "10",
-            "WORKGATE_TOOL_TIMEOUT_S": "20",
-        }
-    )
-    return env
-
-
 @dataclass
 class BrowserHarness:
     root: Path
     artifacts: Path
     control_workspace: Path
-    remote_workspace: Path
     control_tmux_tmpdir: Path
-    remote_tmux_tmpdir: Path
     base_url: str
     admin_pin: str
     opentui_crash_marker: Path
@@ -128,7 +103,6 @@ class BrowserHarness:
     context: BrowserContext
     page: Page
     server: subprocess.Popen[Any]
-    worker: subprocess.Popen[Any] | None = None
     api_token: str | None = None
     terminal_sessions: list[tuple[str, str]] = field(default_factory=list)
     console_messages: list[str] = field(default_factory=list)
@@ -146,11 +120,8 @@ class BrowserHarness:
     ) -> BrowserHarness:
         artifacts.mkdir(parents=True, exist_ok=True)
         control_workspace = root / "workspace-control"
-        remote_workspace = root / "workspace-remote"
         control_workspace.mkdir(parents=True)
-        remote_workspace.mkdir(parents=True)
         control_tmux_tmpdir = Path(tempfile.mkdtemp(prefix="workgate-b-ctl-"))
-        remote_tmux_tmpdir = Path(tempfile.mkdtemp(prefix="workgate-b-rem-"))
         (control_workspace / "notes.txt").write_text(
             "local browser fixture\n", encoding="utf-8"
         )
@@ -159,9 +130,6 @@ class BrowserHarness:
         )
         (control_workspace / "copy-source.txt").write_text(
             "copy source\n", encoding="utf-8"
-        )
-        (remote_workspace / "remote-note.txt").write_text(
-            "remote browser fixture\n", encoding="utf-8"
         )
         opentui_crash_marker = root / "opentui-crash-next"
         opentui_wrapper = root / "opentui-wrapper.py"
@@ -247,9 +215,7 @@ class BrowserHarness:
                 root=root,
                 artifacts=artifacts,
                 control_workspace=control_workspace,
-                remote_workspace=remote_workspace,
                 control_tmux_tmpdir=control_tmux_tmpdir,
-                remote_tmux_tmpdir=remote_tmux_tmpdir,
                 base_url=base_url,
                 admin_pin=admin_pin,
                 opentui_crash_marker=opentui_crash_marker,
@@ -264,7 +230,6 @@ class BrowserHarness:
         except Exception:
             _terminate_process(server)
             shutil.rmtree(control_tmux_tmpdir, ignore_errors=True)
-            shutil.rmtree(remote_tmux_tmpdir, ignore_errors=True)
             raise
 
     def _attach_diagnostics(self) -> None:
@@ -345,10 +310,8 @@ class BrowserHarness:
                 self.context.close()
             with contextlib.suppress(Exception):
                 self.browser.close()
-            _terminate_process(self.worker)
             _terminate_process(self.server)
             shutil.rmtree(self.control_tmux_tmpdir, ignore_errors=True)
-            shutil.rmtree(self.remote_tmux_tmpdir, ignore_errors=True)
 
     def track_terminal(self, machine: str, shell_id: str) -> None:
         self.terminal_sessions.append((machine, shell_id))
@@ -615,6 +578,7 @@ class BrowserHarness:
             {
                 "overview": "Overview",
                 "machines": "Machines",
+                "executors": "Executors",
                 "remotes": "Remotes",
                 "sessions": "Sessions",
                 "terminals": "Terminals",
@@ -623,63 +587,6 @@ class BrowserHarness:
                 "console": "OpenTUI",
             }[view]
         )
-
-    def invite_and_start_worker(self, machine: str = "browser-edge") -> None:
-        self.navigate("remotes")
-        self.page.locator("#remote-invite-open").click()
-        expect(self.page.locator("#remote-invite-dialog")).to_be_visible()
-        self.page.locator("#remote-invite-name").fill(machine)
-        self.page.locator("#remote-invite-workdir").fill(
-            str(self.remote_workspace)
-        )
-        self.page.locator("#remote-invite-form").get_by_role(
-            "button", name="Create invite"
-        ).click()
-        expect(
-            self.page.locator("#remote-invite-result-dialog")
-        ).to_be_visible()
-        command = self.page.locator("#remote-invite-command").inner_text()
-        self.page.locator("#remote-invite-done").click()
-
-        worker_env = _worker_env(self.remote_workspace, self.remote_tmux_tmpdir)
-        worker_env["WORKGATE_WORKER_STATE_DIR"] = str(
-            self.remote_workspace / ".workgate-worker"
-        )
-        self.worker = _start_logged_process(
-            ["bash", "-c", command],
-            cwd=PROJECT_ROOT,
-            env=worker_env,
-            stdout_path=self.artifacts / "worker.stdout.log",
-            stderr_path=self.artifacts / "worker.stderr.log",
-        )
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            if self.worker.poll() is not None:
-                raise AssertionError(
-                    f"worker exited early with code {self.worker.returncode}"
-                )
-            inventory = self.api("GET", "/api/ui/remotes")
-            if inventory["status"] == 200:
-                machines = inventory["payload"]["data"]["machines"]
-                if any(
-                    item.get("name") == machine
-                    and item.get("status") == "online"
-                    for item in machines
-                ):
-                    self.page.locator("#remote-refresh").click()
-                    self.page.wait_for_timeout(300)
-                    expect(
-                        self.page.locator("#remote-detail-profile")
-                    ).not_to_have_text("—")
-                    expect(
-                        self.page.locator("#remote-detail-reconnect")
-                    ).to_contain_text("/run")
-                    expect(
-                        self.page.locator("#remote-reconnect-copy")
-                    ).to_be_enabled()
-                    return
-            time.sleep(0.1)
-        raise AssertionError(f"remote worker {machine!r} did not become online")
 
     def assert_clean_browser(self) -> None:
         assert not self.console_errors, "\n".join(self.console_errors)

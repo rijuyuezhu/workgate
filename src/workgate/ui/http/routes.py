@@ -81,6 +81,7 @@ def _ui_asset_revision() -> str:
         "syntax_highlight.js",
         "web.js",
         "dashboard.js",
+        "executors.js",
         "remotes.js",
         "audit_view.js",
         "audit.js",
@@ -324,7 +325,7 @@ def human_ui_routes(
             api_session_action,
             methods=["POST"],
         ),
-        Route(UI_API_PREFIX + "/remotes", api_remotes, methods=["GET", "POST"]),
+        Route(UI_API_PREFIX + "/remotes", api_remotes, methods=["GET"]),
         Route(
             UI_API_PREFIX + "/remotes/{action}",
             api_remote_action,

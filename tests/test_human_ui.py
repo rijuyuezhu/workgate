@@ -107,9 +107,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="dashboard-cpu-trend"' in index.text
     assert 'id="dashboard-alerts"' in index.text
     assert 'id="dashboard-activity"' in index.text
+    assert 'id="executors-panel"' in index.text
+    assert 'id="executor-pair-dialog"' in index.text
+    assert 'id="executor-rename-dialog"' in index.text
+    assert 'id="executor-revoke-dialog"' in index.text
     assert 'id="remotes-panel"' in index.text
-    assert 'id="remote-invite-dialog"' in index.text
-    assert 'id="remote-invite-result-dialog"' in index.text
     assert 'id="remote-reconnect-copy"' in index.text
     assert 'id="remote-detail-reconnect"' in index.text
     assert 'id="remote-rename-dialog"' in index.text
@@ -185,6 +187,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert script.headers["x-content-type-options"] == "nosniff"
     assert "await Promise.all([" in script.text
     assert 'import(assetUrl("dashboard.js"))' in script.text
+    assert 'import(assetUrl("executors.js"))' in script.text
     assert 'import(assetUrl("remotes.js"))' in script.text
     assert 'import(assetUrl("audit_view.js"))' in script.text
     assert 'import(assetUrl("audit.js"))' in script.text
@@ -196,6 +199,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert dashboard_script.status_code == 200
     assert dashboard_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createDashboardController" in dashboard_script.text
+    executors_script = client.get("/ui/assets/executors.js")
+    assert executors_script.status_code == 200
+    assert executors_script.headers["x-content-type-options"] == "nosniff"
+    assert "export function createExecutorsController" in executors_script.text
     remotes_script = client.get("/ui/assets/remotes.js")
     assert remotes_script.status_code == 200
     assert remotes_script.headers["x-content-type-options"] == "nosniff"
@@ -243,12 +250,17 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "controllerState.generation" in remotes_script.text
     assert "generation !== controllerState.generation" in remotes_script.text
     assert "startRemotePolling" in remotes_script.text
-    assert "clearRemoteInviteResult" in remotes_script.text
+    assert "inviteCommand" not in remotes_script.text
+    assert 'request("/executors")' in executors_script.text
     assert (
-        "navigator.clipboard.writeText(controllerState.inviteCommand)"
-        in remotes_script.text
+        "request(`/pair?code=${encodeURIComponent(code)}`)"
+        in executors_script.text
     )
-    assert 'inviteCommand: ""' in remotes_script.text
+    assert 'void pairDecision("approve")' in executors_script.text
+    assert 'void pairDecision("deny")' in executors_script.text
+    assert 'request("/executors/rename"' in executors_script.text
+    assert 'request("/executors/revoke"' in executors_script.text
+    assert "credential" not in executors_script.text.lower()
     assert "innerHTML" not in script.text
     assert "controllerState.terminalMachineStates" in terminal_script.text
     assert (

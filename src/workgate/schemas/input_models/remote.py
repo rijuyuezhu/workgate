@@ -28,24 +28,6 @@ RemoteNewNameArg = Annotated[
         description="New stable remote worker machine name to use for later remote calls."
     ),
 ]
-RemoteInviteNameArg = Annotated[
-    str | None,
-    Field(
-        description="Optional friendly remote worker name bound to the invite."
-    ),
-]
-RemoteWorkdirArg = Annotated[
-    str | None,
-    Field(
-        description="Optional worker-side starting directory requested by the invite."
-    ),
-]
-RemoteInviteTtlArg = Annotated[
-    int | None,
-    Field(
-        description="Optional invite lifetime in seconds, clamped by remote invite limits."
-    ),
-]
 RemotePathArg = Annotated[
     str,
     Field(description="Path on the selected remote worker machine."),
@@ -189,14 +171,14 @@ RemoteRecursiveArg = Annotated[
     ),
 ]
 RemoteAdminActionArg = Annotated[
-    Literal["invite", "list", "revoke", "rename", "reconnect_command"],
+    Literal["list", "revoke", "rename", "reconnect_command"],
     Field(
-        description="Remote control-plane action: invite, list, revoke, rename, or retrieve a reconnect command."
+        description="Legacy remote control-plane action: list, revoke, rename, or retrieve a reconnect command. New enrollment uses `workgate executor connect`."
     ),
 ]
 RemoteAdminArgsArg = Annotated[
     dict[str, Any],
     Field(
-        description="Action-specific control-plane arguments. invite accepts name, workdir, ttl_s; list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name."
+        description="Action-specific control-plane arguments. list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name."
     ),
 ]

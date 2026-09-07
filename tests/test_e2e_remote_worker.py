@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -72,14 +72,57 @@ def process_logs(workspace: Path, prefix: str) -> str:
     return f"stdout:\n{stdout}\nstderr:\n{stderr}"
 
 
+def legacy_worker_access(machine: str) -> str:
+    """Return deterministic test-only bearer material for a seeded legacy worker."""
+    digest = hashlib.sha256(f"legacy-e2e:{machine}".encode()).hexdigest()
+    return f"legacy_e2e_{digest}"
+
+
+def _seed_legacy_worker_registry(
+    control_workspace: Path,
+    workers: Mapping[str, Path],
+) -> None:
+    """Seed private legacy trust without restoring the retired public invite flow."""
+    state_dir = control_workspace / ".workgate"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    registry = state_dir / "remote-workers.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "workers": [
+                    {
+                        "name": machine,
+                        "access": legacy_worker_access(machine),
+                        "workdir": str(workdir),
+                        "created_at": 1.0,
+                        "capabilities": [],
+                        "info": {},
+                    }
+                    for machine, workdir in sorted(workers.items())
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    if os.name != "nt":
+        registry.chmod(0o600)
+
+
 @asynccontextmanager
 async def run_remote_enabled_mcp_process(
     tmp_path: Path,
+    *,
+    legacy_workers: Mapping[str, Path] | None = None,
 ) -> AsyncGenerator[tuple[str, Path, Path]]:
     control_workspace = tmp_path / "workspace-control"
     remote_workspace = tmp_path / "workspace-remote"
     control_workspace.mkdir()
     remote_workspace.mkdir()
+    if legacy_workers:
+        _seed_legacy_worker_registry(control_workspace, legacy_workers)
     port = free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
     env = server_env(control_workspace, mode="mcp", port=port)
@@ -153,7 +196,7 @@ def worker_env(remote_workspace: Path) -> dict[str, str]:
 
 def start_worker_process(
     base_url: str,
-    invite: str,
+    access: str,
     machine: str,
     remote_workspace: Path,
     bundle_path: Path,
@@ -232,6 +275,47 @@ def start_worker_process(
     assert isolation_probe.returncode == 0, isolation_probe.stderr
     assert isolation_probe.stdout.splitlines() == ["None", "True", "True"]
 
+    profile_id = "p_e2e00000"
+    profile_dir = (
+        remote_workspace / ".workgate-worker-state" / "profiles" / profile_id
+    )
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_path = profile_dir / "profile.json"
+    identity_path = profile_dir / "identity.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "runtime_sha256": digest,
+                "runtime_version": __version__,
+                "server": base_url,
+                "name": machine,
+                "workdir": str(remote_workspace),
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    identity_path.write_text(
+        json.dumps(
+            {
+                "server": base_url,
+                "name": machine,
+                "access": access,
+                "workdir": str(remote_workspace),
+                "profile_id": profile_id,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    if os.name != "nt":
+        profile_path.chmod(0o600)
+        identity_path.chmod(0o600)
+
     env = worker_env(remote_workspace)
     env["PYTHONPATH"] = str(runtime_dir)
     env["WORKGATE_WORKER_RUNTIME_SHA256"] = digest
@@ -240,17 +324,8 @@ def start_worker_process(
             str(worker_python),
             "-m",
             "workgate.remote_worker",
-            "connect",
-            "--server",
-            base_url,
-            "--invite",
-            invite,
-            "--name",
-            machine,
-            "--workdir",
-            str(remote_workspace),
-            "--profile",
-            "p_e2e00000",
+            "run",
+            profile_id,
         ],
         cwd=runtime_dir,
         env=env,
@@ -302,8 +377,13 @@ async def wait_for_machine(
 async def test_mcp_remote_worker_process_exercises_remote_tool_categories(
     tmp_path: Path,
 ):
+    machine = "e2e-remote"
+    seeded_remote_workspace = tmp_path / "workspace-remote"
     async with (
-        run_remote_enabled_mcp_process(tmp_path) as (
+        run_remote_enabled_mcp_process(
+            tmp_path,
+            legacy_workers={machine: seeded_remote_workspace},
+        ) as (
             base_url,
             control_workspace,
             remote_workspace,
@@ -312,52 +392,6 @@ async def test_mcp_remote_worker_process_exercises_remote_tool_categories(
     ):
         await assert_required_tools(client, REMOTE_TOOL_NAMES)
         assert "remote" not in await client.list_tools()
-
-        machine = "e2e-remote"
-        invite_result = await client.call_tool(
-            "remote_admin",
-            {
-                "action": "invite",
-                "args": {
-                    "name": machine,
-                    "workdir": str(remote_workspace),
-                    "ttl_s": 120,
-                },
-            },
-        )
-        invite = invite_result["data"]
-        assert invite["join_url"] == f"{base_url}/join"
-        assert "curl -fsSL" in invite["command"]
-
-        async with httpx.AsyncClient(
-            timeout=10, trust_env=False
-        ) as http_client:
-            join_response = await http_client.get(invite["join_url"])
-        join_response.raise_for_status()
-        join_script = join_response.text
-        assert "__REMOTE_SERVER__" not in join_script
-        assert "__REMOTE_WORKER_BUNDLE_PATH__" not in join_script
-        assert f"SERVER={base_url}" in join_script
-        assert 'BUNDLE_URL="$SERVER/remote/worker-bundle.tgz"' in join_script
-        assert 'RUNTIME_DIR="$DATA_DIR/runtimes/$RUNTIME_DIGEST"' in join_script
-        assert "runtime_is_installed" in join_script
-        assert "Reusing worker runtime" in join_script
-        assert (
-            'export WORKGATE_WORKER_RUNTIME_SHA256="$RUNTIME_DIGEST"'
-            in join_script
-        )
-        assert 'export PYTHONPATH="$RUNTIME_DIR"' in join_script
-        assert "python_supports_worker" in join_script
-        assert "python install 3.14" in join_script
-        assert "Downloading worker manifest" in join_script
-        assert "Downloading worker bundle" in join_script
-        assert "Cache-Control: no-cache" in join_script
-        assert "Preparing shared worker runtime" in join_script
-        assert "os.replace(staging, runtime)" in join_script
-        assert "member.isreg()" in join_script
-        assert "curl -fSs" in join_script
-        assert "-m workgate.remote_worker" in join_script
-        assert "python3 -m workgate.main worker" not in join_script
 
         async with httpx.AsyncClient(
             timeout=20, trust_env=False
@@ -394,7 +428,7 @@ async def test_mcp_remote_worker_process_exercises_remote_tool_categories(
 
         worker = start_worker_process(
             base_url,
-            invite["code"],
+            legacy_worker_access(machine),
             machine,
             remote_workspace,
             bundle_path,

@@ -766,14 +766,14 @@
           {
             "items": [
               {
-                "description": "Remote control-plane action: invite, list, revoke, rename, or retrieve a reconnect command.",
+                "description": "Legacy remote control-plane action: list, revoke, rename, or retrieve a reconnect command. New enrollment uses `workgate executor connect`.",
                 "head": {
                   "code": "action"
                 },
-                "note": "(invite / list / revoke / rename / reconnect_command, required)"
+                "note": "(list / revoke / rename / reconnect_command, required)"
               },
               {
-                "description": "Action-specific control-plane arguments. invite accepts name, workdir, ttl_s; list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name.",
+                "description": "Action-specific control-plane arguments. list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name.",
                 "head": {
                   "code": "args"
                 },
@@ -781,7 +781,7 @@
               }
             ]
           },
-          "Run compact remote-worker control-plane actions. Use this only to administer worker connections: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"invite\" creates a one-time join command, action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command to run on the worker machine for a profile-aware registration.\n\nDo not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools such as read, search, hashline_edit, edit_lines, apply_patch, bash, job, write_file, delete_file_or_dir, tree_view, glob_search, and secret_scan. Invite output is sensitive because it grants enrollment capability. Reconnect commands contain no invite or bearer credential. Defaults: invite ttl_s defaults to configured remote_invite_ttl_s=600 seconds when omitted."
+          "Run legacy remote-worker control-plane actions for already-enrolled workers: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines must pair with `workgate executor connect <control-url>`; remote_admin no longer creates enrollment invites. Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools. Reconnect commands contain no invite or bearer credential."
         ]
       ]
     },
@@ -5522,13 +5522,12 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run compact remote-worker control-plane actions. Use this only to administer worker connections: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"invite\" creates a one-time join command, action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command to run on the worker machine for a profile-aware registration.\n\nDo not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools such as read, search, hashline_edit, edit_lines, apply_patch, bash, job, write_file, delete_file_or_dir, tree_view, glob_search, and secret_scan. Invite output is sensitive because it grants enrollment capability. Reconnect commands contain no invite or bearer credential. Defaults: invite ttl_s defaults to configured remote_invite_ttl_s=600 seconds when omitted.",
+      "description": "Run legacy remote-worker control-plane actions for already-enrolled workers: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines must pair with `workgate executor connect <control-url>`; remote_admin no longer creates enrollment invites. Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools. Reconnect commands contain no invite or bearer credential.",
       "inputSchema": {
         "properties": {
           "action": {
-            "description": "Remote control-plane action: invite, list, revoke, rename, or retrieve a reconnect command.",
+            "description": "Legacy remote control-plane action: list, revoke, rename, or retrieve a reconnect command. New enrollment uses `workgate executor connect`.",
             "enum": [
-              "invite",
               "list",
               "revoke",
               "rename",
@@ -5539,7 +5538,7 @@
           },
           "args": {
             "additionalProperties": true,
-            "description": "Action-specific control-plane arguments. invite accepts name, workdir, ttl_s; list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name.",
+            "description": "Action-specific control-plane arguments. list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name.",
             "title": "Args",
             "type": "object"
           }

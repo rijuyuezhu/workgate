@@ -136,7 +136,7 @@ def test_build_mcp_http_app_includes_remote_routes_when_enabled():
 
     assert app is not None
     paths = _route_paths(app)
-    assert "/join" in paths
+    assert "/join" not in paths
     assert "/remote/register" in paths
     assert "/remote/poll" in paths
 
@@ -174,7 +174,7 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
     app = mcp_app.build_mcp_http_app(cast(Any, dummy), runtime=runtime)
 
     paths = _route_paths(app)
-    assert "/join" in paths
+    assert "/join" not in paths
     assert "/remote/register" in paths
     assert session_manager.session_idle_timeout == 987
 

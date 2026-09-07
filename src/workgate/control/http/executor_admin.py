@@ -15,7 +15,6 @@ from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_REMOTE_USE
 from ...protocol.pairing import PairApprovalRequest
-from ...ui.security import UI_API_PREFIX
 from ..executor_transport import ExecutorTransport
 from ..pairing import (
     ExecutorPairingError,
@@ -100,6 +99,8 @@ def executor_admin_routes(
     state: ControlState,
     transport: ExecutorTransport,
     pairing: ExecutorPairingService,
+    *,
+    api_prefix: str,
 ) -> list[BaseRoute]:
     """Return owner-authenticated final executor administration routes."""
 
@@ -203,10 +204,10 @@ def executor_admin_routes(
             )
 
     return [
-        Route(UI_API_PREFIX + "/pair", pair, methods=["GET", "POST"]),
-        Route(UI_API_PREFIX + "/executors", executors, methods=["GET"]),
+        Route(api_prefix + "/pair", pair, methods=["GET", "POST"]),
+        Route(api_prefix + "/executors", executors, methods=["GET"]),
         Route(
-            UI_API_PREFIX + "/executors/{action}",
+            api_prefix + "/executors/{action}",
             executor_action,
             methods=["POST"],
         ),

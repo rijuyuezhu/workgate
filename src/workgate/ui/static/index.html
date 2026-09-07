@@ -25,23 +25,26 @@
         <button class="nav-item" type="button" data-view="machines">
           <span class="nav-index" aria-hidden="true">02</span><span>Machines</span>
         </button>
+        <button class="nav-item" type="button" data-view="executors">
+          <span class="nav-index" aria-hidden="true">03</span><span>Executors</span>
+        </button>
         <button class="nav-item" type="button" data-view="remotes">
-          <span class="nav-index" aria-hidden="true">03</span><span>Remotes</span>
+          <span class="nav-index" aria-hidden="true">04</span><span>Remotes</span>
         </button>
         <button class="nav-item" type="button" data-view="sessions">
-          <span class="nav-index" aria-hidden="true">04</span><span>Sessions</span>
+          <span class="nav-index" aria-hidden="true">05</span><span>Sessions</span>
         </button>
         <button class="nav-item" type="button" data-view="terminals">
-          <span class="nav-index" aria-hidden="true">05</span><span>Terminals</span>
+          <span class="nav-index" aria-hidden="true">06</span><span>Terminals</span>
         </button>
         <button class="nav-item" type="button" data-view="files">
-          <span class="nav-index" aria-hidden="true">06</span><span>Files</span>
+          <span class="nav-index" aria-hidden="true">07</span><span>Files</span>
         </button>
         <button class="nav-item" type="button" data-view="audit">
-          <span class="nav-index" aria-hidden="true">07</span><span>Audit</span>
+          <span class="nav-index" aria-hidden="true">08</span><span>Audit</span>
         </button>
         <button class="nav-item" type="button" data-view="console">
-          <span class="nav-index" aria-hidden="true">08</span><span>OpenTUI</span>
+          <span class="nav-index" aria-hidden="true">09</span><span>OpenTUI</span>
         </button>
       </nav>
       <div class="sidebar-spacer"></div>
@@ -219,14 +222,95 @@
       </div>
     </section>
 
+    <section id="executors-panel" class="panel remotes-panel app-view" data-app-view="executors" hidden>
+      <div class="section-heading remotes-heading">
+        <div>
+          <p class="eyebrow">Final executor identity</p>
+          <h2>Executors</h2>
+        </div>
+        <div class="remotes-actions">
+          <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
+          <button id="executor-refresh" type="button">Refresh</button>
+          <span id="executor-state" class="muted">Not loaded</span>
+        </div>
+      </div>
+      <div class="remote-summary" aria-live="polite">
+        <article class="remote-metric"><span>Online</span><strong id="executor-online">—</strong></article>
+        <article class="remote-metric"><span>Total</span><strong id="executor-total">—</strong></article>
+        <article class="remote-metric"><span>Revoked</span><strong id="executor-revoked">—</strong></article>
+      </div>
+      <div class="remotes-layout">
+        <nav id="executor-list" class="remote-list" aria-label="Paired executors" aria-live="polite">
+          <div class="empty-state">Loading executors…</div>
+        </nav>
+        <article class="remote-details">
+          <div class="remote-details-header">
+            <div>
+              <strong id="executor-detail-name">No executor selected</strong>
+              <span id="executor-detail-status" class="muted">Select an executor to inspect it</span>
+            </div>
+            <div class="remote-detail-actions">
+              <button id="executor-rename-open" type="button" disabled>Rename</button>
+              <button id="executor-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
+            </div>
+          </div>
+          <dl class="remote-detail-grid">
+            <div><dt>Executor ID</dt><dd id="executor-detail-id">—</dd></div>
+            <div><dt>Workgate version</dt><dd id="executor-detail-version">—</dd></div>
+            <div><dt>Platform</dt><dd id="executor-detail-platform">—</dd></div>
+            <div><dt>Created</dt><dd id="executor-detail-created">—</dd></div>
+            <div><dt>Last seen</dt><dd id="executor-detail-last-seen">—</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <dialog id="executor-pair-dialog" class="remote-dialog">
+      <form id="executor-pair-form">
+        <div class="dialog-heading"><div><p class="eyebrow">Owner approval</p><h2>Pair executor</h2></div><button class="dialog-close" type="button" data-close-executor-dialog="executor-pair-dialog" aria-label="Close">×</button></div>
+        <label>Pairing code <input id="executor-pair-code" name="code" maxlength="32" required autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH"></label>
+        <div class="dialog-actions"><button type="button" data-close-executor-dialog="executor-pair-dialog">Cancel</button><button class="primary-action" type="submit">Inspect request</button></div>
+      </form>
+      <div id="executor-pair-review" hidden>
+        <dl class="remote-detail-grid">
+          <div><dt>Requested name</dt><dd id="executor-pair-requested-name">—</dd></div>
+          <div><dt>Hostname</dt><dd id="executor-pair-hostname">—</dd></div>
+          <div><dt>Platform</dt><dd id="executor-pair-platform">—</dd></div>
+          <div><dt>Build</dt><dd id="executor-pair-build">—</dd></div>
+          <div><dt>Existing executor hint</dt><dd id="executor-pair-existing">—</dd></div>
+          <div><dt>Expires</dt><dd id="executor-pair-expiry">—</dd></div>
+        </dl>
+        <label>Executor name <input id="executor-pair-name" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Optional"></label>
+        <label id="executor-pair-replace-wrap" hidden><input id="executor-pair-replace" type="checkbox"> Replace the existing executor credential shown above</label>
+        <p class="muted">Approve only a request whose machine identity you recognize. The bearer credential is delivered only to the executor and is never shown here.</p>
+        <div class="dialog-actions"><button id="executor-pair-deny" class="danger-action" type="button">Deny</button><button id="executor-pair-approve" class="primary-action" type="button">Approve</button></div>
+      </div>
+    </dialog>
+
+    <dialog id="executor-rename-dialog" class="remote-dialog">
+      <form id="executor-rename-form">
+        <div class="dialog-heading"><div><p class="eyebrow">Stable identity</p><h2>Rename executor</h2></div><button class="dialog-close" type="button" data-close-executor-dialog="executor-rename-dialog" aria-label="Close">×</button></div>
+        <label>New name <input id="executor-rename-name" maxlength="80" required autocomplete="off" spellcheck="false"></label>
+        <div class="dialog-actions"><button type="button" data-close-executor-dialog="executor-rename-dialog">Cancel</button><button class="primary-action" type="submit">Rename</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="executor-revoke-dialog" class="remote-dialog">
+      <form id="executor-revoke-form">
+        <div class="dialog-heading"><div><p class="eyebrow">Destructive action</p><h2>Revoke executor</h2></div><button class="dialog-close" type="button" data-close-executor-dialog="executor-revoke-dialog" aria-label="Close">×</button></div>
+        <p>Revoke <strong id="executor-revoke-name">this executor</strong>?</p>
+        <p class="muted">Its persisted bearer stops authenticating immediately after the revocation fence is persisted.</p>
+        <div class="dialog-actions"><button type="button" data-close-executor-dialog="executor-revoke-dialog">Cancel</button><button class="danger-action" type="submit">Revoke executor</button></div>
+      </form>
+    </dialog>
+
     <section id="remotes-panel" class="panel remotes-panel app-view" data-app-view="remotes" hidden>
       <div class="section-heading remotes-heading">
         <div>
-          <p class="eyebrow">Worker control plane</p>
+          <p class="eyebrow">Legacy runtime bridge</p>
           <h2>Remotes</h2>
         </div>
         <div class="remotes-actions">
-          <button id="remote-invite-open" class="primary-action" type="button">New invite</button>
           <button id="remote-refresh" type="button">Refresh</button>
           <span id="remote-state" class="muted">Not loaded</span>
         </div>
@@ -275,25 +359,6 @@
         </article>
       </div>
     </section>
-
-    <dialog id="remote-invite-dialog" class="remote-dialog">
-      <form id="remote-invite-form">
-        <div class="dialog-heading"><div><p class="eyebrow">One-time enrollment</p><h2>Create remote invite</h2></div><button class="dialog-close" type="button" data-close-dialog="remote-invite-dialog" aria-label="Close">×</button></div>
-        <label>Machine name <input id="remote-invite-name" name="name" maxlength="128" autocomplete="off" spellcheck="false" placeholder="Optional"></label>
-        <label>Starting workdir <input id="remote-invite-workdir" name="workdir" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Optional"></label>
-        <label>Lifetime <select id="remote-invite-ttl" name="ttl"><option value="600">10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="86400">24 hours</option></select></label>
-        <p class="muted">The returned command grants one enrollment and is not saved by this page.</p>
-        <div class="dialog-actions"><button type="button" data-close-dialog="remote-invite-dialog">Cancel</button><button class="primary-action" type="submit">Create invite</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="remote-invite-result-dialog" class="remote-dialog remote-invite-result-dialog">
-      <div class="dialog-heading"><div><p class="eyebrow">Sensitive one-time command</p><h2>Remote invite ready</h2></div><button class="dialog-close" id="remote-invite-result-close" type="button" aria-label="Close">×</button></div>
-      <p>Run this command on the remote worker:</p>
-      <pre id="remote-invite-command" class="remote-invite-command" tabindex="0"></pre>
-      <p id="remote-invite-expiry" class="muted">—</p>
-      <div class="dialog-actions"><button id="remote-invite-copy" type="button">Copy command</button><button id="remote-invite-done" class="primary-action" type="button">Done</button></div>
-    </dialog>
 
     <dialog id="remote-rename-dialog" class="remote-dialog">
       <form id="remote-rename-form">

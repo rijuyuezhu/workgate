@@ -8,6 +8,7 @@ void (async () => {
     `${uiPath}/assets/${name}${assetRevision ? `?v=${assetRevision}` : ""}`;
   const [
     { createDashboardController },
+    { createExecutorsController },
     { createRemotesController },
     { createAuditView },
     { createAuditController },
@@ -16,6 +17,7 @@ void (async () => {
     { createSessionsController },
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
+    import(assetUrl("executors.js")),
     import(assetUrl("remotes.js")),
     import(assetUrl("audit_view.js")),
     import(assetUrl("audit.js")),
@@ -56,9 +58,13 @@ void (async () => {
       title: "Machines",
       description: "Controller and worker targets available to the Human UI.",
     },
+    executors: {
+      title: "Executors",
+      description: "Pair, inspect, rename, and revoke final executor identities.",
+    },
     remotes: {
       title: "Remotes",
-      description: "Enroll, inspect, rename, and revoke outbound remote workers.",
+      description: "Inspect and administer the legacy remote runtime bridge during migration.",
     },
     sessions: {
       title: "Sessions",
@@ -170,6 +176,43 @@ void (async () => {
     machineOnline: document.getElementById("machine-online"),
     machineTotal: document.getElementById("machine-total"),
     oauthLogin: document.getElementById("oauth-login"),
+    executorDetailCreated: document.getElementById("executor-detail-created"),
+    executorDetailId: document.getElementById("executor-detail-id"),
+    executorDetailLastSeen: document.getElementById("executor-detail-last-seen"),
+    executorDetailName: document.getElementById("executor-detail-name"),
+    executorDetailPlatform: document.getElementById("executor-detail-platform"),
+    executorDetailStatus: document.getElementById("executor-detail-status"),
+    executorDetailVersion: document.getElementById("executor-detail-version"),
+    executorList: document.getElementById("executor-list"),
+    executorOnline: document.getElementById("executor-online"),
+    executorPairApprove: document.getElementById("executor-pair-approve"),
+    executorPairBuild: document.getElementById("executor-pair-build"),
+    executorPairCode: document.getElementById("executor-pair-code"),
+    executorPairDeny: document.getElementById("executor-pair-deny"),
+    executorPairDialog: document.getElementById("executor-pair-dialog"),
+    executorPairExisting: document.getElementById("executor-pair-existing"),
+    executorPairExpiry: document.getElementById("executor-pair-expiry"),
+    executorPairForm: document.getElementById("executor-pair-form"),
+    executorPairHostname: document.getElementById("executor-pair-hostname"),
+    executorPairName: document.getElementById("executor-pair-name"),
+    executorPairOpen: document.getElementById("executor-pair-open"),
+    executorPairPlatform: document.getElementById("executor-pair-platform"),
+    executorPairReplace: document.getElementById("executor-pair-replace"),
+    executorPairReplaceWrap: document.getElementById("executor-pair-replace-wrap"),
+    executorPairRequestedName: document.getElementById("executor-pair-requested-name"),
+    executorPairReview: document.getElementById("executor-pair-review"),
+    executorRefresh: document.getElementById("executor-refresh"),
+    executorRenameDialog: document.getElementById("executor-rename-dialog"),
+    executorRenameForm: document.getElementById("executor-rename-form"),
+    executorRenameName: document.getElementById("executor-rename-name"),
+    executorRenameOpen: document.getElementById("executor-rename-open"),
+    executorRevokeDialog: document.getElementById("executor-revoke-dialog"),
+    executorRevokeForm: document.getElementById("executor-revoke-form"),
+    executorRevokeName: document.getElementById("executor-revoke-name"),
+    executorRevokeOpen: document.getElementById("executor-revoke-open"),
+    executorRevoked: document.getElementById("executor-revoked"),
+    executorState: document.getElementById("executor-state"),
+    executorTotal: document.getElementById("executor-total"),
     remoteController: document.getElementById("remote-controller"),
     remoteDetailCapabilities: document.getElementById("remote-detail-capabilities"),
     remoteDetailHostname: document.getElementById("remote-detail-hostname"),
@@ -184,18 +227,6 @@ void (async () => {
     remoteDetailUser: document.getElementById("remote-detail-user"),
     remoteDetailVersion: document.getElementById("remote-detail-version"),
     remoteDetailWorkdir: document.getElementById("remote-detail-workdir"),
-    remoteInviteCommand: document.getElementById("remote-invite-command"),
-    remoteInviteCopy: document.getElementById("remote-invite-copy"),
-    remoteInviteDialog: document.getElementById("remote-invite-dialog"),
-    remoteInviteDone: document.getElementById("remote-invite-done"),
-    remoteInviteExpiry: document.getElementById("remote-invite-expiry"),
-    remoteInviteForm: document.getElementById("remote-invite-form"),
-    remoteInviteName: document.getElementById("remote-invite-name"),
-    remoteInviteOpen: document.getElementById("remote-invite-open"),
-    remoteInviteResultClose: document.getElementById("remote-invite-result-close"),
-    remoteInviteResultDialog: document.getElementById("remote-invite-result-dialog"),
-    remoteInviteTtl: document.getElementById("remote-invite-ttl"),
-    remoteInviteWorkdir: document.getElementById("remote-invite-workdir"),
     remoteList: document.getElementById("remote-list"),
     remoteOffline: document.getElementById("remote-offline"),
     remoteOnline: document.getElementById("remote-online"),
@@ -332,6 +363,15 @@ void (async () => {
   });
   dashboard.bind();
 
+  const executors = createExecutorsController({
+    elements,
+    request,
+    authMode: config.authMode,
+    isAuthenticated: () => authenticated,
+    reloadApp: () => load(),
+  });
+  executors.bind();
+
   const remotes = createRemotesController({
     elements,
     request,
@@ -350,7 +390,9 @@ void (async () => {
   }
 
   function viewFromLocation() {
-    return normalizeView(location.hash.slice(1));
+    const hashView = location.hash.slice(1);
+    if (!hashView && location.pathname === "/pair") return "executors";
+    return normalizeView(hashView);
   }
 
   function setActiveView(value, { syncHash = true, replaceHash = false } = {}) {
@@ -790,6 +832,8 @@ void (async () => {
       render(await request("/bootstrap"));
       await dashboard.refresh({ force: true });
       dashboard.startPolling();
+      await executors.refresh({ force: true });
+      executors.startPolling();
       await remotes.refresh({ force: true });
       remotes.startPolling();
       try {
@@ -820,6 +864,7 @@ void (async () => {
         terminal.reset("local");
         elements.terminalState.textContent = "Authentication required";
         dashboard.stopPolling();
+        executors.stopPolling();
         remotes.stopPolling();
         dashboard.invalidate();
         files.invalidate();
@@ -827,6 +872,7 @@ void (async () => {
         audit.invalidate();
 
         dashboard.reset("local");
+        executors.reset("Authentication required");
         remotes.reset("Authentication required");
         elements.dashboardState.textContent = "Authentication required";
         showAuthentication("Authentication required");
@@ -902,8 +948,10 @@ void (async () => {
     }
     terminal.reset("local");
     dashboard.stopPolling();
+    executors.stopPolling();
     remotes.stopPolling();
     dashboard.reset("local");
+    executors.reset("Authentication required");
     remotes.reset("Authentication required");
     files.reset("local");
     sessions.reset("local");
@@ -944,8 +992,8 @@ void (async () => {
   window.addEventListener("resize", () => window.requestAnimationFrame(terminal.resize));
   window.addEventListener("beforeunload", () => {
     dashboard.stopPolling();
+    executors.stopPolling();
     remotes.stopPolling();
-    remotes.clearInviteResult();
     terminal.close();
   });
   elements.oauthLogin.hidden = !oauthAvailable();

@@ -1,24 +1,18 @@
 """HTTP routes for remote worker bootstrap, polling, and results."""
 
 import json
-import shlex
-from importlib import resources
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from ..config.settings import get_settings
 from .bundle import worker_bundle
 from .constants import (
     REMOTE_API_PREFIX,
-    REMOTE_JOIN_PATH,
     REMOTE_WORKER_BUNDLE_PATH,
 )
 from .manager import WorkerRuntimeCompatibilityError, remote_manager
 from .responses import _error, _ok
-
-JOIN_SCRIPT_RESOURCE = "join_worker.sh"
 
 
 def _bearer_token(request: Request) -> str:
@@ -41,20 +35,6 @@ async def _optional_json_object(request: Request) -> dict[str, object]:
     if not isinstance(decoded, dict):
         raise ValueError("request body must be a JSON object")
     return decoded
-
-
-async def join_script(request: Request) -> PlainTextResponse:
-    """Serve a shell script that installs and starts a remote worker for a pending invite."""
-    settings = get_settings()
-    server = settings.resolved_base_url
-    script = (
-        resources.files(__package__)
-        .joinpath(JOIN_SCRIPT_RESOURCE)
-        .read_text(encoding="utf-8")
-        .replace("__REMOTE_SERVER__", shlex.quote(server))
-        .replace("__REMOTE_WORKER_BUNDLE_PATH__", REMOTE_WORKER_BUNDLE_PATH)
-    )
-    return PlainTextResponse(script, media_type="text/x-shellscript")
 
 
 async def register_endpoint(request: Request) -> JSONResponse:
@@ -129,7 +109,6 @@ async def result_endpoint(request: Request) -> JSONResponse:
 def remote_routes() -> list[Route]:
     """Create the APIRouter containing worker bootstrap and control endpoints."""
     return [
-        Route(REMOTE_JOIN_PATH, join_script, methods=["GET"]),
         Route(REMOTE_WORKER_BUNDLE_PATH, worker_bundle, methods=["GET"]),
         Route(
             f"{REMOTE_API_PREFIX}/register", register_endpoint, methods=["POST"]

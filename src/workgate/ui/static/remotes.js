@@ -13,7 +13,6 @@ export function createRemotesController({
     generation: 0,
     loading: false,
     timer: null,
-    inviteCommand: "",
   };
 
   function selectedRemote() {
@@ -42,17 +41,8 @@ export function createRemotesController({
     if (dialog?.open) dialog.close();
   }
 
-  function clearRemoteInviteResult({ close = true } = {}) {
-    controllerState.inviteCommand = "";
-    elements.remoteInviteCommand.textContent = "";
-    elements.remoteInviteExpiry.textContent = "—";
-    elements.remoteInviteCopy.textContent = "Copy command";
-    if (close) closeRemoteDialog(elements.remoteInviteResultDialog);
-  }
-
   function setRemoteControls() {
     elements.remoteRefresh.disabled = controllerState.loading;
-    elements.remoteInviteOpen.disabled = controllerState.loading || !controllerState.enabled;
     const selected = selectedRemote();
     elements.remoteRenameOpen.disabled = controllerState.loading || !controllerState.enabled || !selected;
     elements.remoteRevokeOpen.disabled = controllerState.loading || !controllerState.enabled || !selected;
@@ -65,11 +55,8 @@ export function createRemotesController({
     controllerState.machines = [];
     controllerState.selectedName = "";
     controllerState.enabled = false;
-    clearRemoteInviteResult();
-    closeRemoteDialog(elements.remoteInviteDialog);
     closeRemoteDialog(elements.remoteRenameDialog);
     closeRemoteDialog(elements.remoteRevokeDialog);
-    elements.remoteInviteForm.reset();
     elements.remoteRenameForm.reset();
     elements.remoteState.textContent = message;
     elements.remoteOnline.textContent = "—";
@@ -286,12 +273,6 @@ export function createRemotesController({
         elements.remoteState.textContent = error instanceof Error ? error.message : String(error);
       }
     });
-    elements.remoteInviteOpen.addEventListener("click", () => {
-      if (!controllerState.enabled || controllerState.loading || elements.remoteInviteDialog.open) return;
-      elements.remoteInviteForm.reset();
-      elements.remoteInviteDialog.showModal();
-      elements.remoteInviteName.focus();
-    });
     elements.remoteRenameOpen.addEventListener("click", () => {
       const machine = selectedRemote();
       if (!machine || elements.remoteRenameDialog.open) return;
@@ -311,57 +292,6 @@ export function createRemotesController({
         closeRemoteDialog(dialog);
       });
     }
-    elements.remoteInviteDialog.addEventListener("close", () => {
-      elements.remoteInviteForm.reset();
-    });
-    elements.remoteInviteResultDialog.addEventListener("close", () => {
-      clearRemoteInviteResult({ close: false });
-    });
-    elements.remoteInviteResultClose.addEventListener("click", () => clearRemoteInviteResult());
-    elements.remoteInviteDone.addEventListener("click", () => clearRemoteInviteResult());
-    elements.remoteInviteCopy.addEventListener("click", async () => {
-      if (!controllerState.inviteCommand) return;
-      try {
-        if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-          throw new Error("Clipboard API is unavailable");
-        }
-        await navigator.clipboard.writeText(controllerState.inviteCommand);
-        elements.remoteInviteCopy.textContent = "Copied";
-      } catch (error) {
-        elements.remoteInviteCopy.textContent = "Copy unavailable";
-        elements.remoteState.textContent = error instanceof Error ? error.message : String(error);
-      }
-    });
-    elements.remoteInviteForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const button = elements.remoteInviteForm.querySelector('button[type="submit"]');
-      button.disabled = true;
-      elements.remoteState.textContent = "Creating remote invite";
-      try {
-        const payload = await remoteAction("/remotes", {
-          name: elements.remoteInviteName.value.trim() || null,
-          workdir: elements.remoteInviteWorkdir.value.trim() || null,
-          ttl_s: Number(elements.remoteInviteTtl.value),
-        });
-        controllerState.inviteCommand = text(payload?.command, "");
-        if (!controllerState.inviteCommand) throw new Error("Invite response did not contain a command");
-        elements.remoteInviteCommand.textContent = controllerState.inviteCommand;
-        elements.remoteInviteExpiry.textContent = `Expires ${remoteTimestamp(payload?.expires_at, "at an unknown time")}`;
-        closeRemoteDialog(elements.remoteInviteDialog);
-        elements.remoteInviteResultDialog.showModal();
-        elements.remoteInviteCommand.focus();
-        elements.remoteState.textContent = "Remote invite created";
-      } catch (error) {
-        clearRemoteInviteResult();
-        if (error.authenticationRequired) {
-          void reloadApp();
-          return;
-        }
-        elements.remoteState.textContent = error instanceof Error ? error.message : String(error);
-      } finally {
-        button.disabled = false;
-      }
-    });
     elements.remoteRenameForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const machine = selectedRemote();
@@ -415,7 +345,6 @@ export function createRemotesController({
 
   return {
     bind,
-    clearInviteResult: clearRemoteInviteResult,
     refresh: refreshRemotes,
     reset: resetRemotes,
     startPolling: startRemotePolling,

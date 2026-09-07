@@ -1,59 +1,40 @@
-# Remote workers
+# Executors and legacy remote workers
 
-Remote workers let one `workgate` control server run session-bound work on another machine. They are useful for GPU hosts, build machines, lab servers, or remote checkouts while keeping a single public MCP connector.
+Workgate is moving machine execution behind paired executors. Pairing establishes a stable executor identity and long-lived trust with the control service. Already-enrolled legacy remote workers remain usable during the migration, but the old invite/join enrollment path is no longer public.
 
 ## Requirements
 
-The control server needs a public `WORKGATE_BASE_URL` reachable from the remote machine and remote support enabled. Normal MCP and UI access should remain protected by OAuth.
+The control service needs a URL reachable from the executor. Normal MCP and Human UI access should remain protected by the configured owner authentication. The executor machine needs Workgate installed and outbound access to the control URL; it never needs an inbound Workgate port. Machine-local tools such as Git, compilers, CUDA, and package managers still come from that executor host.
 
-The remote machine needs `curl`; the generated enrollment command bootstraps `uv` when necessary and uses it to obtain Python 3.14. Each content-addressed managed worker runtime owns its own `.venv`, populated from the `worker` dependency group in the bundled `pyproject.toml` and the bundled project `uv.lock`. Workgate does not maintain a separate worker requirements file. The selected workdir must be accessible to the user running the worker. Tools such as Git, compilers, CUDA, and package managers come from that remote machine.
+## Pair an executor
 
-Installing a managed runtime can require outbound HTTPS access beyond the Workgate controller. Even when Python 3.14 is already installed, `uv` must populate a new runtime `.venv`; unless every locked artifact is already present in the local uv cache, that means reaching a Python package registry. The default public registry is PyPI. Operators can use normal uv configuration such as `UV_INDEX_URL` to point workers at an approved private mirror. A worker that is allowed to reach only the Workgate controller cannot enroll a fresh uncached runtime, or upgrade to a new uncached runtime digest, with the current packaging model. If `uv` or a suitable Python is also absent, bootstrap may additionally need network access to obtain those tools.
-
-## Enroll a worker
-
-The easiest path is the browser UI:
-
-1. Open **Remotes**.
-2. Create an invite with a machine name and workdir.
-3. Copy the generated one-time command.
-4. Run it on the remote machine.
-5. Wait for the machine to appear online.
-
-You can also ask the connected MCP client:
-
-```text
-Use workgate to create a remote worker invite named gpu1 with workdir /home/me/project.
-```
-
-The generated command is sensitive and expires after a short time. Paste it only on the intended machine. Enrollment prints a profile id and a reconnect command; keep the worker state directory private.
-
-The selected remote workdir is user content: it is the filesystem context in which Workgate is allowed to work. Worker-owned files are stored separately. On Linux, new workers use:
-
-```text
-${XDG_STATE_HOME:-~/.local/state}/workgate/worker/   # identity, profiles, logs/state
-${XDG_DATA_HOME:-~/.local/share}/workgate/worker/   # runtimes, launcher, stored Python
-```
-
-macOS and Windows use native per-user Workgate state/data locations. Clearing ordinary cache or runtime/temp storage does not remove an installed managed worker runtime.
-
-Managed worker execution is intentionally isolated from controller configuration on the remote host. A worker does not auto-discover that machine's default Workgate `config.yaml`; the enrolled workdir and worker-specific environment are authoritative. `WORKGATE_CONFIG=/absolute/path` remains an explicit opt-in when an operator intentionally wants to apply a config file to the worker process.
-
-If enrollment used a custom `WORKGATE_WORKER_STATE_DIR`, export the same value whenever you run the `workgate worker ...` lifecycle and update commands below. For compatibility with older layouts, an explicit `WORKGATE_WORKER_STATE_DIR` also owns worker runtime/data files unless `WORKGATE_WORKER_DATA_DIR` is set separately. The saved reconnect launcher and an installed native service preserve the selected roots internally, but a fresh administrative CLI process otherwise uses the platform defaults.
+Run this on the machine you want to pair:
 
 ```bash
-export WORKGATE_WORKER_STATE_DIR=/path/to/worker-state
-# Optional when state and installed runtime data should use different roots:
-export WORKGATE_WORKER_DATA_DIR=/path/to/worker-data
+workgate executor connect https://control.example --name gpu1
 ```
+
+The command prints an owner verification URL and a short pairing code. Open the verification URL, sign in as the owner, open **Executors**, inspect the reported machine metadata, and approve or deny the request. The browser never receives the executor bearer credential.
+
+After approval, the executor atomically saves its private profile before the first authenticated hello. Re-running `connect` against the same control URL first checks the saved profile; a still-valid profile is reused rather than paired again. The former Remote invite and `/join` enrollment surfaces are intentionally unavailable.
+
+The final executor profile is private durable state under Workgate's normal state root at `executor/profile.json`. It contains the control URL, stable executor ID, and bearer credential, so keep the state directory private and do not copy the profile into logs or support output.
+
+Executor machine policy is resolved locally. In particular, its configured workspace root is executor authority; control-side path settings do not override that machine policy.
 
 ## Reconnect after a restart
 
-Run the reconnect command printed during enrollment. It is also available from the worker's action menu in the browser UI or through `remote_admin(action="reconnect_command", ...)`.
+Start the executor from its saved profile:
 
-Temporary network failures are retried while the worker process is running. A new invite is needed after revocation or after deleting the saved worker identity.
+```bash
+workgate executor run
+```
 
-## Install a user service
+Temporary network or control outages use reconnect/backoff with the same profile. Long inactivity does not itself expire executor trust. If the executor was revoked or its credential was replaced, run `workgate executor connect CONTROL_URL` and complete the owner-approved pairing/replacement flow instead of falling back to a legacy invite.
+
+## Legacy worker service lifecycle
+
+The commands in this section apply only to already-enrolled legacy workers retained during the migration; they are not the provisioning path for new executors.
 
 Linux with `systemd --user` and macOS with launchd can keep one selected profile running as a per-user service:
 
@@ -105,38 +86,26 @@ Copy results/summary.json from the gpu1 session into reports/gpu1-summary.json i
 
 The control server selects an available transfer method. Users normally do not need to tune transfer internals. For limits and advanced settings, see [Configuration](../reference/configuration.md).
 
-## Update
+## Legacy worker update
 
-Update a profile's managed worker runtime with:
+For an already-enrolled legacy worker, `workgate worker update PROFILE_ID` still refreshes its managed runtime during the migration. Do not use the legacy worker CLI to provision a new machine. Older source-only or pre-Workgate installations are not adopted automatically; stop the old service if needed and pair a final executor instead.
 
-```bash
-workgate worker update p_0123456789abcdef
-```
+The 5.0-alpha state/data layout change also does not automatically move an older Workgate worker root such as `~/.local/state/workgate-worker`. Existing installations may temporarily keep using an explicitly configured legacy root, but new trust belongs to the final executor profile.
 
-Use `--force` only when you intentionally want to reinstall the current runtime.
+## Revoke an executor
 
-Managed runtime protocol 2 introduces the per-runtime locked uv environment. Workers from the earlier source-only/runtime-protocol-1 design are intentionally not upgraded in place: a current controller rejects them before issuing a bundle upgrade instruction. Create a fresh invite and re-enroll that worker. This is an intentional 5.0-alpha compatibility break that removes the old dependency/YAML/Pydantic compatibility shims rather than carrying them forward.
+Open **Executors**, select the executor, and choose **Revoke**. Revocation is persisted before the action returns, wakes transport waiters, and prevents the old bearer from authenticating again. Pairing delivery plaintext associated with that executor is cleared as part of the same owner action.
 
-Pre-Workgate worker installations are not migrated or adopted automatically. Leave their state untouched, remove or stop the old service separately if needed, then create a fresh Workgate invite and re-enroll the machine.
+To deliberately replace the credential for the same stable executor ID, run `workgate executor connect CONTROL_URL` from that machine, inspect the pairing request in **Executors**, and explicitly approve replacement.
 
-The 5.0-alpha state/data layout change also does not automatically move an older Workgate worker root such as `~/.local/state/workgate-worker`. To keep using that installation temporarily, set `WORKGATE_WORKER_STATE_DIR` to the old absolute root; compatibility mode keeps its runtimes and launcher there too. A clean re-enrollment uses the new split state/data defaults. If you migrate files manually instead, stop the managed service first and preserve owner-private permissions.
-
-## Revoke a worker
-
-Use the **Revoke** action in the browser UI or ask the MCP client:
-
-```text
-Use workgate to revoke remote machine gpu1.
-```
-
-A revoked worker cannot receive more jobs. Re-enrollment requires a new invite.
+The **Remotes** page and `remote_admin` remain only for administration of already-enrolled legacy workers; they no longer create enrollment invites.
 
 ## Troubleshooting
 
-- **Worker never appears online:** confirm the public base URL is reachable from the remote host and that the invite has not expired.
-- **Worker was online before a reboot:** run the saved reconnect command or install the user service. On Linux, also enable systemd lingering if the worker must start before that user logs in.
-- **Service fails to start:** inspect `workgate worker status` and `workgate worker logs --lines 100`.
-- **A command or file action is missing:** verify the remote host has the required executable and that the selected worker supports the operation.
-- **The worker is rejected after an old upgrade:** run `worker update`, migrate a legacy installation, or enroll again.
+- **Pairing request never appears:** confirm the control URL is reachable from the executor and that the short pairing code has not expired.
+- **Executor was paired before a reboot:** run `workgate executor run`; ordinary downtime does not require pairing again.
+- **Executor reports revoked or unauthorized:** run `workgate executor connect CONTROL_URL` and complete the owner-approved replacement flow if that machine should still be trusted.
+- **Legacy worker service fails to start:** inspect `workgate worker status` and `workgate worker logs --lines 100` for that already-enrolled worker.
+- **A machine command or file action is missing:** verify the machine has the required executable and advertises the needed capability.
 
 For exact CLI syntax, see [CLI reference](../reference/cli.md). For implementation and protocol work, see [Development](../development.md) and [Security](../security.md).
