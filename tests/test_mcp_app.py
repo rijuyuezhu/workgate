@@ -17,6 +17,11 @@ from workgate.ui.security import (
     UI_LOCAL_TOKEN_HEADER,
     get_or_create_ui_local_token,
 )
+from workgate.ui.session import (
+    UI_SESSION_BINDING_HEADER,
+    issue_ui_session,
+    ui_session_cookie_name,
+)
 
 
 async def _ok(request):
@@ -55,7 +60,9 @@ def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
         ),
         legacy_settings=settings,
         tool_catalog=tool_catalog,
+        control_state=object(),
         executor_transport=object(),
+        executor_pairing=object(),
     )
 
 
@@ -176,9 +183,26 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
     paths = _route_paths(app)
     assert "/join" not in paths
     assert "/remote/register" in paths
+    assert "/executor/v1/pair/start" in paths
+    assert "/executor/v1/pair/poll" in paths
+    assert "/executor/v1/hello" in paths
+    assert "/api/ui/pair" in paths
+    assert "/api/ui/executors" in paths
+    assert "/api/ui/executors/{action}" in paths
     assert session_manager.session_idle_timeout == 987
 
-    assert any(entry.cls is AuthMiddleware for entry in app.user_middleware)
+    auth = next(
+        entry for entry in app.user_middleware if entry.cls is AuthMiddleware
+    )
+    public_paths = {
+        getattr(route, "path", "")
+        for route in cast(Any, auth.kwargs["public_routes"])
+    }
+    assert "/executor/v1/pair/start" in public_paths
+    assert "/executor/v1/pair/poll" in public_paths
+    assert "/api/ui/pair" not in public_paths
+    assert "/api/ui/executors" not in public_paths
+    assert "/api/ui/executors/{action}" not in public_paths
     session_limit = next(
         entry
         for entry in app.user_middleware
@@ -191,6 +215,47 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
     )
     assert session_limit.kwargs["max_sessions"] == 17
     assert request_limit.kwargs["max_bytes"] == 4321
+
+
+def test_mcp_executor_admin_routes_require_auth_and_ui_csrf(tmp_path):
+    base_url = "https://control.test"
+    settings = Settings(
+        mode="mcp",
+        auth_mode="oauth",
+        base_url=base_url,
+        oauth_admin_pin="test-admin-pin-1234",
+        state_dir=tmp_path / "state",
+        remote_enabled=False,
+    )
+    configure_settings(settings)
+    runtime = cast(Any, _runtime_stub(settings))
+    app = mcp_app.build_mcp_http_app(cast(Any, _DummyMcp()), runtime=runtime)
+    client = TestClient(
+        app,
+        base_url=base_url,
+        client=("203.0.113.10", 50000),
+    )
+
+    unauthenticated = client.get("/api/ui/executors")
+    assert unauthenticated.status_code == 401
+
+    binding_token = "b" * 43
+    session_token, _csrf_token, _max_age = issue_ui_session(
+        {"sub": "owner", "scope": "remote:use"},
+        binding_token,
+        base_url,
+    )
+    missing_csrf = client.post(
+        "/api/ui/pair",
+        headers={
+            "Cookie": f"{ui_session_cookie_name(base_url)}={session_token}",
+            "Origin": base_url,
+            UI_SESSION_BINDING_HEADER: binding_token,
+        },
+        json={"user_code": "ABCDEFGH", "decision": "deny"},
+    )
+    assert missing_csrf.status_code == 403
+    assert missing_csrf.json()["detail"] == "Human UI CSRF validation failed"
 
 
 def test_build_mcp_uses_runtime_settings_for_transport_security():

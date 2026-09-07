@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,10 @@ from workgate.protocol.credentials import (
     new_executor_credential,
 )
 from workgate.protocol.errors import ProtocolErrorCode
+from workgate.protocol.executor import (
+    ExecutorHelloRequest,
+    ExecutorRuntimeSummary,
+)
 from workgate.protocol.ids import new_executor_id
 from workgate.protocol.pairing import (
     PairApprovalRequest,
@@ -82,6 +87,17 @@ def _request(*, existing_executor_id: str | None = None) -> PairStartRequest:
         metadata=PairingExecutorMetadata(
             hostname="host-a", platform="linux", build="test"
         ),
+    )
+
+
+def _hello() -> ExecutorHelloRequest:
+    return ExecutorHelloRequest(
+        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        capabilities=("shell",),
+        workspace_root="/workspace",
+        sessions=(),
+        shells=(),
+        jobs=(),
     )
 
 
@@ -269,6 +285,71 @@ async def test_owner_replacement_keeps_executor_id_and_invalidates_old_bearer(
 
 
 @pytest.mark.asyncio
+async def test_stale_authenticated_hello_cannot_consume_replacement_delivery(
+    tmp_path: Path,
+) -> None:
+    service, state, transport, _clock = _service(tmp_path)
+    executor_id = new_executor_id()
+    old_credential = new_executor_credential()
+    state.put_executor(
+        ExecutorTrustRecord(
+            executor_id=executor_id,
+            name="executor",
+            credential_verifier=executor_credential_verifier(old_credential),
+            created_at=123.0,
+        )
+    )
+
+    old_hello_authenticated = asyncio.Event()
+    release_old_hello = asyncio.Event()
+
+    async def delayed_completion(
+        authenticated_executor_id: str, authenticated_credential: str
+    ) -> None:
+        if authenticated_credential == old_credential:
+            old_hello_authenticated.set()
+            await release_old_hello.wait()
+        await service.complete_authenticated_hello(
+            authenticated_executor_id,
+            authenticated_credential,
+        )
+
+    transport.set_authenticated_hello_callback(delayed_completion)
+    old_hello = asyncio.create_task(transport.hello(old_credential, _hello()))
+    await old_hello_authenticated.wait()
+
+    started = await service.start_pairing(
+        _request(existing_executor_id=executor_id)
+    )
+    approved = await service.decide(
+        PairApprovalRequest(
+            user_code=started.user_code,
+            decision=PairDecision.APPROVE,
+            replace_executor_id=executor_id,
+        )
+    )
+    assert approved.executor_id == executor_id
+
+    release_old_hello.set()
+    await old_hello
+
+    delivery = await service.poll(started.device_code)
+    assert delivery.executor_id == executor_id
+    assert executor_credential_matches(
+        delivery.credential,
+        state.snapshot_executors()[executor_id].credential_verifier,
+    )
+
+    await transport.hello(delivery.credential, _hello())
+    with pytest.raises(ExecutorPairingError) as consumed:
+        await service.poll(started.device_code)
+    assert consumed.value.error.code is ProtocolErrorCode.PAIRING_EXPIRED
+
+    await service.aclose()
+    await transport.aclose()
+
+
+@pytest.mark.asyncio
 async def test_first_authenticated_hello_or_close_erases_plaintext_delivery(
     tmp_path: Path,
 ) -> None:
@@ -281,9 +362,11 @@ async def test_first_authenticated_hello_or_close_erases_plaintext_delivery(
         )
     )
     assert approved.executor_id is not None
-    await service.poll(started.device_code)
+    delivery = await service.poll(started.device_code)
 
-    await service.complete_authenticated_hello(approved.executor_id)
+    await service.complete_authenticated_hello(
+        approved.executor_id, delivery.credential
+    )
     with pytest.raises(ExecutorPairingError) as caught:
         await service.poll(started.device_code)
     assert caught.value.error.code is ProtocolErrorCode.PAIRING_EXPIRED

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import math
 import time
 from collections import deque
@@ -259,8 +260,22 @@ class ExecutorPairingService:
                 credential=attempt.credential,
             )
 
-    async def complete_authenticated_hello(self, executor_id: str) -> None:
-        """Erase transient plaintext delivery after the bearer authenticates once."""
+    async def complete_authenticated_hello(
+        self, executor_id: str, credential: str
+    ) -> None:
+        """Erase only delivery for the bearer that authenticated this hello."""
+        async with self._lock:
+            self._prune_expired_locked(self._clock())
+            for device_code, attempt in tuple(self._attempts.items()):
+                if (
+                    attempt.executor_id == executor_id
+                    and attempt.credential is not None
+                    and hmac.compare_digest(attempt.credential, credential)
+                ):
+                    self._remove_attempt_locked(device_code)
+
+    async def clear_executor_delivery(self, executor_id: str) -> None:
+        """Erase every undelivered plaintext bearer for an owner-fenced executor."""
         async with self._lock:
             self._prune_expired_locked(self._clock())
             for device_code, attempt in tuple(self._attempts.items()):
@@ -269,10 +284,6 @@ class ExecutorPairingService:
                     and attempt.credential is not None
                 ):
                     self._remove_attempt_locked(device_code)
-
-    async def clear_executor_delivery(self, executor_id: str) -> None:
-        """Erase undelivered plaintext after owner revocation/replacement."""
-        await self.complete_authenticated_hello(executor_id)
 
     async def aclose(self) -> None:
         """Discard all pairing secrets; no attempt survives control restart."""

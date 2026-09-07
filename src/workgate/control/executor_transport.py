@@ -84,15 +84,15 @@ class ExecutorTransport:
         self._wall_clock = wall_clock
         self._channels: dict[str, _ExecutorChannel] = {}
         self._authenticated_hello_callback: (
-            Callable[[str], Awaitable[None]] | None
+            Callable[[str, str], Awaitable[None]] | None
         ) = None
         self._started = False
         self._closed = False
 
     def set_authenticated_hello_callback(
-        self, callback: Callable[[str], Awaitable[None]] | None
+        self, callback: Callable[[str, str], Awaitable[None]] | None
     ) -> None:
-        """Observe successful hello after the per-executor handoff lock is released."""
+        """Observe the executor ID and bearer that authenticated one successful hello."""
         self._authenticated_hello_callback = callback
 
     def start(self) -> None:
@@ -198,7 +198,7 @@ class ExecutorTransport:
             self._touch(channel)
         callback = self._authenticated_hello_callback
         if callback is not None:
-            await callback(record.executor_id)
+            await callback(record.executor_id, credential)
         return ExecutorHelloResponse(
             heartbeat_interval_s=self._heartbeat_interval_s,
             offline_after_s=self._offline_after_s,
