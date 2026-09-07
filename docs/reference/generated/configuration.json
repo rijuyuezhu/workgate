@@ -1578,6 +1578,46 @@
             "code": "64"
           },
           "Maximum queued or offered ordinary commands retained per executor."
+        ],
+        [
+          {
+            "code": "executor_pairing_max_pending"
+          },
+          {
+            "lines": [
+              {
+                "code": "--executor-pairing-max-pending"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_EXECUTOR_PAIRING_MAX_PENDING"
+          },
+          "integer",
+          {
+            "code": "32"
+          },
+          "Maximum live process-local executor pairing attempts admitted by control."
+        ],
+        [
+          {
+            "code": "executor_pairing_ttl_s"
+          },
+          {
+            "lines": [
+              {
+                "code": "--executor-pairing-ttl-s"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_EXECUTOR_PAIRING_TTL_S"
+          },
+          "integer",
+          {
+            "code": "600"
+          },
+          "Lifetime in seconds for one process-local executor pairing attempt."
         ]
       ]
     },
@@ -3067,6 +3107,32 @@
       "description": "Maximum queued or offered ordinary commands retained per executor.",
       "env": "WORKGATE_EXECUTOR_MAX_PENDING_COMMANDS",
       "name": "executor_max_pending_commands",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--executor-pairing-max-pending",
+      "default": 32,
+      "default_display": "32",
+      "description": "Maximum live process-local executor pairing attempts admitted by control.",
+      "env": "WORKGATE_EXECUTOR_PAIRING_MAX_PENDING",
+      "name": "executor_pairing_max_pending",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--executor-pairing-ttl-s",
+      "default": 600,
+      "default_display": "600",
+      "description": "Lifetime in seconds for one process-local executor pairing attempt.",
+      "env": "WORKGATE_EXECUTOR_PAIRING_TTL_S",
+      "name": "executor_pairing_ttl_s",
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",

@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -14,7 +14,6 @@ from ...config.settings import get_settings
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_REMOTE_USE
 from ...remote.service import (
-    create_remote_invite,
     list_remote_machines,
     rename_remote_machine,
     revoke_remote_machine,
@@ -26,7 +25,6 @@ UI_REMOTE_MACHINE_MAX_BYTES = 512
 UI_REMOTE_PATH_MAX_BYTES = 4_096
 UI_REMOTE_CAPABILITIES_MAX = 64
 UI_REMOTE_CAPABILITY_MAX_BYTES = 128
-UI_REMOTE_COMMAND_MAX_BYTES = 16_384
 UI_REMOTE_PROFILE_ID_MAX_BYTES = 128
 UI_REMOTE_RECONNECT_COMMAND_MAX_BYTES = 8_192
 UI_REMOTE_VERSION_MAX_BYTES = 256
@@ -41,14 +39,6 @@ UI_REMOTE_INFO_KEYS = {
     "workdir": UI_REMOTE_PATH_MAX_BYTES,
 }
 _UI_REMOTE_PROFILE_ID_RE = re.compile(r"p_[A-Za-z0-9_-]{8,64}")
-
-
-class _InviteBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    workdir: str | None = None
-    ttl_s: int | None = Field(default=None, ge=60, le=24 * 60 * 60)
 
 
 class _RenameBody(BaseModel):
@@ -248,7 +238,6 @@ def _inventory_payload() -> dict[str, Any]:
             "enabled": False,
             "machines": [],
             "counts": {"online": 0, "offline": 0, "total": 0},
-            "invite_ttl_s": settings.remote_invite_ttl_s,
         }
     raw = list_remote_machines().model_dump(mode="json")
     rows = raw.get("machines")
@@ -271,29 +260,6 @@ def _inventory_payload() -> dict[str, Any]:
             "offline": len(machines) - online,
             "total": len(machines),
         },
-        "invite_ttl_s": settings.remote_invite_ttl_s,
-    }
-
-
-def _invite_payload(value: Any) -> dict[str, Any]:
-    data = value.model_dump(mode="json")
-    expires_at = _finite_number(data.get("expires_at"), field="expires_at")
-    ttl_s = _nonnegative_int(data.get("ttl_s"), field="ttl_s")
-    if ttl_s < 60 or ttl_s > 24 * 60 * 60:
-        raise RuntimeError("Remote invite returned an invalid lifetime")
-    return {
-        "name": None
-        if data.get("name") is None
-        else _machine_name(data.get("name"), field="name"),
-        "workdir": _optional_path(data.get("workdir"), field="workdir"),
-        "expires_at": expires_at,
-        "ttl_s": ttl_s,
-        "command": _bounded_text(
-            data.get("command"),
-            field="command",
-            max_bytes=UI_REMOTE_COMMAND_MAX_BYTES,
-            allow_empty=False,
-        ),
     }
 
 
@@ -315,57 +281,14 @@ def _mutation_disabled() -> JSONResponse:
 
 
 async def api_remotes(request: Request) -> Response:
-    """List remote workers or create one short-lived enrollment invite."""
+    """List already-enrolled legacy remote workers."""
     _require_remote_scope()
-    if request.method == "GET":
-        try:
-            return _json_ok(_inventory_payload())
-        except Exception:  # noqa: BLE001
-            return _json_error(
-                "RemoteInventoryUnavailable",
-                "Remote worker inventory is unavailable",
-                status_code=500,
-            )
-
-    if not get_settings().remote_enabled:
-        return _mutation_disabled()
     try:
-        body = _parse_body(_InviteBody, await request.json())
-        assert isinstance(body, _InviteBody)
-        name = (
-            None
-            if body.name is None
-            else _machine_name(body.name, field="name")
-        )
-        workdir = _optional_path(body.workdir, field="workdir")
-        result = await create_remote_invite(name, workdir, body.ttl_s)
-        payload = _invite_payload(result)
-        audit(
-            "ui_remote_invite_created",
-            machine=name,
-            workdir=workdir,
-            expires_at=payload["expires_at"],
-            ttl_s=payload["ttl_s"],
-        )
-        return _json_ok(payload, "Remote invite created")
-    except ValueError as exc:
-        return _json_error(type(exc).__name__, str(exc), status_code=400)
-    except RuntimeError as exc:
-        if "Too many pending remote invites" in str(exc):
-            return _json_error(
-                "RemoteInviteCapacityExceeded",
-                "Too many pending remote invites",
-                status_code=429,
-            )
-        return _json_error(
-            "RemoteInviteUnavailable",
-            "Remote invite could not be created",
-            status_code=500,
-        )
+        return _json_ok(_inventory_payload())
     except Exception:  # noqa: BLE001
         return _json_error(
-            "RemoteInviteUnavailable",
-            "Remote invite could not be created",
+            "RemoteInventoryUnavailable",
+            "Remote worker inventory is unavailable",
             status_code=500,
         )
 

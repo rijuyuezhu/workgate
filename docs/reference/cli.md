@@ -59,26 +59,17 @@ Every `WORKGATE_*` application setting has a matching CLI flag using lowercase d
 WORKGATE_REMOTE_ENABLED -> --remote-enabled true
 ```
 
-## Remote worker commands
+## Executor commands
 
-The worker CLI has an explicit breaking-clean subcommand tree:
+New machines use the final executor pairing flow:
 
 ```text
-workgate worker enroll --server URL (--invite VALUE | --invite-stdin) [--name NAME] [--workdir PATH]
-workgate worker connect --server URL (--invite VALUE | --invite-stdin) [--name NAME] [--workdir PATH]
-workgate worker run
-workgate worker install-service [--no-start]
-workgate worker uninstall-service
-workgate worker start
-workgate worker stop
-workgate worker restart
-workgate worker status
-workgate worker logs [--lines N] [--follow]
-workgate worker update [--force]
+workgate executor connect CONTROL_URL [--name NAME]
+workgate executor run
 ```
 
-`enroll` persists identity and exits. `connect` enrolls or resumes and stays in the foreground. `run` uses only the private persisted identity and is the command referenced by managed services and verified runtime re-exec. `--invite-stdin` accepts bounded UTF-8 from non-interactive stdin and avoids shell-history retention.
+`connect` starts device-code pairing when the saved executor profile is absent or no longer authenticates. It prints the owner verification URL and short user code, then waits for approval. After approval, Workgate atomically saves the issued `control_url`, stable `executor_id`, and bearer credential before the first authenticated hello. If the existing profile still authenticates, `connect` reports that it is already paired and leaves it unchanged.
 
-User-service management supports Linux `systemd --user` and macOS launchd. Windows returns a structured unsupported result. Service files contain no invite, worker access token, or server credential, and these commands remain local CLI functionality rather than MCP tools.
+`run` uses only the saved executor profile. Normal network or control outages reconnect with the same long-lived credential; they do not require a fresh owner approval. Revocation or credential replacement requires owner action before that profile can authenticate again.
 
-In most cases, create the invitation with `remote_admin(action="invite", args={...})` and paste the generated join command. The old flat `worker --server ...` form and `--persist` are not supported.
+The old remote invite/join enrollment flow is no longer a public tool, API, or browser workflow. The legacy `workgate worker` runtime remains an internal migration implementation for already-enrolled workers until machine execution is fully moved behind the executor boundary; do not use it to provision new machines.

@@ -31,28 +31,33 @@ class ExecutorProfile(BaseModel):
     @field_validator("control_url")
     @classmethod
     def _validate_control_url(cls, value: str) -> str:
-        normalized = value.rstrip("/")
-        parsed = urlsplit(normalized)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("control_url must be an absolute HTTP(S) URL")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("control_url must not contain userinfo")
-        if parsed.query or parsed.fragment:
-            raise ValueError("control_url must not contain query or fragment")
-        if parsed.path not in {"", "/"}:
-            raise ValueError("control_url must be an origin without a path")
-        if parsed.scheme == "http":
-            host = parsed.hostname.rstrip(".").lower()
-            if host != "localhost":
-                try:
-                    is_loopback = ipaddress.ip_address(host).is_loopback
-                except ValueError:
-                    is_loopback = False
-                if not is_loopback:
-                    raise ValueError(
-                        "plain HTTP control_url is allowed only for loopback"
-                    )
-        return normalized
+        return normalize_control_url(value)
+
+
+def normalize_control_url(value: str) -> str:
+    """Validate and normalize one executor control origin."""
+    normalized = value.rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("control_url must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("control_url must not contain userinfo")
+    if parsed.query or parsed.fragment:
+        raise ValueError("control_url must not contain query or fragment")
+    if parsed.path not in {"", "/"}:
+        raise ValueError("control_url must be an origin without a path")
+    if parsed.scheme == "http":
+        host = parsed.hostname.rstrip(".").lower()
+        if host != "localhost":
+            try:
+                is_loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                is_loopback = False
+            if not is_loopback:
+                raise ValueError(
+                    "plain HTTP control_url is allowed only for loopback"
+                )
+    return normalized
 
 
 class ExecutorProfileStore:

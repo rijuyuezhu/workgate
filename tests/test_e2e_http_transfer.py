@@ -6,6 +6,7 @@ import pytest
 
 from tests.e2e_helpers import streamable_http_tool_client
 from tests.test_e2e_remote_worker import (
+    legacy_worker_access,
     run_remote_enabled_mcp_process,
     start_worker_process,
     terminate_process,
@@ -19,14 +20,7 @@ def _data(result):
     return result.get("data", result)
 
 
-async def _enroll_worker(client, base_url, machine, workspace):
-    invite = await client.call_tool(
-        "remote_admin",
-        {
-            "action": "invite",
-            "args": {"name": machine, "workdir": str(workspace), "ttl_s": 120},
-        },
-    )
+async def _start_seeded_worker(client, base_url, machine, workspace):
     async with httpx.AsyncClient(timeout=20, trust_env=False) as http_client:
         bundle_response = await http_client.get(
             f"{base_url}/remote/worker-bundle.tgz"
@@ -36,7 +30,7 @@ async def _enroll_worker(client, base_url, machine, workspace):
     bundle_path.write_bytes(bundle_response.content)
     worker = start_worker_process(
         base_url,
-        _data(invite)["code"],
+        legacy_worker_access(machine),
         machine,
         workspace,
         bundle_path,
@@ -48,16 +42,21 @@ async def _enroll_worker(client, base_url, machine, workspace):
 async def test_real_controller_worker_large_http_routes(tmp_path) -> None:
     payload = (b"phase-8-http-transfer-" * 60000) + b"tail"
     assert len(payload) > 1024 * 1024
+    machine = "http-worker-one"
+    seeded_remote_workspace = tmp_path / "workspace-remote"
     async with (
-        run_remote_enabled_mcp_process(tmp_path) as (
+        run_remote_enabled_mcp_process(
+            tmp_path,
+            legacy_workers={machine: seeded_remote_workspace},
+        ) as (
             base_url,
             control_workspace,
             remote_workspace,
         ),
         streamable_http_tool_client(base_url) as client,
     ):
-        worker = await _enroll_worker(
-            client, base_url, "http-worker-one", remote_workspace
+        worker = await _start_seeded_worker(
+            client, base_url, machine, remote_workspace
         )
         try:
             local = _data(
@@ -179,21 +178,30 @@ async def test_real_controller_worker_large_http_routes(tmp_path) -> None:
 async def test_real_two_workers_large_http_spool(tmp_path) -> None:
     payload = (b"cross-worker-http-" * 70000) + b"done"
     assert len(payload) > 1024 * 1024
+    source_machine = "http-worker-source"
+    destination_machine = "http-worker-destination"
+    seeded_first_workspace = tmp_path / "workspace-remote"
+    second_workspace = tmp_path / "remote-workspace-two"
+    second_workspace.mkdir(parents=True)
     async with (
-        run_remote_enabled_mcp_process(tmp_path) as (
+        run_remote_enabled_mcp_process(
+            tmp_path,
+            legacy_workers={
+                source_machine: seeded_first_workspace,
+                destination_machine: second_workspace,
+            },
+        ) as (
             base_url,
             _control_workspace,
             first_workspace,
         ),
         streamable_http_tool_client(base_url) as client,
     ):
-        second_workspace = tmp_path / "remote-workspace-two"
-        second_workspace.mkdir(parents=True)
-        first_worker = await _enroll_worker(
-            client, base_url, "http-worker-source", first_workspace
+        first_worker = await _start_seeded_worker(
+            client, base_url, source_machine, first_workspace
         )
-        second_worker = await _enroll_worker(
-            client, base_url, "http-worker-destination", second_workspace
+        second_worker = await _start_seeded_worker(
+            client, base_url, destination_machine, second_workspace
         )
         try:
             source = _data(

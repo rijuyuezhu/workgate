@@ -5,8 +5,6 @@ from playwright.sync_api import expect
 
 from tests.browser.harness import BrowserHarness
 
-MACHINE = "browser-edge"
-
 
 def _wait_terminal_output(
     harness: BrowserHarness,
@@ -182,114 +180,11 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
     expect(page.locator("#terminal-xterm .xterm")).to_be_visible()
     _wait_terminal_output(harness, "local", local_shell, "local-terminal-e2e")
-
-    harness.invite_and_start_worker(MACHINE)
-    page.locator("#refresh").click()
-    expect(
-        page.locator('#file-machine option[value="browser-edge"]')
-    ).to_have_count(1)
-    expect(
-        page.locator('#terminal-machine option[value="browser-edge"]')
-    ).to_have_count(1)
-    expect(
-        page.locator('#session-machine option[value="browser-edge"]')
-    ).to_have_count(1)
-
-    harness.navigate("files")
-    page.locator("#file-machine").select_option(MACHINE)
-    expect(page.locator("#file-state")).to_contain_text(f"{MACHINE}:.")
-    remote_note = page.locator('.file-entry[title="remote-note.txt"]')
-    expect(remote_note).to_be_visible()
-    remote_note.click()
-    expect(page.locator("#file-preview-body")).to_contain_text(
-        "remote browser fixture"
-    )
-    page.locator("#file-edit").click()
-    page.locator("#file-editor").fill("edited on remote worker\n")
-    page.locator("#file-editor-form").get_by_role(
-        "button", name="Save file"
-    ).click()
-    expect(page.locator("#file-state")).to_contain_text(
-        f"Saved {MACHINE}:remote-note.txt"
-    )
-    assert harness.remote_workspace.joinpath("remote-note.txt").read_text() == (
-        "edited on remote worker\n"
-    )
-    assert harness.control_workspace.joinpath("notes.txt").read_text() == (
-        "edited by Chromium\n"
-    )
-
-    remote_session = harness.api(
-        "POST",
-        "/tools/session_start",
-        body={"target": "remote", "machine": MACHINE, "workdir": "."},
-    )
-    assert remote_session["status"] == 200
-    remote_session_id = remote_session["payload"]["session_id"]
-    local_sessions = harness.api("GET", "/api/ui/sessions?machine=local")
-    local_session_id = local_sessions["payload"]["data"]["sessions"][0][
-        "session_id"
-    ]
-
-    harness.navigate("sessions")
-    page.locator("#session-machine").select_option(MACHINE)
-    expect(
-        page.locator(
-            f'#session-list .session-entry[data-session-id="{remote_session_id}"]'
-        )
-    ).to_have_attribute("aria-current", "true")
-    page.locator("#todo-add").click()
-    remote_row = page.locator("#todo-list .todo-row").last
-    remote_row.locator("input").fill("remote todo is isolated")
-    page.locator("#todo-save").click()
-    expect(page.locator("#todo-state")).to_contain_text(
-        f"Saved {remote_session_id}"
-    )
-    remote_todos = harness.api(
-        "GET",
-        f"/api/ui/todos?machine={MACHINE}&session_id={remote_session_id}",
-    )
-    local_todos = harness.api(
-        "GET", f"/api/ui/todos?machine=local&session_id={local_session_id}"
-    )
-    assert remote_todos["payload"]["data"]["todos"][0]["content"] == (
-        "remote todo is isolated"
-    )
-    assert local_todos["payload"]["data"]["todos"][0]["content"] == (
-        "verify browser todos"
-    )
-
+    # Legacy remote-worker enrollment UI was retired in PR5. Browser coverage
+    # now stays on the local Human UI path until final executor-backed remote
+    # file/session/terminal routing lands in the later migration PRs. The
+    # legacy remote protocol remains covered by its non-browser E2E suite.
     harness.navigate("terminals")
-    page.locator("#terminal-machine").select_option(MACHINE)
-    expect(page.locator("#terminal-state")).to_contain_text(
-        f"0 session(s) · {MACHINE}"
-    )
-    remote_shell = _start_terminal(harness, f"browser-remote-{suffix}")
-    _send_terminal(
-        harness,
-        MACHINE,
-        remote_shell,
-        "printf 'remote-terminal-e2e\\n'",
-        "remote-terminal-e2e",
-    )
-    remote_resize = harness.api(
-        "POST",
-        "/api/ui/terminals/resize",
-        body={
-            "machine": MACHINE,
-            "shell_id": remote_shell,
-            "cols": 109,
-            "rows": 35,
-        },
-    )
-    assert remote_resize["status"] == 200
-    assert remote_resize["payload"]["data"]["machine"] == MACHINE
-
-    page.locator("#terminal-kill").click()
-    expect(page.locator("#terminal-state")).to_contain_text(
-        f"0 session(s) · {MACHINE}"
-    )
-    page.locator("#terminal-machine").select_option("local")
     page.locator(
         f'#terminal-list .terminal-session[title*="{local_shell}"]'
     ).click()

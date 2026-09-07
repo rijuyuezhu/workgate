@@ -19,6 +19,8 @@ class ControlConfig:
     auth_mode: Literal["none", "oauth"]
     ui_enabled: bool
     executor_max_pending_commands: int
+    executor_pairing_max_pending: int
+    executor_pairing_ttl_s: int
 
     remote_enabled: bool
     remote_max_pending_jobs: int
@@ -37,6 +39,8 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         auth_mode=settings.auth_mode,
         ui_enabled=settings.ui_enabled,
         executor_max_pending_commands=settings.executor_max_pending_commands,
+        executor_pairing_max_pending=settings.executor_pairing_max_pending,
+        executor_pairing_ttl_s=settings.executor_pairing_ttl_s,
         remote_enabled=settings.remote_enabled,
         remote_max_pending_jobs=settings.remote_max_pending_jobs,
         max_agent_sessions=settings.max_agent_sessions,

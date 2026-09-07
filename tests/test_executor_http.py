@@ -23,6 +23,7 @@ from workgate.protocol.executor import (
     ExecutorRuntimeSummary,
 )
 from workgate.protocol.ids import new_command_id, new_executor_id
+from workgate.protocol.pairing import PairApprovalRequest, PairDecision
 
 
 def _transport(tmp_path: Path) -> tuple[ExecutorTransport, str, str]:
@@ -139,5 +140,86 @@ async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
             )
         assert response.status_code == 204
     finally:
+        await runtime.executor_pairing.aclose()
+        await runtime.executor_transport.aclose()
+        runtime.control_state.close()
+
+
+@pytest.mark.asyncio
+async def test_pairing_routes_are_public_and_first_hello_clears_delivery(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        workspace_root=tmp_path / "workspace",
+        state_dir=tmp_path / "state",
+        auth_mode="oauth",
+        remote_enabled=False,
+        base_url="https://control.test",
+    )
+    runtime = build_control_runtime(settings)
+    runtime.control_state.start()
+    runtime.executor_transport.start()
+    app = build_http_app(runtime=runtime)
+
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://control.test",
+        ) as client:
+            started = await client.post(
+                "/executor/v1/pair/start",
+                json={
+                    "requested_name": "laptop",
+                    "metadata": {"hostname": "host-a", "platform": "linux"},
+                },
+            )
+            assert started.status_code == 200
+            payload = started.json()
+            assert payload["verification_uri"] == "https://control.test/pair"
+
+            pending = await client.post(
+                "/executor/v1/pair/poll",
+                json={"device_code": payload["device_code"]},
+            )
+            assert pending.status_code == 202
+            assert pending.json()["error"]["code"] == "pairing_pending"
+
+            second = await client.post(
+                "/executor/v1/pair/start",
+                json={"requested_name": "approved-laptop", "metadata": {}},
+            )
+            assert second.status_code == 200
+            approved_payload = second.json()
+            approved = await runtime.executor_pairing.decide(
+                PairApprovalRequest(
+                    user_code=approved_payload["user_code"],
+                    decision=PairDecision.APPROVE,
+                    name="laptop",
+                )
+            )
+            assert approved.executor_id is not None
+
+            delivered = await client.post(
+                "/executor/v1/pair/poll",
+                json={"device_code": approved_payload["device_code"]},
+            )
+            assert delivered.status_code == 200
+            credential = delivered.json()["credential"]
+
+            hello = await client.post(
+                "/executor/v1/hello",
+                json=_hello_payload(),
+                headers={"Authorization": f"Bearer {credential}"},
+            )
+            assert hello.status_code == 200
+
+            gone = await client.post(
+                "/executor/v1/pair/poll",
+                json={"device_code": approved_payload["device_code"]},
+            )
+            assert gone.status_code == 410
+            assert gone.json()["error"]["code"] == "pairing_expired"
+    finally:
+        await runtime.executor_pairing.aclose()
         await runtime.executor_transport.aclose()
         runtime.control_state.close()

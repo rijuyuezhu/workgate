@@ -4,7 +4,6 @@ from typing import Any, cast
 
 from ..remote.service import (
     call_remote_worker_tool,
-    create_remote_invite,
     list_remote_machines,
     remote_reconnect_command,
     rename_remote_machine,
@@ -51,10 +50,6 @@ async def remote_admin_execute(
 ) -> RemoteAdminOutput:
     """Run one remote control-plane action."""
     match action:
-        case "invite":
-            result = await create_remote_invite(
-                args.get("name"), args.get("workdir"), args.get("ttl_s")
-            )
         case "list":
             result = list_remote_machines()
         case "revoke":
@@ -69,7 +64,7 @@ async def remote_admin_execute(
         case _:
             raise ValueError(
                 "Unsupported remote admin action "
-                f"{action!r}; supported: invite, list, revoke, rename, reconnect_command"
+                f"{action!r}; supported: list, revoke, rename, reconnect_command"
             )
     return RemoteAdminOutput(action=action, data=_json_dict(result))
 

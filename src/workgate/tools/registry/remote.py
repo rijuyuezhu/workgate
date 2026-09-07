@@ -222,10 +222,10 @@ remote_tool = RemoteToolRegistry.get_tool_decorator()
 
 
 def _remote_admin_description(context: McpToolContext) -> str:
-    settings = context.settings
-    return f"""Run compact remote-worker control-plane actions. Use this only to administer worker connections: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"invite\" creates a one-time join command, action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command to run on the worker machine for a profile-aware registration.
+    del context
+    return """Run legacy remote-worker control-plane actions for already-enrolled workers: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.
 
-Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools such as read, search, hashline_edit, edit_lines, apply_patch, bash, job, write_file, delete_file_or_dir, tree_view, glob_search, and secret_scan. Invite output is sensitive because it grants enrollment capability. Reconnect commands contain no invite or bearer credential. Defaults: invite ttl_s defaults to configured remote_invite_ttl_s={settings.remote_invite_ttl_s} seconds when omitted."""
+New machines must pair with `workgate executor connect <control-url>`; remote_admin no longer creates enrollment invites. Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools. Reconnect commands contain no invite or bearer credential."""
 
 
 @remote_tool(

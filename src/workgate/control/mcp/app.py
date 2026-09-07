@@ -22,7 +22,8 @@ from ...remote.transfer_gateway import build_transfer_gateway_router
 from ...tools.catalog import ToolCatalog, build_tool_catalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
-from ...ui.http.routes import human_ui_routes
+from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
+from ..http.executor_admin import executor_admin_routes
 from ..http.executor_routes import executor_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from .instructions import SERVER_INSTRUCTIONS
@@ -118,7 +119,10 @@ def _add_public_routes_to_mcp_http_app(
             readyz_include_workspace_root=False,
         ),
         *(
-            executor_routes(runtime.executor_transport)
+            executor_routes(
+                runtime.executor_transport,
+                runtime.executor_pairing,
+            )
             if runtime is not None
             else ()
         ),
@@ -132,7 +136,22 @@ def _add_public_routes_to_mcp_http_app(
         *oauth_public_routes(),
     ]
     ui_routes, ui_public_routes = human_ui_routes(active_settings)
-    routes = [*public_routes, *ui_routes, Mount("/", app=mcp_app)]
+    executor_admin = (
+        executor_admin_routes(
+            runtime.control_state,
+            runtime.executor_transport,
+            runtime.executor_pairing,
+            api_prefix=UI_API_PREFIX,
+        )
+        if runtime is not None
+        else ()
+    )
+    routes = [
+        *public_routes,
+        *ui_routes,
+        *executor_admin,
+        Mount("/", app=mcp_app),
+    ]
     public_routes.extend(ui_public_routes)
     return Starlette(routes=routes, lifespan=lifespan), public_routes
 

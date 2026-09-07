@@ -190,6 +190,10 @@ path_denylist:
   - ".git/config"
 # Maximum queued or offered ordinary commands retained per executor.
 executor_max_pending_commands: 64
+# Maximum live process-local executor pairing attempts admitted by control.
+executor_pairing_max_pending: 32
+# Lifetime in seconds for one process-local executor pairing attempt.
+executor_pairing_ttl_s: 600
 
 # Remote workers.
 # Enable remote worker routes and MCP tools.

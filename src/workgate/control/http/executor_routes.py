@@ -13,12 +13,16 @@ from ...protocol.errors import ProtocolErrorCode, ProtocolErrorResponse
 from ...protocol.executor import (
     EXECUTOR_HEARTBEAT_PATH,
     EXECUTOR_HELLO_PATH,
+    EXECUTOR_PAIR_POLL_PATH,
+    EXECUTOR_PAIR_START_PATH,
     EXECUTOR_POLL_PATH,
     EXECUTOR_RESULT_PATH,
     ExecutorHelloRequest,
     ExecutorResult,
 )
+from ...protocol.pairing import PairPollRequest, PairStartRequest
 from ..executor_transport import ExecutorTransport, ExecutorTransportError
+from ..pairing import ExecutorPairingError, ExecutorPairingService
 
 
 def _bearer(request: Request) -> str:
@@ -45,6 +49,22 @@ def _error_response(exc: ExecutorTransportError) -> JSONResponse:
     return JSONResponse(payload.model_dump(mode="json"), status_code=status)
 
 
+def _pairing_error_response(exc: ExecutorPairingError) -> JSONResponse:
+    code = exc.error.code
+    if code is ProtocolErrorCode.PAIRING_PENDING:
+        status = 202
+    elif code is ProtocolErrorCode.PAIRING_DENIED:
+        status = 403
+    elif code is ProtocolErrorCode.PAIRING_EXPIRED:
+        status = 410
+    elif code is ProtocolErrorCode.PAIRING_CAPACITY_EXHAUSTED:
+        status = 429
+    else:
+        status = 400
+    payload = ProtocolErrorResponse(error=exc.error)
+    return JSONResponse(payload.model_dump(mode="json"), status_code=status)
+
+
 async def _json_model(request: Request, model_type):
     try:
         payload = await request.json()
@@ -53,8 +73,41 @@ async def _json_model(request: Request, model_type):
         return None
 
 
-def executor_routes(transport: ExecutorTransport) -> list[BaseRoute]:
+def executor_routes(
+    transport: ExecutorTransport,
+    pairing: ExecutorPairingService | None = None,
+) -> list[BaseRoute]:
     """Return bearer-authenticated executor routes outside owner OAuth auth."""
+
+    async def pair_start(request: Request) -> Response:
+        if pairing is None:
+            return Response(status_code=404)
+        message = await _json_model(request, PairStartRequest)
+        if message is None:
+            return JSONResponse(
+                {"detail": "invalid executor pair-start request"},
+                status_code=422,
+            )
+        try:
+            response = await pairing.start_pairing(message)
+        except ExecutorPairingError as exc:
+            return _pairing_error_response(exc)
+        return JSONResponse(response.model_dump(mode="json"))
+
+    async def pair_poll(request: Request) -> Response:
+        if pairing is None:
+            return Response(status_code=404)
+        message = await _json_model(request, PairPollRequest)
+        if message is None:
+            return JSONResponse(
+                {"detail": "invalid executor pair-poll request"},
+                status_code=422,
+            )
+        try:
+            response = await pairing.poll(message.device_code)
+        except ExecutorPairingError as exc:
+            return _pairing_error_response(exc)
+        return JSONResponse(response.model_dump(mode="json"))
 
     async def hello(request: Request) -> Response:
         message = await _json_model(request, ExecutorHelloRequest)
@@ -97,6 +150,14 @@ def executor_routes(transport: ExecutorTransport) -> list[BaseRoute]:
         return Response(status_code=204)
 
     return [
+        *(
+            [
+                Route(EXECUTOR_PAIR_START_PATH, pair_start, methods=["POST"]),
+                Route(EXECUTOR_PAIR_POLL_PATH, pair_poll, methods=["POST"]),
+            ]
+            if pairing is not None
+            else []
+        ),
         Route(EXECUTOR_HELLO_PATH, hello, methods=["POST"]),
         Route(EXECUTOR_HEARTBEAT_PATH, heartbeat, methods=["POST"]),
         Route(EXECUTOR_POLL_PATH, poll, methods=["POST"]),

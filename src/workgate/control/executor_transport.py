@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -51,6 +51,7 @@ class _ExecutorChannel:
     pending: dict[str, _PendingCommand] = field(default_factory=dict)
     poll_active: bool = False
     last_activity: float | None = None
+    last_seen_at: float | None = None
     hello: ExecutorHelloRequest | None = None
 
 
@@ -66,6 +67,7 @@ class ExecutorTransport:
         offline_after_s: int = 60,
         poll_timeout_s: int = 25,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         if max_pending_commands < 1:
             raise ValueError("max_pending_commands must be positive")
@@ -79,9 +81,19 @@ class ExecutorTransport:
         self._offline_after_s = offline_after_s
         self._poll_timeout_s = poll_timeout_s
         self._clock = clock
+        self._wall_clock = wall_clock
         self._channels: dict[str, _ExecutorChannel] = {}
+        self._authenticated_hello_callback: (
+            Callable[[str, str], Awaitable[None]] | None
+        ) = None
         self._started = False
         self._closed = False
+
+    def set_authenticated_hello_callback(
+        self, callback: Callable[[str, str], Awaitable[None]] | None
+    ) -> None:
+        """Observe the executor ID and bearer that authenticated one successful hello."""
+        self._authenticated_hello_callback = callback
 
     def start(self) -> None:
         """Open this process-local coordination owner after durable state is loaded."""
@@ -164,6 +176,7 @@ class ExecutorTransport:
 
     def _touch(self, channel: _ExecutorChannel) -> None:
         channel.last_activity = self._clock()
+        channel.last_seen_at = self._wall_clock()
 
     def _is_online(self, channel: _ExecutorChannel) -> bool:
         last_activity = channel.last_activity
@@ -183,6 +196,9 @@ class ExecutorTransport:
             self._reauthenticate(record.executor_id, credential)
             channel.hello = request
             self._touch(channel)
+        callback = self._authenticated_hello_callback
+        if callback is not None:
+            await callback(record.executor_id, credential)
         return ExecutorHelloResponse(
             heartbeat_interval_s=self._heartbeat_interval_s,
             offline_after_s=self._offline_after_s,
@@ -351,6 +367,23 @@ class ExecutorTransport:
             return None
         async with channel.lock:
             return channel.hello
+
+    async def last_seen_at(self, executor_id: str) -> float | None:
+        """Return process-local wall-clock presence metadata for owner diagnostics."""
+        channel = self._channels.get(executor_id)
+        if channel is None:
+            return None
+        async with channel.lock:
+            return channel.last_seen_at
+
+    async def rename_executor(
+        self, executor_id: str, *, name: str
+    ) -> ExecutorTrustRecord:
+        """Persist a display-name mutation under the executor handoff lock."""
+        self._require_running()
+        channel = self._channel(executor_id)
+        async with channel.lock:
+            return self._control_state.rename_executor(executor_id, name=name)
 
     async def revoke_executor(
         self, executor_id: str, *, revoked_at: float

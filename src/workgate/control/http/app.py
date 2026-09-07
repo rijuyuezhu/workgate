@@ -17,9 +17,10 @@ from ...oauth.http.routes import oauth_public_routes
 from ...remote.http import remote_routes
 from ...remote.transfer_gateway import build_transfer_gateway_router
 from ...tools.catalog import ToolCatalog, build_tool_catalog
-from ...ui.http.routes import human_ui_routes
+from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from .errors import install_error_handlers
+from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
 from .tool_routes import (
     install_tool_cache_control_middleware,
@@ -58,7 +59,9 @@ def _install_public_routes(
     installed_routes = [
         *public_http_routes(settings, readyz_include_workspace_root=False),
         *(
-            executor_routes(runtime.executor_transport)
+            executor_routes(
+                runtime.executor_transport, runtime.executor_pairing
+            )
             if runtime is not None
             else ()
         ),
@@ -115,6 +118,15 @@ def build_http_app(
     ui_routes, ui_public_routes = human_ui_routes(settings)
     app.router.routes.extend(ui_routes)
     public_routes.extend(ui_public_routes)
+    if runtime is not None:
+        app.router.routes.extend(
+            executor_admin_routes(
+                runtime.control_state,
+                runtime.executor_transport,
+                runtime.executor_pairing,
+                api_prefix=UI_API_PREFIX,
+            )
+        )
     install_request_body_limit(app, max_bytes=settings.max_http_request_bytes)
     if settings.auth_mode != "none":
         app.add_middleware(AuthMiddleware, public_routes=public_routes)

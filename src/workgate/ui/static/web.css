@@ -1979,24 +1979,6 @@ h2 {
   justify-content: flex-end;
 }
 
-.remote-invite-result-dialog[open] {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.remote-invite-command {
-  max-height: 14rem;
-  overflow: auto;
-  border: 1px solid rgba(151, 184, 202, 0.18);
-  border-radius: 0.65rem;
-  background: #020a10;
-  padding: 0.8rem;
-  color: #9bd7ed;
-  font-size: 0.72rem;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
 
 @media (max-width: 1180px) {
   .dashboard-summary {

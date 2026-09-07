@@ -11,7 +11,6 @@ from workgate.control.runtime import build_control_runtime
 from workgate.oauth.core.scopes import SCOPE_REMOTE_USE, SCOPE_SHELL_READ
 from workgate.oauth.protocol.token_codec import issue_access_token
 from workgate.schemas.result_models.remote import (
-    RemoteInviteOutput,
     RemoteListMachinesOutput,
     RemoteMachineInfo,
     RemoteRenameMachineOutput,
@@ -87,12 +86,14 @@ def test_http_app_installs_public_worker_routes_when_remote_enabled(
         remote_enabled=True,
     )
     runtime = build_control_runtime(get_settings())
+    app = build_http_app(runtime=runtime)
+    assert "/join" not in {getattr(route, "path", None) for route in app.routes}
     with TestClient(
-        build_http_app(runtime=runtime),
+        app,
         base_url=BASE_URL,
         client=("203.0.113.15", 50006),
     ) as client:
-        assert client.get("/join").status_code == 200
+        assert client.get("/join").status_code == 401
         assert client.post("/remote/register", json={}).status_code == 409
 
 
@@ -172,9 +173,9 @@ def test_remotes_disabled_is_empty_and_mutations_conflict(
         "enabled": False,
         "machines": [],
         "counts": {"online": 0, "offline": 0, "total": 0},
-        "invite_ttl_s": 600,
     }
-    for response in (invited, renamed, revoked):
+    assert invited.status_code == 405
+    for response in (renamed, revoked):
         assert response.status_code == 409
         assert response.json()["error"] == "RemoteWorkersDisabled"
 
@@ -300,107 +301,12 @@ def test_remote_inventory_rejects_duplicate_and_malformed_rows(
     assert malformed_reconnect.json()["error"] == ("RemoteInventoryUnavailable")
 
 
-def test_remote_invite_is_bounded_ephemeral_and_audited_without_secret(
-    monkeypatch, tmp_path
-):
+def test_legacy_remote_human_ui_inventory_is_read_only(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    calls: list[tuple[str | None, str | None, int | None]] = []
-    audit_rows: list[tuple[str, dict[str, Any]]] = []
+    response = client.post("/api/ui/remotes", json={})
 
-    async def fake_invite(
-        name: str | None,
-        workdir: str | None,
-        ttl_s: int | None,
-    ) -> RemoteInviteOutput:
-        calls.append((name, workdir, ttl_s))
-        return RemoteInviteOutput(
-            code="one-time-code",
-            name=name,
-            workdir=workdir,
-            expires_at=1_000.0,
-            ttl_s=ttl_s or 600,
-            join_url="https://secret.invalid/join?code=one-time-code",
-            command="uvx workgate remote-worker --invite one-time-code",
-        )
-
-    monkeypatch.setattr(remotes_module, "create_remote_invite", fake_invite)
-    monkeypatch.setattr(
-        remotes_module,
-        "audit",
-        lambda event, **fields: audit_rows.append((event, fields)),
-    )
-
-    response = client.post(
-        "/api/ui/remotes",
-        json={"name": " edge-a ", "workdir": " /srv/work ", "ttl_s": 600},
-    )
-
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    assert calls == [("edge-a", "/srv/work", 600)]
-    payload = response.json()["data"]
-    assert payload == {
-        "name": "edge-a",
-        "workdir": "/srv/work",
-        "expires_at": 1_000.0,
-        "ttl_s": 600,
-        "command": "uvx workgate remote-worker --invite one-time-code",
-    }
-    assert "code" not in payload
-    assert "join_url" not in payload
-    assert audit_rows == [
-        (
-            "ui_remote_invite_created",
-            {
-                "machine": "edge-a",
-                "workdir": "/srv/work",
-                "expires_at": 1_000.0,
-                "ttl_s": 600,
-            },
-        )
-    ]
-    assert "one-time-code" not in str(audit_rows)
-
-    invalid = client.post(
-        "/api/ui/remotes",
-        json={"name": "bad/name", "ttl_s": 600},
-    )
-    assert invalid.status_code == 400
-    extra = client.post(
-        "/api/ui/remotes",
-        json={"ttl_s": 600, "unexpected": True},
-    )
-    assert extra.status_code == 400
-
-
-@pytest.mark.parametrize(
-    ("message", "expected_status", "expected_error"),
-    [
-        (
-            "Too many pending remote invites",
-            429,
-            "RemoteInviteCapacityExceeded",
-        ),
-        ("registry unavailable", 500, "RemoteInviteUnavailable"),
-    ],
-)
-def test_remote_invite_errors_are_safe(
-    monkeypatch,
-    tmp_path,
-    message,
-    expected_status,
-    expected_error,
-):
-    client = _client(monkeypatch, tmp_path)
-
-    async def fail_invite(*args, **kwargs):
-        raise RuntimeError(message)
-
-    monkeypatch.setattr(remotes_module, "create_remote_invite", fail_invite)
-    response = client.post("/api/ui/remotes", json={"ttl_s": 600})
-    assert response.status_code == expected_status
-    assert response.json()["error"] == expected_error
-    assert "registry unavailable" not in response.text
+    assert response.status_code == 405
+    assert "invite" not in response.text.lower()
 
 
 def test_remote_rename_and_revoke_dispatch_and_audit(monkeypatch, tmp_path):
@@ -460,3 +366,73 @@ def test_remote_rename_and_revoke_dispatch_and_audit(monkeypatch, tmp_path):
         json={"machine": "edge-a"},
     )
     assert unsupported.status_code == 400
+
+
+def test_remote_inventory_rejects_invalid_or_excessive_machine_lists(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+
+    class InvalidInventory:
+        def model_dump(self, *, mode: str) -> dict[str, Any]:
+            assert mode == "json"
+            return {"machines": "not-a-list", "counts": {}}
+
+    monkeypatch.setattr(
+        remotes_module,
+        "list_remote_machines",
+        lambda: InvalidInventory(),
+    )
+    invalid = client.get("/api/ui/remotes")
+    assert invalid.status_code == 500
+    assert invalid.json()["error"] == "RemoteInventoryUnavailable"
+
+    class ExcessiveInventory:
+        def model_dump(self, *, mode: str) -> dict[str, Any]:
+            assert mode == "json"
+            return {
+                "machines": [{}] * (remotes_module.UI_REMOTE_MAX_MACHINES + 1),
+                "counts": {},
+            }
+
+    monkeypatch.setattr(
+        remotes_module,
+        "list_remote_machines",
+        lambda: ExcessiveInventory(),
+    )
+    excessive = client.get("/api/ui/remotes")
+    assert excessive.status_code == 500
+    assert excessive.json()["error"] == "RemoteInventoryUnavailable"
+
+
+def test_remote_actions_validate_body_and_mask_backend_failures(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+
+    non_object = client.post("/api/ui/remotes/revoke", json=["edge-a"])
+    assert non_object.status_code == 400
+    assert non_object.json()["error"] == "ValueError"
+
+    invalid_schema = client.post(
+        "/api/ui/remotes/rename",
+        json={"machine": "edge-a", "new_name": "edge-b", "extra": True},
+    )
+    assert invalid_schema.status_code == 400
+    assert invalid_schema.json()["error"] == "ValueError"
+
+    def fail_rename(machine: str, new_name: str) -> RemoteRenameMachineOutput:
+        del machine, new_name
+        raise RuntimeError("backend unavailable")
+
+    monkeypatch.setattr(remotes_module, "rename_remote_machine", fail_rename)
+    failed = client.post(
+        "/api/ui/remotes/rename",
+        json={"machine": "edge-a", "new_name": "edge-b"},
+    )
+    assert failed.status_code == 500
+    assert failed.json() == {
+        "ok": False,
+        "error": "RemoteMutationUnavailable",
+        "message": "Remote worker operation failed",
+    }
