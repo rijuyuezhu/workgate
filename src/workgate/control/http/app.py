@@ -58,7 +58,9 @@ def _install_public_routes(
     installed_routes = [
         *public_http_routes(settings, readyz_include_workspace_root=False),
         *(
-            executor_routes(runtime.executor_transport)
+            executor_routes(
+                runtime.executor_transport, runtime.executor_pairing
+            )
             if runtime is not None
             else ()
         ),

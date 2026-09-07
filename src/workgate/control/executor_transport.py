@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -80,8 +80,17 @@ class ExecutorTransport:
         self._poll_timeout_s = poll_timeout_s
         self._clock = clock
         self._channels: dict[str, _ExecutorChannel] = {}
+        self._authenticated_hello_callback: (
+            Callable[[str], Awaitable[None]] | None
+        ) = None
         self._started = False
         self._closed = False
+
+    def set_authenticated_hello_callback(
+        self, callback: Callable[[str], Awaitable[None]] | None
+    ) -> None:
+        """Observe successful hello after the per-executor handoff lock is released."""
+        self._authenticated_hello_callback = callback
 
     def start(self) -> None:
         """Open this process-local coordination owner after durable state is loaded."""
@@ -183,6 +192,9 @@ class ExecutorTransport:
             self._reauthenticate(record.executor_id, credential)
             channel.hello = request
             self._touch(channel)
+        callback = self._authenticated_hello_callback
+        if callback is not None:
+            await callback(record.executor_id)
         return ExecutorHelloResponse(
             heartbeat_interval_s=self._heartbeat_interval_s,
             offline_after_s=self._offline_after_s,
