@@ -501,13 +501,14 @@ class ControlSessionCopyService:
             args,
             session_id=str(record.session_id),
         )
-        self._sessions.observe_session_activity(str(record.session_id))
-        if not result.ok:
-            assert result.error is not None
-            raise RuntimeError(
-                f"executor {op} failed: {result.error.code}: {result.error.message}"
-            )
-        return result.result
+        if result.ok:
+            self._sessions.observe_session_activity(str(record.session_id))
+            return result.result
+        await self._sessions.reconcile_session_activity_after_error(record)
+        assert result.error is not None
+        raise RuntimeError(
+            f"executor {op} failed: {result.error.code}: {result.error.message}"
+        )
 
     @staticmethod
     async def _report(progress: ProgressCallback | None, **values: Any) -> None:

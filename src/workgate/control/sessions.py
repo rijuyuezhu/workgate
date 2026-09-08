@@ -192,7 +192,10 @@ class ControlSessionCoordinator:
                 wire_args,
                 session_id=session_id,
             )
-            self.observe_session_activity(session_id)
+            if result.ok:
+                self.observe_session_activity(session_id)
+            else:
+                await self.reconcile_session_activity_after_error(record)
             payload = self._unwrap(result)
             return payload
 
@@ -207,7 +210,8 @@ class ControlSessionCoordinator:
                 {"workdir": workdir},
                 session_id=session_id,
             )
-            self.observe_session_activity(session_id)
+            if not result.ok:
+                await self.reconcile_session_activity_after_error(record)
             payload = self._unwrap(result)
             resolved = self._resolved_workdir(payload)
             now = self._clock()
@@ -368,16 +372,23 @@ class ControlSessionCoordinator:
             if not await self._transport.is_online(executor_id):
                 return None
             return missing_since if missing_since < cutoff else None
-        summary = await self._lookup_cleanup_summary(record)
+        summary = await self._lookup_session_summary(record)
         if not self._cleanup_eligible(summary, cutoff=cutoff):
             return None
         assert summary is not None and summary.last_active_at is not None
         return summary.last_active_at
 
-    async def _lookup_cleanup_summary(
+    async def reconcile_session_activity_after_error(
+        self, record: ControlSessionRecord
+    ) -> None:
+        """Repair activity/availability from a read-only executor lookup."""
+        await self._lookup_session_summary(record)
+
+    async def _lookup_session_summary(
         self, record: ControlSessionRecord
     ) -> SessionInventorySummary | None:
         executor_id = str(record.executor_id)
+        session_id = str(record.session_id)
         if not await self._transport.is_online(executor_id):
             return None
         try:
@@ -385,7 +396,7 @@ class ControlSessionCoordinator:
                 executor_id,
                 SESSION_LOOKUP_OP,
                 {},
-                session_id=str(record.session_id),
+                session_id=session_id,
                 timeout_s=_LOOKUP_TIMEOUT_S,
             )
         except Exception:
@@ -394,7 +405,8 @@ class ControlSessionCoordinator:
             return None
         if result.result is None:
             missing = self._missing_by_executor.setdefault(executor_id, {})
-            missing.setdefault(str(record.session_id), float(self._clock()))
+            missing.setdefault(session_id, float(self._clock()))
+            self._replace_session_activity(session_id, None)
             return None
         try:
             summary = SessionInventorySummary.model_validate(result.result)
@@ -402,13 +414,10 @@ class ControlSessionCoordinator:
             return None
         missing = self._missing_by_executor.get(executor_id)
         if missing is not None:
-            missing.pop(str(record.session_id), None)
+            missing.pop(session_id, None)
             if not missing:
                 self._missing_by_executor.pop(executor_id, None)
-        if summary.last_active_at is not None:
-            self.observe_session_activity(
-                str(record.session_id), observed_at=summary.last_active_at
-            )
+        self._replace_session_activity(session_id, summary.last_active_at)
         return summary
 
     @staticmethod
@@ -472,10 +481,7 @@ class ControlSessionCoordinator:
                     self._schedule_termination(record)
                 continue
             if item is not None:
-                if item.last_active_at is not None:
-                    self.observe_session_activity(
-                        session_id, observed_at=item.last_active_at
-                    )
+                self._replace_session_activity(session_id, item.last_active_at)
                 if record.status == "creating" or (
                     record.resolved_workdir_display != item.resolved_workdir
                 ):
@@ -584,6 +590,15 @@ class ControlSessionCoordinator:
         if previous is None or value > previous:
             self._activity_by_session[session_id] = value
 
+    def _replace_session_activity(
+        self, session_id: str, observed_at: float | None
+    ) -> None:
+        """Apply one authoritative executor activity observation exactly."""
+        if observed_at is None:
+            self._activity_by_session.pop(session_id, None)
+            return
+        self._activity_by_session[session_id] = float(observed_at)
+
     def _finish_create(
         self, record: ControlSessionRecord, result: ExecutorResult
     ) -> JsonValue:
@@ -640,10 +655,9 @@ class ControlSessionCoordinator:
                 }
             )
         )
-        if item.last_active_at is not None:
-            self.observe_session_activity(
-                str(record.session_id), observed_at=item.last_active_at
-            )
+        self._replace_session_activity(
+            str(record.session_id), item.last_active_at
+        )
 
     def _schedule_termination(self, record: ControlSessionRecord) -> None:
         task = asyncio.create_task(

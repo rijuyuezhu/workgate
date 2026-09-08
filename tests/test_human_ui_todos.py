@@ -910,7 +910,97 @@ def test_sessions_api_counts_executor_operation_errors_as_activity(
     assert row["availability"] == "available"
     assert row["active"] is True
     assert row["activity_known"] is True
-    assert row["last_active_at"] > old_activity_at
+    assert row["last_active_at"] == pytest.approx(executor_after.last_active_at)
+
+
+def test_sessions_api_preserves_activity_for_pre_touch_operation_error(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "cwd-error"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+    harness.control.session_coordinator._activity_by_session[session_id] = (
+        executor_before.last_active_at + 1000.0
+    )
+
+    failed = client.post(
+        "/tools/session_change_cwd",
+        json={"session_id": session_id, "workdir": "missing-dir"},
+    )
+    assert failed.status_code == 400
+    assert failed.json()["error"] == "FileNotFoundError"
+    executor_after = harness.executor.sessions.lookup(session_id)
+    assert executor_after is not None
+    assert executor_after.last_active_at == pytest.approx(
+        executor_before.last_active_at
+    )
+
+    availability, activity = asyncio.run(
+        harness.control.session_coordinator.session_activity_projection(
+            session_id
+        )
+    )
+    assert availability == "available"
+    assert activity == pytest.approx(executor_before.last_active_at)
+
+
+def test_sessions_api_marks_missing_executor_session_without_refreshing_activity(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start",
+        json={"workdir": ".", "label": "missing-session"},
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+    harness.control.session_coordinator._activity_by_session[session_id] = (
+        executor_before.last_active_at + 1000.0
+    )
+    harness.executor.services.tool_session_store.end_session(session_id)
+    assert harness.executor.sessions.lookup(session_id) is None
+
+    with pytest.raises(RuntimeError, match="UnknownAgentSessionError"):
+        asyncio.run(
+            harness.control.session_coordinator.call_session_tool(
+                "read",
+                {"session_id": session_id, "path": "missing.txt"},
+            )
+        )
+
+    availability, activity = asyncio.run(
+        harness.control.session_coordinator.session_activity_projection(
+            session_id
+        )
+    )
+    assert availability == "missing_on_executor"
+    assert activity is None
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    assert recent.status_code == 200
+    rows = recent.json()["data"]["sessions"]
+    row = next(item for item in rows if item["session_id"] == session_id)
+    assert row["availability"] == "missing_on_executor"
+    assert row["active"] is False
+    assert row["activity_known"] is False
+    assert row["last_active_at"] is None
 
 
 def test_sessions_api_does_not_lookup_each_final_session(monkeypatch, tmp_path):

@@ -174,9 +174,10 @@ class ControlDownloadService:
             args,
             session_id=str(record.session_id),
         )
-        self._sessions.observe_session_activity(str(record.session_id))
         if result.ok:
+            self._sessions.observe_session_activity(str(record.session_id))
             return result.result
+        await self._sessions.reconcile_session_activity_after_error(record)
         assert result.error is not None
         if result.error.data is not None:
             raise exception_from_tool_error(dict(result.error.data))

@@ -343,6 +343,7 @@ async def test_hello_seeds_activity_projection_without_targeted_lookup(
         jobs=(),
     )
     coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator.observe_session_activity(session_id, observed_at=999.0)
 
     await coordinator.reconcile_hello(executor_id)
     (
