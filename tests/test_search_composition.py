@@ -7,12 +7,12 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.control.search_composition import (
-    build_control_tool_catalog,
-)
 from workgate.executor.search_composition import (
     build_executor_dispatcher_with_search,
 )
+from workgate.ops.search.composition import build_search_service
+from workgate.ops.search.service import RemoteSearchClient
+from workgate.ops.utils.remote_session import call_remote_session_tool
 from workgate.persistence import configure_state_store
 from workgate.remote.manager import (
     RemoteManager,
@@ -49,7 +49,9 @@ def _configure_runtime_services(settings: Settings):
 
 
 @pytest.mark.asyncio
-async def test_controller_catalog_binds_search_service(tmp_path, monkeypatch):
+async def test_bound_search_registry_uses_explicit_service(
+    tmp_path, monkeypatch
+):
     if not shutil.which("rg"):
         pytest.skip("missing rg")
     settings = _settings(tmp_path, monkeypatch)
@@ -57,16 +59,10 @@ async def test_controller_catalog_binds_search_service(tmp_path, monkeypatch):
     (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
     session = services.tool_session_store.create_session(workdir=tmp_path)
 
-    catalog = build_control_tool_catalog(
-        settings,
-        services.tool_session_store,
-        RemoteManager(lambda: settings, state_store=services.state_store),
+    search_service = build_search_service(
+        settings, services.tool_session_store, remote=None
     )
-    registry = next(
-        registry
-        for registry in catalog.registries
-        if isinstance(registry, SearchToolRegistry)
-    )
+    registry = SearchToolRegistry(settings, search_service=search_service)
     bound_search = next(
         tool for tool in registry._enabled_tools() if tool.name == "search"
     )
@@ -92,9 +88,7 @@ async def test_controller_catalog_binds_search_service(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_controller_search_remote_wire_uses_owned_manager(
-    tmp_path, monkeypatch
-):
+async def test_search_remote_client_uses_owned_manager(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
     session = services.tool_session_store.create_session(
@@ -123,16 +117,21 @@ async def test_controller_search_remote_wire_uses_owned_manager(
         return {"ok": True, "data": output.model_dump(mode="json")}
 
     monkeypatch.setattr(manager, "call", fake_call)
-    catalog = build_control_tool_catalog(
+
+    async def call_remote_search(binding, tool, args):
+        return await call_remote_session_tool(
+            binding,
+            tool,
+            args,
+            call_worker=manager.call,
+        )
+
+    search_service = build_search_service(
         settings,
         services.tool_session_store,
-        manager,
+        remote=RemoteSearchClient(call=call_remote_search),
     )
-    registry = next(
-        registry
-        for registry in catalog.registries
-        if isinstance(registry, SearchToolRegistry)
-    )
+    registry = SearchToolRegistry(settings, search_service=search_service)
     bound_search = next(
         tool for tool in registry._enabled_tools() if tool.name == "search"
     )

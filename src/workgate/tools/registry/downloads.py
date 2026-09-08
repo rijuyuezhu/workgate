@@ -43,7 +43,7 @@ def _download_tools_enabled(settings: Settings) -> bool:
 
 def _create_file_link_description(context: McpToolContext) -> str:
     settings = context.settings
-    return f"""Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in a local or remote agent session. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: {settings.file_download_default_ttl_s}/{settings.file_download_max_ttl_s} seconds. Current file-size cap: {settings.file_download_max_file_bytes} bytes, with 0 meaning no configured cap."""
+    return f"""Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the snapshot succeeds, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: {settings.file_download_default_ttl_s}/{settings.file_download_max_ttl_s} seconds. Current file-size cap: {settings.file_download_max_file_bytes} bytes, with 0 meaning no configured cap."""
 
 
 @download_tool(
@@ -61,7 +61,7 @@ async def create_file_link(
     max_downloads: MaxDownloadsArg = None,
     inline: InlineDownloadArg = False,
 ) -> CreateFileLinkOutput:
-    """Create a tokenized snapshot URL for one local or remote session file."""
+    """Create a tokenized snapshot URL for one file in an executor-backed session."""
     return await create_file_link_dispatch_execute(
         path=path,
         ttl_s=ttl_s,

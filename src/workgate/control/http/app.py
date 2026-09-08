@@ -16,7 +16,7 @@ from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
 from ...remote.http import remote_routes
 from ...remote.transfer_gateway import build_transfer_gateway_router
-from ...tools.catalog import ToolCatalog, build_tool_catalog
+from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from .errors import install_error_handlers
@@ -94,14 +94,19 @@ def build_http_app(
     runtime: ControlRuntime | None = None,
 ) -> FastAPI:
     """Construct the authenticated REST API from one explicit tool catalog."""
+    if runtime is None and tool_catalog is None:
+        runtime = build_control_runtime(get_settings())
     settings = (
         runtime.legacy_settings if runtime is not None else get_settings()
     )
-    catalog = tool_catalog or (
-        runtime.tool_catalog
-        if runtime is not None
-        else build_tool_catalog(settings)
-    )
+    if tool_catalog is not None:
+        catalog = tool_catalog
+    elif runtime is not None:
+        catalog = runtime.tool_catalog
+    else:  # pragma: no cover - guarded above; keeps the invariant explicit.
+        raise RuntimeError(
+            "control HTTP requires a routed runtime or explicit catalog"
+        )
 
     app = FastAPI(
         title="workgate REST API",
@@ -111,6 +116,7 @@ def build_http_app(
         ),
     )
 
+    app.state.control_runtime = runtime
     install_error_handlers(app)
     install_tools_timeout_middleware(app, catalog)
     public_routes = _install_public_routes(app, settings, runtime=runtime)

@@ -68,6 +68,30 @@ def _session_payload(session: AgentSession, *, now: float) -> dict[str, Any]:
     return payload
 
 
+def _final_session_payload(record: Any, *, now: float) -> dict[str, Any]:
+    status = str(record.status)
+    updated_at = float(record.updated_at)
+    return {
+        "session_id": str(record.session_id),
+        "executor_id": str(record.executor_id),
+        "target": None,
+        "machine": None,
+        "workdir": record.resolved_workdir_display or record.requested_workdir,
+        "requested_workdir": record.requested_workdir,
+        "label": record.label,
+        "status": status,
+        "created_at": float(record.created_at),
+        "updated_at": updated_at,
+        "active": status == "active"
+        and updated_at >= now - SESSION_ACTIVE_WINDOW_S,
+        "termination_requested": status in {"terminating", "ended"},
+    }
+
+
+def _control_runtime(request: Request) -> Any | None:
+    return getattr(request.app.state, "control_runtime", None)
+
+
 def _bool_arg(value: Any, *, default: bool = False) -> bool:
     if value in {None, ""}:
         return default
@@ -89,28 +113,53 @@ def _session_for_machine(session_id: str, machine: str) -> AgentSession:
 
 
 async def api_sessions(request: Request) -> Response:
-    """Return durable public agent sessions bound to one machine."""
+    """Return durable public agent sessions, preferring final control bindings."""
     try:
         machine = _machine_arg(request.query_params.get("machine"))
         _require_scopes(machine)
         include_inactive = _bool_arg(
             request.query_params.get("include_inactive")
         )
-        if machine != "local":
-            require_remote_machine(machine)
-        sessions = await asyncio.to_thread(
-            get_tool_session_store().list_sessions
-        )
         now = time.time()
-        rows = [
-            _session_payload(session, now=now)
-            for session in sessions
-            if _belongs_to_machine(session, machine)
-            and (
-                include_inactive
-                or session.updated_at >= now - SESSION_ACTIVE_WINDOW_S
+        runtime = _control_runtime(request)
+        final_records = (
+            tuple(runtime.control_state.snapshot_sessions().values())
+            if runtime is not None
+            else ()
+        )
+        if final_records:
+            rows = [
+                _final_session_payload(record, now=now)
+                for record in sorted(
+                    final_records,
+                    key=lambda item: float(item.updated_at),
+                    reverse=True,
+                )
+                if (machine == "local" or str(record.executor_id) == machine)
+                and (
+                    include_inactive
+                    or (
+                        record.status == "active"
+                        and float(record.updated_at)
+                        >= now - SESSION_ACTIVE_WINDOW_S
+                    )
+                )
+            ][:UI_SESSION_MAX_ENTRIES]
+        else:
+            if machine != "local":
+                require_remote_machine(machine)
+            sessions = await asyncio.to_thread(
+                get_tool_session_store().list_sessions
             )
-        ][:UI_SESSION_MAX_ENTRIES]
+            rows = [
+                _session_payload(session, now=now)
+                for session in sessions
+                if _belongs_to_machine(session, machine)
+                and (
+                    include_inactive
+                    or session.updated_at >= now - SESSION_ACTIVE_WINDOW_S
+                )
+            ][:UI_SESSION_MAX_ENTRIES]
         return _json_ok(
             {
                 "machine": machine,
@@ -151,6 +200,40 @@ async def api_session_action(request: Request) -> Response:
             allow_empty=False,
         )
         _require_scopes(machine, write=True)
+        runtime = _control_runtime(request)
+        final_record = (
+            runtime.control_state.snapshot_sessions().get(session_id)
+            if runtime is not None
+            else None
+        )
+        if runtime is not None and final_record is not None:
+            if machine != "local" and str(final_record.executor_id) != machine:
+                raise ValueError(
+                    f"session {session_id} does not belong to executor {machine}"
+                )
+            result = await runtime.session_coordinator.end_session(session_id)
+            ended_record = runtime.control_state.snapshot_sessions().get(
+                session_id
+            )
+            session_payload = (
+                _final_session_payload(ended_record, now=time.time())
+                if ended_record is not None
+                else {
+                    "session_id": session_id,
+                    "executor_id": str(final_record.executor_id),
+                    "status": "ended",
+                    "active": False,
+                    "termination_requested": True,
+                }
+            )
+            return _json_ok(
+                {
+                    "machine": machine,
+                    "session": session_payload,
+                    "result": result,
+                },
+                message="Session termination completed",
+            )
         _session_for_machine(session_id, machine)
         session = await asyncio.to_thread(
             get_tool_session_store().request_termination, session_id

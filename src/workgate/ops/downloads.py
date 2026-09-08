@@ -209,12 +209,10 @@ async def create_file_link_dispatch_execute(
     )
 
 
-def list_file_links_execute(
+def _list_file_links_owned(
     include_expired: bool = False, session_id: str | None = None
 ) -> ListFileLinksOutput:
-    """List generated links owned by one explicit session."""
-    if session_id is not None:
-        get_tool_session_store().touch_session(session_id)
+    """List control-owned links without resolving machine/session state."""
     with transaction() as store:
         changed = False
         if not include_expired:
@@ -230,12 +228,19 @@ def list_file_links_execute(
     return ListFileLinksOutput(links=links)
 
 
-def revoke_file_link_execute(
-    token: str, session_id: str | None = None
-) -> RevokeFileLinkOutput:
-    """Revoke one link and remove its private snapshot."""
+def list_file_links_execute(
+    include_expired: bool = False, session_id: str | None = None
+) -> ListFileLinksOutput:
+    """List generated links owned by one explicit legacy tool session."""
     if session_id is not None:
         get_tool_session_store().touch_session(session_id)
+    return _list_file_links_owned(include_expired, session_id)
+
+
+def _revoke_file_link_owned(
+    token: str, session_id: str | None = None
+) -> RevokeFileLinkOutput:
+    """Revoke one control-owned link without resolving machine/session state."""
     removed: dict[str, Any] | None = None
     with transaction() as store:
         link = store.get("links", {}).get(token)
@@ -253,6 +258,15 @@ def revoke_file_link_execute(
             token_sha256=download_token_fingerprint(token),
         )
     return RevokeFileLinkOutput(revoked=removed is not None, token=token)
+
+
+def revoke_file_link_execute(
+    token: str, session_id: str | None = None
+) -> RevokeFileLinkOutput:
+    """Revoke one link owned by an explicit legacy tool session."""
+    if session_id is not None:
+        get_tool_session_store().touch_session(session_id)
+    return _revoke_file_link_owned(token, session_id)
 
 
 def claim_download(

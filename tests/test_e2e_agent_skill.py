@@ -98,8 +98,12 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
         assert status["manifest_status"] == "loaded"
         assert status["skills"]["count"] == 1
         assert status["skills"]["warnings"] == []
+        session = await client.call_tool("session_start", {"workdir": "."})
+        session_id = session["session_id"]
 
-        listed = await client.call_tool("list_agent_skills")
+        listed = await client.call_tool(
+            "list_agent_skills", {"session_id": session_id}
+        )
         assert listed["warnings"] == []
         assert len(listed["skills"]) == 1
         skill = listed["skills"][0]
@@ -113,7 +117,8 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
         )
 
         activated = await client.call_tool(
-            "activate_agent_skill", {"name": "code-humanizer"}
+            "activate_agent_skill",
+            {"session_id": session_id, "name": "code-humanizer"},
         )
         assert activated["name"] == "code-humanizer"
         assert activated["bytes"] > 10_000
@@ -123,7 +128,11 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
 
         readme = await client.call_tool(
             "read_agent_skill_file",
-            {"name": "code-humanizer", "path": "README.md"},
+            {
+                "session_id": session_id,
+                "name": "code-humanizer",
+                "path": "README.md",
+            },
         )
         assert readme["name"] == "code-humanizer"
         assert readme["path"] == "README.md"

@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
@@ -19,7 +20,7 @@ from ...oauth.http.routes import oauth_public_routes
 from ...ops.shell import tool_timeout_s
 from ...remote.http import remote_routes
 from ...remote.transfer_gateway import build_transfer_gateway_router
-from ...tools.catalog import ToolCatalog, build_tool_catalog
+from ...tools.catalog import ToolCatalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
@@ -48,15 +49,21 @@ def build_mcp(
     runtime: ControlRuntime | None = None,
     own_runtime_lifespan: bool = False,
 ) -> FastMCP:
-    """Create the MCP server and register one explicit local tool catalog."""
+    """Create the MCP server from a routed control runtime or explicit catalog."""
+    auto_runtime = runtime is None and tool_catalog is None
+    if auto_runtime:
+        runtime = build_control_runtime(get_settings())
     settings = (
         runtime.legacy_settings if runtime is not None else get_settings()
     )
-    catalog = tool_catalog or (
-        runtime.tool_catalog
-        if runtime is not None
-        else build_tool_catalog(settings)
-    )
+    if tool_catalog is not None:
+        catalog = tool_catalog
+    elif runtime is not None:
+        catalog = runtime.tool_catalog
+    else:  # pragma: no cover - guarded above.
+        raise RuntimeError(
+            "control MCP requires a routed runtime or explicit catalog"
+        )
 
     @asynccontextmanager
     async def runtime_lifespan(_mcp: FastMCP) -> AsyncGenerator[None]:
@@ -76,6 +83,8 @@ def build_mcp(
             else None
         ),
     )
+    cast(Any, mcp)._workgate_runtime = runtime
+    cast(Any, mcp)._workgate_runtime_lifespan_owned = own_runtime_lifespan
     context = McpToolContext(
         settings=settings,
         read_only_tool_annotations=_make_read_only_tool_annotations(),
@@ -153,7 +162,9 @@ def _add_public_routes_to_mcp_http_app(
         Mount("/", app=mcp_app),
     ]
     public_routes.extend(ui_public_routes)
-    return Starlette(routes=routes, lifespan=lifespan), public_routes
+    app = Starlette(routes=routes, lifespan=lifespan)
+    app.state.control_runtime = runtime
+    return app, public_routes
 
 
 def _build_authenticated_mcp_http_app(
@@ -200,8 +211,17 @@ def build_mcp_http_app(
     runtime: ControlRuntime | None = None,
 ) -> Starlette:
     """Use the MCP SDK's HTTP app and add local public routes/auth."""
+    active_runtime = runtime
+    if active_runtime is None and not bool(
+        getattr(mcp, "_workgate_runtime_lifespan_owned", False)
+    ):
+        active_runtime = cast(
+            ControlRuntime | None, getattr(mcp, "_workgate_runtime", None)
+        )
     settings = (
-        runtime.legacy_settings if runtime is not None else get_settings()
+        active_runtime.legacy_settings
+        if active_runtime is not None
+        else get_settings()
     )
     if hasattr(mcp, "streamable_http_app"):
         inner: Starlette = mcp.streamable_http_app()
@@ -224,14 +244,14 @@ def build_mcp_http_app(
             session_manager=session_manager,
             mcp_path=str(getattr(mcp_settings, "streamable_http_path", "/mcp")),
             settings=settings,
-            runtime=runtime,
+            runtime=active_runtime,
         )
     if hasattr(mcp, "sse_app"):
         inner = mcp.sse_app()
         return _build_authenticated_mcp_http_app(
             inner,
             settings=settings,
-            runtime=runtime,
+            runtime=active_runtime,
         )
     raise RuntimeError(
         "MCP HTTP ASGI app not available since both streamable_http_app and sse_app are not available"

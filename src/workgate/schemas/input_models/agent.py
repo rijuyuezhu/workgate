@@ -8,8 +8,8 @@ AgentSessionIdArg = Annotated[
     str | None,
     Field(
         description=(
-            "Optional explicit session id. Local sessions add <workdir>/.agents/skills "
-            "as the highest-priority source; remote sessions scan on that worker."
+            "Optional explicit shared session id. When provided, the bound executor "
+            "adds <workdir>/.agents/skills as the highest-priority source."
         )
     ),
 ]

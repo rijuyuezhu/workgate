@@ -4,6 +4,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -16,6 +17,15 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+from workgate.control.state import ControlState, ExecutorTrustRecord
+from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
+from workgate.persistence import FileStateStore
+from workgate.protocol.credentials import (
+    executor_credential_verifier,
+    new_executor_credential,
+)
+from workgate.protocol.ids import new_executor_id
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 
@@ -26,6 +36,12 @@ class ToolClient(Protocol):
     async def call_tool(
         self, name: str, args: dict[str, Any] | None = None
     ) -> Any: ...
+
+
+@dataclass(frozen=True)
+class E2EExecutor:
+    executor_id: str
+    workspace: Path
 
 
 def free_tcp_port() -> int:
@@ -40,6 +56,7 @@ def server_env(
     mode: str,
     port: int | None = None,
     agent_bridge_enabled: bool = False,
+    state_dir: Path | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     pythonpath = str(SRC_ROOT)
@@ -49,7 +66,9 @@ def server_env(
         {
             "PYTHONPATH": pythonpath,
             "WORKGATE_WORKSPACE_ROOT": str(workspace_root),
-            "WORKGATE_STATE_DIR": str(workspace_root / ".workgate"),
+            "WORKGATE_STATE_DIR": str(
+                state_dir or workspace_root / ".workgate"
+            ),
             "WORKGATE_MODE": mode,
             "WORKGATE_HOST": "127.0.0.1",
             "WORKGATE_AUTH_MODE": "none",
@@ -64,6 +83,100 @@ def server_env(
         env["WORKGATE_PORT"] = str(port)
         env["WORKGATE_BASE_URL"] = f"http://127.0.0.1:{port}"
     return env
+
+
+def provision_executor_pair(
+    *,
+    control_state_dir: Path,
+    executor_state_dir: Path,
+    control_url: str,
+    name: str = "e2e-executor",
+) -> str:
+    """Seed matching production trust/profile state for non-interactive E2E setup."""
+    executor_id = new_executor_id()
+    credential = new_executor_credential()
+
+    control_store = FileStateStore(lambda: control_state_dir)
+    state = ControlState(control_store)
+    state.start()
+    try:
+        state.put_executor(
+            ExecutorTrustRecord(
+                executor_id=executor_id,
+                name=name,
+                credential_verifier=executor_credential_verifier(credential),
+                created_at=time.time(),
+            )
+        )
+    finally:
+        state.close()
+
+    executor_store = FileStateStore(lambda: executor_state_dir)
+    ExecutorProfileStore(executor_store).save(
+        ExecutorProfile(
+            control_url=control_url,
+            executor_id=executor_id,
+            credential=credential,
+        )
+    )
+    return executor_id
+
+
+def start_executor_process(
+    workspace_root: Path,
+    *,
+    state_dir: Path,
+    mode: str,
+    agent_bridge_enabled: bool = False,
+) -> subprocess.Popen[str]:
+    """Start one final executor process from a pre-provisioned profile."""
+    return subprocess.Popen(
+        [sys.executable, "-m", "workgate.main", "executor", "run"],
+        cwd=PROJECT_ROOT,
+        env=server_env(
+            workspace_root,
+            mode=mode,
+            agent_bridge_enabled=agent_bridge_enabled,
+            state_dir=state_dir,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+async def wait_for_executor_online(
+    base_url: str,
+    process: subprocess.Popen[str],
+    executor_id: str,
+) -> None:
+    """Wait until final authenticated hello makes the seeded executor eligible."""
+    deadline = asyncio.get_running_loop().time() + 10
+    async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
+        while True:
+            if process.poll() is not None:
+                stdout, stderr = process.communicate(timeout=1)
+                raise AssertionError(
+                    f"executor exited early with code {process.returncode}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            try:
+                response = await client.get(f"{base_url}/api/ui/executors")
+                if response.status_code == 200:
+                    rows = response.json().get("data", {}).get("executors", [])
+                    if any(
+                        row.get("executor_id") == executor_id
+                        and row.get("online") is True
+                        for row in rows
+                    ):
+                        return
+            except httpx.HTTPError, json.JSONDecodeError:
+                pass
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError(
+                    f"executor {executor_id} did not become online at {base_url}"
+                )
+            await asyncio.sleep(0.05)
 
 
 async def wait_for_http_ready(
@@ -98,20 +211,40 @@ async def wait_for_http_ready(
 
 
 @asynccontextmanager
-async def run_http_process(
+async def run_http_process_with_executors(
     tmp_path: Path,
     *,
     mode: str,
+    executor_workspaces: tuple[Path, ...],
     agent_bridge_enabled: bool = False,
-    workspace_setup: Callable[[Path], None] | None = None,
-) -> AsyncGenerator[tuple[str, Path]]:
-    workspace = tmp_path / f"workspace-{mode}"
-    workspace.mkdir()
-    if workspace_setup is not None:
-        workspace_setup(workspace)
+) -> AsyncGenerator[tuple[str, tuple[E2EExecutor, ...]]]:
+    """Run one control process plus explicitly separated final executor processes."""
+    if not executor_workspaces:
+        raise ValueError("at least one executor workspace is required")
+
+    control_workspace = tmp_path / f"control-workspace-{mode}"
+    control_workspace.mkdir(parents=True, exist_ok=True)
     port = free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
-    process = subprocess.Popen(
+    control_state_dir = tmp_path / f"control-state-{mode}"
+    executor_specs: list[tuple[E2EExecutor, Path]] = []
+    for index, workspace in enumerate(executor_workspaces, start=1):
+        workspace.mkdir(parents=True, exist_ok=True)
+        state_dir = tmp_path / f"executor-state-{mode}-{index}"
+        executor_id = provision_executor_pair(
+            control_state_dir=control_state_dir,
+            executor_state_dir=state_dir,
+            control_url=base_url,
+            name=f"e2e-executor-{index}",
+        )
+        executor_specs.append(
+            (
+                E2EExecutor(executor_id=executor_id, workspace=workspace),
+                state_dir,
+            )
+        )
+
+    control_process = subprocess.Popen(
         [
             sys.executable,
             "-m",
@@ -126,7 +259,9 @@ async def run_http_process(
             "--auth-mode",
             "none",
             "--workspace-root",
-            str(workspace),
+            str(control_workspace),
+            "--state-dir",
+            str(control_state_dir),
             "--agent-bridge-enabled",
             str(agent_bridge_enabled).lower(),
             "--remote-enabled",
@@ -134,26 +269,66 @@ async def run_http_process(
         ],
         cwd=PROJECT_ROOT,
         env=server_env(
-            workspace,
+            control_workspace,
             mode=mode,
             port=port,
             agent_bridge_enabled=agent_bridge_enabled,
+            state_dir=control_state_dir,
         ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+    executor_processes: list[subprocess.Popen[str]] = []
     try:
-        await wait_for_http_ready(base_url, process)
-        yield base_url, workspace
+        await wait_for_http_ready(base_url, control_process)
+        for executor, state_dir in executor_specs:
+            child = start_executor_process(
+                executor.workspace,
+                state_dir=state_dir,
+                mode=mode,
+                agent_bridge_enabled=agent_bridge_enabled,
+            )
+            executor_processes.append(child)
+            await wait_for_executor_online(
+                base_url, child, executor.executor_id
+            )
+        yield (
+            base_url,
+            tuple(executor for executor, _state_dir in executor_specs),
+        )
     finally:
-        if process.poll() is None:
-            process.terminate()
+        for child in (*reversed(executor_processes), control_process):
+            if child.poll() is not None:
+                continue
+            child.terminate()
             try:
-                process.communicate(timeout=5)
+                child.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.communicate(timeout=5)
+                child.kill()
+                child.communicate(timeout=5)
+
+
+@asynccontextmanager
+async def run_http_process(
+    tmp_path: Path,
+    *,
+    mode: str,
+    agent_bridge_enabled: bool = False,
+    workspace_setup: Callable[[Path], None] | None = None,
+) -> AsyncGenerator[tuple[str, Path]]:
+    """Run one control process and one final executor for normal process E2E tests."""
+    workspace = tmp_path / f"workspace-{mode}"
+    workspace.mkdir(parents=True, exist_ok=True)
+    if workspace_setup is not None:
+        workspace_setup(workspace)
+    async with run_http_process_with_executors(
+        tmp_path,
+        mode=mode,
+        executor_workspaces=(workspace,),
+        agent_bridge_enabled=agent_bridge_enabled,
+    ) as (base_url, executors):
+        yield base_url, executors[0].workspace
 
 
 def decode_jsonish(value: Any) -> Any:

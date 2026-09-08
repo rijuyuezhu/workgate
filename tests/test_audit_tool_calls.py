@@ -4,10 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tests.helpers import mcp_text
+from tests.helpers import build_paired_http_app, build_paired_mcp, mcp_text
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.http.app import build_http_app
-from workgate.control.mcp.app import build_mcp
 
 
 def _audit_records(path):
@@ -20,16 +18,20 @@ def _audit_records(path):
     ]
 
 
-def _tool_call_pairs(records, tool_name):
+def _tool_call_pairs(records, tool_name, *, transport):
     starts = [
         r
         for r in records
-        if r.get("event") == "tool_call_start" and r.get("tool") == tool_name
+        if r.get("event") == "tool_call_start"
+        and r.get("tool") == tool_name
+        and r.get("transport") == transport
     ]
     ends = [
         r
         for r in records
-        if r.get("event") == "tool_call_end" and r.get("tool") == tool_name
+        if r.get("event") == "tool_call_end"
+        and r.get("tool") == tool_name
+        and r.get("transport") == transport
     ]
     return starts, ends
 
@@ -43,7 +45,8 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.post(
         "/tools/read",
@@ -52,7 +55,7 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
 
     assert response.status_code == 200
     records = _audit_records(get_settings().audit_log_path)
-    starts, ends = _tool_call_pairs(records, "read")
+    starts, ends = _tool_call_pairs(records, "read", transport="http")
 
     assert len(starts) == 1
     assert len(ends) == 1
@@ -75,17 +78,18 @@ async def test_mcp_tool_calls_audit_full_input_output(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
+    mcp, _harness = build_paired_mcp(get_settings())
     session = json.loads(
-        mcp_text(await build_mcp().call_tool("session_start", {"workdir": "."}))
+        mcp_text(await mcp.call_tool("session_start", {"workdir": "."}))
     )
-    response = await build_mcp().call_tool(
+    response = await mcp.call_tool(
         "read",
         {"session_id": session["session_id"], "path": "beta.txt:raw"},
     )
     payload = json.loads(mcp_text(response))
 
     records = _audit_records(get_settings().audit_log_path)
-    starts, ends = _tool_call_pairs(records, "read")
+    starts, ends = _tool_call_pairs(records, "read", transport="mcp")
 
     assert len(starts) == 1
     assert len(ends) == 1
@@ -107,17 +111,18 @@ async def test_mcp_tool_structured_errors_are_audited_with_input_and_output(
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
+    mcp, _harness = build_paired_mcp(get_settings())
     session = json.loads(
-        mcp_text(await build_mcp().call_tool("session_start", {"workdir": "."}))
+        mcp_text(await mcp.call_tool("session_start", {"workdir": "."}))
     )
     with pytest.raises(ToolError, match="Error executing tool read"):
-        await build_mcp().call_tool(
+        await mcp.call_tool(
             "read",
             {"session_id": session["session_id"], "path": "missing.txt"},
         )
 
     records = _audit_records(get_settings().audit_log_path)
-    starts, ends = _tool_call_pairs(records, "read")
+    starts, ends = _tool_call_pairs(records, "read", transport="mcp")
 
     assert len(starts) == 1
     assert len(ends) == 1

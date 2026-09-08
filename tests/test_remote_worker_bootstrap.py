@@ -159,9 +159,22 @@ async def test_worker_dispatches_persistent_shell_resize(monkeypatch):
         shell_ops, "resize_persistent_shell_execute", fake_resize
     )
 
+    async def owned_shells(session_id: str):
+        assert session_id == "sess_test"
+        return ["shell-1"]
+
+    monkeypatch.setattr(
+        shell_ops, "list_owned_persistent_shell_ids_execute", owned_shells
+    )
+
     result = await execute_worker_tool(
         "resize_persistent_shell",
-        {"shell_id": "shell-1", "cols": 132, "rows": 38},
+        {
+            "session_id": "sess_test",
+            "shell_id": "shell-1",
+            "cols": 132,
+            "rows": 38,
+        },
     )
 
     assert result["resized"] is True
@@ -191,9 +204,22 @@ async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
         shell_ops, "read_persistent_shell_output_execute", fake_read
     )
 
+    async def owned_shells(session_id: str):
+        assert session_id == "sess_test"
+        return ["shell-1"]
+
+    monkeypatch.setattr(
+        shell_ops, "list_owned_persistent_shell_ids_execute", owned_shells
+    )
+
     result = await execute_worker_tool(
         "read_persistent_shell_output",
-        {"shell_id": "shell-1", "lines": 500, "preserve_ansi": True},
+        {
+            "session_id": "sess_test",
+            "shell_id": "shell-1",
+            "lines": 500,
+            "preserve_ansi": True,
+        },
     )
 
     assert result == {
@@ -205,7 +231,11 @@ async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
     with pytest.raises(ValueError, match="preserve_ansi must be a boolean"):
         await execute_worker_tool(
             "read_persistent_shell_output",
-            {"shell_id": "shell-1", "preserve_ansi": "true"},
+            {
+                "session_id": "sess_test",
+                "shell_id": "shell-1",
+                "preserve_ansi": "true",
+            },
         )
 
 

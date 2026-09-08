@@ -54,7 +54,8 @@ async def exercise_environment_tool(
     assert payload["target"] == "local"
     assert payload["workdir"] == str(workspace)
     assert payload["workspace_root"] == str(workspace)
-    assert len(payload["session_id"]) == 8
+    assert payload["session_id"].startswith("sess_")
+    assert len(payload["session_id"]) >= 27
 
 
 async def exercise_explicit_session_workflow(
@@ -70,7 +71,8 @@ async def exercise_explicit_session_workflow(
         "session_start", {"workdir": "session-work", "label": "e2e"}
     )
     session_id = session["session_id"]
-    assert len(session_id) == 8
+    assert session_id.startswith("sess_")
+    assert len(session_id) >= 27
     assert session["target"] == "local"
     assert session["workdir"] == str(session_dir)
 
@@ -324,7 +326,14 @@ async def exercise_session_copy_tool(
         },
     )
     assert file_copy["kind"] == "file"
-    assert file_copy["relation"]["route"] == "local_to_local"
+    assert file_copy["relation"]["route"] == "same_executor"
+    assert file_copy["relation"]["same_executor"] is True
+    assert (
+        file_copy["source"]["executor_id"]
+        == file_copy["destination"]["executor_id"]
+    )
+    assert file_copy["source"]["target"] is None
+    assert file_copy["destination"]["target"] is None
     assert file_copy["chunks"] > 1
     assert (dst_dir / "artifact-copy.bin").read_bytes() == payload
 
@@ -346,13 +355,19 @@ async def exercise_session_copy_tool(
 
 
 async def exercise_workspace_connector_tools(client: ToolClient) -> None:
-    search = await client.call_tool("workspace_search", {"query": "needle two"})
+    session = await client.call_tool("session_start", {"workdir": "."})
+    session_id = session["session_id"]
+    search = await client.call_tool(
+        "workspace_search", {"session_id": session_id, "query": "needle two"}
+    )
     assert "results" in search
     if search["results"]:
         result_ids = {item["id"] for item in search["results"]}
         assert "notes/demo.txt" in result_ids
 
-    fetched = await client.call_tool("fetch", {"id": "notes/demo.txt"})
+    fetched = await client.call_tool(
+        "fetch", {"session_id": session_id, "id": "notes/demo.txt"}
+    )
     assert fetched["id"] == "notes/demo.txt"
     assert "needle two" in fetched["text"]
 
@@ -461,7 +476,9 @@ async def exercise_shell_tools(client: ToolClient, workspace: Path) -> None:
     assert python_result["result"]["ok"] is True
     assert json.loads(python_result["result"]["stdout"])["e2e"] == 314
 
-    list_persistent_shells = await client.call_tool("list_persistent_shells")
+    list_persistent_shells = await client.call_tool(
+        "list_persistent_shells", {"session_id": session_id}
+    )
     assert "shells" in list_persistent_shells
 
 
@@ -574,10 +591,11 @@ async def exercise_interactive_shell_tools(client: ToolClient) -> None:
 
     await assert_required_tools(client, INTERACTIVE_SHELL_TOOL_NAMES)
     session = await client.call_tool("session_start", {"workdir": "."})
+    session_id = session["session_id"]
     started = await client.call_tool(
         "bash",
         {
-            "session_id": session["session_id"],
+            "session_id": session_id,
             "command": "bash",
             "pty": True,
             "name": "e2e",
@@ -588,6 +606,7 @@ async def exercise_interactive_shell_tools(client: ToolClient) -> None:
         await client.call_tool(
             "send_persistent_shell_input",
             {
+                "session_id": session_id,
                 "shell_id": shell_id,
                 "input_text": "echo ready",
                 "enter": True,
@@ -597,7 +616,8 @@ async def exercise_interactive_shell_tools(client: ToolClient) -> None:
         output = ""
         while time.monotonic() < deadline:
             read = await client.call_tool(
-                "read_persistent_shell_output", {"shell_id": shell_id}
+                "read_persistent_shell_output",
+                {"session_id": session_id, "shell_id": shell_id},
             )
             output = read.get("output", "")
             if "ready" in output:
@@ -605,7 +625,10 @@ async def exercise_interactive_shell_tools(client: ToolClient) -> None:
             time.sleep(0.1)
         assert "ready" in output
     finally:
-        await client.call_tool("kill_persistent_shell", {"shell_id": shell_id})
+        await client.call_tool(
+            "kill_persistent_shell",
+            {"session_id": session_id, "shell_id": shell_id},
+        )
 
 
 async def exercise_todo_tools(client: ToolClient) -> None:

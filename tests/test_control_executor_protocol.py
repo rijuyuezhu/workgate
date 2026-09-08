@@ -171,7 +171,11 @@ def test_hello_uses_complete_thin_session_inventory() -> None:
         workspace_root="/workspace",
         sessions=(
             SessionInventorySummary(
-                session_id=session_id, resolved_workdir="/workspace/project"
+                session_id=session_id,
+                resolved_workdir="/workspace/project",
+                last_active_at=123.0,
+                has_persistent_shells=True,
+                has_active_jobs=True,
             ),
         ),
         shells=(),
@@ -181,7 +185,13 @@ def test_hello_uses_complete_thin_session_inventory() -> None:
     encoded = hello.model_dump(mode="json")
     assert encoded["protocol_version"] == 1
     assert encoded["sessions"] == [
-        {"session_id": session_id, "resolved_workdir": "/workspace/project"}
+        {
+            "session_id": session_id,
+            "resolved_workdir": "/workspace/project",
+            "last_active_at": 123.0,
+            "has_persistent_shells": True,
+            "has_active_jobs": True,
+        }
     ]
     assert "executor_id" not in encoded
 

@@ -3,18 +3,20 @@
 import asyncio
 import contextlib
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from pathlib import Path
 from typing import Any
 
 from ..audit import audit
 from ..config.settings import get_settings
 from ..errors import public_error_type
+from ..persistence import StateStore, use_state_store
 from ..schemas.result_models.jobs import (
     JobListOutput,
     JobRetryOutput,
     JobStartOutput,
     JobStopOutput,
+    JobTailOutput,
 )
 from ..tool_session.lifecycle import session_lifecycle_lock
 from ..tool_session.store import get_tool_session_store
@@ -26,18 +28,13 @@ from ..utils.runtime_identity import (
     managed_job_lease_state,
 )
 from . import lifecycle as job_lifecycle
+from . import persistence as job_persistence
 from . import recovery as job_recovery
 from .persistence import (
     TERMINAL_STATUSES,
 )
 from .persistence import (
-    attempt_paths as _attempt_paths,
-)
-from .persistence import (
     prune_store as _prune_store,
-)
-from .persistence import (
-    remove_attempt_files as _remove_attempt_files,
 )
 from .persistence import (
     remove_attempt_paths as _remove_attempt_paths,
@@ -48,6 +45,7 @@ from .state import (
     CONFIRMED_TERMINAL_STATUSES,
     JobAttemptPaths,
     JobRow,
+    JobStore,
     MutableJobRow,
 )
 from .state import (
@@ -83,8 +81,6 @@ from .state import (
 
 MANAGED_JOB_STORE_RETRY_ATTEMPTS = 2
 JOB_STORE_LOCK_RETRY_INTERVAL_S = job_recovery.JOB_STORE_LOCK_RETRY_INTERVAL_S
-_store_transaction = job_recovery.store_transaction
-_write_managed_deferred_update = job_recovery.write_managed_deferred_update
 _apply_managed_update = job_recovery.apply_managed_update
 _clear_pending_retry = job_lifecycle._clear_pending_retry
 type ManagedJobHandler = Callable[
@@ -95,7 +91,8 @@ type ManagedJobHandler = Callable[
 class ManagedJobsRuntime:
     """Own process-local managed-job handlers, tasks, and liveness leases."""
 
-    def __init__(self) -> None:
+    def __init__(self, state_store: StateStore | None = None) -> None:
+        self.state_store = state_store
         self.handlers: dict[str, ManagedJobHandler] = {}
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.leases: dict[str, ManagedJobLease] = {}
@@ -148,7 +145,11 @@ class ManagedJobsRuntime:
         """Acquire and retain one cross-process liveness lease."""
         if job_id in self.leases:
             raise RuntimeError(f"managed job lease is already held: {job_id}")
-        lease = ManagedJobLease(job_id)
+        if self.state_store is None:
+            lease = ManagedJobLease(job_id)
+        else:
+            with use_state_store(self.state_store):
+                lease = ManagedJobLease(job_id)
         lease.acquire()
         self.leases[job_id] = lease
         return lease
@@ -228,12 +229,52 @@ def managed_jobs_runtime() -> ManagedJobsRuntime:
     return _MANAGED_JOBS_RUNTIME
 
 
+@contextlib.contextmanager
+def _managed_state_scope() -> Generator[None]:
+    """Pin managed-job persistence to its owning control runtime."""
+    runtime = _MANAGED_JOBS_RUNTIME
+    if runtime is None or runtime.state_store is None:
+        yield
+        return
+    with use_state_store(runtime.state_store):
+        yield
+
+
+@contextlib.contextmanager
+def _store_transaction() -> Generator[JobStore]:
+    with _managed_state_scope(), job_recovery.store_transaction() as store:
+        yield store
+
+
+def _attempt_paths(job_id: str, attempt: int) -> JobAttemptPaths:
+    with _managed_state_scope():
+        return job_persistence.attempt_paths(job_id, attempt)
+
+
+def _remove_attempt_files(job_id: str, keep_attempt: int | None = None) -> None:
+    with _managed_state_scope():
+        job_persistence.remove_attempt_files(job_id, keep_attempt)
+
+
+def _write_managed_deferred_update(
+    session_id: str,
+    job_id: str,
+    operation: str,
+    payload: dict[str, Any],
+) -> Path:
+    with _managed_state_scope():
+        return job_recovery.write_managed_deferred_update(
+            session_id, job_id, operation, payload
+        )
+
+
 def _managed_job_liveness(job: Mapping[str, Any]) -> str:
     """Return the authoritative cross-process liveness state for a managed row."""
-    return managed_job_lease_state(
-        str(job.get("job_id") or ""),
-        job.get("managed_lease_version"),
-    )
+    with _managed_state_scope():
+        return managed_job_lease_state(
+            str(job.get("job_id") or ""),
+            job.get("managed_lease_version"),
+        )
 
 
 def _managed_job_has_local_task(job: Mapping[str, Any]) -> bool:
@@ -515,11 +556,13 @@ async def _start_managed_job_unlocked(
     name: str | None = None,
     command: str | None = None,
     cwd: str = ".",
+    touch_session: bool = True,
 ) -> JobStartOutput:
     """Start one controller-managed task owned by an explicit agent session."""
     runtime = managed_jobs_runtime()
     runtime.require_admission()
-    get_tool_session_store().touch_session(session_id)
+    if touch_session:
+        get_tool_session_store().touch_session(session_id)
     normalized_kind = kind.strip()
     if normalized_kind not in runtime.handlers:
         raise ValueError(f"unknown managed job kind: {normalized_kind}")
@@ -589,6 +632,27 @@ async def _start_managed_job_unlocked(
         kind=normalized_kind,
     )
     return JobStartOutput(**_public_job(job).model_dump())
+
+
+async def start_managed_job_without_session_admission(
+    session_id: str,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    name: str | None = None,
+    command: str | None = None,
+    cwd: str = ".",
+) -> JobStartOutput:
+    """Start managed work after an external session authority admitted it."""
+    return await _start_managed_job_unlocked(
+        session_id,
+        kind,
+        payload,
+        name=name,
+        command=command,
+        cwd=cwd,
+        touch_session=False,
+    )
 
 
 async def _stop_managed_job(
@@ -666,6 +730,13 @@ async def _stop_managed_job_without_session_admission(
         return await _stop_managed_job(session_id, job_id, operation_id)
     finally:
         _discard_job_operation(operation_id)
+
+
+async def stop_managed_job_without_session_admission(
+    session_id: str, job_id: str
+) -> JobStopOutput:
+    """Stop managed work after an external session authority admitted cleanup."""
+    return await _stop_managed_job_without_session_admission(session_id, job_id)
 
 
 async def job_stop_managed_references_execute(
@@ -827,11 +898,22 @@ async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
         _discard_job_operation(operation_id)
 
 
+async def retry_managed_job_without_session_admission(
+    session_id: str, job_id: str
+) -> JobRetryOutput:
+    """Retry managed work after an external session authority admitted it."""
+    return await _retry_managed_job(session_id, job_id)
+
+
 async def managed_job_list_execute(
-    session_id: str, include_finished: bool
+    session_id: str,
+    include_finished: bool,
+    *,
+    touch_session: bool = True,
 ) -> JobListOutput:
     """List only controller-managed jobs owned by one explicit session."""
-    get_tool_session_store().touch_session(session_id)
+    if touch_session:
+        get_tool_session_store().touch_session(session_id)
     now = _utc()
     with _store_transaction() as store:
         for row in store.get("jobs", []):
@@ -858,6 +940,76 @@ async def managed_job_list_execute(
             counts[status] = counts.get(status, 0) + 1
     rows.sort(key=lambda item: item.created_at, reverse=True)
     return JobListOutput(jobs=rows, counts=counts)
+
+
+async def managed_job_tail_execute(
+    session_id: str, job_id: str, lines: int = 200
+) -> JobTailOutput:
+    """Read managed-job state without consulting legacy session authority."""
+    with _store_transaction() as store:
+        job = _refresh_job_status(
+            _find_session_job(store, session_id, job_id), set()
+        )
+        if str(job.get("kind") or "shell") != "managed":
+            raise RuntimeError(f"job is not controller-managed: {job_id}")
+        public = _public_job(job)
+        log_path = str(job.get("log_path") or "")
+    output = job_lifecycle._read_log_tail(log_path, lines)
+    message = None
+    if public.status in TERMINAL_STATUSES:
+        message = (
+            f"job completed with exit code {public.exit_code}"
+            if public.exit_code is not None
+            else f"job is {public.status}"
+        )
+    return JobTailOutput(job=public, output=output, message=message)
+
+
+def managed_job_referenced_session_ids(
+    session_id: str, job_id: str
+) -> tuple[str, ...]:
+    """Return durable session references carried by one managed-job payload."""
+    referenced = {session_id}
+    with _store_transaction() as store:
+        job = _find_session_job(store, session_id, job_id)
+        if str(job.get("kind") or "shell") != "managed":
+            return (session_id,)
+        payload = job.get("managed_payload")
+        if isinstance(payload, dict):
+            for key in ("src_session_id", "dst_session_id"):
+                value = str(payload.get(key) or "")
+                if value:
+                    referenced.add(value)
+    return tuple(sorted(referenced))
+
+
+def managed_job_has_active_reference(
+    referenced_session_id: str,
+    *,
+    managed_kind: str,
+    payload_keys: tuple[str, ...],
+) -> bool:
+    """Return whether live managed work currently references one session."""
+    with _store_transaction() as store:
+        for row in store.get("jobs", []):
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("kind") or "shell") != "managed":
+                continue
+            if str(row.get("managed_kind") or "") != managed_kind:
+                continue
+            job = _refresh_job_status(row, set())
+            if job.get("status") not in ACTIVE_STATUSES:
+                continue
+            payload = job.get("managed_payload")
+            if not isinstance(payload, dict):
+                continue
+            if any(
+                str(payload.get(key) or "") == referenced_session_id
+                for key in payload_keys
+            ):
+                return True
+    return False
 
 
 def managed_job_id_set(session_id: str, job_ids: list[str]) -> set[str]:

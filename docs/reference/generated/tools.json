@@ -35,7 +35,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional explicit session id. Local sessions add <workdir>/.agents/skills as the highest-priority source; remote sessions scan on that worker.",
+                "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
                 "head": {
                   "code": "session_id"
                 },
@@ -43,7 +43,7 @@
               }
             ]
           },
-          "Load one exact Skill from the same local or remote session registry used by list_agent_skills."
+          "Load one exact Skill from the executor-backed session registry used by list_agent_skills."
         ],
         [
           {
@@ -114,7 +114,7 @@
           {
             "items": [
               {
-                "description": "Optional explicit session id. Local sessions add <workdir>/.agents/skills as the highest-priority source; remote sessions scan on that worker.",
+                "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
                 "head": {
                   "code": "session_id"
                 },
@@ -145,7 +145,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional explicit session id. Local sessions add <workdir>/.agents/skills as the highest-priority source; remote sessions scan on that worker.",
+                "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
                 "head": {
                   "code": "session_id"
                 },
@@ -230,7 +230,7 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -252,7 +252,7 @@
               }
             ]
           },
-          "Read bounded, coalesced audit history for the local or remote target selected by an explicit agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."
+          "Read bounded, coalesced audit history for the executor-backed target selected by an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."
         ]
       ]
     },
@@ -301,7 +301,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -316,7 +316,7 @@
               }
             ]
           },
-          "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in a local or remote agent session. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap."
+          "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the snapshot succeeds, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap."
         ],
         [
           {
@@ -332,7 +332,7 @@
                 "note": "(boolean, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -349,7 +349,7 @@
           {
             "items": [
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -399,7 +399,7 @@
                 "note": "(boolean, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -437,7 +437,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -475,7 +475,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -513,7 +513,7 @@
                 "note": "(boolean, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -551,7 +551,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -587,7 +587,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -595,7 +595,7 @@
               }
             ]
           },
-          "View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the explicit local or remote session workdir; use this instead of read when visual inspection is needed."
+          "View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the shared session workdir on its bound executor; use this instead of read when visual inspection is needed."
         ]
       ]
     },
@@ -658,7 +658,7 @@
                 "note": "(array / null, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -701,7 +701,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -737,7 +737,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -781,7 +781,7 @@
               }
             ]
           },
-          "Run legacy remote-worker control-plane actions for already-enrolled workers: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines must pair with `workgate executor connect <control-url>`; remote_admin no longer creates enrollment invites. Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools. Reconnect commands contain no invite or bearer credential."
+          "Run migration-only control-plane actions for already-enrolled legacy remote workers: action=\"list\" inspects legacy worker inventory, action=\"revoke\" removes stale or untrusted legacy trust, action=\"rename\" updates a legacy worker name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines pair with `workgate executor connect <control-url>`. `remote_admin` does not create enrollment invites and is not a normal machine-execution selector. Start normal work with executor-backed `session_start(workdir=..., executor_id=...)` and then use ordinary session-bound tools."
         ]
       ]
     },
@@ -823,7 +823,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -831,7 +831,7 @@
               }
             ]
           },
-          "Find files by glob pattern inside an explicit agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir. Remote sessions dispatch to the paired worker session. Current max glob results: 5000."
+          "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max glob results: 5000."
         ],
         [
           {
@@ -882,7 +882,7 @@
                 "note": "(boolean, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -897,7 +897,7 @@
               }
             ]
           },
-          "Search code content inside an explicit agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch only for connector-style sessionless document retrieval. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. Current max_grep_results=200."
+          "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. Current max_grep_results=200."
         ],
         [
           {
@@ -927,7 +927,7 @@
                 "note": "(integer, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -935,7 +935,7 @@
               }
             ]
           },
-          "Return a compact directory tree inside an explicit agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir. Remote sessions dispatch to the paired worker session. Current max tree entries: 5000."
+          "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max tree entries: 5000."
         ]
       ]
     },
@@ -977,7 +977,7 @@
                 "note": "(integer, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -1006,14 +1006,14 @@
           {
             "items": [
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
                 "note": "(string, required)"
               },
               {
-                "description": "Working directory to bind to the session. Local paths resolve inside the configured workspace; remote paths resolve on the selected worker.",
+                "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
                 "head": {
                   "code": "workdir"
                 },
@@ -1021,7 +1021,7 @@
               }
             ]
           },
-          "Change an existing local or remote agent/workspace session to a new required workdir, clear stale grounding snapshots for that session, and return refreshed Git, instruction-file, runtime, tool, capability, and policy orientation. Use this when the user redirects you to a different project/subdirectory or you infer the original workdir was wrong; then read any relevant AGENTS.md/CLAUDE.md/config files before continuing edits."
+          "Change an existing executor-backed agent/workspace session to a new required workdir. Relative workdirs resolve against the executor's fixed workspace_root; old grounding snapshots are invalidated before the durable cwd changes. Use this when the user redirects you to a different project/subdirectory."
         ],
         [
           {
@@ -1051,7 +1051,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "dst_session_id"
                 },
@@ -1079,7 +1079,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "src_session_id"
                 },
@@ -1087,7 +1087,7 @@
               }
             ]
           },
-          "Copy one file or directory between two explicit agent/workspace sessions. Source and destination may be any pair of local or remote sessions; paths resolve inside their respective session workdirs. Same-worker remote copies stream raw bounded chunks inside that worker; other routes use the authenticated, checksummed control-plane transfer. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry from the beginning after interruption. The response includes the selected route and whether the sessions share a target, session id, or remote machine."
+          "Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies use control-coordinated transfer between the two bound executors without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor."
         ],
         [
           {
@@ -1096,14 +1096,14 @@
           {
             "items": [
               {
-                "description": "For a remote session only, release the controller binding even when the paired worker cannot be reached. This may leave orphaned worker-side work and does not bypass local job or PTY cleanup.",
+                "description": "When the bound executor is permanently unreachable, release only the control binding without claiming executor-side cleanup. This may leave orphaned executor resources.",
                 "head": {
                   "code": "force"
                 },
                 "note": "(boolean, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -1111,7 +1111,7 @@
               }
             ]
           },
-          "End one explicit local or remote agent/workspace session. Active tracked jobs and persistent PTYs owned by the session are stopped before controller state is removed. A remote worker session is also ended first; when that worker is permanently unreachable, force=true releases only the controller binding and reports that remote cleanup was not confirmed. Force never bypasses local job or PTY cleanup and may leave orphaned worker-side work. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files."
+          "End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files."
         ],
         [
           {
@@ -1120,6 +1120,13 @@
           {
             "items": [
               {
+                "description": "Optional stable executor_id. Omit only when exactly one eligible executor is online.",
+                "head": {
+                  "code": "executor_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
                 "description": "Optional human-readable label for this agent session.",
                 "head": {
                   "code": "label"
@@ -1127,21 +1134,7 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Required remote worker machine name when target is remote. Omit for local sessions.",
-                "head": {
-                  "code": "machine"
-                },
-                "note": "(string / null, optional)"
-              },
-              {
-                "description": "Session target. Use local for this workspace or remote for an online worker.",
-                "head": {
-                  "code": "target"
-                },
-                "note": "(local / remote, optional)"
-              },
-              {
-                "description": "Working directory to bind to the session. Local paths resolve inside the configured workspace; remote paths resolve on the selected worker.",
+                "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
                 "head": {
                   "code": "workdir"
                 },
@@ -1149,7 +1142,7 @@
               }
             ]
           },
-          "Start an explicit agent/workspace session and bind it to a required workdir. Use target=\"local\" for the control-server workspace, or target=\"remote\" with machine set to an online remote worker name and workdir set to the worker-side directory. Before calling, ask the user which project directory or remote worker to use when unclear; otherwise infer the most specific safe workdir from the task, repository, or paths the user mentioned. The response includes structured target runtime, tool, capability, policy, Git, and instruction-file orientation; read relevant AGENTS.md/CLAUDE.md/config files before editing. Pass the returned 8-character session_id to read, search, hashline_edit, edit_lines, bash, job, and other session-bound tools; remote sessions dispatch those normal tools to their paired worker session."
+          "Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool."
         ]
       ]
     },
@@ -1226,7 +1219,7 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -1241,7 +1234,7 @@
               }
             ]
           },
-          "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true only for local-session interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools and is not available for remote sessions. Do not use shell_id with job, and do not use session_id with persistent-shell companion tools. If both async_ and pty are true, PTY mode is used for local sessions. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Current bounded command timeout default/cap: 10/120 seconds."
+          "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Current bounded command timeout default/cap: 10/120 seconds."
         ],
         [
           {
@@ -1249,6 +1242,13 @@
           },
           {
             "items": [
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
               {
                 "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
                 "head": {
@@ -1258,14 +1258,24 @@
               }
             ]
           },
-          "Terminate a persistent shell by shell_id. Use for manually managed shells started with bash(pty=true), such as servers, watches, REPLs, or stuck interactive commands. shell_id is separate from the agent/workspace session_id. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files."
+          "Terminate a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use for manually managed shells such as servers, watches, REPLs, or stuck interactive commands. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files."
         ],
         [
           {
             "code": "list_persistent_shells"
           },
-          "none",
-          "List active persistent shells created by bash(pty=true). Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. The returned shell_id values are persistent-shell handles, not agent/workspace session_id values. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs."
+          {
+            "items": [
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "List active persistent shells owned by the explicit session_id. Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. Returned shell_id values are persistent-shell handles scoped by the owning session. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs."
         ],
         [
           {
@@ -1281,6 +1291,13 @@
                 "note": "(integer, optional)"
               },
               {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
                 "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
                 "head": {
                   "code": "shell_id"
@@ -1289,7 +1306,7 @@
               }
             ]
           },
-          "Read recent output from a persistent shell created by bash(pty=true). Pass shell_id returned by bash PTY mode or list_persistent_shells; shell_id is separate from the agent/workspace session_id. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context."
+          "Read recent output from a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context."
         ],
         [
           {
@@ -1312,6 +1329,13 @@
                 "note": "(integer, required)"
               },
               {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
                 "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
                 "head": {
                   "code": "shell_id"
@@ -1320,7 +1344,7 @@
               }
             ]
           },
-          "Resize a persistent PTY shell created by bash(pty=true). Pass shell_id returned by bash PTY mode or list_persistent_shells; shell_id is separate from the agent/workspace session_id. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport."
+          "Resize a persistent PTY shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport."
         ],
         [
           {
@@ -1385,7 +1409,7 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -1400,7 +1424,7 @@
               }
             ]
           },
-          "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true only for local-session Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools; PTY mode is not available for remote sessions. Current bounded command timeout default/cap: 10/120 seconds."
+          "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Current bounded command timeout default/cap: 10/120 seconds."
         ],
         [
           {
@@ -1423,6 +1447,13 @@
                 "note": "(string, required)"
               },
               {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
                 "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
                 "head": {
                   "code": "shell_id"
@@ -1431,7 +1462,7 @@
               }
             ]
           },
-          "Send input to an existing persistent shell created by bash(pty=true). Pass shell_id returned by bash PTY mode or list_persistent_shells; shell_id is separate from the agent/workspace session_id. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline."
+          "Send input to an existing persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline."
         ]
       ]
     },
@@ -1452,7 +1483,7 @@
           {
             "items": [
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -1460,7 +1491,7 @@
               }
             ]
           },
-          "Read the structured todo list owned by one explicit agent/workspace session. Pass the session_id returned by session_start. Use this when resuming or checking multi-step work in the current session before deciding what to do next. Todos are session-scoped: items from one session are not shared with another local or remote session, and shell_id/job_id values are not valid here. For changing the list, use write_todos with the complete replacement list."
+          "Read the structured todo list owned by one explicit executor-backed agent/workspace session. Pass the shared session_id returned by session_start. Use this when resuming or checking multi-step work in the current session before deciding what to do next. Todos are session-scoped: items from one session are not shared with another session, and shell_id/job_id values are not valid here. For changing the list, use write_todos with the complete replacement list."
         ],
         [
           {
@@ -1476,7 +1507,7 @@
                 "note": "(integer / null, optional)"
               },
               {
-                "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
@@ -1536,10 +1567,17 @@
                   "code": "id"
                 },
                 "note": "(string, required)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
               }
             ]
           },
-          "Fetch one UTF-8 workspace text file as a connector-compatible document. The id should normally come from a prior workspace_search result card; fetch is the second step in the connector search -> fetch workflow. This tool is sessionless and read-only for connector clients. For coding-agent work that already has a session_id, prefer read(session_id, path) because it supports line selectors, hashline output, and grounding metadata for hashline_edit/edit_lines."
+          "Fetch one UTF-8 workspace text file from the executor bound to session_id. The id should normally come from workspace_search on the same session. For coding-agent work, prefer read because it returns grounding metadata for safe edits."
         ],
         [
           {
@@ -1553,10 +1591,17 @@
                   "code": "query"
                 },
                 "note": "(string, required)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
               }
             ]
           },
-          "Search workspace text files and return connector-compatible result cards. Use this sessionless read-only tool for connector-style document retrieval clients that expect a search -> fetch workflow: call workspace_search first, then pass a returned result id to fetch. This is a broad literal text search from the configured workspace root and returns at most one card per matched file. For coding-agent work inside an explicit session, prefer session-bound tree_view/glob_search for path discovery, search for content matches with grounding metadata, and read for precise file ranges."
+          "Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id."
         ]
       ]
     }
@@ -1569,7 +1614,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Load one exact Skill from the same local or remote session registry used by list_agent_skills.",
+      "description": "Load one exact Skill from the executor-backed session registry used by list_agent_skills.",
       "inputSchema": {
         "properties": {
           "name": {
@@ -1587,7 +1632,7 @@
               }
             ],
             "default": null,
-            "description": "Optional explicit session id. Local sessions add <workdir>/.agents/skills as the highest-priority source; remote sessions scan on that worker.",
+            "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
             "title": "Session Id"
           }
         },
@@ -1790,10 +1835,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -1913,7 +1958,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read bounded, coalesced audit history for the local or remote target selected by an explicit agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot.",
+      "description": "Read bounded, coalesced audit history for the executor-backed target selected by an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot.",
       "inputSchema": {
         "properties": {
           "audit_session": {
@@ -2015,10 +2060,10 @@
             "title": "Search"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -2147,7 +2192,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true only for local-session interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools and is not available for remote sessions. Do not use shell_id with job, and do not use session_id with persistent-shell companion tools. If both async_ and pty are true, PTY mode is used for local sessions. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Current bounded command timeout default/cap: 10/120 seconds.",
+      "description": "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Current bounded command timeout default/cap: 10/120 seconds.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -2229,10 +2274,10 @@
             "title": "Purpose"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -2384,7 +2429,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in a local or remote agent session. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap.",
+      "description": "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the snapshot succeeds, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap.",
       "inputSchema": {
         "properties": {
           "filename": {
@@ -2425,10 +2470,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -2634,10 +2679,10 @@
             "type": "boolean"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -2709,10 +2754,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -3018,16 +3063,25 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Fetch one UTF-8 workspace text file as a connector-compatible document. The id should normally come from a prior workspace_search result card; fetch is the second step in the connector search -> fetch workflow. This tool is sessionless and read-only for connector clients. For coding-agent work that already has a session_id, prefer read(session_id, path) because it supports line selectors, hashline output, and grounding metadata for hashline_edit/edit_lines.",
+      "description": "Fetch one UTF-8 workspace text file from the executor bound to session_id. The id should normally come from workspace_search on the same session. For coding-agent work, prefer read because it returns grounding metadata for safe edits.",
       "inputSchema": {
         "properties": {
           "id": {
             "description": "Workspace result id returned by connector-style search, normally a relative file path.",
             "title": "Id",
             "type": "string"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
           }
         },
         "required": [
+          "session_id",
           "id"
         ],
         "title": "fetchArguments",
@@ -3102,7 +3156,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Find files by glob pattern inside an explicit agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir. Remote sessions dispatch to the paired worker session. Current max glob results: 5000.",
+      "description": "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max glob results: 5000.",
       "inputSchema": {
         "properties": {
           "cwd": {
@@ -3123,10 +3177,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -3184,10 +3238,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -3597,10 +3651,10 @@
             "title": "Retry"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -4109,9 +4163,17 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Terminate a persistent shell by shell_id. Use for manually managed shells started with bash(pty=true), such as servers, watches, REPLs, or stuck interactive commands. shell_id is separate from the agent/workspace session_id. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files.",
+      "description": "Terminate a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use for manually managed shells such as servers, watches, REPLs, or stuck interactive commands. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files.",
       "inputSchema": {
         "properties": {
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
           "shell_id": {
             "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
             "title": "Shell Id",
@@ -4119,6 +4181,7 @@
           }
         },
         "required": [
+          "session_id",
           "shell_id"
         ],
         "title": "kill_persistent_shellArguments",
@@ -4315,7 +4378,7 @@
               }
             ],
             "default": null,
-            "description": "Optional explicit session id. Local sessions add <workdir>/.agents/skills as the highest-priority source; remote sessions scan on that worker.",
+            "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
             "title": "Session Id"
           }
         },
@@ -4398,10 +4461,10 @@
             "type": "boolean"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -4620,10 +4683,10 @@
             "type": "boolean"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -4744,9 +4807,21 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "List active persistent shells created by bash(pty=true). Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. The returned shell_id values are persistent-shell handles, not agent/workspace session_id values. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs.",
+      "description": "List active persistent shells owned by the explicit session_id. Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. Returned shell_id values are persistent-shell handles scoped by the owning session. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs.",
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
         "title": "list_persistent_shellsArguments",
         "type": "object"
       },
@@ -4867,10 +4942,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -5242,7 +5317,7 @@
               }
             ],
             "default": null,
-            "description": "Optional explicit session id. Local sessions add <workdir>/.agents/skills as the highest-priority source; remote sessions scan on that worker.",
+            "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
             "title": "Session Id"
           }
         },
@@ -5324,7 +5399,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read recent output from a persistent shell created by bash(pty=true). Pass shell_id returned by bash PTY mode or list_persistent_shells; shell_id is separate from the agent/workspace session_id. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context.",
+      "description": "Read recent output from a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context.",
       "inputSchema": {
         "properties": {
           "lines": {
@@ -5333,6 +5408,14 @@
             "title": "Lines",
             "type": "integer"
           },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
           "shell_id": {
             "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
             "title": "Shell Id",
@@ -5340,6 +5423,7 @@
           }
         },
         "required": [
+          "session_id",
           "shell_id"
         ],
         "title": "read_persistent_shell_outputArguments",
@@ -5412,14 +5496,14 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read the structured todo list owned by one explicit agent/workspace session. Pass the session_id returned by session_start. Use this when resuming or checking multi-step work in the current session before deciding what to do next. Todos are session-scoped: items from one session are not shared with another local or remote session, and shell_id/job_id values are not valid here. For changing the list, use write_todos with the complete replacement list.",
+      "description": "Read the structured todo list owned by one explicit executor-backed agent/workspace session. Pass the shared session_id returned by session_start. Use this when resuming or checking multi-step work in the current session before deciding what to do next. Todos are session-scoped: items from one session are not shared with another session, and shell_id/job_id values are not valid here. For changing the list, use write_todos with the complete replacement list.",
       "inputSchema": {
         "properties": {
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -5522,7 +5606,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run legacy remote-worker control-plane actions for already-enrolled workers: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines must pair with `workgate executor connect <control-url>`; remote_admin no longer creates enrollment invites. Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools. Reconnect commands contain no invite or bearer credential.",
+      "description": "Run migration-only control-plane actions for already-enrolled legacy remote workers: action=\"list\" inspects legacy worker inventory, action=\"revoke\" removes stale or untrusted legacy trust, action=\"rename\" updates a legacy worker name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines pair with `workgate executor connect <control-url>`. `remote_admin` does not create enrollment invites and is not a normal machine-execution selector. Start normal work with executor-backed `session_start(workdir=..., executor_id=...)` and then use ordinary session-bound tools.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -5591,7 +5675,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Resize a persistent PTY shell created by bash(pty=true). Pass shell_id returned by bash PTY mode or list_persistent_shells; shell_id is separate from the agent/workspace session_id. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport.",
+      "description": "Resize a persistent PTY shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport.",
       "inputSchema": {
         "properties": {
           "cols": {
@@ -5608,6 +5692,14 @@
             "title": "Rows",
             "type": "integer"
           },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
           "shell_id": {
             "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
             "title": "Shell Id",
@@ -5615,6 +5707,7 @@
           }
         },
         "required": [
+          "session_id",
           "shell_id",
           "cols",
           "rows"
@@ -5685,10 +5778,10 @@
       "inputSchema": {
         "properties": {
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -5746,7 +5839,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true only for local-session Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools; PTY mode is not available for remote sessions. Current bounded command timeout default/cap: 10/120 seconds.",
+      "description": "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Current bounded command timeout default/cap: 10/120 seconds.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -5828,10 +5921,10 @@
             "title": "Purpose"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -5921,7 +6014,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Search code content inside an explicit agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch only for connector-style sessionless document retrieval. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. Current max_grep_results=200.",
+      "description": "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. Current max_grep_results=200.",
       "inputSchema": {
         "properties": {
           "case_sensitive": {
@@ -5980,10 +6073,10 @@
             "type": "boolean"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
@@ -6365,10 +6458,10 @@
             "type": "integer"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -6457,7 +6550,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Send input to an existing persistent shell created by bash(pty=true). Pass shell_id returned by bash PTY mode or list_persistent_shells; shell_id is separate from the agent/workspace session_id. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline.",
+      "description": "Send input to an existing persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline.",
       "inputSchema": {
         "properties": {
           "enter": {
@@ -6471,6 +6564,14 @@
             "title": "Input Text",
             "type": "string"
           },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
           "shell_id": {
             "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
             "title": "Shell Id",
@@ -6478,6 +6579,7 @@
           }
         },
         "required": [
+          "session_id",
           "shell_id",
           "input_text"
         ],
@@ -6531,19 +6633,19 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Change an existing local or remote agent/workspace session to a new required workdir, clear stale grounding snapshots for that session, and return refreshed Git, instruction-file, runtime, tool, capability, and policy orientation. Use this when the user redirects you to a different project/subdirectory or you infer the original workdir was wrong; then read any relevant AGENTS.md/CLAUDE.md/config files before continuing edits.",
+      "description": "Change an existing executor-backed agent/workspace session to a new required workdir. Relative workdirs resolve against the executor's fixed workspace_root; old grounding snapshots are invalidated before the durable cwd changes. Use this when the user redirects you to a different project/subdirectory.",
       "inputSchema": {
         "properties": {
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },
           "workdir": {
-            "description": "Working directory to bind to the session. Local paths resolve inside the configured workspace; remote paths resolve on the selected worker.",
+            "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
             "title": "Workdir",
             "type": "string"
           }
@@ -7201,6 +7303,19 @@
             "$ref": "#/$defs/SessionEnvironment",
             "description": "Bounded runtime, workspace, tool, capability, and policy orientation."
           },
+          "executor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable executor id bound to this shared session.",
+            "title": "Executor Id"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -7249,7 +7364,7 @@
               }
             ],
             "default": null,
-            "description": "Remote worker name for remote sessions.",
+            "description": "Legacy remote-worker projection; final executor sessions do not use this for routing.",
             "title": "Machine"
           },
           "message": {
@@ -7258,12 +7373,12 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session id.",
+            "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
             "title": "Session Id",
             "type": "string"
           },
           "target": {
-            "description": "Execution target bound to this session.",
+            "description": "Legacy executor-local orientation projection; public routing uses executor_id.",
             "enum": [
               "local",
               "remote"
@@ -7282,7 +7397,7 @@
             "type": "string"
           },
           "workspace_root": {
-            "description": "Configured local workspace root for this server.",
+            "description": "Configured workspace root reported by the executor that owns this session.",
             "title": "Workspace Root",
             "type": "string"
           }
@@ -7310,7 +7425,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Copy one file or directory between two explicit agent/workspace sessions. Source and destination may be any pair of local or remote sessions; paths resolve inside their respective session workdirs. Same-worker remote copies stream raw bounded chunks inside that worker; other routes use the authenticated, checksummed control-plane transfer. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry from the beginning after interruption. The response includes the selected route and whether the sessions share a target, session id, or remote machine.",
+      "description": "Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies use control-coordinated transfer between the two bound executors without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor.",
       "inputSchema": {
         "properties": {
           "background": {
@@ -7338,10 +7453,10 @@
             "type": "string"
           },
           "dst_session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Dst Session Id",
             "type": "string"
           },
@@ -7368,10 +7483,10 @@
             "type": "string"
           },
           "src_session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Src Session Id",
             "type": "string"
           }
@@ -7581,6 +7696,19 @@
           "SessionCopyEndpoint": {
             "description": "One endpoint in a session-to-session copy.",
             "properties": {
+              "executor_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stable final executor identity for this endpoint, when applicable.",
+                "title": "Executor Id"
+              },
               "machine": {
                 "anyOf": [
                   {
@@ -7591,7 +7719,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Remote worker machine for remote sessions.",
+                "description": "Legacy remote-worker machine name, omitted for final executor-bound sessions.",
                 "title": "Machine"
               },
               "path": {
@@ -7618,13 +7746,21 @@
                 "type": "string"
               },
               "target": {
-                "description": "Execution target bound to this endpoint session.",
-                "enum": [
-                  "local",
-                  "remote"
+                "anyOf": [
+                  {
+                    "enum": [
+                      "local",
+                      "remote"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
-                "title": "Target",
-                "type": "string"
+                "default": null,
+                "description": "Legacy local/remote target, omitted for final executor-bound sessions.",
+                "title": "Target"
               },
               "workdir": {
                 "description": "Session workdir used for path resolution.",
@@ -7634,7 +7770,6 @@
             },
             "required": [
               "session_id",
-              "target",
               "workdir",
               "path"
             ],
@@ -7782,21 +7917,37 @@
             "description": "Relationship between the source and destination sessions.",
             "properties": {
               "route": {
-                "description": "Transfer route selected from the two session targets.",
+                "description": "Final executor relation, or a legacy local/remote transfer route.",
                 "enum": [
                   "local_to_local",
                   "local_to_remote",
                   "remote_to_local",
                   "remote_to_remote_same_machine",
-                  "remote_to_remote_different_machines"
+                  "remote_to_remote_different_machines",
+                  "same_executor",
+                  "different_executors"
                 ],
                 "title": "Route",
                 "type": "string"
               },
-              "same_machine": {
-                "description": "Whether both endpoints are remote sessions on the same worker machine.",
-                "title": "Same Machine",
+              "same_executor": {
+                "default": false,
+                "description": "Whether both final shared sessions are bound to the same executor.",
+                "title": "Same Executor",
                 "type": "boolean"
+              },
+              "same_machine": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Legacy remote-worker machine relation; omitted for final executor-bound sessions.",
+                "title": "Same Machine"
               },
               "same_session": {
                 "description": "Whether source and destination are the same agent session.",
@@ -7804,16 +7955,22 @@
                 "type": "boolean"
               },
               "same_target": {
-                "description": "Whether source and destination have the same target type.",
-                "title": "Same Target",
-                "type": "boolean"
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Legacy local/remote target relation; omitted for final executor-bound sessions.",
+                "title": "Same Target"
               }
             },
             "required": [
               "route",
-              "same_session",
-              "same_target",
-              "same_machine"
+              "same_session"
             ],
             "title": "SessionCopyRelation",
             "type": "object"
@@ -7846,20 +8003,20 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "End one explicit local or remote agent/workspace session. Active tracked jobs and persistent PTYs owned by the session are stopped before controller state is removed. A remote worker session is also ended first; when that worker is permanently unreachable, force=true releases only the controller binding and reports that remote cleanup was not confirmed. Force never bypasses local job or PTY cleanup and may leave orphaned worker-side work. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files.",
+      "description": "End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files.",
       "inputSchema": {
         "properties": {
           "force": {
             "default": false,
-            "description": "For a remote session only, release the controller binding even when the paired worker cannot be reached. This may leave orphaned worker-side work and does not bypass local job or PTY cleanup.",
+            "description": "When the bound executor is permanently unreachable, release only the control binding without claiming executor-side cleanup. This may leave orphaned executor resources.",
             "title": "Force",
             "type": "boolean"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -7889,9 +8046,22 @@
             "title": "Ended",
             "type": "boolean"
           },
+          "executor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable executor id formerly bound to this shared session, when available.",
+            "title": "Executor Id"
+          },
           "force_released": {
             "default": false,
-            "description": "Whether controller state was released despite failed remote cleanup.",
+            "description": "Whether control released the binding without confirmed executor cleanup.",
             "title": "Force Released",
             "type": "boolean"
           },
@@ -7905,7 +8075,7 @@
               }
             ],
             "default": null,
-            "description": "Remote worker formerly bound to the session.",
+            "description": "Legacy remote-worker projection, when available.",
             "title": "Machine"
           },
           "remote_cleanup_succeeded": {
@@ -7918,7 +8088,7 @@
               }
             ],
             "default": null,
-            "description": "Whether the paired worker session was released, for remote sessions.",
+            "description": "Legacy remote-worker cleanup projection, when applicable.",
             "title": "Remote Cleanup Succeeded"
           },
           "session_id": {
@@ -7943,18 +8113,25 @@
             "type": "array"
           },
           "target": {
-            "description": "Execution target formerly bound to the session.",
-            "enum": [
-              "local",
-              "remote"
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "remote"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Target",
-            "type": "string"
+            "default": null,
+            "description": "Legacy execution-target projection, when available.",
+            "title": "Target"
           }
         },
         "required": [
           "session_id",
-          "target",
           "ended"
         ],
         "title": "SessionEndOutput",
@@ -7968,9 +8145,24 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start an explicit agent/workspace session and bind it to a required workdir. Use target=\"local\" for the control-server workspace, or target=\"remote\" with machine set to an online remote worker name and workdir set to the worker-side directory. Before calling, ask the user which project directory or remote worker to use when unclear; otherwise infer the most specific safe workdir from the task, repository, or paths the user mentioned. The response includes structured target runtime, tool, capability, policy, Git, and instruction-file orientation; read relevant AGENTS.md/CLAUDE.md/config files before editing. Pass the returned 8-character session_id to read, search, hashline_edit, edit_lines, bash, job, and other session-bound tools; remote sessions dispatch those normal tools to their paired worker session.",
+      "description": "Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool.",
       "inputSchema": {
         "properties": {
+          "executor_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^exec_[A-Za-z0-9_-]{22,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional stable executor_id. Omit only when exactly one eligible executor is online.",
+            "title": "Executor Id"
+          },
           "label": {
             "anyOf": [
               {
@@ -7986,31 +8178,8 @@
             "description": "Optional human-readable label for this agent session.",
             "title": "Label"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Required remote worker machine name when target is remote. Omit for local sessions.",
-            "title": "Machine"
-          },
-          "target": {
-            "default": "local",
-            "description": "Session target. Use local for this workspace or remote for an online worker.",
-            "enum": [
-              "local",
-              "remote"
-            ],
-            "title": "Target",
-            "type": "string"
-          },
           "workdir": {
-            "description": "Working directory to bind to the session. Local paths resolve inside the configured workspace; remote paths resolve on the selected worker.",
+            "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
             "title": "Workdir",
             "type": "string"
           }
@@ -8667,6 +8836,19 @@
             "$ref": "#/$defs/SessionEnvironment",
             "description": "Bounded runtime, workspace, tool, capability, and policy orientation."
           },
+          "executor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable executor id bound to this shared session.",
+            "title": "Executor Id"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -8715,7 +8897,7 @@
               }
             ],
             "default": null,
-            "description": "Remote worker name for remote sessions.",
+            "description": "Legacy remote-worker projection; final executor sessions do not use this for routing.",
             "title": "Machine"
           },
           "message": {
@@ -8724,12 +8906,12 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session id.",
+            "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
             "title": "Session Id",
             "type": "string"
           },
           "target": {
-            "description": "Execution target bound to this session.",
+            "description": "Legacy executor-local orientation projection; public routing uses executor_id.",
             "enum": [
               "local",
               "remote"
@@ -8748,7 +8930,7 @@
             "type": "string"
           },
           "workspace_root": {
-            "description": "Configured local workspace root for this server.",
+            "description": "Configured workspace root reported by the executor that owns this session.",
             "title": "Workspace Root",
             "type": "string"
           }
@@ -8776,7 +8958,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Return a compact directory tree inside an explicit agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir. Remote sessions dispatch to the paired worker session. Current max tree entries: 5000.",
+      "description": "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max tree entries: 5000.",
       "inputSchema": {
         "properties": {
           "cwd": {
@@ -8798,10 +8980,10 @@
             "type": "integer"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -8992,7 +9174,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the explicit local or remote session workdir; use this instead of read when visual inspection is needed.",
+      "description": "View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the shared session workdir on its bound executor; use this instead of read when visual inspection is needed.",
       "inputSchema": {
         "properties": {
           "path": {
@@ -9001,10 +9183,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -9091,16 +9273,25 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Search workspace text files and return connector-compatible result cards. Use this sessionless read-only tool for connector-style document retrieval clients that expect a search -> fetch workflow: call workspace_search first, then pass a returned result id to fetch. This is a broad literal text search from the configured workspace root and returns at most one card per matched file. For coding-agent work inside an explicit session, prefer session-bound tree_view/glob_search for path discovery, search for content matches with grounding metadata, and read for precise file ranges.",
+      "description": "Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id.",
       "inputSchema": {
         "properties": {
           "query": {
             "description": "Case-insensitive literal text query used by connector-style workspace search.",
             "title": "Query",
             "type": "string"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
           }
         },
         "required": [
+          "session_id",
           "query"
         ],
         "title": "workspace_searchArguments",
@@ -9195,10 +9386,10 @@
             "type": "string"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           }
@@ -9276,10 +9467,10 @@
             "title": "Expected Revision"
           },
           "session_id": {
-            "description": "8-character alphanumeric agent/workspace session_id returned by session_start.",
-            "maxLength": 8,
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
             "minLength": 8,
-            "pattern": "^[A-Za-z0-9]{8}$",
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
           },

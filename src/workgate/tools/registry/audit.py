@@ -47,7 +47,7 @@ async def audit_tail(
     entry_id: AuditEntryIdArg = None,
     include_full_payloads: AuditIncludeFullPayloadsArg = False,
 ) -> AuditTailOutput:
-    """Read bounded, coalesced audit history for the local or remote target selected by an explicit agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."""
+    """Read bounded, coalesced audit history for the executor-backed target selected by an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."""
     if include_full_payloads:
         _enforce_oauth_scopes((SCOPE_AUDIT_FULL,))
     return await audit_tail_execute(

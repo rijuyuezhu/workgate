@@ -29,7 +29,7 @@ async def view_image(
     session_id: SessionIdArg,
     path: ImagePathArg,
 ) -> ViewImageOutput:
-    """View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the explicit local or remote session workdir; use this instead of read when visual inspection is needed."""
+    """View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the shared session workdir on its bound executor; use this instead of read when visual inspection is needed."""
     return cast(
         ViewImageOutput,
         await view_image_dispatch_execute(path, session_id),

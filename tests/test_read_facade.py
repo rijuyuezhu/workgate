@@ -1,7 +1,7 @@
 import pytest
 
-from tests.helpers import mcp_structured
-from workgate.config.settings import clear_settings_cache
+from tests.helpers import build_paired_control_harness, mcp_structured
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
 from workgate.tool_session.selectors import parse_read_target
 
@@ -20,10 +20,13 @@ async def test_read_facade_reads_line_selector_with_numbered_content(
     clear_settings_cache()
     (tmp_path / "demo.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 
-    session = mcp_structured(
-        await build_mcp().call_tool("session_start", {"workdir": "."})
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
     )
-    response = await build_mcp().call_tool(
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
         "read", {"session_id": session["session_id"], "path": "demo.py:2-3"}
     )
     result = mcp_structured(response)
@@ -49,10 +52,13 @@ async def test_read_facade_reads_multi_range_selector_with_grounding(
         "alpha\nbeta\ngamma\ndelta\nepsilon\n", encoding="utf-8"
     )
 
-    session = mcp_structured(
-        await build_mcp().call_tool("session_start", {"workdir": "."})
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
     )
-    response = await build_mcp().call_tool(
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
         "read",
         {"session_id": session["session_id"], "path": "demo.py:2-3,5-5"},
     )
@@ -83,10 +89,13 @@ async def test_read_facade_raw_multi_range_selector_returns_unnumbered_content(
         "alpha\nbeta\ngamma\ndelta\n", encoding="utf-8"
     )
 
-    session = mcp_structured(
-        await build_mcp().call_tool("session_start", {"workdir": "."})
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
     )
-    response = await build_mcp().call_tool(
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
         "read",
         {"session_id": session["session_id"], "path": "demo.py:2-2,4-4:raw"},
     )
@@ -110,10 +119,13 @@ async def test_read_facade_raw_selector_returns_unnumbered_content(
     clear_settings_cache()
     (tmp_path / "demo.py").write_bytes(b"alpha\nbeta\n")
 
-    session = mcp_structured(
-        await build_mcp().call_tool("session_start", {"workdir": "."})
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
     )
-    response = await build_mcp().call_tool(
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
         "read", {"session_id": session["session_id"], "path": "demo.py:raw"}
     )
     result = mcp_structured(response)
@@ -135,10 +147,13 @@ async def test_read_facade_lists_directories(tmp_path, monkeypatch):
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "demo.py").write_text("", encoding="utf-8")
 
-    session = mcp_structured(
-        await build_mcp().call_tool("session_start", {"workdir": "."})
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
     )
-    response = await build_mcp().call_tool(
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
         "read", {"session_id": session["session_id"], "path": "pkg"}
     )
     result = mcp_structured(response)

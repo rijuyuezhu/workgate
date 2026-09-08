@@ -250,12 +250,12 @@ def _configure_http_limit(
     clear_settings_cache()
 
 
-def _assert_oversize(response) -> None:
+def _assert_oversize(response, *, limit_bytes: int = 64) -> None:
     assert response.status_code == 413
     assert response.json() == {
         "error": "request_too_large",
-        "message": "Request body exceeds the configured 64 byte limit",
-        "limit_bytes": 64,
+        "message": f"Request body exceeds the configured {limit_bytes} byte limit",
+        "limit_bytes": limit_bytes,
     }
     assert response.headers["cache-control"] == "no-store"
 
@@ -389,15 +389,16 @@ async def test_real_http_process_rejects_oversized_body(tmp_path, monkeypatch):
 
     from tests.e2e_helpers import run_http_process
 
-    monkeypatch.setenv("WORKGATE_MAX_HTTP_REQUEST_BYTES", "64")
+    limit = 16 * 1024
+    monkeypatch.setenv("WORKGATE_MAX_HTTP_REQUEST_BYTES", str(limit))
     async with (
         run_http_process(tmp_path, mode="http") as (base_url, _workspace),
         httpx.AsyncClient(timeout=10) as client,
     ):
         response = await client.post(
             f"{base_url}/tools/session_start",
-            content=b"x" * 65,
+            content=b"x" * (limit + 1),
             headers={"content-type": "application/json"},
         )
 
-    _assert_oversize(response)
+    _assert_oversize(response, limit_bytes=limit)

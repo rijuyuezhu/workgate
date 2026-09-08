@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import hashlib
 import json
 import os
@@ -14,12 +13,10 @@ from typing import Any
 
 import httpx
 import pytest
-from mcp.types import ImageContent
 
 from tests.e2e_helpers import (
     PROJECT_ROOT,
     ToolClient,
-    assert_required_tools,
     free_tcp_port,
     server_env,
     streamable_http_tool_client,
@@ -374,7 +371,7 @@ async def wait_for_machine(
 
 
 @pytest.mark.asyncio
-async def test_mcp_remote_worker_process_exercises_remote_tool_categories(
+async def test_legacy_remote_worker_bundle_and_inventory_remain_available(
     tmp_path: Path,
 ):
     machine = "e2e-remote"
@@ -390,8 +387,9 @@ async def test_mcp_remote_worker_process_exercises_remote_tool_categories(
         ),
         streamable_http_tool_client(base_url) as client,
     ):
-        await assert_required_tools(client, REMOTE_TOOL_NAMES)
-        assert "remote" not in await client.list_tools()
+        tools = await client.list_tools()
+        assert "remote_admin" in tools
+        assert "remote" not in tools
 
         async with httpx.AsyncClient(
             timeout=20, trust_env=False
@@ -439,357 +437,11 @@ async def test_mcp_remote_worker_process_exercises_remote_tool_categories(
             )
             assert row["workdir"] == str(remote_workspace)
 
-            (remote_workspace / "remote").mkdir()
-            (remote_workspace / "remote" / "demo.txt").write_text(
-                "hello from remote worker\nsecond remote line\n",
-                encoding="utf-8",
+            marker = remote_workspace / "legacy-marker.txt"
+            marker.write_text(
+                "legacy worker compatibility only", encoding="utf-8"
             )
-            assert not (control_workspace / "remote" / "demo.txt").exists()
-            png = base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP7LAAAAAElFTkSuQmCC"
-            )
-            (remote_workspace / "remote" / "pixel.png").write_bytes(png)
-            remote_skill = (
-                remote_workspace / ".agents" / "skills" / "remote-skill"
-            )
-            remote_skill.mkdir(parents=True)
-            (remote_skill / "SKILL.md").write_text(
-                "# Remote Skill\n\nUse the remote workspace.\n",
-                encoding="utf-8",
-            )
-            (remote_skill / "guide.md").write_text(
-                "remote guide\n", encoding="utf-8"
-            )
-
-            first_class_session = await client.call_tool(
-                "session_start",
-                {
-                    "target": "remote",
-                    "machine": machine,
-                    "workdir": ".",
-                    "label": "remote-e2e",
-                },
-            )
-            first_class_session_id = first_class_session["session_id"]
-            assert first_class_session["target"] == "remote"
-            assert first_class_session["machine"] == machine
-            assert "worker_session_id" not in first_class_session
-            environment = first_class_session["environment"]
-            assert environment["workspace"]["workspace_root"] == str(
-                remote_workspace
-            )
-            assert environment["workspace"]["workdir"] == str(remote_workspace)
-            assert environment["workspace"]["target"] == "remote"
-            assert environment["workspace"]["machine"] == machine
-            assert environment["workspace"]["worker_runtime"]["active"] is True
-            assert (
-                environment["workspace"]["worker_runtime"]["service_status"]
-                == "running"
-            )
-            assert environment["runtime"]["python_version"]
-            assert set(environment["tools"]) == {
-                "shell",
-                "git",
-                "ripgrep",
-                "tmux",
-                "curl",
-                "bun",
-                "chromium",
-                "playwright",
-                "opentui",
-            }
-            assert environment["capabilities"]["oauth_mcp_clients"] is False
-
-            orientation_dir = remote_workspace / "orientation"
-            orientation_dir.mkdir()
-            (orientation_dir / "AGENTS.md").write_text(
-                "remote orientation instructions\n", encoding="utf-8"
-            )
-            changed = await client.call_tool(
-                "session_change_cwd",
-                {
-                    "session_id": first_class_session_id,
-                    "workdir": "orientation",
-                },
-            )
-            assert changed["session_id"] == first_class_session_id
-            assert changed["workdir"] == str(orientation_dir)
-            assert changed["instruction_files"] == ["orientation/AGENTS.md"]
-            assert changed["environment"]["workspace"]["workdir"] == str(
-                orientation_dir
-            )
-            assert changed["environment"]["workspace"]["target"] == "remote"
-            assert changed["environment"]["workspace"]["machine"] == machine
-            restored = await client.call_tool(
-                "session_change_cwd",
-                {
-                    "session_id": first_class_session_id,
-                    "workdir": str(remote_workspace),
-                },
-            )
-            assert restored["workdir"] == str(remote_workspace)
-
-            remote_skills = await client.call_tool(
-                "list_agent_skills", {"session_id": first_class_session_id}
-            )
-            assert [row["name"] for row in remote_skills["skills"]] == [
-                "remote-skill"
-            ]
-            assert remote_skills["skills"][0]["source"] == "project"
-            remote_activated = await client.call_tool(
-                "activate_agent_skill",
-                {"name": "remote-skill", "session_id": first_class_session_id},
-            )
-            assert remote_activated["source"] == "project"
-            assert "remote workspace" in remote_activated["content"]
-            remote_guide = await client.call_tool(
-                "read_agent_skill_file",
-                {
-                    "name": "remote-skill",
-                    "path": "guide.md",
-                    "session_id": first_class_session_id,
-                },
-            )
-            assert remote_guide["content"] == "remote guide\n"
-            assert remote_guide["source"] == "project"
-
-            image_result = await client.call_tool_result(
-                "view_image",
-                {
-                    "session_id": first_class_session_id,
-                    "path": "remote/pixel.png",
-                },
-            )
-            assert image_result.isError is False
-            assert isinstance(image_result.content[0], ImageContent)
-            assert base64.b64decode(image_result.content[0].data) == png
-            assert image_result.structuredContent == {
-                "session_id": first_class_session_id,
-                "target": "remote",
-                "machine": machine,
-                "path": "remote/pixel.png",
-                "mime_type": "image/png",
-                "bytes": len(png),
-            }
-
-            remote_download_source = (
-                remote_workspace / "remote" / "download-snapshot.txt"
-            )
-            remote_download_source.write_text(
-                "remote creation-time snapshot", encoding="utf-8"
-            )
-            remote_link = await client.call_tool(
-                "create_file_link",
-                {
-                    "session_id": first_class_session_id,
-                    "path": "remote/download-snapshot.txt",
-                    "inline": True,
-                },
-            )
-            assert remote_link["target"] == "remote"
-            assert remote_link["machine"] == machine
-            assert remote_link["inline"] is True
-            remote_download_source.write_text(
-                "changed after link creation", encoding="utf-8"
-            )
-            async with httpx.AsyncClient(trust_env=False) as download_client:
-                download_response = await download_client.get(
-                    remote_link["url"]
-                )
-            assert download_response.status_code == 200
-            assert download_response.text == "remote creation-time snapshot"
-            assert (
-                download_response.headers["content-security-policy"]
-                == "sandbox"
-            )
-            assert (
-                download_response.headers["x-content-type-options"] == "nosniff"
-            )
-
-            first_class_read = await client.call_tool(
-                "read",
-                {
-                    "session_id": first_class_session_id,
-                    "path": "remote/demo.txt:1",
-                },
-            )
-            assert first_class_read["kind"] == "file"
-            assert "hello from remote worker" in first_class_read["content"]
-            assert (
-                first_class_read["file"]["session_id"] == first_class_session_id
-            )
-            first_class_snapshot_id = first_class_read["file"]["snapshot_id"]
-
-            first_class_search = await client.call_tool(
-                "search",
-                {
-                    "session_id": first_class_session_id,
-                    "pattern": "hello",
-                    "paths": ["remote/demo.txt"],
-                    "regex": False,
-                },
-            )
-            assert "count" in first_class_search
-            assert "matches" in first_class_search
-
-            hashline_edit = await client.call_tool(
-                "hashline_edit",
-                {
-                    "session_id": first_class_session_id,
-                    "input": (
-                        f"[remote/demo.txt#{first_class_snapshot_id}]\n"
-                        "1:hello from remote worker\n"
-                        "+edited through hashline remote session"
-                    ),
-                },
-            )
-            assert (
-                hashline_edit["context"]["session_id"] == first_class_session_id
-            )
-            assert (remote_workspace / "remote" / "demo.txt").read_text() == (
-                "edited through hashline remote session\nsecond remote line\n"
-            )
-            assert not (control_workspace / "remote" / "demo.txt").exists()
-
-            second_line_read = await client.call_tool(
-                "read",
-                {
-                    "session_id": first_class_session_id,
-                    "path": "remote/demo.txt:2",
-                },
-            )
-            second_line_snapshot_id = second_line_read["file"]["snapshot_id"]
-
-            first_class_edit = await client.call_tool(
-                "edit_lines",
-                {
-                    "session_id": first_class_session_id,
-                    "path": "remote/demo.txt",
-                    "start_line": 2,
-                    "end_line": 2,
-                    "replacement": "edited through structured remote edit",
-                    "snapshot_id": second_line_snapshot_id,
-                },
-            )
-            assert (
-                first_class_edit["context"]["session_id"]
-                == first_class_session_id
-            )
-            assert (remote_workspace / "remote" / "demo.txt").read_text() == (
-                "edited through hashline remote session\n"
-                "edited through structured remote edit\n"
-            )
-            assert not (control_workspace / "remote" / "demo.txt").exists()
-
-            patch_result = await client.call_tool(
-                "apply_patch",
-                {
-                    "session_id": first_class_session_id,
-                    "cwd": ".",
-                    "patch": """*** Begin Patch
-*** Update File: remote/demo.txt
-@@
--edited through structured remote edit
-+edited through remote apply_patch
-*** End Patch
-""",
-                },
-            )
-            assert patch_result["checked"] is True
-            assert patch_result["applied"] is True
-            assert (remote_workspace / "remote" / "demo.txt").read_text() == (
-                "edited through hashline remote session\n"
-                "edited through remote apply_patch\n"
-            )
-            assert not (control_workspace / "remote" / "demo.txt").exists()
-
-            first_class_bash = await client.call_tool(
-                "bash",
-                {
-                    "session_id": first_class_session_id,
-                    "command": "printf first-class-remote-shell",
-                    "timeout_s": 5,
-                },
-            )
-            assert first_class_bash["mode"] == "command"
-            assert (
-                first_class_bash["result"]["stdout"]
-                == "first-class-remote-shell"
-            )
-
-            tmux_check = await client.call_tool(
-                "bash",
-                {
-                    "session_id": first_class_session_id,
-                    "command": "command -v tmux",
-                    "timeout_s": 5,
-                },
-            )
-            if tmux_check["result"]["ok"]:
-                first_class_job = await client.call_tool(
-                    "bash",
-                    {
-                        "session_id": first_class_session_id,
-                        "command": (
-                            "python -c 'import time; "
-                            'print("first-class-job", flush=True); '
-                            "time.sleep(3)'"
-                        ),
-                        "async_": True,
-                        "name": "first-class-remote-job",
-                    },
-                )
-                first_class_job_id = first_class_job["result"]["job_id"]
-                assert (
-                    first_class_job["result"]["session_id"]
-                    == first_class_session_id
-                )
-                first_class_jobs = await client.call_tool(
-                    "job",
-                    {
-                        "session_id": first_class_session_id,
-                        "list_jobs": True,
-                    },
-                )
-                assert any(
-                    item["job_id"] == first_class_job_id
-                    and item["session_id"] == first_class_session_id
-                    for item in first_class_jobs["jobs"]
-                )
-                first_class_poll = None
-                for _ in range(40):
-                    first_class_poll = await client.call_tool(
-                        "job",
-                        {
-                            "session_id": first_class_session_id,
-                            "poll": [first_class_job_id],
-                            "lines": 20,
-                        },
-                    )
-                    first_class_output = first_class_poll["outputs"][0]
-                    if first_class_output["job"]["status"] in {
-                        "succeeded",
-                        "failed",
-                        "lost",
-                    }:
-                        break
-                    await asyncio.sleep(0.25)
-                assert first_class_poll is not None
-                first_class_output = first_class_poll["outputs"][0]
-                assert first_class_output["job"]["status"] == "succeeded"
-                assert first_class_output["job"]["exit_code"] == 0
-                assert "first-class-job" in first_class_output["output"]
-
-            delete_result = await client.call_tool(
-                "bash",
-                {
-                    "session_id": first_class_session_id,
-                    "command": "rm remote/demo.txt",
-                    "timeout_s": 5,
-                },
-            )
-            assert delete_result["result"]["ok"] is True
-            assert not (remote_workspace / "remote" / "demo.txt").exists()
+            assert not (control_workspace / marker.name).exists()
 
             revoked = await client.call_tool(
                 "remote_admin",

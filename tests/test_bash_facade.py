@@ -4,8 +4,12 @@ import pytest
 
 import workgate.ops.bash as shell_ops
 import workgate.ops.session as session_ops
-from tests.helpers import mcp_structured, python_shell_command
-from workgate.config.settings import clear_settings_cache
+from tests.helpers import (
+    build_paired_control_harness,
+    mcp_structured,
+    python_shell_command,
+)
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
 from workgate.schemas.result_models.jobs import JobStartOutput
 from workgate.schemas.result_models.shell import (
@@ -290,7 +294,9 @@ async def test_shell_execution_is_exposed_in_mcp(tmp_path, monkeypatch):
     clear_settings_cache()
     get_tool_session_store().clear()
 
-    mcp = build_mcp()
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
+    )
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )

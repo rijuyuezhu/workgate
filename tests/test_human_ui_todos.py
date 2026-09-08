@@ -14,7 +14,8 @@ import workgate.ops.todo as todo_module
 import workgate.ops.utils.remote_session as remote_session_module
 import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.todos as ui_todos_module
-from workgate.config.settings import clear_settings_cache
+from tests.helpers import build_paired_http_app
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import (
     SCOPE_REMOTE_USE,
@@ -38,7 +39,6 @@ from workgate.schemas.result_models.remote import (
 )
 from workgate.tool_session.store import (
     SESSION_ACTIVE_WINDOW_S,
-    SESSION_TERMINATION_PROMPT,
     AgentSession,
     UnknownAgentSessionError,
     get_tool_session_store,
@@ -688,10 +688,6 @@ def test_sessions_api_defaults_to_five_hour_activity_and_terminates_work(
         "/api/ui/sessions/terminate",
         json={"machine": "local", "session_id": active.session_id},
     )
-    blocked = client.post(
-        "/tools/read",
-        json={"session_id": active.session_id, "path": "missing.txt"},
-    )
 
     assert [row["session_id"] for row in recent.json()["data"]["sessions"]] == [
         active.session_id
@@ -707,10 +703,55 @@ def test_sessions_api_defaults_to_five_hour_activity_and_terminates_work(
     ] == [active.session_id]
     assert terminated.status_code == 200
     assert terminated.json()["data"]["session"]["termination_requested"]
-    assert blocked.status_code == 409
-    assert blocked.json()["error"] == "session_termination_requested"
-    assert SESSION_TERMINATION_PROMPT in blocked.json()["message"]
     assert store.require_session(active.session_id).termination_requested_at
+
+
+def test_sessions_api_uses_final_control_sessions_and_terminates_executor_work(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "final-ui"}
+    )
+    assert started.status_code == 200
+    session = started.json()
+    session_id = session["session_id"]
+
+    inventory = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    rows = inventory.json()["data"]["sessions"]
+    assert [row["session_id"] for row in rows] == [session_id]
+    assert rows[0]["executor_id"] == session["executor_id"]
+    assert rows[0]["status"] == "active"
+    assert rows[0]["target"] is None
+
+    terminated = client.post(
+        "/api/ui/sessions/terminate",
+        json={"machine": "local", "session_id": session_id},
+    )
+    assert terminated.status_code == 200
+    terminated_session = terminated.json()["data"]["session"]
+    assert terminated_session["status"] == "ended"
+    assert terminated_session["termination_requested"] is True
+    assert (
+        harness.control.control_state.snapshot_sessions()[session_id].status
+        == "ended"
+    )
+
+    blocked = client.post(
+        "/tools/read", json={"session_id": session_id, "path": "missing.txt"}
+    )
+    assert blocked.status_code == 400
+    assert blocked.json()["error"] == "validation_error"
+    assert "is ended" in blocked.json()["message"]
 
 
 def test_todo_api_enforces_local_remote_and_write_scopes(monkeypatch, tmp_path):

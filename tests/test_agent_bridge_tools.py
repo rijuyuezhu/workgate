@@ -4,10 +4,10 @@ from typing import Any, cast
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tests.helpers import mcp_text
+from tests.helpers import build_paired_mcp, mcp_structured, mcp_text
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
 from workgate.tools.registry import agent as tools_module
 
@@ -264,12 +264,19 @@ async def test_activate_agent_skill_returns_skill_content(
     (skill_dir / "SKILL.md").write_text(
         "# Debugging\n\nFind root causes.\n", encoding="utf-8"
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
-    response = await build_mcp().call_tool(
-        "activate_agent_skill", {"name": "debugging"}
+    mcp, _harness = build_paired_mcp(get_settings())
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
+        "activate_agent_skill",
+        {"session_id": session["session_id"], "name": "debugging"},
     )
     payload = mcp_text(response)
 

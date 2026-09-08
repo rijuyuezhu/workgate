@@ -15,6 +15,12 @@ EXECUTOR_HELLO_PATH = "/executor/v1/hello"
 EXECUTOR_HEARTBEAT_PATH = "/executor/v1/heartbeat"
 EXECUTOR_POLL_PATH = "/executor/v1/poll"
 EXECUTOR_RESULT_PATH = "/executor/v1/result"
+EXECUTOR_CAPABILITY_SESSIONS = "sessions.v1"
+
+SESSION_CREATE_OP = "session.create"
+SESSION_LOOKUP_OP = "session.lookup"
+SESSION_TERMINATE_OP = "session.terminate"
+SESSION_CHANGE_CWD_OP = "session.change_cwd"
 
 
 class ExecutorRuntimeSummary(BaseModel):
@@ -34,6 +40,11 @@ class SessionInventorySummary(BaseModel):
 
     session_id: SessionId
     resolved_workdir: str = Field(min_length=1, max_length=4096)
+    last_active_at: float | None = Field(
+        default=None, ge=0, allow_inf_nan=False
+    )
+    has_persistent_shells: bool = False
+    has_active_jobs: bool = False
 
 
 class ShellInventorySummary(BaseModel):
@@ -127,6 +138,7 @@ class OperationError(BaseModel):
         pattern=r"^[a-z][a-z0-9_.-]*$",
     )
     message: str = Field(min_length=1, max_length=1000)
+    data: dict[str, JsonValue] | None = None
 
 
 class ExecutorResult(BaseModel):

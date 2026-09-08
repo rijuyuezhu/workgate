@@ -789,7 +789,7 @@ async def test_high_level_search_merges_repeated_line_scoped_file_selectors(
 async def test_mcp_search_facade_returns_grounded_results(
     tmp_path, monkeypatch
 ):
-    from tests.helpers import mcp_structured
+    from tests.helpers import build_paired_control_harness, mcp_structured
     from workgate.control.mcp.app import build_mcp
 
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
@@ -800,11 +800,14 @@ async def test_mcp_search_facade_returns_grounded_results(
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("needle\n", encoding="utf-8")
 
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
+    )
     session = mcp_structured(
-        await build_mcp().call_tool("session_start", {"workdir": "."})
+        await mcp.call_tool("session_start", {"workdir": "."})
     )
     payload = mcp_structured(
-        await build_mcp().call_tool(
+        await mcp.call_tool(
             "search",
             {
                 "session_id": session["session_id"],

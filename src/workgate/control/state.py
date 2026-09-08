@@ -50,7 +50,7 @@ class ControlSessionRecord(BaseModel):
     requested_workdir: str = Field(min_length=1, max_length=4096)
     resolved_workdir_display: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
-    status: Literal["creating", "active", "terminating", "ended"]
+    status: Literal["creating", "active", "missing", "terminating", "ended"]
     created_at: Timestamp
     updated_at: Timestamp
 
@@ -158,6 +158,17 @@ class ControlState:
             ):
                 raise ValueError("session executor binding cannot change")
             candidate = {**self._sessions, record.session_id: record}
+            self._write_sessions(candidate)
+            self._sessions = candidate
+
+    def remove_session(self, session_id: str) -> None:
+        """Durably forget a checkpoint only when no executor side effect exists."""
+        with self._lock:
+            self._require_started()
+            if session_id not in self._sessions:
+                return
+            candidate = dict(self._sessions)
+            candidate.pop(session_id, None)
             self._write_sessions(candidate)
             self._sessions = candidate
 

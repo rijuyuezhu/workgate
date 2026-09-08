@@ -62,7 +62,7 @@ class SnapshotRecord:
 
 
 def generate_session_id() -> str:
-    """Return one opaque 8-character alphanumeric agent session id."""
+    """Return one legacy local-session id during the PR6 routing migration."""
     return "".join(
         secrets.choice(SESSION_ID_ALPHABET) for _ in range(SESSION_ID_LENGTH)
     )
@@ -72,11 +72,21 @@ def valid_session_id(value: Any) -> str | None:
     """Return one normalized agent session id, or None for invalid input."""
     if not isinstance(value, str):
         return None
-    if len(value) != SESSION_ID_LENGTH or any(
-        character not in SESSION_ID_ALPHABET for character in value
+    if len(value) == SESSION_ID_LENGTH and all(
+        character in SESSION_ID_ALPHABET for character in value
     ):
-        return None
-    return value
+        # Read pre-PR6 durable records while all new allocations use the final
+        # shared ``sess_...`` namespace.
+        return value
+    if (
+        value.startswith("sess_")
+        and len(value) >= 27
+        and all(
+            character in (SESSION_ID_ALPHABET + "_-") for character in value[5:]
+        )
+    ):
+        return value
+    return None
 
 
 def new_snapshot_id() -> str:

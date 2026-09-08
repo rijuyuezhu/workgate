@@ -64,27 +64,27 @@ workgate worker uninstall-service
 
 There is one native worker service per user state directory. Installing another profile rebinds that service; other profiles can still run in the foreground. The native service records both its state root and installed-data root, so startup does not depend on the service manager's CWD. Native Windows service management is not provided, so use the reconnect command from your preferred startup mechanism.
 
-## Use the remote machine
+## Start work on an executor
 
-Ask the MCP client to list machines and start an explicit remote session:
+Ask the MCP client to start an explicit session on the intended paired executor. Pass `executor_id` when more than one eligible executor is online:
 
 ```text
-List remote machines. Start a remote session on gpu1 in /home/me/project, inspect the repository and its instructions, then run git status. Do not edit files yet.
+Start a session in /home/me/project on executor gpu1, inspect the repository and its instructions, then run git status. Do not edit files yet.
 ```
 
-After `session_start`, use the returned `session_id` with the normal read, search, edit, shell, job, Todo, and Audit tools. Use `session_change_cwd` to move that session to another allowed directory.
+After `session_start`, the same opaque `session_id` is shared by control and executor. Use it with the normal read, search, edit, shell, job, Todo, and Audit tools. Use `session_change_cwd` to move that session to another allowed directory on the same executor; sessions are never silently rebound.
 
-For long-running non-interactive commands, use asynchronous `bash` and poll the returned job. Prefer bounded commands when an interactive shell is unnecessary.
+For long-running non-interactive commands, use asynchronous `bash` and poll the returned job. Use `pty=true` when the executor-side task genuinely needs an interactive terminal; prefer bounded commands otherwise.
 
 ## Copy files
 
 Use `session_copy` after starting both source and destination sessions:
 
 ```text
-Copy results/summary.json from the gpu1 session into reports/gpu1-summary.json in my local session, then verify the destination.
+Copy results/summary.json from the gpu1 session into reports/gpu1-summary.json in my workstation session, then verify the destination.
 ```
 
-The control server selects an available transfer method. Users normally do not need to tune transfer internals. For limits and advanced settings, see [Configuration](../reference/configuration.md).
+The control server coordinates the transfer. Same-executor copies involve one executor; cross-executor copies coordinate the two bound executors without turning the control workspace into a hidden filesystem endpoint. Users normally do not need to tune transfer internals. For limits and advanced settings, see [Configuration](../reference/configuration.md).
 
 ## Legacy worker update
 

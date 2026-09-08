@@ -233,11 +233,30 @@ async def _start_persistent_shell(args: dict[str, Any]) -> Any:
     )
 
 
+async def _require_owned_persistent_shell(
+    session_id: str, shell_id: str
+) -> set[str]:
+    from workgate.ops.shell import list_owned_persistent_shell_ids_execute
+
+    owned = await list_owned_persistent_shell_ids_execute(session_id)
+    if owned is None:
+        raise RuntimeError("persistent shell ownership is currently uncertain")
+    normalized = set(owned)
+    if shell_id not in normalized:
+        raise ValueError(
+            f"shell_id {shell_id!r} is not owned by session {session_id!r}"
+        )
+    return normalized
+
+
 async def _send_persistent_shell_input(args: dict[str, Any]) -> Any:
     from workgate.ops.shell import send_persistent_shell_input_execute
 
+    session_id = str(args["session_id"])
+    shell_id = str(args["shell_id"])
+    await _require_owned_persistent_shell(session_id, shell_id)
     return await send_persistent_shell_input_execute(
-        str(args["shell_id"]),
+        shell_id,
         str(args.get("input_text") or ""),
         bool(args.get("enter", True)),
     )
@@ -246,19 +265,25 @@ async def _send_persistent_shell_input(args: dict[str, Any]) -> Any:
 async def _resize_persistent_shell(args: dict[str, Any]) -> Any:
     from workgate.ops.shell import resize_persistent_shell_execute
 
+    session_id = str(args["session_id"])
+    shell_id = str(args["shell_id"])
+    await _require_owned_persistent_shell(session_id, shell_id)
     return await resize_persistent_shell_execute(
-        str(args["shell_id"]), int(args["cols"]), int(args["rows"])
+        shell_id, int(args["cols"]), int(args["rows"])
     )
 
 
 async def _read_persistent_shell_output(args: dict[str, Any]) -> Any:
     from workgate.ops.shell import read_persistent_shell_output_execute
 
+    session_id = str(args["session_id"])
+    shell_id = str(args["shell_id"])
+    await _require_owned_persistent_shell(session_id, shell_id)
     preserve_ansi = args.get("preserve_ansi", False)
     if not isinstance(preserve_ansi, bool):
         raise ValueError("preserve_ansi must be a boolean")
     return await read_persistent_shell_output_execute(
-        str(args["shell_id"]),
+        shell_id,
         int(args.get("lines") or 200),
         preserve_ansi=preserve_ansi,
     )
@@ -267,13 +292,27 @@ async def _read_persistent_shell_output(args: dict[str, Any]) -> Any:
 async def _kill_persistent_shell(args: dict[str, Any]) -> Any:
     from workgate.ops.shell import kill_persistent_shell_execute
 
-    return await kill_persistent_shell_execute(str(args["shell_id"]))
+    session_id = str(args["session_id"])
+    shell_id = str(args["shell_id"])
+    await _require_owned_persistent_shell(session_id, shell_id)
+    return await kill_persistent_shell_execute(shell_id)
 
 
 async def _list_persistent_shells(args: dict[str, Any]) -> Any:
     from workgate.ops.shell import list_persistent_shells_execute
+    from workgate.schemas.result_models.shell import ListPersistentShellsOutput
 
-    return await list_persistent_shells_execute()
+    session_id = str(args["session_id"])
+    from workgate.ops.shell import list_owned_persistent_shell_ids_execute
+
+    owned = await list_owned_persistent_shell_ids_execute(session_id)
+    if owned is None:
+        raise RuntimeError("persistent shell ownership is currently uncertain")
+    output = await list_persistent_shells_execute()
+    owned_set = set(owned)
+    return ListPersistentShellsOutput(
+        shells=[shell for shell in output.shells if shell.shell_id in owned_set]
+    )
 
 
 async def _job(args: dict[str, Any]) -> Any:
@@ -445,6 +484,30 @@ async def _search(args: dict[str, Any]) -> Any:
     )
 
 
+async def _view_image(args: dict[str, Any]) -> Any:
+    from workgate.ops.image import view_image_dispatch_execute
+
+    return await view_image_dispatch_execute(
+        str(args["path"]), str(args["session_id"])
+    )
+
+
+async def _workspace_search(args: dict[str, Any]) -> Any:
+    from workgate.tool_session import get_tool_session_store
+    from workgate.tools.ops.workspace_connector import search_execute
+
+    get_tool_session_store().admit_active_session(str(args["session_id"]))
+    return await search_execute(str(args["query"]))
+
+
+async def _workspace_fetch(args: dict[str, Any]) -> Any:
+    from workgate.tool_session import get_tool_session_store
+    from workgate.tools.ops.workspace_connector import fetch_execute
+
+    get_tool_session_store().admit_active_session(str(args["session_id"]))
+    return await fetch_execute(str(args["id"]))
+
+
 async def _secret_scan(args: dict[str, Any]) -> Any:
     from workgate.ops.secret_scan import secret_scan_execute
 
@@ -463,6 +526,8 @@ def _transfer_session_id(
     workdir_key: str = "workdir",
 ) -> Any:
     """Prefer an immutable workdir binding over a mutable worker session id."""
+    if bool(args.get("_workgate_unbound_temp", False)):
+        return None
     return None if args.get(workdir_key) is not None else args.get(session_key)
 
 
@@ -701,6 +766,9 @@ _DEFAULT_WORKER_HANDLERS: Mapping[str, WorkerHandler] = MappingProxyType(
         "tree_view": _tree_view,
         "glob_search": _glob_search,
         "search": _search,
+        "view_image": _view_image,
+        "workspace_search": _workspace_search,
+        "fetch": _workspace_fetch,
         "secret_scan": _secret_scan,
         "transfer_stat": _transfer_stat,
         "transfer_copy_file": _transfer_copy_file,

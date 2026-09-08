@@ -13,10 +13,9 @@ from ...schemas.input_models.session import (
     SessionCopyOverwriteArg,
     SessionCopyPathArg,
     SessionEndForceArg,
+    SessionExecutorIdArg,
     SessionIdArg,
     SessionLabelArg,
-    SessionMachineArg,
-    SessionTargetArg,
     SessionWorkdirArg,
 )
 from ...schemas.result_models.jobs import JobStartOutput
@@ -40,19 +39,19 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start an explicit agent/workspace session and bind it to a required workdir. Use target="local" for the control-server workspace, or target="remote" with machine set to an online remote worker name and workdir set to the worker-side directory. Before calling, ask the user which project directory or remote worker to use when unclear; otherwise infer the most specific safe workdir from the task, repository, or paths the user mentioned. The response includes structured target runtime, tool, capability, policy, Git, and instruction-file orientation; read relevant AGENTS.md/CLAUDE.md/config files before editing. Pass the returned 8-character session_id to read, search, hashline_edit, edit_lines, bash, job, and other session-bound tools; remote sessions dispatch those normal tools to their paired worker session."""
+    return """Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool."""
 
 
 def _session_change_cwd_description(_context: McpToolContext) -> str:
-    return """Change an existing local or remote agent/workspace session to a new required workdir, clear stale grounding snapshots for that session, and return refreshed Git, instruction-file, runtime, tool, capability, and policy orientation. Use this when the user redirects you to a different project/subdirectory or you infer the original workdir was wrong; then read any relevant AGENTS.md/CLAUDE.md/config files before continuing edits."""
+    return """Change an existing executor-backed agent/workspace session to a new required workdir. Relative workdirs resolve against the executor's fixed workspace_root; old grounding snapshots are invalidated before the durable cwd changes. Use this when the user redirects you to a different project/subdirectory."""
 
 
 def _session_copy_description(_context: McpToolContext) -> str:
-    return """Copy one file or directory between two explicit agent/workspace sessions. Source and destination may be any pair of local or remote sessions; paths resolve inside their respective session workdirs. Same-worker remote copies stream raw bounded chunks inside that worker; other routes use the authenticated, checksummed control-plane transfer. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry from the beginning after interruption. The response includes the selected route and whether the sessions share a target, session id, or remote machine."""
+    return """Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies use control-coordinated transfer between the two bound executors without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor."""
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one explicit local or remote agent/workspace session. Active tracked jobs and persistent PTYs owned by the session are stopped before controller state is removed. A remote worker session is also ended first; when that worker is permanently unreachable, force=true releases only the controller binding and reports that remote cleanup was not confirmed. Force never bypasses local job or PTY cleanup and may leave orphaned worker-side work. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files."""
+    return """End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files."""
 
 
 @session_tool(
@@ -63,12 +62,14 @@ def _session_end_description(_context: McpToolContext) -> str:
 )
 async def session_start(
     workdir: SessionWorkdirArg,
-    target: SessionTargetArg = "local",
-    machine: SessionMachineArg = None,
     label: SessionLabelArg = None,
+    executor_id: SessionExecutorIdArg = None,
 ) -> SessionStartOutput:
     """Start an explicit agent/workspace session."""
-    return await session_start_execute(workdir, target, machine, label)
+    # The control composition replaces this compatibility body with the final
+    # executor router. The direct implementation remains executor-local only
+    # until PR7 finishes physical ownership moves.
+    return await session_start_execute(workdir, "local", None, label)
 
 
 @session_tool(

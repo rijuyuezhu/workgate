@@ -254,14 +254,22 @@ class SessionStartOutput(BaseModel):
     """Explicit agent/workspace session orientation."""
 
     session_id: str = Field(
-        description="8-character alphanumeric agent/workspace session id."
+        description=(
+            "Opaque shared control/executor session id with at least 128 bits of "
+            "randomness."
+        )
+    )
+    executor_id: str | None = Field(
+        default=None,
+        description="Stable executor id bound to this shared session.",
     )
     target: Literal["local", "remote"] = Field(
-        description="Execution target bound to this session."
+        description="Legacy executor-local orientation projection; public routing uses executor_id."
     )
     workdir: str = Field(description="Canonical workdir bound to this session.")
     machine: str | None = Field(
-        default=None, description="Remote worker name for remote sessions."
+        default=None,
+        description="Legacy remote-worker projection; final executor sessions do not use this for routing.",
     )
     created_at: float = Field(
         description="Unix timestamp when the session was created."
@@ -277,7 +285,7 @@ class SessionStartOutput(BaseModel):
         default=None, description="Optional human-readable session label."
     )
     workspace_root: str = Field(
-        description="Configured local workspace root for this server."
+        description="Configured workspace root reported by the executor that owns this session."
     )
     git: GitSessionInfo = Field(
         description="Lightweight git orientation for the session workdir."
@@ -297,11 +305,17 @@ class SessionEndOutput(BaseModel):
     """Result of ending one explicit agent/workspace session."""
 
     session_id: str = Field(description="Ended agent/workspace session id.")
-    target: Literal["local", "remote"] = Field(
-        description="Execution target formerly bound to the session."
+    executor_id: str | None = Field(
+        default=None,
+        description="Stable executor id formerly bound to this shared session, when available.",
+    )
+    target: Literal["local", "remote"] | None = Field(
+        default=None,
+        description="Legacy execution-target projection, when available.",
     )
     machine: str | None = Field(
-        default=None, description="Remote worker formerly bound to the session."
+        default=None,
+        description="Legacy remote-worker projection, when available.",
     )
     ended: bool = Field(
         description="Whether durable session state was removed."
@@ -316,11 +330,11 @@ class SessionEndOutput(BaseModel):
     )
     remote_cleanup_succeeded: bool | None = Field(
         default=None,
-        description="Whether the paired worker session was released, for remote sessions.",
+        description="Legacy remote-worker cleanup projection, when applicable.",
     )
     force_released: bool = Field(
         default=False,
-        description="Whether controller state was released despite failed remote cleanup.",
+        description="Whether control released the binding without confirmed executor cleanup.",
     )
 
 
@@ -330,11 +344,17 @@ class SessionCopyEndpoint(BaseModel):
     session_id: str = Field(
         description="Agent/workspace session id for this endpoint."
     )
-    target: Literal["local", "remote"] = Field(
-        description="Execution target bound to this endpoint session."
+    target: Literal["local", "remote"] | None = Field(
+        default=None,
+        description="Legacy local/remote target, omitted for final executor-bound sessions.",
     )
     machine: str | None = Field(
-        default=None, description="Remote worker machine for remote sessions."
+        default=None,
+        description="Legacy remote-worker machine name, omitted for final executor-bound sessions.",
+    )
+    executor_id: str | None = Field(
+        default=None,
+        description="Stable final executor identity for this endpoint, when applicable.",
     )
     workdir: str = Field(
         description="Session workdir used for path resolution."
@@ -357,17 +377,25 @@ class SessionCopyRelation(BaseModel):
         "remote_to_local",
         "remote_to_remote_same_machine",
         "remote_to_remote_different_machines",
+        "same_executor",
+        "different_executors",
     ] = Field(
-        description="Transfer route selected from the two session targets."
+        description="Final executor relation, or a legacy local/remote transfer route."
     )
     same_session: bool = Field(
         description="Whether source and destination are the same agent session."
     )
-    same_target: bool = Field(
-        description="Whether source and destination have the same target type."
+    same_target: bool | None = Field(
+        default=None,
+        description="Legacy local/remote target relation; omitted for final executor-bound sessions.",
     )
-    same_machine: bool = Field(
-        description="Whether both endpoints are remote sessions on the same worker machine."
+    same_machine: bool | None = Field(
+        default=None,
+        description="Legacy remote-worker machine relation; omitted for final executor-bound sessions.",
+    )
+    same_executor: bool = Field(
+        default=False,
+        description="Whether both final shared sessions are bound to the same executor.",
     )
 
 

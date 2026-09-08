@@ -8,6 +8,7 @@ import shutil
 import threading
 from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -376,6 +377,9 @@ class FileStateStore:
 
 
 _STATE_STORE: StateStore | None = None
+_STATE_STORE_OVERRIDE: ContextVar[StateStore | None] = ContextVar(
+    "workgate_state_store_override", default=None
+)
 
 
 def _default_state_root() -> Path:
@@ -398,8 +402,21 @@ def configure_state_store(store: StateStore | None) -> StateStore | None:
     return previous
 
 
+@contextmanager
+def use_state_store(store: StateStore) -> Generator[None]:
+    """Temporarily bind one state-store owner to the current async/thread context."""
+    token = _STATE_STORE_OVERRIDE.set(store)
+    try:
+        yield
+    finally:
+        _STATE_STORE_OVERRIDE.reset(token)
+
+
 def get_state_store() -> StateStore:
-    """Return the configured state store, with a compatibility lazy fallback."""
+    """Return context-owned state first, then the compatibility process binding."""
+    override = _STATE_STORE_OVERRIDE.get()
+    if override is not None:
+        return override
     global _STATE_STORE
     if _STATE_STORE is None:
         _STATE_STORE = FileStateStore(_default_state_root)

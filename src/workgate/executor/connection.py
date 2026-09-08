@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from pydantic import JsonValue, TypeAdapter
 
+from ..errors import tool_error_payload
 from ..protocol.errors import ProtocolErrorCode
 from ..protocol.executor import (
     ExecutorCommand,
@@ -20,6 +21,7 @@ from ..protocol.executor import (
 )
 from ..utils.serialization import to_jsonable
 from .control_client import ExecutorControlClient, ExecutorControlError
+from .errors import ExecutorOperationFailure
 
 _JSON_VALUE = TypeAdapter(JsonValue)
 _INITIAL_RETRY_DELAY_S = 0.5
@@ -59,6 +61,27 @@ class ExecutorOwnerActionRequired(RuntimeError):
     """The persisted executor profile cannot reconnect without owner action."""
 
 
+def operation_error_from_exception(exc: Exception) -> OperationError:
+    """Serialize one executor failure without erasing stable public error semantics."""
+    message = str(exc).strip() or type(exc).__name__
+    if isinstance(exc, ExecutorOperationFailure):
+        return OperationError(code=exc.code, message=message[:1000])
+    if isinstance(exc, NotImplementedError):
+        return OperationError(
+            code=ProtocolErrorCode.OPERATION_UNSUPPORTED.value,
+            message=message[:1000],
+        )
+    public_error = {
+        str(key): _JSON_VALUE.validate_python(to_jsonable(value))
+        for key, value in tool_error_payload(exc).items()
+    }
+    return OperationError(
+        code="operation_failed",
+        message=message[:1000],
+        data=public_error,
+    )
+
+
 class ExecutorConnection:
     """Run one bounded executor v1 delivery loop using a persisted profile."""
 
@@ -84,6 +107,7 @@ class ExecutorConnection:
         self._owner_action = asyncio.Event()
         self._owner_action_error: ExecutorOwnerActionRequired | None = None
         self._command_tasks: set[asyncio.Task[None]] = set()
+        self._session_mutation_tails: dict[str, asyncio.Future[None]] = {}
         self._main_task: asyncio.Task[None] | None = None
 
     @classmethod
@@ -231,8 +255,22 @@ class ExecutorConnection:
             delivery_progress.set()
             if command is None:
                 continue
+            predecessor: asyncio.Future[None] | None = None
+            completion: asyncio.Future[None] | None = None
+            if command.session_id is not None and command.op in {
+                "session.create",
+                "session.terminate",
+            }:
+                session_id = str(command.session_id)
+                predecessor = self._session_mutation_tails.get(session_id)
+                completion = asyncio.get_running_loop().create_future()
+                self._session_mutation_tails[session_id] = completion
             task = asyncio.create_task(
-                self._run_command(command),
+                self._run_command_ordered(
+                    command,
+                    predecessor=predecessor,
+                    completion=completion,
+                ),
                 name=f"workgate-executor-command-{command.id}",
             )
             self._command_tasks.add(task)
@@ -248,6 +286,26 @@ class ExecutorConnection:
                 # cancellation or an implementation defect can escape here.
                 task.result()
 
+    async def _run_command_ordered(
+        self,
+        command: ExecutorCommand,
+        *,
+        predecessor: asyncio.Future[None] | None,
+        completion: asyncio.Future[None] | None,
+    ) -> None:
+        """Preserve receipt order for same-session existence mutations."""
+        try:
+            if predecessor is not None:
+                await asyncio.shield(predecessor)
+            await self._run_command(command)
+        finally:
+            if completion is not None and not completion.done():
+                completion.set_result(None)
+            if command.session_id is not None and completion is not None:
+                session_id = str(command.session_id)
+                if self._session_mutation_tails.get(session_id) is completion:
+                    self._session_mutation_tails.pop(session_id, None)
+
     async def _run_command(self, command: ExecutorCommand) -> None:
         try:
             value = await self._execute_command(command)
@@ -259,18 +317,10 @@ class ExecutorConnection:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            message = str(exc).strip() or type(exc).__name__
             result = ExecutorResult(
                 id=command.id,
                 ok=False,
-                error=OperationError(
-                    code=(
-                        ProtocolErrorCode.OPERATION_UNSUPPORTED.value
-                        if isinstance(exc, NotImplementedError)
-                        else "operation_failed"
-                    ),
-                    message=message[:1000],
-                ),
+                error=operation_error_from_exception(exc),
             )
         await self._submit_result_until_terminal(result)
 

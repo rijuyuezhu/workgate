@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from workgate.config.settings import clear_settings_cache
 from workgate.control.http.app import build_http_app
+from workgate.tools.catalog import build_tool_catalog
 
 
 def test_http_missing_required_argument_returns_validation_error(
@@ -27,7 +28,9 @@ def test_http_exception_uses_consistent_error_envelope(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    # This test exercises the legacy HTTP adapter's validation envelope only.
+    # Final runtime execution is covered separately through executor protocol.
+    client = TestClient(build_http_app(tool_catalog=build_tool_catalog()))
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.post(
         "/tools/bash",

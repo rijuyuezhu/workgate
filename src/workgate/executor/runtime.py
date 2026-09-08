@@ -14,6 +14,12 @@ from ..composition.services import (
     install_runtime_services,
 )
 from ..config.settings import Settings
+from ..protocol.executor import (
+    SESSION_CHANGE_CWD_OP,
+    SESSION_CREATE_OP,
+    SESSION_LOOKUP_OP,
+    SESSION_TERMINATE_OP,
+)
 from ..remote_worker.dispatch import WorkerDispatcher as LegacyWorkerDispatcher
 from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from .config import ExecutorConfig, resolve_executor_config
@@ -23,6 +29,7 @@ if TYPE_CHECKING:
     from ..protocol.executor import ExecutorCommand
     from .connection import ExecutorConnection
     from .profile import ExecutorProfileStore
+    from .sessions import ExecutorSessionService
 
 
 @dataclass
@@ -39,6 +46,8 @@ class ExecutorRuntime:
     """Executor-owned terminal bridge and ConPTY live state."""
     dispatcher: LegacyWorkerDispatcher
     """Legacy dispatcher with the migrated Search service already bound."""
+    sessions: ExecutorSessionService
+    """Executor-authoritative final shared-session resource service."""
     profile_store: ExecutorProfileStore | None
     """Final v1 profile store, absent for the temporary legacy worker runtime."""
     connection: ExecutorConnection | None = field(default=None, init=False)
@@ -80,7 +89,9 @@ class ExecutorRuntime:
                 client = ExecutorControlClient(profile)
                 connection = ExecutorConnection.from_client(
                     client,
-                    hello_factory=lambda: build_executor_hello(self.config),
+                    hello_factory=lambda: build_executor_hello(
+                        self.config, sessions=self.sessions.inventory()
+                    ),
                     execute=self._execute_protocol_command,
                     max_concurrent_commands=self.config.max_concurrent_commands,
                 )
@@ -100,6 +111,38 @@ class ExecutorRuntime:
 
     async def _execute_protocol_command(self, command: ExecutorCommand):
         """Adapt final v1 envelopes to the temporary executor-local dispatcher seam."""
+        if command.op in {
+            SESSION_CREATE_OP,
+            SESSION_LOOKUP_OP,
+            SESSION_TERMINATE_OP,
+            SESSION_CHANGE_CWD_OP,
+        }:
+            if command.session_id is None:
+                raise ValueError(f"{command.op} requires session_id")
+            session_id = str(command.session_id)
+            if command.op == SESSION_CREATE_OP:
+                workdir = command.args.get("workdir")
+                label = command.args.get("label")
+                if not isinstance(workdir, str) or not workdir:
+                    raise ValueError("session.create requires workdir")
+                if label is not None and not isinstance(label, str):
+                    raise ValueError(
+                        "session.create label must be a string or null"
+                    )
+                return await self.sessions.create(
+                    session_id,
+                    workdir=workdir,
+                    label=label,
+                )
+            if command.op == SESSION_LOOKUP_OP:
+                return self.sessions.lookup(session_id)
+            if command.op == SESSION_TERMINATE_OP:
+                return await self.sessions.terminate(session_id)
+            workdir = command.args.get("workdir")
+            if not isinstance(workdir, str) or not workdir:
+                raise ValueError("session.change_cwd requires workdir")
+            return await self.sessions.change_cwd(session_id, workdir)
+
         args = dict(command.args)
         if command.session_id is not None:
             args.setdefault("session_id", command.session_id)
@@ -148,13 +191,17 @@ def build_executor_runtime(
         from .profile import ExecutorProfileStore
 
         profile_store = ExecutorProfileStore(services.state_store)
+    from .sessions import ExecutorSessionService
+
+    config = resolve_executor_config(settings)
     return ExecutorRuntime(
-        config=resolve_executor_config(settings),
+        config=config,
         legacy_settings=settings,
         services=services,
         terminal_runtime=build_terminal_runtime(),
         dispatcher=build_executor_dispatcher_with_search(
             settings, services.tool_session_store
         ),
+        sessions=ExecutorSessionService(config, services.tool_session_store),
         profile_store=profile_store,
     )

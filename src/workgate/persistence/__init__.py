@@ -6,6 +6,7 @@ from .store import (
     StateStore,
     configure_state_store,
     get_state_store,
+    use_state_store,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "StateStore",
     "configure_state_store",
     "get_state_store",
+    "use_state_store",
 ]
