@@ -325,15 +325,18 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#session-terminate").click()
     expect(page.locator("#session-detail-status")).to_contain_text(
-        "Immediate termination requested"
+        "Ended · executor confirmed session absence"
     )
     blocked = harness.api(
         "POST",
         "/tools/read",
         body={"session_id": session_id, "path": "notes.txt"},
     )
-    assert blocked["status"] == 409
-    assert blocked["payload"]["error"] == "session_termination_requested"
+    assert blocked["status"] == 400
+    assert blocked["payload"]["error"] == "validation_error"
+    assert "is ended" in blocked["payload"]["message"]
     harness.console_errors = [
-        line for line in harness.console_errors if "409 (Conflict)" not in line
+        line
+        for line in harness.console_errors
+        if "400 (Bad Request)" not in line
     ]

@@ -23,7 +23,12 @@ from playwright.sync_api import (
     expect,
 )
 
-from tests.e2e_helpers import PROJECT_ROOT, free_tcp_port, server_env
+from tests.e2e_helpers import (
+    PROJECT_ROOT,
+    free_tcp_port,
+    provision_executor_pair,
+    server_env,
+)
 from workgate.oauth.core.scopes import default_scope
 from workgate.ui.contracts import POSIX_TUI_EXECUTABLE_NAME
 from workgate.ui.session import (
@@ -94,15 +99,18 @@ class BrowserHarness:
     root: Path
     artifacts: Path
     control_workspace: Path
+    executor_workspace: Path
     control_tmux_tmpdir: Path
     base_url: str
     admin_pin: str
+    executor_id: str
     opentui_crash_marker: Path
     playwright: Playwright
     browser: Browser
     context: BrowserContext
     page: Page
     server: subprocess.Popen[Any]
+    executor: subprocess.Popen[Any]
     api_token: str | None = None
     terminal_sessions: list[tuple[str, str]] = field(default_factory=list)
     console_messages: list[str] = field(default_factory=list)
@@ -121,6 +129,8 @@ class BrowserHarness:
         artifacts.mkdir(parents=True, exist_ok=True)
         control_workspace = root / "workspace-control"
         control_workspace.mkdir(parents=True)
+        executor_workspace = root / "workspace-executor"
+        executor_workspace.mkdir(parents=True)
         control_tmux_tmpdir = Path(tempfile.mkdtemp(prefix="workgate-b-ctl-"))
         (control_workspace / "notes.txt").write_text(
             "local browser fixture\n", encoding="utf-8"
@@ -154,7 +164,20 @@ class BrowserHarness:
         port = free_tcp_port()
         base_url = f"http://127.0.0.1:{port}"
         admin_pin = "browser-e2e-pin-924681"
-        env = server_env(control_workspace, mode="http", port=port)
+        control_state_dir = root / "state-control"
+        executor_state_dir = root / "state-executor"
+        executor_id = provision_executor_pair(
+            control_state_dir=control_state_dir,
+            executor_state_dir=executor_state_dir,
+            control_url=base_url,
+            name="browser-loopback",
+        )
+        env = server_env(
+            control_workspace,
+            mode="http",
+            port=port,
+            state_dir=control_state_dir,
+        )
         env.update(
             {
                 "TMUX_TMPDIR": str(control_tmux_tmpdir),
@@ -199,8 +222,20 @@ class BrowserHarness:
             stdout_path=artifacts / "server.stdout.log",
             stderr_path=artifacts / "server.stderr.log",
         )
+        executor: subprocess.Popen[Any] | None = None
         try:
             _wait_for_http_ready(base_url, server)
+            executor = _start_logged_process(
+                [sys.executable, "-m", "workgate.main", "executor", "run"],
+                cwd=PROJECT_ROOT,
+                env=server_env(
+                    executor_workspace,
+                    mode="http",
+                    state_dir=executor_state_dir,
+                ),
+                stdout_path=artifacts / "executor.stdout.log",
+                stderr_path=artifacts / "executor.stderr.log",
+            )
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
                 viewport={"width": 1440, "height": 1000},
@@ -215,19 +250,23 @@ class BrowserHarness:
                 root=root,
                 artifacts=artifacts,
                 control_workspace=control_workspace,
+                executor_workspace=executor_workspace,
                 control_tmux_tmpdir=control_tmux_tmpdir,
                 base_url=base_url,
                 admin_pin=admin_pin,
+                executor_id=executor_id,
                 opentui_crash_marker=opentui_crash_marker,
                 playwright=playwright,
                 browser=browser,
                 context=context,
                 page=page,
                 server=server,
+                executor=executor,
             )
             harness._attach_diagnostics()
             return harness
         except Exception:
+            _terminate_process(executor)
             _terminate_process(server)
             shutil.rmtree(control_tmux_tmpdir, ignore_errors=True)
             raise
@@ -310,8 +349,32 @@ class BrowserHarness:
                 self.context.close()
             with contextlib.suppress(Exception):
                 self.browser.close()
+            _terminate_process(self.executor)
             _terminate_process(self.server)
             shutil.rmtree(self.control_tmux_tmpdir, ignore_errors=True)
+
+    def wait_executor_online(self) -> None:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if self.executor.poll() is not None:
+                raise AssertionError(
+                    f"executor exited early with code {self.executor.returncode}; "
+                    f"see {self.artifacts / 'executor.stderr.log'}"
+                )
+            result = self.api("GET", "/api/ui/executors")
+            if result["status"] == 200:
+                rows = result["payload"]["data"]["executors"]
+                if any(
+                    row.get("executor_id") == self.executor_id
+                    and row.get("online") is True
+                    for row in rows
+                ):
+                    return
+            time.sleep(0.05)
+        raise AssertionError(
+            f"executor {self.executor_id} did not become online; "
+            f"see {self.artifacts / 'executor.stderr.log'}"
+        )
 
     def track_terminal(self, machine: str, shell_id: str) -> None:
         self.terminal_sessions.append((machine, shell_id))
@@ -563,6 +626,7 @@ class BrowserHarness:
         self._attach_diagnostics()
 
         self.api_token = self.issue_token(default_scope())
+        self.wait_executor_online()
         self.console_errors = [
             line
             for line in self.console_errors

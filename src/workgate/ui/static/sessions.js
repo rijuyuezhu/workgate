@@ -139,9 +139,14 @@ export function createSessionsController({
       return;
     }
     const terminated = sessionTerminated(session);
+    const finalStatus = text(session.status, "");
     elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
-    elements.sessionDetailStatus.textContent = terminated
-      ? `Immediate termination requested ${sessionTimestamp(session.termination_requested_at)}`
+    elements.sessionDetailStatus.textContent = finalStatus === "ended"
+      ? "Ended · executor confirmed session absence"
+      : finalStatus === "terminating"
+        ? "Termination in progress · waiting for executor absence"
+        : terminated
+          ? `Immediate termination requested ${sessionTimestamp(session.termination_requested_at)}`
       : session.active === false
         ? "Inactive · outside the recent 5 hour window"
         : "Active · responded within the last 5 hours";
@@ -389,7 +394,9 @@ export function createSessionsController({
         controllerState.todoSessions = controllerState.todoSessions.map((item) => item.session_id === updated.session_id ? updated : item);
       }
       renderTodoSessions(controllerState.todoSessions);
-      elements.sessionState.textContent = `${session.session_id} marked for immediate termination`;
+      elements.sessionState.textContent = updated && updated.status === "ended"
+        ? `${session.session_id} ended`
+        : `${session.session_id} marked for immediate termination`;
     } catch (error) {
       elements.sessionState.textContent = error instanceof Error ? error.message : String(error);
     } finally {

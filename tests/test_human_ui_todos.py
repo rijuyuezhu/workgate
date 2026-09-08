@@ -166,6 +166,48 @@ def test_local_todos_require_explicit_session_and_use_session_directory(
     assert not (workspace / ".state" / "todos.json").exists()
 
 
+def test_final_shared_session_todos_route_to_bound_executor(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+
+    with TestClient(app, base_url=BASE_URL) as client:
+        started = client.post("/tools/session_start", json={"workdir": "."})
+        assert started.status_code == 200
+        session_id = started.json()["session_id"]
+        assert session_id.startswith("sess_")
+
+        initial = client.get(
+            "/api/ui/todos",
+            params={"machine": "local", "session_id": session_id},
+        )
+        saved = client.put(
+            "/api/ui/todos",
+            json={
+                "machine": "local",
+                "session_id": session_id,
+                "expected_revision": 0,
+                "todos": [_item("shared")],
+            },
+        )
+        current = client.get(
+            "/api/ui/todos",
+            params={"machine": harness.executor_id, "session_id": session_id},
+        )
+
+    assert initial.status_code == 200
+    assert initial.json()["data"]["revision"] == 0
+    assert (
+        initial.json()["data"]["session"]["executor_id"] == harness.executor_id
+    )
+    assert saved.status_code == 200
+    assert saved.json()["data"]["revision"] == 1
+    assert current.status_code == 200
+    assert current.json()["data"]["todos"][0]["id"] == "shared"
+
+
 def test_todos_are_isolated_between_ui_selected_sessions(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     _configure(monkeypatch, workspace)
