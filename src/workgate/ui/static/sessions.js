@@ -70,6 +70,17 @@ export function createSessionsController({
     return "";
   }
 
+  function sessionActivityKnown(session = selectedSession()) {
+    return Boolean(session && session.activity_known !== false);
+  }
+
+  function sessionActivityTimestamp(session = selectedSession()) {
+    if (!sessionActivityKnown(session)) return "activity time unavailable";
+    return sessionTimestamp(
+      session && session.last_active_at != null ? session.last_active_at : session && session.updated_at,
+    );
+  }
+
   function setTodoControls() {
     const online = todoMachineOnline();
     const sessionReady = Boolean(controllerState.todoSessionId);
@@ -171,9 +182,11 @@ export function createSessionsController({
             ? "Unavailable · executor offline"
             : terminated
               ? `Immediate termination requested ${sessionTimestamp(session.termination_requested_at)}`
-              : session.active === false
-                ? "Inactive · outside the recent 5 hour window"
-                : "Active · responded within the last 5 hours";
+              : !sessionActivityKnown(session)
+                ? "Available · activity time unavailable"
+                : session.active === false
+                  ? "Inactive · outside the recent 5 hour window"
+                  : "Active · responded within the last 5 hours";
     elements.sessionDetailId.textContent = text(session.session_id);
     elements.sessionDetailTarget.textContent = text(session.target);
     elements.sessionDetailMachine.textContent = text(session.machine, session.target === "local" ? "local" : "—");
@@ -213,9 +226,11 @@ export function createSessionsController({
           ? "termination requested"
           : unavailable
             ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
-            : session.active === false
-              ? `inactive · ${sessionTimestamp(session.updated_at)}`
-              : `active · ${sessionTimestamp(session.updated_at)}`;
+            : !sessionActivityKnown(session)
+              ? "available · activity time unavailable"
+              : session.active === false
+                ? `inactive · ${sessionActivityTimestamp(session)}`
+                : `active · ${sessionActivityTimestamp(session)}`;
         button.append(title, meta);
         button.addEventListener("click", () => void selectTodoSession(session.session_id));
         elements.sessionList.append(button);

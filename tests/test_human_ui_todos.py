@@ -825,6 +825,88 @@ def test_sessions_api_uses_final_control_sessions_and_terminates_executor_work(
     assert "is ended" in blocked.json()["message"]
 
 
+def test_sessions_api_uses_executor_activity_for_final_recent_filter(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "recent-final"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    lifecycle_record = harness.control.control_state.snapshot_sessions()[
+        session_id
+    ]
+    old_lifecycle_at = time.time() - SESSION_ACTIVE_WINDOW_S - 60
+    harness.control.control_state.put_session(
+        lifecycle_record.model_copy(update={"updated_at": old_lifecycle_at})
+    )
+
+    write = client.post(
+        "/tools/write_file",
+        json={
+            "session_id": session_id,
+            "path": "fresh.txt",
+            "content": "fresh",
+        },
+    )
+    assert write.status_code == 200
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    rows = recent.json()["data"]["sessions"]
+    row = next(item for item in rows if item["session_id"] == session_id)
+    assert row["status"] == "active"
+    assert row["availability"] == "available"
+    assert row["active"] is True
+    assert row["activity_known"] is True
+    assert row["last_active_at"] > old_lifecycle_at
+    assert row["updated_at"] == pytest.approx(old_lifecycle_at)
+    assert harness.control.control_state.snapshot_sessions()[
+        session_id
+    ].updated_at == pytest.approx(old_lifecycle_at)
+
+
+def test_sessions_api_merges_final_and_legacy_sessions_during_migration(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    legacy = _local_session(workspace, label="legacy-before-final")
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start",
+        json={"workdir": ".", "label": "final-after-legacy"},
+    )
+    assert started.status_code == 200
+    final_session_id = started.json()["session_id"]
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    inventory = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    recent_rows = recent.json()["data"]["sessions"]
+    rows = inventory.json()["data"]["sessions"]
+    expected_ids = {legacy.session_id, final_session_id}
+    assert {row["session_id"] for row in recent_rows} == expected_ids
+    assert {row["session_id"] for row in rows} == expected_ids
+    legacy_row = next(
+        row for row in rows if row["session_id"] == legacy.session_id
+    )
+    final_row = next(
+        row for row in rows if row["session_id"] == final_session_id
+    )
+    assert legacy_row["target"] == "local"
+    assert final_row["target"] is None
+    assert final_row["executor_id"] is not None
+
+
 def test_todo_api_enforces_local_remote_and_write_scopes(monkeypatch, tmp_path):
     fake = _FakeRemoteTodos("worker01")
     client, remote = _remote_client(

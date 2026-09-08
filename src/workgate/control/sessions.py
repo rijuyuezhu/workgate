@@ -539,6 +539,24 @@ class ControlSessionCoordinator:
             return "missing_on_executor"
         return "available"
 
+    async def session_activity_projection(
+        self, session_id: str
+    ) -> tuple[SessionAvailability, float | None]:
+        """Project operational availability and executor-authoritative activity."""
+        record = self._state.snapshot_sessions().get(session_id)
+        if record is None:
+            raise ValueError(
+                f"unknown session_id {session_id!r}; call session_start first"
+            )
+        availability = await self.session_availability(session_id)
+        if record.status != "active" or availability != "available":
+            return availability, None
+        summary = await self._lookup_cleanup_summary(record)
+        return (
+            availability,
+            summary.last_active_at if summary is not None else None,
+        )
+
     def _finish_create(
         self, record: ControlSessionRecord, result: ExecutorResult
     ) -> JsonValue:

@@ -73,9 +73,11 @@ def _final_session_payload(
     *,
     now: float,
     availability: str | None = None,
+    last_active_at: float | None = None,
 ) -> dict[str, Any]:
     status = str(record.status)
-    updated_at = float(record.updated_at)
+    projected_availability = availability or status
+    activity_known = last_active_at is not None
     return {
         "session_id": str(record.session_id),
         "executor_id": str(record.executor_id),
@@ -85,13 +87,35 @@ def _final_session_payload(
         "requested_workdir": record.requested_workdir,
         "label": record.label,
         "status": status,
-        "availability": availability or status,
+        "availability": projected_availability,
         "created_at": float(record.created_at),
-        "updated_at": updated_at,
+        "updated_at": float(record.updated_at),
+        "last_active_at": last_active_at,
+        "activity_known": activity_known,
         "active": status == "active"
-        and updated_at >= now - SESSION_ACTIVE_WINDOW_S,
+        and projected_availability == "available"
+        and activity_known
+        and last_active_at >= now - SESSION_ACTIVE_WINDOW_S,
         "termination_requested": status in {"terminating", "ended"},
     }
+
+
+def _row_sort_timestamp(row: dict[str, Any]) -> float:
+    value = row.get("last_active_at")
+    if value is None:
+        value = row.get("updated_at", 0.0)
+    return float(value)
+
+
+def _row_visible_by_default(row: dict[str, Any]) -> bool:
+    if row.get("status") == "active" and row.get("availability") not in {
+        None,
+        "available",
+    }:
+        return True
+    if row.get("status") == "active" and row.get("activity_known") is False:
+        return True
+    return bool(row.get("active"))
 
 
 def _control_runtime(request: Request) -> Any | None:
@@ -119,7 +143,7 @@ def _session_for_machine(session_id: str, machine: str) -> AgentSession:
 
 
 async def api_sessions(request: Request) -> Response:
-    """Return durable public agent sessions, preferring final control bindings."""
+    """Return coexisting final and legacy sessions with authoritative activity."""
     try:
         machine = _machine_arg(request.query_params.get("machine"))
         _require_scopes(machine)
@@ -133,58 +157,52 @@ async def api_sessions(request: Request) -> Response:
             if runtime is not None
             else ()
         )
-        if final_records:
-            assert runtime is not None
-            records = [
-                record
-                for record in sorted(
-                    final_records,
-                    key=lambda item: float(item.updated_at),
-                    reverse=True,
-                )
-                if (machine == "local" or str(record.executor_id) == machine)
-                and (
-                    include_inactive
-                    or (
-                        record.status == "active"
-                        and float(record.updated_at)
-                        >= now - SESSION_ACTIVE_WINDOW_S
-                    )
-                )
-            ][:UI_SESSION_MAX_ENTRIES]
-            availabilities = await asyncio.gather(
-                *(
-                    runtime.session_coordinator.session_availability(
+        final_candidates = [
+            record
+            for record in final_records
+            if machine == "local" or str(record.executor_id) == machine
+        ]
+        if machine != "local" and not final_candidates:
+            require_remote_machine(machine)
+
+        final_rows: list[dict[str, Any]] = []
+        if runtime is not None and final_candidates:
+            semaphore = asyncio.Semaphore(16)
+
+            async def project_final(record: Any) -> dict[str, Any]:
+                async with semaphore:
+                    (
+                        availability,
+                        last_active_at,
+                    ) = await runtime.session_coordinator.session_activity_projection(
                         str(record.session_id)
                     )
-                    for record in records
-                )
-            )
-            rows = [
-                _final_session_payload(
+                return _final_session_payload(
                     record,
                     now=now,
                     availability=availability,
+                    last_active_at=last_active_at,
                 )
-                for record, availability in zip(
-                    records, availabilities, strict=True
+
+            final_rows = list(
+                await asyncio.gather(
+                    *(project_final(record) for record in final_candidates)
                 )
-            ]
-        else:
-            if machine != "local":
-                require_remote_machine(machine)
-            sessions = await asyncio.to_thread(
-                get_tool_session_store().list_sessions
             )
-            rows = [
-                _session_payload(session, now=now)
-                for session in sessions
-                if _belongs_to_machine(session, machine)
-                and (
-                    include_inactive
-                    or session.updated_at >= now - SESSION_ACTIVE_WINDOW_S
-                )
-            ][:UI_SESSION_MAX_ENTRIES]
+
+        sessions = await asyncio.to_thread(
+            get_tool_session_store().list_sessions
+        )
+        legacy_rows = [
+            _session_payload(session, now=now)
+            for session in sessions
+            if _belongs_to_machine(session, machine)
+        ]
+        rows = final_rows + legacy_rows
+        if not include_inactive:
+            rows = [row for row in rows if _row_visible_by_default(row)]
+        rows.sort(key=_row_sort_timestamp, reverse=True)
+        rows = rows[:UI_SESSION_MAX_ENTRIES]
         return _json_ok(
             {
                 "machine": machine,
