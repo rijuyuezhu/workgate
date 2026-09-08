@@ -318,6 +318,44 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
 
 
 @pytest.mark.asyncio
+async def test_hello_seeds_activity_projection_without_targeted_lookup(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(_active_record(executor_id, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = ExecutorHelloRequest(
+        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
+        workspace_root="/workspace",
+        sessions=(
+            SessionInventorySummary(
+                session_id=session_id,
+                resolved_workdir="/workspace/project",
+                last_active_at=123.0,
+            ),
+        ),
+        shells=(),
+        jobs=(),
+    )
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+
+    await coordinator.reconcile_hello(executor_id)
+    (
+        availability,
+        last_active_at,
+    ) = await coordinator.session_activity_projection(session_id)
+
+    assert availability == "available"
+    assert last_active_at == 123.0
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
 async def test_hello_reports_orphan_and_cross_executor_session_diagnostics(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -511,6 +549,44 @@ async def test_start_reaps_expired_session_through_confirmed_absence(
         "session.terminate",
         "session.create",
     ]
+
+
+@pytest.mark.asyncio
+async def test_explicit_cleanup_lookup_confirms_missing_availability(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    existing = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(_active_record(executor_id, existing))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello((existing, "/workspace/project"))
+
+    async def execute(_executor_id, op, _args, session_id, _timeout):
+        assert op == "session.lookup"
+        assert session_id == existing
+        return _ok(None)
+
+    transport.call_impl = execute
+    coordinator = ControlSessionCoordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=1,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+
+    with pytest.raises(RuntimeError, match="agent session limit reached"):
+        await coordinator.start_session(workdir="new")
+
+    assert [call[1] for call in transport.calls] == ["session.lookup"]
+    assert (
+        await coordinator.session_availability(existing)
+        == "missing_on_executor"
+    )
+    assert state.snapshot_sessions()[existing].status == "active"
 
 
 @pytest.mark.asyncio

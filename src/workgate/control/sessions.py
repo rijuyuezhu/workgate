@@ -67,6 +67,7 @@ class ControlSessionCoordinator:
         self._capacity_lock = asyncio.Lock()
         self._reconcile_tasks: set[asyncio.Task[None]] = set()
         self._missing_by_executor: dict[str, dict[str, float]] = {}
+        self._activity_by_session: dict[str, float] = {}
         self._auto_cleanup_blocked: Callable[[str], Awaitable[bool]] | None = (
             None
         )
@@ -92,6 +93,7 @@ class ControlSessionCoordinator:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._reconcile_tasks.clear()
         self._missing_by_executor.clear()
+        self._activity_by_session.clear()
         self._locks.clear()
 
     async def select_executor(self, executor_id: str | None = None) -> str:
@@ -190,7 +192,9 @@ class ControlSessionCoordinator:
                 wire_args,
                 session_id=session_id,
             )
-            return self._unwrap(result)
+            payload = self._unwrap(result)
+            self.observe_session_activity(session_id)
+            return payload
 
     async def change_cwd(self, session_id: str, workdir: str) -> JsonValue:
         lock = self._lock(session_id)
@@ -215,6 +219,7 @@ class ControlSessionCoordinator:
                     }
                 )
             )
+            self.observe_session_activity(session_id, observed_at=now)
             return self._with_executor_binding(record, payload)
 
     async def end_session(
@@ -384,12 +389,26 @@ class ControlSessionCoordinator:
             )
         except Exception:
             return None
-        if not result.ok or result.result is None:
+        if not result.ok:
+            return None
+        if result.result is None:
+            missing = self._missing_by_executor.setdefault(executor_id, {})
+            missing.setdefault(str(record.session_id), float(self._clock()))
             return None
         try:
-            return SessionInventorySummary.model_validate(result.result)
+            summary = SessionInventorySummary.model_validate(result.result)
         except Exception:
             return None
+        missing = self._missing_by_executor.get(executor_id)
+        if missing is not None:
+            missing.pop(str(record.session_id), None)
+            if not missing:
+                self._missing_by_executor.pop(executor_id, None)
+        if summary.last_active_at is not None:
+            self.observe_session_activity(
+                str(record.session_id), observed_at=summary.last_active_at
+            )
+        return summary
 
     @staticmethod
     def _cleanup_eligible(
@@ -452,6 +471,10 @@ class ControlSessionCoordinator:
                     self._schedule_termination(record)
                 continue
             if item is not None:
+                if item.last_active_at is not None:
+                    self.observe_session_activity(
+                        session_id, observed_at=item.last_active_at
+                    )
                 if record.status == "creating" or (
                     record.resolved_workdir_display != item.resolved_workdir
                 ):
@@ -542,20 +565,23 @@ class ControlSessionCoordinator:
     async def session_activity_projection(
         self, session_id: str
     ) -> tuple[SessionAvailability, float | None]:
-        """Project operational availability and executor-authoritative activity."""
+        """Project availability plus process-local activity without executor RPC."""
         record = self._state.snapshot_sessions().get(session_id)
         if record is None:
             raise ValueError(
                 f"unknown session_id {session_id!r}; call session_start first"
             )
         availability = await self.session_availability(session_id)
-        if record.status != "active" or availability != "available":
-            return availability, None
-        summary = await self._lookup_cleanup_summary(record)
-        return (
-            availability,
-            summary.last_active_at if summary is not None else None,
-        )
+        return availability, self._activity_by_session.get(session_id)
+
+    def observe_session_activity(
+        self, session_id: str, *, observed_at: float | None = None
+    ) -> None:
+        """Refresh one process-local activity observation without durable writes."""
+        value = float(self._clock() if observed_at is None else observed_at)
+        previous = self._activity_by_session.get(session_id)
+        if previous is None or value > previous:
+            self._activity_by_session[session_id] = value
 
     def _finish_create(
         self, record: ControlSessionRecord, result: ExecutorResult
@@ -569,15 +595,17 @@ class ControlSessionCoordinator:
             )
         payload = self._unwrap(result)
         resolved = self._resolved_workdir(payload)
+        now = self._clock()
         self._state.put_session(
             record.model_copy(
                 update={
                     "status": "active",
                     "resolved_workdir_display": resolved,
-                    "updated_at": self._clock(),
+                    "updated_at": now,
                 }
             )
         )
+        self.observe_session_activity(str(record.session_id), observed_at=now)
         return self._with_executor_binding(record, payload)
 
     async def _reconcile_ambiguous_create(
@@ -611,6 +639,10 @@ class ControlSessionCoordinator:
                 }
             )
         )
+        if item.last_active_at is not None:
+            self.observe_session_activity(
+                str(record.session_id), observed_at=item.last_active_at
+            )
 
     def _schedule_termination(self, record: ControlSessionRecord) -> None:
         task = asyncio.create_task(
@@ -628,6 +660,7 @@ class ControlSessionCoordinator:
             return
 
     def _mark_ended(self, record: ControlSessionRecord) -> None:
+        self._activity_by_session.pop(str(record.session_id), None)
         missing = self._missing_by_executor.get(str(record.executor_id))
         if missing is not None:
             missing.pop(str(record.session_id), None)

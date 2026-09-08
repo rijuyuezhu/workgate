@@ -506,6 +506,7 @@ class ControlSessionCopyService:
             raise RuntimeError(
                 f"executor {op} failed: {result.error.code}: {result.error.message}"
             )
+        self._sessions.observe_session_activity(str(record.session_id))
         return result.result
 
     @staticmethod

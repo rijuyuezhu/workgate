@@ -31,6 +31,7 @@ from workgate.ops.todo import (
     todo_counts_execute,
     write_todos_execute,
 )
+from workgate.protocol.executor import SESSION_LOOKUP_OP
 from workgate.remote.tool_specs import (
     REMOTE_WORKER_ORIGIN_ARG,
     REMOTE_WORKER_ORIGIN_HUMAN_UI,
@@ -868,6 +869,45 @@ def test_sessions_api_uses_executor_activity_for_final_recent_filter(
     assert harness.control.control_state.snapshot_sessions()[
         session_id
     ].updated_at == pytest.approx(old_lifecycle_at)
+
+
+def test_sessions_api_does_not_lookup_each_final_session(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    session_ids = []
+    for index in range(5):
+        started = client.post(
+            "/tools/session_start",
+            json={"workdir": ".", "label": f"final-{index}"},
+        )
+        assert started.status_code == 200
+        session_ids.append(started.json()["session_id"])
+
+    original_call = harness.control.executor_transport.call
+    lookup_calls = 0
+
+    async def observe_call(*args, **kwargs):
+        nonlocal lookup_calls
+        op = args[1] if len(args) > 1 else kwargs.get("op")
+        if op == SESSION_LOOKUP_OP:
+            lookup_calls += 1
+        return await original_call(*args, **kwargs)
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", observe_call
+    )
+
+    inventory = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    assert inventory.status_code == 200
+    rows = inventory.json()["data"]["sessions"]
+    assert {row["session_id"] for row in rows} == set(session_ids)
+    assert lookup_calls == 0
 
 
 def test_sessions_api_merges_final_and_legacy_sessions_during_migration(
