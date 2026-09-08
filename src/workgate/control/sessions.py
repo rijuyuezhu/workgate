@@ -192,8 +192,8 @@ class ControlSessionCoordinator:
                 wire_args,
                 session_id=session_id,
             )
-            payload = self._unwrap(result)
             self.observe_session_activity(session_id)
+            payload = self._unwrap(result)
             return payload
 
     async def change_cwd(self, session_id: str, workdir: str) -> JsonValue:
@@ -207,6 +207,7 @@ class ControlSessionCoordinator:
                 {"workdir": workdir},
                 session_id=session_id,
             )
+            self.observe_session_activity(session_id)
             payload = self._unwrap(result)
             resolved = self._resolved_workdir(payload)
             now = self._clock()

@@ -174,8 +174,8 @@ class ControlDownloadService:
             args,
             session_id=str(record.session_id),
         )
+        self._sessions.observe_session_activity(str(record.session_id))
         if result.ok:
-            self._sessions.observe_session_activity(str(record.session_id))
             return result.result
         assert result.error is not None
         if result.error.data is not None:

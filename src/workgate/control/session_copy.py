@@ -501,12 +501,12 @@ class ControlSessionCopyService:
             args,
             session_id=str(record.session_id),
         )
+        self._sessions.observe_session_activity(str(record.session_id))
         if not result.ok:
             assert result.error is not None
             raise RuntimeError(
                 f"executor {op} failed: {result.error.code}: {result.error.message}"
             )
-        self._sessions.observe_session_activity(str(record.session_id))
         return result.result
 
     @staticmethod

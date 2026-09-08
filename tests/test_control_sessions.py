@@ -356,6 +356,38 @@ async def test_hello_seeds_activity_projection_without_targeted_lookup(
 
 
 @pytest.mark.asyncio
+async def test_transport_uncertainty_does_not_refresh_activity(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(_active_record(executor_id, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+
+    async def fail_transport(_executor_id, _op, _args, _session_id, _timeout):
+        raise RuntimeError("transport down")
+
+    transport.call_impl = fail_transport
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator.observe_session_activity(session_id, observed_at=10.0)
+
+    with pytest.raises(RuntimeError, match="transport down"):
+        await coordinator.call_session_tool(
+            "read", {"session_id": session_id, "path": "missing.txt"}
+        )
+
+    (
+        availability,
+        last_active_at,
+    ) = await coordinator.session_activity_projection(session_id)
+    assert availability == "available"
+    assert last_active_at == 10.0
+
+
+@pytest.mark.asyncio
 async def test_hello_reports_orphan_and_cross_executor_session_diagnostics(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
