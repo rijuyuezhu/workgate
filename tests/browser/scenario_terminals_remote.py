@@ -175,6 +175,7 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     assert sent
     page.keyboard.press("End")
 
+    reload_websocket_start = len(harness.websocket_events)
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
     session_button = page.locator(
@@ -184,7 +185,13 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     session_button.click()
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
     expect(page.locator("#terminal-xterm .xterm")).to_be_visible()
-    _wait_terminal_output(harness, "local", local_shell, "local-terminal-e2e")
+    _wait_terminal_output(
+        harness,
+        "local",
+        local_shell,
+        "scroll-complete",
+        websocket_event_start=reload_websocket_start,
+    )
     # Legacy remote-worker enrollment UI was retired in PR5. Browser coverage
     # now stays on the local Human UI path until final executor-backed remote
     # file/session/terminal routing lands in the later migration PRs. The
