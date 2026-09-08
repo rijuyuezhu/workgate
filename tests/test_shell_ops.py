@@ -1068,6 +1068,44 @@ async def test_list_owned_shells_handles_unavailable_tmux_from_durable_ownership
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("durable_shell_ids", "expected"),
+    [([], []), (["owned-shell"], None)],
+)
+async def test_list_owned_shells_handles_unavailable_conpty_from_durable_ownership(
+    monkeypatch,
+    durable_shell_ids,
+    expected,
+):
+    monkeypatch.setattr(
+        shell_ops, "_use_conpty_persistent_shell_backend", lambda: True
+    )
+    monkeypatch.setattr(
+        shell_ops,
+        "get_tool_session_store",
+        lambda: SimpleNamespace(
+            require_session=lambda session_id: SimpleNamespace(
+                session_id=session_id,
+                persistent_shell_ids=list(durable_shell_ids),
+            )
+        ),
+    )
+
+    async def list_owned(_session_id):
+        return list(durable_shell_ids)
+
+    monkeypatch.setattr(shell_ops.conpty, "list_owned_shell_ids", list_owned)
+    monkeypatch.setattr(
+        shell_ops.conpty, "authoritative_shell_ids", lambda: None
+    )
+
+    assert (
+        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        == expected
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_owned_shells_treats_absent_server_as_authoritative_empty(
     monkeypatch,
 ):

@@ -1122,6 +1122,8 @@ async def list_owned_persistent_shell_ids_execute(
             store = get_tool_session_store()
             session = store.require_session(owner_session_id)
             durable_ids = set(session.persistent_shell_ids)
+            if not durable_ids:
+                return []
             local_ids = set(await conpty.list_owned_shell_ids(owner_session_id))
             authoritative_ids = conpty.authoritative_shell_ids()
         except Exception:
