@@ -246,9 +246,17 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     assert scroll_extent["scrollHeight"] > scroll_extent["height"]
     request_body.focus()
+    expect(request_body).to_be_focused()
     request_body.press("PageDown")
-    page.wait_for_timeout(100)
-    assert request_body.evaluate("element => element.scrollTop") > 0
+    scroll_deadline = time.monotonic() + 2
+    while time.monotonic() < scroll_deadline:
+        if request_body.evaluate("element => element.scrollTop") > 0:
+            break
+        page.wait_for_timeout(50)
+    else:
+        raise AssertionError(
+            "focused audit request body did not scroll on PageDown"
+        )
     detail_style = page.locator(
         "#session-audit-detail-body .audit-detail-json"
     ).first.evaluate(
