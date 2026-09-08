@@ -874,6 +874,20 @@ def test_sessions_api_uses_executor_activity_for_final_recent_filter(
 def test_successful_persistent_shell_inventory_refreshes_executor_activity(
     monkeypatch, tmp_path
 ):
+    from workgate.ops import shell as shell_ops
+    from workgate.schemas.result_models.shell import ListPersistentShellsOutput
+
+    async def no_owned_shells(_session_id: str):
+        return []
+
+    async def no_shells():
+        return ListPersistentShellsOutput(shells=[])
+
+    monkeypatch.setattr(
+        shell_ops, "list_owned_persistent_shell_ids_execute", no_owned_shells
+    )
+    monkeypatch.setattr(shell_ops, "list_persistent_shells_execute", no_shells)
+
     workspace = tmp_path / "workspace"
     _configure(monkeypatch, workspace)
     app, harness = build_paired_http_app(get_settings())
