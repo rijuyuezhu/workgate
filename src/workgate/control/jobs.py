@@ -67,13 +67,18 @@ class ControlJobService:
             raise ValueError("poll, cancel, and retry are mutually exclusive")
 
         record = self._sessions.require_session_status(
-            session_id, {"active", "missing", "terminating"}
+            session_id, {"active", "terminating"}
         )
         if list_jobs or not any(selected):
+            executor_available = bool(
+                record.status == "active"
+                and await self._sessions.session_availability(session_id)
+                == "available"
+            )
             return await self._list(
                 session_id,
                 include_finished=include_finished,
-                executor_available=record.status == "active",
+                executor_available=executor_available,
                 lines=lines,
             )
 

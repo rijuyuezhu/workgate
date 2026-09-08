@@ -226,10 +226,12 @@ async def _close_terminal_bridge(args: dict[str, Any]) -> Any:
 async def _start_persistent_shell(args: dict[str, Any]) -> Any:
     from workgate.ops.shell import start_persistent_shell_execute
 
+    session_id = args.get("session_id")
     return await start_persistent_shell_execute(
         str(args.get("cwd") or "."),
         str(args["name"]) if args.get("name") is not None else None,
         str(args["command"]) if args.get("command") is not None else None,
+        owner_session_id=str(session_id) if session_id is not None else None,
     )
 
 

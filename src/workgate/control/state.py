@@ -50,7 +50,7 @@ class ControlSessionRecord(BaseModel):
     requested_workdir: str = Field(min_length=1, max_length=4096)
     resolved_workdir_display: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
-    status: Literal["creating", "active", "missing", "terminating", "ended"]
+    status: Literal["creating", "active", "terminating", "ended"]
     created_at: Timestamp
     updated_at: Timestamp
 

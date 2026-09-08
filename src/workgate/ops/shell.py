@@ -1142,7 +1142,14 @@ async def list_owned_persistent_shell_ids_execute(
         return sorted(local_ids)
     selection = resolve_tmux()
     if selection.path is None and selection.source == "unavailable":
-        return None
+        # A session that has never durably reserved a shell has nothing to
+        # clean up even when the tmux backend itself is unavailable.  Keep
+        # fail-closed behavior for any session with durable shell ownership.
+        try:
+            session = get_tool_session_store().require_session(owner_session_id)
+        except Exception:
+            return None
+        return [] if not session.persistent_shell_ids else None
     result = await tmux(
         [
             "list-sessions",

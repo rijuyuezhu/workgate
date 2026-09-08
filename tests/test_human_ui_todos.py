@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import stat
@@ -17,6 +18,7 @@ import workgate.ui.http.todos as ui_todos_module
 from tests.helpers import build_paired_http_app
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
+from workgate.executor.hello import build_executor_hello
 from workgate.oauth.core.scopes import (
     SCOPE_REMOTE_USE,
     SCOPE_SHELL_READ,
@@ -773,7 +775,33 @@ def test_sessions_api_uses_final_control_sessions_and_terminates_executor_work(
     assert [row["session_id"] for row in rows] == [session_id]
     assert rows[0]["executor_id"] == session["executor_id"]
     assert rows[0]["status"] == "active"
+    assert rows[0]["availability"] == "available"
     assert rows[0]["target"] is None
+
+    async def missing_inventory(_executor_id: str):
+        return build_executor_hello(harness.executor.config, sessions=())
+
+    monkeypatch.setattr(
+        harness.control.executor_transport,
+        "inventory",
+        missing_inventory,
+    )
+    asyncio.run(
+        harness.control.session_coordinator.reconcile_hello(
+            session["executor_id"]
+        )
+    )
+    missing_inventory_response = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    missing_row = missing_inventory_response.json()["data"]["sessions"][0]
+    assert missing_row["status"] == "active"
+    assert missing_row["availability"] == "missing_on_executor"
+    assert (
+        harness.control.control_state.snapshot_sessions()[session_id].status
+        == "active"
+    )
 
     terminated = client.post(
         "/api/ui/sessions/terminate",
@@ -782,6 +810,7 @@ def test_sessions_api_uses_final_control_sessions_and_terminates_executor_work(
     assert terminated.status_code == 200
     terminated_session = terminated.json()["data"]["session"]
     assert terminated_session["status"] == "ended"
+    assert terminated_session["availability"] == "ended"
     assert terminated_session["termination_requested"] is True
     assert (
         harness.control.control_state.snapshot_sessions()[session_id].status

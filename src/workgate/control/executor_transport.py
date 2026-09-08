@@ -27,9 +27,16 @@ from .state import ControlState, ExecutorTrustRecord
 class ExecutorTransportError(RuntimeError):
     """One stable executor-protocol failure raised by the control transport."""
 
-    def __init__(self, code: ProtocolErrorCode, message: str) -> None:
+    def __init__(
+        self,
+        code: ProtocolErrorCode,
+        message: str,
+        *,
+        delivery_state: Literal["queued", "offered"] | None = None,
+    ) -> None:
         super().__init__(message)
         self.error = ProtocolError(code=code, message=message)
+        self.delivery_state = delivery_state
 
 
 class ExecutorTransportClosedError(RuntimeError):
@@ -37,8 +44,11 @@ class ExecutorTransportClosedError(RuntimeError):
 
 
 def abandoned_command_was_offered(exc: BaseException) -> bool:
-    """Return whether a cancelled/timed-out call had crossed irreversible offer."""
-    return getattr(exc, "_workgate_executor_delivery_state", None) == "offered"
+    """Return whether an interrupted call had crossed irreversible offer."""
+    state = getattr(exc, "delivery_state", None)
+    if state is None:
+        state = getattr(exc, "_workgate_executor_delivery_state", None)
+    return state == "offered"
 
 
 @dataclass
@@ -443,4 +453,11 @@ class ExecutorTransport:
         channel.pending.clear()
         for item in pending:
             if not item.future.done():
-                item.future.set_exception(exc)
+                pending_exc = exc
+                if isinstance(exc, ExecutorTransportError):
+                    pending_exc = ExecutorTransportError(
+                        exc.error.code,
+                        str(exc),
+                        delivery_state=item.state,
+                    )
+                item.future.set_exception(pending_exc)

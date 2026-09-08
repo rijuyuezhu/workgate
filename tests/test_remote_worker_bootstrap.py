@@ -246,8 +246,14 @@ async def test_worker_dispatches_persistent_shell_start(monkeypatch):
 
     calls = []
 
-    async def fake_start(cwd: str, name: str | None, command: str | None):
-        calls.append((cwd, name, command))
+    async def fake_start(
+        cwd: str,
+        name: str | None,
+        command: str | None,
+        *,
+        owner_session_id: str | None = None,
+    ):
+        calls.append((cwd, name, command, owner_session_id))
         return {
             "shell_id": "edge-shell",
             "name": name,
@@ -263,7 +269,7 @@ async def test_worker_dispatches_persistent_shell_start(monkeypatch):
     )
 
     assert result["shell_id"] == "edge-shell"
-    assert calls == [("/edge", "edge", "bash")]
+    assert calls == [("/edge", "edge", "bash", None)]
 
 
 @pytest.mark.asyncio

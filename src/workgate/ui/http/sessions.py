@@ -68,7 +68,12 @@ def _session_payload(session: AgentSession, *, now: float) -> dict[str, Any]:
     return payload
 
 
-def _final_session_payload(record: Any, *, now: float) -> dict[str, Any]:
+def _final_session_payload(
+    record: Any,
+    *,
+    now: float,
+    availability: str | None = None,
+) -> dict[str, Any]:
     status = str(record.status)
     updated_at = float(record.updated_at)
     return {
@@ -80,6 +85,7 @@ def _final_session_payload(record: Any, *, now: float) -> dict[str, Any]:
         "requested_workdir": record.requested_workdir,
         "label": record.label,
         "status": status,
+        "availability": availability or status,
         "created_at": float(record.created_at),
         "updated_at": updated_at,
         "active": status == "active"
@@ -128,8 +134,9 @@ async def api_sessions(request: Request) -> Response:
             else ()
         )
         if final_records:
-            rows = [
-                _final_session_payload(record, now=now)
+            assert runtime is not None
+            records = [
+                record
                 for record in sorted(
                     final_records,
                     key=lambda item: float(item.updated_at),
@@ -145,6 +152,24 @@ async def api_sessions(request: Request) -> Response:
                     )
                 )
             ][:UI_SESSION_MAX_ENTRIES]
+            availabilities = await asyncio.gather(
+                *(
+                    runtime.session_coordinator.session_availability(
+                        str(record.session_id)
+                    )
+                    for record in records
+                )
+            )
+            rows = [
+                _final_session_payload(
+                    record,
+                    now=now,
+                    availability=availability,
+                )
+                for record, availability in zip(
+                    records, availabilities, strict=True
+                )
+            ]
         else:
             if machine != "local":
                 require_remote_machine(machine)
@@ -216,12 +241,17 @@ async def api_session_action(request: Request) -> Response:
                 session_id
             )
             session_payload = (
-                _final_session_payload(ended_record, now=time.time())
+                _final_session_payload(
+                    ended_record,
+                    now=time.time(),
+                    availability="ended",
+                )
                 if ended_record is not None
                 else {
                     "session_id": session_id,
                     "executor_id": str(final_record.executor_id),
                     "status": "ended",
+                    "availability": "ended",
                     "active": False,
                     "termination_requested": True,
                 }

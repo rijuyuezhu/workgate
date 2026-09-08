@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from workgate.control.executor_transport import (
+    ExecutorTransport,
+    ExecutorTransportError,
+)
 from workgate.control.sessions import ControlSessionCoordinator
 from workgate.control.state import (
     ControlSessionRecord,
@@ -214,7 +219,56 @@ async def test_offered_create_timeout_uses_positive_lookup_without_replay(
 
 
 @pytest.mark.asyncio
-async def test_hello_reconciles_creating_missing_and_terminating(
+@pytest.mark.parametrize("interrupt", ["revoke", "replace"])
+async def test_offered_create_interrupted_by_trust_change_keeps_checkpoint(
+    tmp_path: Path,
+    interrupt: str,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    credential = new_executor_credential()
+    trust = ExecutorTrustRecord(
+        executor_id=executor_id,
+        name="executor",
+        credential_verifier=executor_credential_verifier(credential),
+        created_at=1,
+    )
+    state.put_executor(trust)
+    transport = ExecutorTransport(state, max_pending_commands=4)
+    transport.start()
+    await transport.hello(credential, _hello())
+    coordinator = ControlSessionCoordinator(state, transport)
+
+    start = asyncio.create_task(coordinator.start_session(workdir="project"))
+    command = await transport.poll(credential)
+    assert command is not None
+    assert command.op == "session.create"
+    session_id = str(command.session_id)
+    assert state.snapshot_sessions()[session_id].status == "creating"
+
+    if interrupt == "revoke":
+        await transport.revoke_executor(executor_id, revoked_at=2)
+    else:
+        replacement = new_executor_credential()
+        await transport.replace_executor(
+            trust.model_copy(
+                update={
+                    "credential_verifier": executor_credential_verifier(
+                        replacement
+                    )
+                }
+            )
+        )
+
+    with pytest.raises(ExecutorTransportError):
+        await start
+    assert state.snapshot_sessions()[session_id].status == "creating"
+    await coordinator.aclose()
+    await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
     tmp_path: Path,
 ) -> None:
     state = _state(tmp_path)
@@ -252,8 +306,48 @@ async def test_hello_reconciles_creating_missing_and_terminating(
     sessions = state.snapshot_sessions()
     assert sessions[creating].status == "active"
     assert sessions[creating].resolved_workdir_display == "/workspace/project"
-    assert sessions[active].status == "missing"
+    assert sessions[active].status == "active"
+    assert (
+        await coordinator.session_availability(active) == "missing_on_executor"
+    )
     assert sessions[terminating].status == "ended"
+
+    state.close()
+    restarted = _state(tmp_path)
+    assert restarted.snapshot_sessions()[active].status == "active"
+
+
+@pytest.mark.asyncio
+async def test_hello_reports_orphan_and_cross_executor_session_diagnostics(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    other_executor_id = new_executor_id()
+    _trust(state, executor_id)
+    _trust(state, other_executor_id)
+    orphan = new_session_id()
+    misbound = new_session_id()
+    state.put_session(_active_record(other_executor_id, misbound))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello(
+        (orphan, "/workspace/orphan"),
+        (misbound, "/workspace/misbound"),
+    )
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+
+    with caplog.at_level("WARNING", logger="workgate.control.sessions"):
+        await coordinator.reconcile_hello(executor_id)
+
+    assert f"reported orphan session {orphan} unknown to control" in caplog.text
+    assert (
+        f"reported session {misbound} bound to executor {other_executor_id}"
+        in caplog.text
+    )
+    assert orphan not in state.snapshot_sessions()
+    assert state.snapshot_sessions()[misbound].executor_id == other_executor_id
 
 
 @pytest.mark.asyncio
@@ -414,6 +508,66 @@ async def test_start_reaps_expired_session_through_confirmed_absence(
     )
     assert [call[1] for call in transport.calls] == [
         "session.lookup",
+        "session.terminate",
+        "session.create",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_missing_observation_reaps_after_retention_without_durable_state(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    existing = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(_active_record(executor_id, existing))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello()
+    clock = {"now": 100.0}
+
+    async def execute(_executor_id, op, _args, session_id, _timeout):
+        if op == "session.terminate":
+            assert session_id == existing
+            assert state.snapshot_sessions()[existing].status == "terminating"
+            return _ok({"session_id": existing, "absent": True})
+        assert op == "session.create"
+        return _ok({"session_id": session_id, "workdir": "/workspace/new"})
+
+    transport.call_impl = execute
+    coordinator = ControlSessionCoordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=1,
+        agent_session_retention_s=10,
+        clock=lambda: clock["now"],
+    )
+
+    await coordinator.reconcile_hello(executor_id)
+    assert (
+        await coordinator.session_availability(existing)
+        == "missing_on_executor"
+    )
+    assert state.snapshot_sessions()[existing].status == "active"
+
+    clock["now"] = 105.0
+    await coordinator.reconcile_hello(executor_id)
+    clock["now"] = 109.0
+    with pytest.raises(RuntimeError, match="agent session limit reached"):
+        await coordinator.start_session(workdir="new")
+    assert transport.calls == []
+    assert state.snapshot_sessions()[existing].status == "active"
+
+    clock["now"] = 111.0
+    created = await coordinator.start_session(workdir="new")
+
+    assert isinstance(created, dict)
+    assert state.snapshot_sessions()[existing].status == "ended"
+    assert (
+        state.snapshot_sessions()[str(created["session_id"])].status == "active"
+    )
+    assert [call[1] for call in transport.calls] == [
         "session.terminate",
         "session.create",
     ]

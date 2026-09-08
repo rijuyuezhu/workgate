@@ -128,34 +128,82 @@ def start_executor_process(
     state_dir: Path,
     mode: str,
     agent_bridge_enabled: bool = False,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
 ) -> subprocess.Popen[str]:
     """Start one final executor process from a pre-provisioned profile."""
-    return subprocess.Popen(
-        [sys.executable, "-m", "workgate.main", "executor", "run"],
-        cwd=PROJECT_ROOT,
-        env=server_env(
+    if (stdout_path is None) != (stderr_path is None):
+        raise ValueError(
+            "executor stdout/stderr paths must be provided together"
+        )
+    popen_kwargs = {
+        "cwd": PROJECT_ROOT,
+        "env": server_env(
             workspace_root,
             mode=mode,
             agent_bridge_enabled=agent_bridge_enabled,
             state_dir=state_dir,
         ),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+        "text": True,
+    }
+    if stdout_path is None:
+        return subprocess.Popen(
+            [sys.executable, "-m", "workgate.main", "executor", "run"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **popen_kwargs,
+        )
+    assert stderr_path is not None
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout,
+        stderr_path.open("w", encoding="utf-8") as stderr,
+    ):
+        return subprocess.Popen(
+            [sys.executable, "-m", "workgate.main", "executor", "run"],
+            stdout=stdout,
+            stderr=stderr,
+            **popen_kwargs,
+        )
+
+
+def _captured_process_output(
+    process: subprocess.Popen[str],
+    *,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+) -> tuple[str, str]:
+    if stdout_path is not None and stderr_path is not None:
+        return (
+            stdout_path.read_text(encoding="utf-8", errors="replace")
+            if stdout_path.exists()
+            else "",
+            stderr_path.read_text(encoding="utf-8", errors="replace")
+            if stderr_path.exists()
+            else "",
+        )
+    stdout, stderr = process.communicate(timeout=1)
+    return stdout or "", stderr or ""
 
 
 async def wait_for_executor_online(
     base_url: str,
     process: subprocess.Popen[str],
     executor_id: str,
+    *,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
 ) -> None:
     """Wait until final authenticated hello makes the seeded executor eligible."""
     deadline = asyncio.get_running_loop().time() + 10
     async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
         while True:
             if process.poll() is not None:
-                stdout, stderr = process.communicate(timeout=1)
+                stdout, stderr = _captured_process_output(
+                    process,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
                 raise AssertionError(
                     f"executor exited early with code {process.returncode}\n"
                     f"stdout:\n{stdout}\nstderr:\n{stderr}"
@@ -180,13 +228,21 @@ async def wait_for_executor_online(
 
 
 async def wait_for_http_ready(
-    base_url: str, process: subprocess.Popen[str]
+    base_url: str,
+    process: subprocess.Popen[str],
+    *,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
 ) -> None:
     deadline = asyncio.get_running_loop().time() + 10
     async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
         while True:
             if process.poll() is not None:
-                stdout, stderr = process.communicate(timeout=1)
+                stdout, stderr = _captured_process_output(
+                    process,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
                 raise AssertionError(
                     f"server exited early with code {process.returncode}\n"
                     f"stdout:\n{stdout}\nstderr:\n{stderr}"
@@ -202,7 +258,12 @@ async def wait_for_http_ready(
                 pass
             if asyncio.get_running_loop().time() >= deadline:
                 process.terminate()
-                stdout, stderr = process.communicate(timeout=2)
+                process.wait(timeout=2)
+                stdout, stderr = _captured_process_output(
+                    process,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
                 raise AssertionError(
                     f"server did not become ready at {base_url}\n"
                     f"stdout:\n{stdout}\nstderr:\n{stderr}"
@@ -227,6 +288,8 @@ async def run_http_process_with_executors(
     port = free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
     control_state_dir = tmp_path / f"control-state-{mode}"
+    log_dir = tmp_path / f"process-logs-{mode}"
+    log_dir.mkdir(parents=True, exist_ok=True)
     executor_specs: list[tuple[E2EExecutor, Path]] = []
     for index, workspace in enumerate(executor_workspaces, start=1):
         workspace.mkdir(parents=True, exist_ok=True)
@@ -244,54 +307,73 @@ async def run_http_process_with_executors(
             )
         )
 
-    control_process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "workgate.main",
-            "server",
-            "--mode",
-            mode,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--auth-mode",
-            "none",
-            "--workspace-root",
-            str(control_workspace),
-            "--state-dir",
-            str(control_state_dir),
-            "--agent-bridge-enabled",
-            str(agent_bridge_enabled).lower(),
-            "--remote-enabled",
-            "false",
-        ],
-        cwd=PROJECT_ROOT,
-        env=server_env(
-            control_workspace,
-            mode=mode,
-            port=port,
-            agent_bridge_enabled=agent_bridge_enabled,
-            state_dir=control_state_dir,
-        ),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    control_stdout = log_dir / "control.stdout.log"
+    control_stderr = log_dir / "control.stderr.log"
+    with (
+        control_stdout.open("w", encoding="utf-8") as stdout,
+        control_stderr.open("w", encoding="utf-8") as stderr,
+    ):
+        control_process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "workgate.main",
+                "server",
+                "--mode",
+                mode,
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--auth-mode",
+                "none",
+                "--workspace-root",
+                str(control_workspace),
+                "--state-dir",
+                str(control_state_dir),
+                "--agent-bridge-enabled",
+                str(agent_bridge_enabled).lower(),
+                "--remote-enabled",
+                "false",
+            ],
+            cwd=PROJECT_ROOT,
+            env=server_env(
+                control_workspace,
+                mode=mode,
+                port=port,
+                agent_bridge_enabled=agent_bridge_enabled,
+                state_dir=control_state_dir,
+            ),
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+        )
     executor_processes: list[subprocess.Popen[str]] = []
     try:
-        await wait_for_http_ready(base_url, control_process)
-        for executor, state_dir in executor_specs:
+        await wait_for_http_ready(
+            base_url,
+            control_process,
+            stdout_path=control_stdout,
+            stderr_path=control_stderr,
+        )
+        for index, (executor, state_dir) in enumerate(executor_specs, start=1):
+            executor_stdout = log_dir / f"executor-{index}.stdout.log"
+            executor_stderr = log_dir / f"executor-{index}.stderr.log"
             child = start_executor_process(
                 executor.workspace,
                 state_dir=state_dir,
                 mode=mode,
                 agent_bridge_enabled=agent_bridge_enabled,
+                stdout_path=executor_stdout,
+                stderr_path=executor_stderr,
             )
             executor_processes.append(child)
             await wait_for_executor_online(
-                base_url, child, executor.executor_id
+                base_url,
+                child,
+                executor.executor_id,
+                stdout_path=executor_stdout,
+                stderr_path=executor_stderr,
             )
         yield (
             base_url,
@@ -303,10 +385,10 @@ async def run_http_process_with_executors(
                 continue
             child.terminate()
             try:
-                child.communicate(timeout=5)
+                child.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 child.kill()
-                child.communicate(timeout=5)
+                child.wait(timeout=5)
 
 
 @asynccontextmanager

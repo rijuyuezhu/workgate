@@ -126,6 +126,33 @@ async def test_worker_dispatcher_local_session_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_worker_persistent_shell_start_records_shared_session_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workgate.ops.shell as shell_ops
+
+    calls = []
+
+    async def start(cwd, name, command, *, owner_session_id=None):
+        calls.append((cwd, name, command, owner_session_id))
+        return {"shell_id": "owned-shell"}
+
+    monkeypatch.setattr(shell_ops, "start_persistent_shell_execute", start)
+
+    result = await worker_dispatch._start_persistent_shell(
+        {
+            "session_id": "sess_shared-owner",
+            "cwd": ".",
+            "name": "owned",
+            "command": "echo hi",
+        }
+    )
+
+    assert result == {"shell_id": "owned-shell"}
+    assert calls == [(".", "owned", "echo hi", "sess_shared-owner")]
+
+
+@pytest.mark.asyncio
 async def test_worker_audit_query_covers_snapshot_and_summary_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

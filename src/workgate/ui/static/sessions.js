@@ -53,27 +53,46 @@ export function createSessionsController({
     return Boolean(session && (session.termination_requested || session.termination_requested_at));
   }
 
+  function sessionAvailability(session = selectedSession()) {
+    return text(session && session.availability, "");
+  }
+
+  function sessionResourcesAvailable(session = selectedSession()) {
+    const availability = sessionAvailability(session);
+    return Boolean(session && (!availability || availability === "available"));
+  }
+
+  function sessionUnavailableLabel(session = selectedSession()) {
+    const availability = sessionAvailability(session);
+    if (availability === "missing_on_executor") return "Missing on executor";
+    if (availability === "executor_offline") return "Executor offline";
+    if (availability && availability !== "available") return text(availability, "Unavailable");
+    return "";
+  }
+
   function setTodoControls() {
     const online = todoMachineOnline();
     const sessionReady = Boolean(controllerState.todoSessionId);
     const session = selectedSession();
+    const resourcesAvailable = sessionReady && sessionResourcesAvailable(session);
+    const executorOffline = sessionAvailability(session) === "executor_offline";
     elements.sessionMachine.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionIncludeInactive.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionRefresh.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating || !online;
     elements.sessionTerminate.disabled =
-      controllerState.sessionLoading || controllerState.sessionTerminating || !online || !sessionReady || sessionTerminated(session);
-    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !online || !sessionReady;
-    elements.todoAdd.disabled = controllerState.todoMutationBusy || !online || !sessionReady || controllerState.todoItems.length >= controllerState.todoLimits.todos;
-    elements.todoSave.disabled = controllerState.todoMutationBusy || !online || !sessionReady || !controllerState.todoDirty;
-    elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !online || !sessionReady;
+      controllerState.sessionLoading || controllerState.sessionTerminating || !online || !sessionReady || executorOffline || sessionTerminated(session);
+    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable;
+    elements.todoAdd.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
+    elements.todoSave.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable || !controllerState.todoDirty;
+    elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !online || !resourcesAvailable;
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
-      control.disabled = controllerState.sessionAuditLoading || !online || !sessionReady;
+      control.disabled = controllerState.sessionAuditLoading || !online || !resourcesAvailable;
     }
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
-      control.disabled = controllerState.todoMutationBusy || !online || !sessionReady;
+      control.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable;
     }
     for (const row of elements.todoList.querySelectorAll(".todo-row")) {
-      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !online || !sessionReady ? "true" : "false");
+      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !online || !resourcesAvailable ? "true" : "false");
     }
   }
 
@@ -140,16 +159,21 @@ export function createSessionsController({
     }
     const terminated = sessionTerminated(session);
     const finalStatus = text(session.status, "");
+    const availability = sessionAvailability(session);
     elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
     elements.sessionDetailStatus.textContent = finalStatus === "ended"
       ? "Ended · executor confirmed session absence"
       : finalStatus === "terminating"
         ? "Termination in progress · waiting for executor absence"
-        : terminated
-          ? `Immediate termination requested ${sessionTimestamp(session.termination_requested_at)}`
-      : session.active === false
-        ? "Inactive · outside the recent 5 hour window"
-        : "Active · responded within the last 5 hours";
+        : availability === "missing_on_executor"
+          ? "Unavailable · missing on executor"
+          : availability === "executor_offline"
+            ? "Unavailable · executor offline"
+            : terminated
+              ? `Immediate termination requested ${sessionTimestamp(session.termination_requested_at)}`
+              : session.active === false
+                ? "Inactive · outside the recent 5 hour window"
+                : "Active · responded within the last 5 hours";
     elements.sessionDetailId.textContent = text(session.session_id);
     elements.sessionDetailTarget.textContent = text(session.target);
     elements.sessionDetailMachine.textContent = text(session.machine, session.target === "local" ? "local" : "—");
@@ -184,11 +208,14 @@ export function createSessionsController({
         title.textContent = sessionOptionLabel(session);
         const meta = document.createElement("span");
         meta.className = sessionTerminated(session) ? "session-entry-meta session-entry-terminated" : "session-entry-meta";
+        const unavailable = sessionUnavailableLabel(session);
         meta.textContent = sessionTerminated(session)
           ? "termination requested"
-          : session.active === false
-            ? `inactive · ${sessionTimestamp(session.updated_at)}`
-            : `active · ${sessionTimestamp(session.updated_at)}`;
+          : unavailable
+            ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
+            : session.active === false
+              ? `inactive · ${sessionTimestamp(session.updated_at)}`
+              : `active · ${sessionTimestamp(session.updated_at)}`;
         button.append(title, meta);
         button.addEventListener("click", () => void selectTodoSession(session.session_id));
         elements.sessionList.append(button);
@@ -224,6 +251,13 @@ export function createSessionsController({
 
   async function refreshSelectedSessionResources() {
     if (!controllerState.todoSessionId || !todoMachineOnline()) return null;
+    const session = selectedSession();
+    if (!sessionResourcesAvailable(session)) {
+      const unavailable = sessionUnavailableLabel(session) || "Session unavailable";
+      clearSelectedSessionResources(unavailable);
+      setTodoControls();
+      return null;
+    }
     const todoRequestGeneration = ++controllerState.todoGeneration;
     const auditRequestGeneration = ++controllerState.sessionAuditGeneration;
     const requestedMachine = controllerState.todoMachine;
