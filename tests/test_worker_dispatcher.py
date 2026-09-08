@@ -153,6 +153,70 @@ async def test_worker_persistent_shell_start_records_shared_session_owner(
 
 
 @pytest.mark.asyncio
+async def test_worker_unbound_transfer_helpers_admit_command_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workgate.ops.transfer as transfer_ops
+    import workgate.tool_session as tool_session
+
+    admissions: list[str] = []
+    stat_calls: list[tuple[str, str | None, str | None]] = []
+
+    class Store:
+        def admit_active_session(self, session_id: str) -> object:
+            admissions.append(session_id)
+            return object()
+
+    monkeypatch.setattr(tool_session, "get_tool_session_store", lambda: Store())
+    monkeypatch.setattr(
+        transfer_ops,
+        "transfer_alloc_temp_path",
+        lambda suffix, *, session_id=None: {
+            "suffix": suffix,
+            "session_id": session_id,
+        },
+    )
+    monkeypatch.setattr(
+        transfer_ops,
+        "transfer_delete_temp_path",
+        lambda path: {"path": path, "deleted": True},
+    )
+
+    def stat(path, sha256, *, session_id=None, workdir=None):
+        stat_calls.append((path, session_id, workdir))
+        return {"path": path, "sha256": sha256}
+
+    monkeypatch.setattr(transfer_ops, "transfer_stat", stat)
+
+    allocated = await worker_dispatch._transfer_alloc_temp_path(
+        {"session_id": "SESSION1", "suffix": ".tmp"}
+    )
+    deleted = await worker_dispatch._transfer_delete_temp_path(
+        {"session_id": "SESSION1", "path": "scratch.tmp"}
+    )
+    regular = await worker_dispatch._transfer_stat(
+        {"session_id": "SESSION1", "path": "regular.txt"}
+    )
+    unbound = await worker_dispatch._transfer_stat(
+        {
+            "session_id": "SESSION1",
+            "path": "scratch.tmp",
+            "_workgate_unbound_temp": True,
+        }
+    )
+
+    assert allocated == {"suffix": ".tmp", "session_id": "SESSION1"}
+    assert deleted == {"path": "scratch.tmp", "deleted": True}
+    assert regular == {"path": "regular.txt", "sha256": True}
+    assert unbound == {"path": "scratch.tmp", "sha256": True}
+    assert stat_calls == [
+        ("regular.txt", "SESSION1", None),
+        ("scratch.tmp", None, None),
+    ]
+    assert admissions == ["SESSION1", "SESSION1", "SESSION1"]
+
+
+@pytest.mark.asyncio
 async def test_worker_audit_query_covers_snapshot_and_summary_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

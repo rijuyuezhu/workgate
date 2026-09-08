@@ -871,6 +871,42 @@ def test_sessions_api_uses_executor_activity_for_final_recent_filter(
     ].updated_at == pytest.approx(old_lifecycle_at)
 
 
+def test_successful_persistent_shell_inventory_refreshes_executor_activity(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "shell-activity"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+
+    listed = client.get(
+        "/tools/list_persistent_shells", params={"session_id": session_id}
+    )
+    assert listed.status_code == 200
+    executor_after = harness.executor.sessions.lookup(session_id)
+    assert executor_after is not None
+    assert executor_after.last_active_at is not None
+    assert executor_after.last_active_at > executor_before.last_active_at
+
+    availability, projected_activity = asyncio.run(
+        harness.control.session_coordinator.session_activity_projection(
+            session_id
+        )
+    )
+    assert availability == "available"
+    assert projected_activity is not None
+    assert projected_activity >= executor_after.last_active_at
+
+
 def test_sessions_api_counts_executor_operation_errors_as_activity(
     monkeypatch, tmp_path
 ):

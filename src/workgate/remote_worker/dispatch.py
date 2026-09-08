@@ -240,6 +240,7 @@ async def _require_owned_persistent_shell(
 ) -> set[str]:
     from workgate.ops.shell import list_owned_persistent_shell_ids_execute
 
+    _admit_session_activity(session_id)
     owned = await list_owned_persistent_shell_ids_execute(session_id)
     if owned is None:
         raise RuntimeError("persistent shell ownership is currently uncertain")
@@ -307,6 +308,7 @@ async def _list_persistent_shells(args: dict[str, Any]) -> Any:
     session_id = str(args["session_id"])
     from workgate.ops.shell import list_owned_persistent_shell_ids_execute
 
+    _admit_session_activity(session_id)
     owned = await list_owned_persistent_shell_ids_execute(session_id)
     if owned is None:
         raise RuntimeError("persistent shell ownership is currently uncertain")
@@ -521,6 +523,20 @@ async def _secret_scan(args: dict[str, Any]) -> Any:
     )
 
 
+def _admit_session_activity(session_id: str) -> None:
+    """Admit one session before a handler that otherwise bypasses session state."""
+    from workgate.tool_session import get_tool_session_store
+
+    get_tool_session_store().admit_active_session(session_id)
+
+
+def _admit_unbound_transfer_activity(args: dict[str, Any]) -> None:
+    """Touch the command session when transfer path resolution is intentionally unbound."""
+    session_id = args.get("session_id")
+    if session_id is not None:
+        _admit_session_activity(str(session_id))
+
+
 def _transfer_session_id(
     args: dict[str, Any],
     *,
@@ -536,11 +552,14 @@ def _transfer_session_id(
 async def _transfer_stat(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_stat
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_stat,
         str(args["path"]),
         bool(args.get("sha256", True)),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -548,22 +567,31 @@ async def _transfer_stat(args: dict[str, Any]) -> Any:
 async def _transfer_copy_file(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_copy_file
 
+    source_session_id = _transfer_session_id(
+        args,
+        session_key="source_session_id",
+        workdir_key="source_workdir",
+    )
+    destination_session_id = _transfer_session_id(
+        args,
+        session_key="destination_session_id",
+        workdir_key="destination_workdir",
+    )
+    command_session_id = args.get("session_id")
+    if command_session_id is not None and str(command_session_id) not in {
+        str(value)
+        for value in (source_session_id, destination_session_id)
+        if value is not None
+    }:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_copy_file,
         str(args["source_path"]),
         str(args["destination_path"]),
         bool(args.get("overwrite", True)),
         args.get("chunk_size"),
-        source_session_id=_transfer_session_id(
-            args,
-            session_key="source_session_id",
-            workdir_key="source_workdir",
-        ),
-        destination_session_id=_transfer_session_id(
-            args,
-            session_key="destination_session_id",
-            workdir_key="destination_workdir",
-        ),
+        source_session_id=source_session_id,
+        destination_session_id=destination_session_id,
         source_workdir=args.get("source_workdir"),
         destination_workdir=args.get("destination_workdir"),
     )
@@ -572,12 +600,15 @@ async def _transfer_copy_file(args: dict[str, Any]) -> Any:
 async def _transfer_read_chunk(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_read_chunk
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_read_chunk,
         str(args["path"]),
         int(args.get("offset") or 0),
         args.get("chunk_size"),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -585,12 +616,15 @@ async def _transfer_read_chunk(args: dict[str, Any]) -> Any:
 async def _transfer_begin_write(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_begin_write
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_begin_write,
         str(args["path"]),
         bool(args.get("overwrite", True)),
         args.get("expected_bytes"),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -598,6 +632,9 @@ async def _transfer_begin_write(args: dict[str, Any]) -> Any:
 async def _transfer_write_chunk(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_write_chunk
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_write_chunk,
         str(args["path"]),
@@ -605,7 +642,7 @@ async def _transfer_write_chunk(args: dict[str, Any]) -> Any:
         int(args["offset"]),
         str(args["data_b64"]),
         args.get("expected_sha256"),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -613,13 +650,16 @@ async def _transfer_write_chunk(args: dict[str, Any]) -> Any:
 async def _transfer_finish_write(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_finish_write
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_finish_write,
         str(args["path"]),
         str(args["transfer_id"]),
         args.get("expected_bytes"),
         args.get("expected_sha256"),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -627,11 +667,14 @@ async def _transfer_finish_write(args: dict[str, Any]) -> Any:
 async def _transfer_abort_write(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_abort_write
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_abort_write,
         str(args["path"]),
         str(args["transfer_id"]),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -639,6 +682,7 @@ async def _transfer_abort_write(args: dict[str, Any]) -> Any:
 async def _transfer_alloc_temp_path(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_alloc_temp_path
 
+    _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_alloc_temp_path,
         str(args.get("suffix") or ".bin"),
@@ -649,11 +693,14 @@ async def _transfer_alloc_temp_path(args: dict[str, Any]) -> Any:
 async def _transfer_pack_dir(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_pack_dir
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_pack_dir,
         str(args["path"]),
         str(args.get("compression") or "gz"),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -661,13 +708,16 @@ async def _transfer_pack_dir(args: dict[str, Any]) -> Any:
 async def _transfer_unpack_archive(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_unpack_archive
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         transfer_unpack_archive,
         str(args["archive_path"]),
         str(args["dst_path"]),
         bool(args.get("overwrite", True)),
         bool(args.get("cleanup_archive", True)),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
     )
 
@@ -675,16 +725,20 @@ async def _transfer_unpack_archive(args: dict[str, Any]) -> Any:
 async def _transfer_delete_temp_path(args: dict[str, Any]) -> Any:
     from workgate.ops.transfer import transfer_delete_temp_path
 
+    _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(transfer_delete_temp_path, str(args["path"]))
 
 
 async def _transfer_http_upload(args: dict[str, Any]) -> Any:
     from workgate.remote_worker.http_transfer import upload_file
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         upload_file,
         path=str(args["path"]),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
         url=str(args["url"]),
         controller_url=str(args["controller_url"]),
@@ -700,10 +754,13 @@ async def _transfer_http_upload(args: dict[str, Any]) -> Any:
 async def _transfer_http_download(args: dict[str, Any]) -> Any:
     from workgate.remote_worker.http_transfer import download_file
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         download_file,
         path=str(args["path"]),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
         url=str(args["url"]),
         controller_url=str(args["controller_url"]),
@@ -721,10 +778,13 @@ async def _transfer_http_download(args: dict[str, Any]) -> Any:
 async def _transfer_http_abort_download(args: dict[str, Any]) -> Any:
     from workgate.remote_worker.http_transfer import abort_download
 
+    session_id = _transfer_session_id(args)
+    if session_id is None:
+        _admit_unbound_transfer_activity(args)
     return await asyncio.to_thread(
         abort_download,
         path=str(args["path"]),
-        session_id=_transfer_session_id(args),
+        session_id=session_id,
         workdir=args.get("workdir"),
         transfer_id=str(args["transfer_id"]),
     )

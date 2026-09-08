@@ -481,7 +481,9 @@ class ControlSessionCoordinator:
                     self._schedule_termination(record)
                 continue
             if item is not None:
-                self._replace_session_activity(session_id, item.last_active_at)
+                self._seed_session_activity_from_hello(
+                    session_id, item.last_active_at
+                )
                 if record.status == "creating" or (
                     record.resolved_workdir_display != item.resolved_workdir
                 ):
@@ -590,10 +592,18 @@ class ControlSessionCoordinator:
         if previous is None or value > previous:
             self._activity_by_session[session_id] = value
 
+    def _seed_session_activity_from_hello(
+        self, session_id: str, observed_at: float | None
+    ) -> None:
+        """Seed activity from an unordered reconnect snapshot without rollback."""
+        if session_id in self._activity_by_session:
+            return
+        self._replace_session_activity(session_id, observed_at)
+
     def _replace_session_activity(
         self, session_id: str, observed_at: float | None
     ) -> None:
-        """Apply one authoritative executor activity observation exactly."""
+        """Apply one authoritative ordered executor activity observation exactly."""
         if observed_at is None:
             self._activity_by_session.pop(session_id, None)
             return

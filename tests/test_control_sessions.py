@@ -318,7 +318,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
 
 
 @pytest.mark.asyncio
-async def test_hello_seeds_activity_projection_without_targeted_lookup(
+async def test_hello_seeds_activity_without_overwriting_newer_observation(
     tmp_path: Path,
 ) -> None:
     state = _state(tmp_path)
@@ -343,8 +343,16 @@ async def test_hello_seeds_activity_projection_without_targeted_lookup(
         jobs=(),
     )
     coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
-    coordinator.observe_session_activity(session_id, observed_at=999.0)
 
+    await coordinator.reconcile_hello(executor_id)
+    (
+        availability,
+        last_active_at,
+    ) = await coordinator.session_activity_projection(session_id)
+    assert availability == "available"
+    assert last_active_at == 123.0
+
+    coordinator.observe_session_activity(session_id, observed_at=20_000.0)
     await coordinator.reconcile_hello(executor_id)
     (
         availability,
@@ -352,7 +360,7 @@ async def test_hello_seeds_activity_projection_without_targeted_lookup(
     ) = await coordinator.session_activity_projection(session_id)
 
     assert availability == "available"
-    assert last_active_at == 123.0
+    assert last_active_at == 20_000.0
     assert transport.calls == []
 
 

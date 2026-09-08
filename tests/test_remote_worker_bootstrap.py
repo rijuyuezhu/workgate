@@ -141,9 +141,15 @@ def test_execute_worker_tool_imports_registry_lazily(monkeypatch):
 @pytest.mark.asyncio
 async def test_worker_dispatches_persistent_shell_resize(monkeypatch):
     from workgate.ops import shell as shell_ops
-    from workgate.remote_worker.dispatch import execute_worker_tool
+    from workgate.remote_worker import dispatch as worker_dispatch
 
     calls = []
+    admissions = []
+    monkeypatch.setattr(
+        worker_dispatch,
+        "_admit_session_activity",
+        lambda session_id: admissions.append(session_id),
+    )
 
     async def fake_resize(shell_id: str, cols: int, rows: int):
         calls.append((shell_id, cols, rows))
@@ -167,7 +173,7 @@ async def test_worker_dispatches_persistent_shell_resize(monkeypatch):
         shell_ops, "list_owned_persistent_shell_ids_execute", owned_shells
     )
 
-    result = await execute_worker_tool(
+    result = await worker_dispatch.execute_worker_tool(
         "resize_persistent_shell",
         {
             "session_id": "sess_test",
@@ -179,14 +185,21 @@ async def test_worker_dispatches_persistent_shell_resize(monkeypatch):
 
     assert result["resized"] is True
     assert calls == [("shell-1", 132, 38)]
+    assert admissions == ["sess_test"]
 
 
 @pytest.mark.asyncio
 async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
     from workgate.ops import shell as shell_ops
-    from workgate.remote_worker.dispatch import execute_worker_tool
+    from workgate.remote_worker import dispatch as worker_dispatch
 
     calls = []
+    admissions = []
+    monkeypatch.setattr(
+        worker_dispatch,
+        "_admit_session_activity",
+        lambda session_id: admissions.append(session_id),
+    )
 
     async def fake_read(
         shell_id: str,
@@ -212,7 +225,7 @@ async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
         shell_ops, "list_owned_persistent_shell_ids_execute", owned_shells
     )
 
-    result = await execute_worker_tool(
+    result = await worker_dispatch.execute_worker_tool(
         "read_persistent_shell_output",
         {
             "session_id": "sess_test",
@@ -227,9 +240,10 @@ async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
         "output": "\x1b[32mready\x1b[0m",
     }
     assert calls == [("shell-1", 500, True)]
+    assert admissions == ["sess_test"]
 
     with pytest.raises(ValueError, match="preserve_ansi must be a boolean"):
-        await execute_worker_tool(
+        await worker_dispatch.execute_worker_tool(
             "read_persistent_shell_output",
             {
                 "session_id": "sess_test",
