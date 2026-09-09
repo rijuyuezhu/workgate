@@ -352,8 +352,6 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         oauth_state=oauth_state,
         tool_catalog=build_control_tool_catalog(
             settings,
-            services.tool_session_store,
-            remote_manager,
             session_coordinator,
             session_copy_service,
             job_service,

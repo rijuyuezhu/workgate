@@ -8,22 +8,15 @@ from typing import Any
 
 from mcp.types import CallToolResult
 
-from ..remote.tool_specs import REMOTE_WORKER_TOOL_NAMES
 from ..tools.contracts import McpToolContext, ToolRegistry
 from ..tools.declarative import DeclarativeToolRegistry, ToolDefinition
+from ..tools.machine import MACHINE_TOOL_NAMES
 from .downloads import ControlDownloadService
 from .jobs import ControlJobService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 
-_MACHINE_TOOL_NAMES = frozenset(
-    {
-        *REMOTE_WORKER_TOOL_NAMES,
-        "view_image",
-        "workspace_search",
-        "fetch",
-    }
-)
+_MACHINE_TOOL_NAMES = MACHINE_TOOL_NAMES
 _SESSION_CONTROL_TOOLS = frozenset(
     {"session_start", "session_change_cwd", "session_end", "session_copy"}
 )
