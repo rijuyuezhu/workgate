@@ -28,9 +28,13 @@ from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .config import ControlConfig, resolve_control_config
+from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
+from .jobs import ControlJobService
 from .pairing import ExecutorPairingService
 from .search_composition import build_control_tool_catalog
+from .session_copy import ControlSessionCopyService
+from .sessions import ControlSessionCoordinator
 from .state import ControlState
 
 
@@ -50,6 +54,14 @@ class ControlRuntime:
     """Process-local ordinary RPC queues, presence, polls, and result waiters."""
     executor_pairing: ExecutorPairingService
     """Process-local device-code pairing attempts and transient credential delivery."""
+    session_coordinator: ControlSessionCoordinator
+    """Control authority for final shared session lifecycle and executor routing."""
+    session_copy_service: ControlSessionCopyService
+    """Control orchestration for copies between existing shared sessions."""
+    download_service: ControlDownloadService
+    """Control-owned public file-link snapshots sourced through executor RPC."""
+    job_service: ControlJobService
+    """Hybrid public job routing across executor resources and control-managed jobs."""
     managed_jobs_runtime: ManagedJobsRuntime
     """Control-owned managed background-job tasks, handlers, and leases."""
     remote_manager: RemoteManager
@@ -166,14 +178,17 @@ class ControlRuntime:
                                                 await self.managed_jobs_runtime.aclose()
                                         finally:
                                             try:
-                                                if executor_transport_started:
-                                                    await self.executor_transport.aclose()
+                                                await self.session_coordinator.aclose()
                                             finally:
                                                 try:
-                                                    self.control_state.close()
+                                                    if executor_transport_started:
+                                                        await self.executor_transport.aclose()
                                                 finally:
-                                                    installation.close()
-                                                    self._closed = True
+                                                    try:
+                                                        self.control_state.close()
+                                                    finally:
+                                                        installation.close()
+                                                        self._closed = True
             raise
         self._installation = installation
         self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
@@ -233,13 +248,16 @@ class ControlRuntime:
                 await self.executor_pairing.aclose()
             finally:
                 try:
-                    await self.executor_transport.aclose()
+                    await self.session_coordinator.aclose()
                 finally:
                     try:
-                        self.control_state.close()
+                        await self.executor_transport.aclose()
                     finally:
-                        if installation is not None:
-                            installation.close()
+                        try:
+                            self.control_state.close()
+                        finally:
+                            if installation is not None:
+                                installation.close()
         if managed_jobs_error is not None:
             raise managed_jobs_error
         if human_ui_error is not None:
@@ -277,13 +295,35 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_pending_attempts=config.executor_pairing_max_pending,
         ttl_s=config.executor_pairing_ttl_s,
     )
-    executor_transport.set_authenticated_hello_callback(
-        executor_pairing.complete_authenticated_hello
+    session_coordinator = ControlSessionCoordinator(
+        control_state,
+        executor_transport,
+        max_agent_sessions=config.max_agent_sessions,
+        agent_session_retention_s=config.agent_session_retention_s,
     )
-    managed_jobs_runtime = ManagedJobsRuntime()
-    from ..ops.utils.session_copy import session_copy_managed_job_registration
 
-    managed_kind, managed_handler = session_copy_managed_job_registration()
+    async def authenticated_hello(executor_id: str, credential: str) -> None:
+        await executor_pairing.complete_authenticated_hello(
+            executor_id, credential
+        )
+        await session_coordinator.reconcile_hello(executor_id)
+
+    executor_transport.set_authenticated_hello_callback(authenticated_hello)
+    session_copy_service = ControlSessionCopyService(
+        session_coordinator, executor_transport
+    )
+    download_service = ControlDownloadService(
+        session_coordinator, executor_transport
+    )
+    job_service = ControlJobService(session_coordinator)
+    session_coordinator.set_control_resource_hooks(
+        auto_cleanup_blocked=job_service.auto_cleanup_blocked,
+        before_terminate=job_service.stop_referencing_jobs,
+    )
+    managed_jobs_runtime = ManagedJobsRuntime(services.state_store)
+    managed_kind, managed_handler = (
+        session_copy_service.managed_job_registration()
+    )
     managed_jobs_runtime.register_handler(managed_kind, managed_handler)
     remote_manager = RemoteManager(
         lambda: settings,
@@ -301,6 +341,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         control_state=control_state,
         executor_transport=executor_transport,
         executor_pairing=executor_pairing,
+        session_coordinator=session_coordinator,
+        session_copy_service=session_copy_service,
+        download_service=download_service,
+        job_service=job_service,
         managed_jobs_runtime=managed_jobs_runtime,
         remote_manager=remote_manager,
         terminal_runtime=terminal_runtime,
@@ -310,5 +354,9 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
             settings,
             services.tool_session_store,
             remote_manager,
+            session_coordinator,
+            session_copy_service,
+            job_service,
+            download_service,
         ),
     )

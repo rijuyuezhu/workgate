@@ -10,12 +10,13 @@ import workgate.tools.registry.remote as remote_registry_module
 import workgate.ui.http.audit as ui_audit_module
 import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.session_snapshot as ui_session_snapshot_module
+from tests.helpers import build_paired_http_app
 from workgate.audit import (
     audit,
     audit_tool_call_end,
     audit_tool_call_start,
 )
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.oauth.core.scopes import (
     SCOPE_AUDIT_FULL,
@@ -451,6 +452,67 @@ def test_local_session_snapshot_returns_todos_and_selected_audit_preview(
     assert data["audit"]["entry"]["output"] == {"content": "snapshot"}
 
 
+def test_final_shared_session_snapshot_combines_executor_todos_and_control_audit(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+
+    with TestClient(app, base_url=BASE_URL) as client:
+        started = client.post("/tools/session_start", json={"workdir": "."})
+        assert started.status_code == 200
+        session_id = started.json()["session_id"]
+
+        saved = client.put(
+            "/api/ui/todos",
+            json={
+                "machine": "local",
+                "session_id": session_id,
+                "expected_revision": 0,
+                "todos": [
+                    {
+                        "id": "shared-todo",
+                        "content": "verify shared snapshot",
+                        "status": "in_progress",
+                        "priority": "high",
+                    }
+                ],
+            },
+        )
+        assert saved.status_code == 200
+
+        written = client.post(
+            "/tools/write_file",
+            json={
+                "session_id": session_id,
+                "path": "snapshot-shared.txt",
+                "content": "shared snapshot\n",
+                "overwrite": True,
+            },
+        )
+        assert written.status_code == 200
+
+        snapshot = client.get(
+            "/api/ui/sessions/snapshot",
+            params={
+                "machine": "local",
+                "session_id": session_id,
+                "operation": "files",
+                "search": "write_file",
+                "limit": 10,
+            },
+        )
+
+    assert snapshot.status_code == 200
+    data = snapshot.json()["data"]
+    assert data["session"]["executor_id"] == harness.executor_id
+    assert data["todos"][0]["content"] == "verify shared snapshot"
+    assert data["audit"]["entries"][0]["session"] == session_id
+    assert data["audit"]["entry"]["session"] == session_id
+    assert data["audit"]["entry"]["input"]["path"] == "snapshot-shared.txt"
+
+
 def test_session_snapshot_offloads_selected_detail_projection(
     monkeypatch, tmp_path
 ):
@@ -718,6 +780,77 @@ def test_remote_session_audit_uses_worker_local_log_and_public_projection(
     assert detail.status_code == 200
     assert detail.json()["data"]["scope"] == "session"
     assert fake.calls[1][1]["log_session_id"] == fake.worker_session_id
+
+
+def test_final_shared_session_audit_uses_control_canonical_log(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+
+    with TestClient(app, base_url=BASE_URL) as client:
+        first = client.post("/tools/session_start", json={"workdir": "."})
+        assert first.status_code == 200
+        first_id = first.json()["session_id"]
+        assert first_id.startswith("sess_")
+
+        written = client.post(
+            "/tools/write_file",
+            json={
+                "session_id": first_id,
+                "path": "shared-audit.txt",
+                "content": "control audit projection\n",
+                "overwrite": True,
+            },
+        )
+        assert written.status_code == 200
+
+        second = client.post("/tools/session_start", json={"workdir": "."})
+        assert second.status_code == 200
+        second_id = second.json()["session_id"]
+
+        listing = client.get(
+            "/api/ui/audit",
+            params={
+                "machine": "local",
+                "scope": "session",
+                "session": first_id,
+                "operation": "files",
+                "search": "write_file",
+                "include_selected": "true",
+            },
+        )
+        assert listing.status_code == 200
+        data = listing.json()["data"]
+        assert data["scope"] == "session"
+        assert data["count"] == 1
+        assert data["entries"][0]["session"] == first_id
+        assert data["entry"]["session"] == first_id
+        entry_id = data["entry"]["id"]
+
+        detail = client.get(
+            "/api/ui/audit/detail",
+            params={
+                "machine": harness.executor_id,
+                "scope": "session",
+                "session": first_id,
+                "id": entry_id,
+            },
+        )
+        wrong_owner = client.get(
+            "/api/ui/audit/detail",
+            params={
+                "machine": "local",
+                "scope": "session",
+                "session": second_id,
+                "id": entry_id,
+            },
+        )
+
+    assert detail.status_code == 200
+    assert detail.json()["data"]["entry"]["session"] == first_id
+    assert wrong_owner.status_code == 404
 
 
 def test_session_audit_scope_keeps_multi_session_calls_in_each_owner_log(

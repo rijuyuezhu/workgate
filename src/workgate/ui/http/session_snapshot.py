@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ...audit import audit_query_snapshot, query_session_audit
+from ...audit import audit_query_snapshot, query_audit, query_session_audit
 from ...oauth.core.scopes import SCOPE_AUDIT_READ, SCOPE_REMOTE_USE
 from ...ops.todo import read_todos_execute
 from ...ops.utils.remote_session import call_remote_session_tool
@@ -74,19 +74,19 @@ async def _remote_snapshot(
 
 async def _normalize_audit_snapshot(
     machine: str,
-    session: AgentSession,
+    session_id: str,
     raw: dict[str, Any],
     request: Request,
 ) -> dict[str, Any]:
     result = audit_http._normalize_query_result(machine, raw)
     for entry in result["entries"]:
-        entry["session"] = session.session_id
+        entry["session"] = session_id
 
     selected = raw.get("entry")
     if not isinstance(selected, dict):
         return result
     detail = audit_http._normalize_entry(machine, selected)
-    detail["session"] = session.session_id
+    detail["session"] = session_id
     try:
         audit_http._require_scopes(*audit_http._detail_scopes(machine, detail))
     except HTTPException as exc:
@@ -111,7 +111,6 @@ async def api_session_snapshot(request: Request) -> Response:
         if machine != "local":
             required.append(SCOPE_REMOTE_USE)
         todos_http._require_scopes(*required)
-        session = todos_http._session_for_machine(machine, session_id)
 
         audit_args = audit_http._query_args(request)
         audit_args.pop("session", None)
@@ -120,22 +119,39 @@ async def api_session_snapshot(request: Request) -> Response:
             field="selected_id",
             max_bytes=audit_http.UI_AUDIT_ENTRY_ID_MAX_BYTES,
         )
-        if session.target == "local":
-            todos, raw_audit = await _local_snapshot(
-                session,
-                audit_args,
-                selected_id=selected_id,
+        runtime, final_record = todos_http._final_session_for_machine(
+            request, machine, session_id
+        )
+        if final_record is not None:
+            todos, audit_result = await asyncio.gather(
+                todos_http._read_final(runtime, session_id),
+                asyncio.to_thread(
+                    query_audit,
+                    **{**audit_args, "session": session_id},
+                ),
             )
+            raw_audit = audit_query_snapshot(
+                audit_result, selected_id=selected_id
+            )
+            payload = todos_http._final_payload(machine, final_record, todos)
         else:
-            todos, raw_audit = await _remote_snapshot(
-                session,
-                audit_args,
-                selected_id=selected_id,
-            )
+            session = todos_http._session_for_machine(machine, session_id)
+            if session.target == "local":
+                todos, raw_audit = await _local_snapshot(
+                    session,
+                    audit_args,
+                    selected_id=selected_id,
+                )
+            else:
+                todos, raw_audit = await _remote_snapshot(
+                    session,
+                    audit_args,
+                    selected_id=selected_id,
+                )
+            payload = todos_http._payload(machine, session, todos)
 
-        payload = todos_http._payload(machine, session, todos)
         normalized_audit = await _normalize_audit_snapshot(
-            machine, session, raw_audit, request
+            machine, session_id, raw_audit, request
         )
         payload["audit"] = audit_http._payload(
             machine,

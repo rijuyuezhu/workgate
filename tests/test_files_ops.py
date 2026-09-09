@@ -8,9 +8,8 @@ import pytest
 
 import workgate.ops.files as files_ops
 import workgate.tools.registry.files as files_registry
-from tests.helpers import nested_mcp_text
+from tests.helpers import build_paired_mcp, mcp_structured, nested_mcp_text
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.mcp.app import build_mcp
 from workgate.ops.files import (
     delete_file_or_dir_execute,
     list_files_execute,
@@ -338,7 +337,13 @@ async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
     clear_settings_cache()
     (tmp_path / "blob.bin").write_bytes(b"abc\xffworld")
 
-    response = await build_mcp().call_tool("fetch", {"id": "blob.bin"})
+    mcp, _harness = build_paired_mcp(get_settings())
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
+        "fetch", {"session_id": session["session_id"], "id": "blob.bin"}
+    )
     payload = json.loads(nested_mcp_text(response))
 
     assert payload["text"].startswith(

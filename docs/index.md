@@ -25,7 +25,7 @@ After connecting an MCP client, start an explicit workspace session and ask it t
 - search, read, edit, and patch project files;
 - run tests, build commands, and Git workflows;
 - keep long-running jobs or persistent terminals;
-- copy data between local and remote sessions;
+- copy data between sessions on the same or different executors;
 - review Todos and Audit history;
 - use configured Skills or upstream MCP servers.
 

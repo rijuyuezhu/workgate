@@ -8,7 +8,7 @@ Treat the entire audit directory as sensitive.
 
 The browser and OpenTUI **Audit** panels are the easiest way to filter recent activity and inspect an entry.
 
-From an MCP client, start an explicit local or remote session and use `audit_tail(session_id=...)`. The default response is a bounded recent list. Use filters to narrow the result rather than requesting a large history.
+From an MCP client, start an explicit executor-backed session and use `audit_tail(session_id=...)`. The default response is a bounded recent list. Use filters to narrow the result rather than requesting a large history.
 
 To retrieve a retained full sanitized value, request one specific entry with `include_full_payloads=true`. This requires the additional `audit:full` scope. Redacted credentials cannot be recovered.
 
@@ -20,7 +20,7 @@ By default, local audit state is under:
 ${XDG_STATE_HOME:-~/.local/state}/workgate/audit_log/
 ```
 
-This is the Linux default; macOS and Windows use their native Workgate state location. The location follows `WORKGATE_STATE_DIR` when that setting is explicitly overridden. A remote worker keeps its own audit history, which is selected through the same session-oriented UI and tool flow.
+This is the Linux default; macOS and Windows use their native Workgate state location. The location follows `WORKGATE_STATE_DIR` when that setting is explicitly overridden. Executor-side audit history is selected through the same shared session-oriented UI and tool flow.
 
 Do not publish this directory, attach it to public bug reports, or assume redaction removed every sensitive project value.
 

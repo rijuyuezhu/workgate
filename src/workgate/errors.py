@@ -140,4 +140,16 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
     if status == "not_found":
         return PathNotFoundError(str(data.get("path") or message))
     error_type = str(data.get("error_type") or "remote_error")
+    public_types: dict[str, type[Exception]] = {
+        "FileNotFoundError": FileNotFoundError,
+        "IsADirectoryError": IsADirectoryError,
+        "NotADirectoryError": NotADirectoryError,
+        "PermissionError": PermissionError,
+        "TimeoutError": TimeoutError,
+        "ValueError": ValueError,
+        "OSError": OSError,
+        "RuntimeError": RuntimeError,
+    }
+    if exception_type := public_types.get(error_type):
+        return exception_type(message)
     return RuntimeError(f"{error_type}: {message}")

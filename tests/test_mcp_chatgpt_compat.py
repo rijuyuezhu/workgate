@@ -11,11 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 
-from tests.helpers import mcp_structured
+from tests.helpers import (
+    build_paired_http_app,
+    build_paired_mcp,
+    mcp_structured,
+)
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import (
     _add_public_routes_to_mcp_http_app,
     build_mcp,
@@ -164,17 +167,20 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     clear_settings_cache()
 
-    mcp = build_mcp()
+    mcp, harness = build_paired_mcp(get_settings())
     assert mcp.instructions is not None
     assert "You are a coding agent aiming to help the user" in mcp.instructions
     assert "Do not commit, push, amend, create PRs, release" in mcp.instructions
     assert "secret_scan is heuristic" in mcp.instructions
     assert (
-        "`session_id` identifies the agent/workspace session"
+        "`session_id` identifies the shared control/executor agent session"
         in mcp.instructions
     )
     assert "`bash(async_=true)` returns a `job_id`" in mcp.instructions
-    assert "`bash(pty=true)` is local-session only" in mcp.instructions
+    assert (
+        "`bash(pty=true)` returns a `shell_id` owned by the session"
+        in mcp.instructions
+    )
     assert "Do not use `shell_id` with `job`" in mcp.instructions
 
     transport_security = mcp.settings.transport_security
@@ -253,7 +259,8 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     structured = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
-    assert re.fullmatch(r"[A-Za-z0-9]{8}", structured["session_id"])
+    assert re.fullmatch(r"sess_[A-Za-z0-9_-]{22,}", structured["session_id"])
+    assert structured["executor_id"] == harness.executor_id
     assert structured["target"] == "local"
     assert structured["workdir"] == str(tmp_path)
     assert structured["workspace_root"] == str(tmp_path)
@@ -289,7 +296,7 @@ async def test_shell_tool_schema_exposes_session_and_execution_modes(
 
 
 @pytest.mark.asyncio
-async def test_persistent_shell_tools_use_shell_id_not_session_id(
+async def test_persistent_shell_tools_require_owning_session_and_shell_id(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
@@ -308,13 +315,14 @@ async def test_persistent_shell_tools_use_shell_id_not_session_id(
         input_properties = tool.inputSchema["properties"]
         output_schema = _output_schema(tool)
 
-        assert "shell_id" in tool.inputSchema["required"]
-        assert "shell_id" in input_properties
-        assert "session_id" not in input_properties
+        assert {"session_id", "shell_id"} <= set(tool.inputSchema["required"])
+        assert {"session_id", "shell_id"} <= set(input_properties)
         assert "shell_id" in output_schema["properties"]
         assert "session_id" not in output_schema["properties"]
 
-    list_schema = _output_schema(tools["list_persistent_shells"])
+    list_tool = tools["list_persistent_shells"]
+    assert "session_id" in list_tool.inputSchema["required"]
+    list_schema = _output_schema(list_tool)
     assert "shells" in list_schema["properties"]
     assert "sessions" not in list_schema["properties"]
     assert "shell_id" in str(list_schema)
@@ -329,7 +337,7 @@ async def test_shell_tool_returns_per_tool_structured_content(
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    mcp = build_mcp()
+    mcp, _harness = build_paired_mcp(get_settings())
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
@@ -1163,22 +1171,30 @@ def test_oauth_scope_enforced_for_rest_tools(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
     read_token = issue_access_token(
         client_id="limited-client",
         scope="shell:read",
         resource="https://workgate.example.com/mcp",
     )
     headers = {"Authorization": f"Bearer {read_token}"}
+    session_response = client.post(
+        "/tools/session_start", json={"workdir": "."}, headers=headers
+    )
+    assert session_response.status_code == 200
+    session_id = session_response.json()["session_id"]
 
     search_response = client.post(
-        "/tools/workspace_search", json={"query": "anything"}, headers=headers
+        "/tools/workspace_search",
+        json={"session_id": session_id, "query": "anything"},
+        headers=headers,
     )
     assert search_response.status_code == 200
 
     bash_response = client.post(
         "/tools/bash",
-        json={"session_id": "ABCDEFGH", "command": "echo ok"},
+        json={"session_id": session_id, "command": "echo ok"},
         headers=headers,
     )
     assert bash_response.status_code == 403

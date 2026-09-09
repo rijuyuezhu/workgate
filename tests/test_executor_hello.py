@@ -3,6 +3,7 @@ from pathlib import Path
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.hello import build_executor_hello
+from workgate.protocol.executor import EXECUTOR_CAPABILITY_SESSIONS
 
 
 def test_executor_hello_reports_complete_current_v1_namespace(
@@ -15,7 +16,7 @@ def test_executor_hello_reports_complete_current_v1_namespace(
     assert hello.protocol_version == 1
     assert hello.runtime.workgate_version
     assert hello.workspace_root == str(tmp_path.resolve(strict=False))
-    assert hello.capabilities == ()
+    assert hello.capabilities == (EXECUTOR_CAPABILITY_SESSIONS,)
     assert hello.sessions == ()
     assert hello.shells == ()
     assert hello.jobs == ()

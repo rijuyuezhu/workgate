@@ -5,12 +5,12 @@ from workgate.composition.services import (
     install_runtime_services,
 )
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.control.search_composition import (
-    build_control_tool_catalog,
-)
 from workgate.executor.search_composition import (
     build_executor_dispatcher_with_search,
 )
+from workgate.ops.files import files_config_from_settings
+from workgate.ops.files_service import FilesService, RemoteFilesClient
+from workgate.ops.utils.remote_session import call_remote_session_tool
 from workgate.persistence import configure_state_store
 from workgate.remote.manager import (
     RemoteManager,
@@ -57,21 +57,20 @@ def _tool(registry, name):
 
 
 @pytest.mark.asyncio
-async def test_controller_files_and_read_use_explicit_service_without_ambient_fallback(
+async def test_bound_files_and_read_use_explicit_service_without_ambient_fallback(
     tmp_path, monkeypatch
 ):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
     (tmp_path / "demo.txt").write_text("alpha\nbeta\n", encoding="utf-8")
     session = services.tool_session_store.create_session(workdir=tmp_path)
-    catalog = build_control_tool_catalog(
-        settings,
+    files_service = FilesService(
+        files_config_from_settings(settings),
         services.tool_session_store,
-        RemoteManager(lambda: settings, state_store=services.state_store),
+        remote=None,
     )
-
-    file_registry = _registry(catalog, FileToolRegistry)
-    read_registry = _registry(catalog, ReadToolRegistry)
+    file_registry = FileToolRegistry(settings, files_service=files_service)
+    read_registry = ReadToolRegistry(settings, files_service=files_service)
 
     assert all(
         tool.session_admission == "handler"
@@ -110,9 +109,7 @@ async def test_controller_files_and_read_use_explicit_service_without_ambient_fa
 
 
 @pytest.mark.asyncio
-async def test_controller_files_remote_wire_uses_owned_manager(
-    tmp_path, monkeypatch
-):
+async def test_files_remote_client_uses_owned_manager(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
     session = services.tool_session_store.create_session(
@@ -137,10 +134,21 @@ async def test_controller_files_remote_wire_uses_owned_manager(
         }
 
     monkeypatch.setattr(manager, "call", fake_call)
-    catalog = build_control_tool_catalog(
-        settings, services.tool_session_store, manager
+
+    async def call_remote_files(binding, tool, args):
+        return await call_remote_session_tool(
+            binding,
+            tool,
+            args,
+            call_worker=manager.call,
+        )
+
+    files_service = FilesService(
+        files_config_from_settings(settings),
+        services.tool_session_store,
+        remote=RemoteFilesClient(call=call_remote_files),
     )
-    file_registry = _registry(catalog, FileToolRegistry)
+    file_registry = FileToolRegistry(settings, files_service=files_service)
 
     result = await _tool(file_registry, "list_files").func(
         session.session_id, "src", False, 10
@@ -292,14 +300,12 @@ async def test_bound_file_registry_handlers_delegate_to_injected_service(
 ):
     settings = _settings(tmp_path, monkeypatch)
     services = _configure_runtime_services(settings)
-    catalog = build_control_tool_catalog(
-        settings,
+    service = FilesService(
+        files_config_from_settings(settings),
         services.tool_session_store,
-        RemoteManager(lambda: settings, state_store=services.state_store),
+        remote=None,
     )
-    registry = _registry(catalog, FileToolRegistry)
-    service = registry._files_service
-    assert service is not None
+    registry = FileToolRegistry(settings, files_service=service)
     calls = []
 
     async def fake_write(*args):

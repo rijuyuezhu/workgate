@@ -50,6 +50,9 @@ def run_executor_admin(harness: BrowserHarness) -> None:
 
     expect(page.locator("#executor-pair-dialog")).to_be_hidden()
     expect(page.locator("#executor-list")).to_contain_text("browser-approved")
+    page.locator("#executor-list").get_by_text(
+        "browser-approved", exact=True
+    ).click()
     expect(page.locator("#executor-detail-status")).to_have_text("offline")
     executor_id = page.locator("#executor-detail-id").inner_text()
     assert executor_id.startswith("exec_")

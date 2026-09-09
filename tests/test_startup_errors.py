@@ -9,9 +9,12 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 import workgate.ops.shell as shell_ops
 import workgate.terminal.conpty as conpty
-from workgate.config.settings import clear_settings_cache
-from workgate.control.http.app import build_http_app
-from workgate.control.mcp.app import build_mcp
+from tests.helpers import (
+    build_paired_http_app,
+    build_paired_mcp,
+    mcp_structured,
+)
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.errors import (
     PathNotFoundError,
     ShellExecutableNotFoundError,
@@ -20,7 +23,6 @@ from workgate.errors import (
     tool_error_payload,
     workspace_path_not_found_error,
 )
-from workgate.ops.session import session_start_execute
 from workgate.ops.utils.path import resolve_path
 from workgate.ops.utils.remote_session import _remote_result_data
 from workgate.remote.bundle import worker_bundle_bytes
@@ -462,7 +464,8 @@ def test_http_shell_error_is_not_misreported_as_workspace_path(
     monkeypatch.setenv("WORKGATE_SHELL_EXECUTABLE", executable)
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.post(
         "/tools/bash",
@@ -488,14 +491,17 @@ async def test_mcp_shell_error_uses_standard_tool_error(
     executable = "missing-mcp-shell"
     monkeypatch.setenv("WORKGATE_SHELL_EXECUTABLE", executable)
     clear_settings_cache()
-    session = await session_start_execute(".", "local", None, None)
+    mcp, _harness = build_paired_mcp(get_settings())
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
 
     with pytest.raises(
         ToolError, match=f"Shell executable not found: {executable}"
     ):
-        await build_mcp().call_tool(
+        await mcp.call_tool(
             "bash",
-            {"session_id": session.session_id, "command": "echo ok"},
+            {"session_id": session["session_id"], "command": "echo ok"},
         )
 
 

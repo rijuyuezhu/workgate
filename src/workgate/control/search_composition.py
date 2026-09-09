@@ -12,12 +12,21 @@ from ..tools.catalog import ToolCatalog, build_tool_catalog
 from ..tools.registry.files import FileToolRegistry
 from ..tools.registry.read import ReadToolRegistry
 from ..tools.registry.search import SearchToolRegistry
+from .downloads import ControlDownloadService
+from .jobs import ControlJobService
+from .session_copy import ControlSessionCopyService
+from .sessions import ControlSessionCoordinator
+from .tool_routing import ControlToolRouter, route_control_registry
 
 
 def build_control_tool_catalog(
     settings: Settings,
     store: ToolSessionStore,
     remote_manager: RemoteManager,
+    sessions: ControlSessionCoordinator,
+    session_copy: ControlSessionCopyService,
+    jobs: ControlJobService,
+    downloads: ControlDownloadService,
 ) -> ToolCatalog:
     """Bind migrated control domains through the Phase 2 catalog seam."""
 
@@ -67,11 +76,18 @@ def build_control_tool_catalog(
             search_service=search_service,
         )
 
-    return build_tool_catalog(
+    catalog = build_tool_catalog(
         settings,
         factory_overrides={
             "files": files_registry,
             "read": read_registry,
             "search": search_registry,
         },
+    )
+    router = ControlToolRouter(sessions, session_copy, jobs, downloads)
+    return ToolCatalog(
+        tuple(
+            route_control_registry(registry, router)
+            for registry in catalog.registries
+        )
     )

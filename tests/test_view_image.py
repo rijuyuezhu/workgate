@@ -6,7 +6,8 @@ import pytest
 from mcp.types import CallToolResult, ImageContent, TextContent
 
 import workgate.ops.image as image_ops
-from workgate.config.settings import clear_settings_cache
+from tests.helpers import build_paired_control_harness, mcp_structured
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
 from workgate.tool_session.store import get_tool_session_store
 
@@ -209,8 +210,12 @@ async def test_view_image_tool_returns_native_mcp_content(
 ):
     _configure(tmp_path, monkeypatch)
     (tmp_path / "pixel.png").write_bytes(PNG_BYTES)
-    session_id = _local_session(tmp_path)
-    mcp = build_mcp()
+    mcp = build_mcp(
+        runtime=build_paired_control_harness(get_settings()).control
+    )
+    session_id = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )["session_id"]
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
     assert "view_image" in tools

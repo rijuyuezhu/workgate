@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient as FastAPITestClient
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from tests.helpers import build_paired_http_app
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
 from workgate.http.downloads import (
     _token_fingerprint,
@@ -172,7 +172,8 @@ def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
     clear_settings_cache()
     (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
 
-    client = FastAPITestClient(build_http_app())
+    app, _harness = build_paired_http_app(get_settings())
+    client = FastAPITestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     link = client.post(
         "/tools/file_link/create",
@@ -205,6 +206,39 @@ def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
         and record.get("token_sha256") == download_token_fingerprint(token)
         for record in records
     )
+
+
+def test_file_link_remains_available_after_executor_goes_offline(
+    tmp_path, monkeypatch
+):
+    _reset(tmp_path, monkeypatch)
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    clear_settings_cache()
+    source = tmp_path / "offline.txt"
+    source.write_text("snapshot bytes", encoding="utf-8")
+
+    app, harness = build_paired_http_app(get_settings())
+    client = FastAPITestClient(app)
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    link_response = client.post(
+        "/tools/file_link/create",
+        json={"session_id": session["session_id"], "path": "offline.txt"},
+    )
+    assert link_response.status_code == 200
+    link = link_response.json()
+
+    async def executor_offline(*args, **kwargs):
+        raise RuntimeError("executor is offline")
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", executor_offline
+    )
+    source.unlink()
+
+    response = client.get(link["url"])
+
+    assert response.status_code == 200
+    assert response.content == b"snapshot bytes"
 
 
 def test_file_link_serves_creation_time_snapshot(tmp_path, monkeypatch):

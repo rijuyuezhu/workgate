@@ -49,27 +49,27 @@ Use `bash` for bounded, non-interactive commands such as formatting, tests, buil
 Run the narrowest relevant test first. If it passes, run the project's normal validation command and summarize any failures.
 ```
 
-For a long-running non-interactive command in either a local or remote session, set `async_=true` and manage the returned job with `job`. Persistent PTY shells are local-session only; use one only when a local task genuinely needs an interactive terminal, server process, or REPL. For remote sessions, use bounded `bash` commands or asynchronous jobs instead.
+For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the executor-bound session genuinely needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same shared `session_id`.
 
 ## Copy between sessions
 
-Use `session_copy` to move files or directories between explicit local and remote sessions. Start both sessions first and name the source and destination clearly.
+Use `session_copy` to move files or directories between two existing executor-backed sessions. Start both sessions first and name the source and destination clearly; they may be bound to the same executor or different executors.
 
 ```text
-Copy artifacts/report.json from the remote build session into reports/latest.json in the local session, then verify the destination file.
+Copy artifacts/report.json from the build session on gpu1 into reports/latest.json in my workstation session, then verify the destination file.
 ```
 
 The service chooses the supported transfer method. Users normally do not need to select a transport.
 
-## Work on a remote machine
+## Work on another executor
 
-List registered machines, then start a remote session with an explicit machine and workdir:
+Pair or select the intended executor, then start a session with its stable executor id and workdir:
 
 ```text
-List remote machines. Start a session on gpu1 in /home/me/project, inspect the repository, and run git status without editing files.
+Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-The normal file, search, shell, job, Todo, and Audit tools use the same session-oriented flow. See [Remote workers](remote-workers.md) for enrollment and lifecycle management.
+The normal file, search, shell, job, Todo, and Audit tools all route through the executor bound to that shared session. See [Executors and legacy remote workers](remote-workers.md) for pairing and migration-era lifecycle management.
 
 ## Review activity
 

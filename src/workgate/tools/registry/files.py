@@ -239,6 +239,7 @@ async def hashline_edit(
 @file_tool(
     http_method="POST",
     http_path="/tools/delete",
+    description="Delete a file or directory inside a session workdir.",
     oauth_scopes=("shell:read", "shell:write"),
     timeout_cancellable=False,
 )

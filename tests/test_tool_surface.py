@@ -133,13 +133,6 @@ async def test_model_facing_tools_require_session_id_by_default(
     sessionless_allowlist = {
         "session_start",
         "version",
-        "workspace_search",
-        "fetch",
-        "send_persistent_shell_input",
-        "resize_persistent_shell",
-        "read_persistent_shell_output",
-        "kill_persistent_shell",
-        "list_persistent_shells",
         "remote_admin",
     }
 
@@ -320,6 +313,16 @@ def _mcp_payload_data(response):
     )
 
 
+def _build_explicit_local_catalog_http_app():
+    """Build only the legacy route-adapter seam, never the final control runtime."""
+    return build_http_app(tool_catalog=build_tool_catalog())
+
+
+def _build_explicit_local_catalog_mcp():
+    """Build only the legacy MCP-adapter seam, never the final control runtime."""
+    return build_mcp(tool_catalog=build_tool_catalog())
+
+
 @pytest.mark.asyncio
 async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
     (tmp_path / "alpha.txt").write_text("hello", encoding="utf-8")
@@ -328,11 +331,13 @@ async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    client = TestClient(_build_explicit_local_catalog_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     args = {"session_id": session["session_id"], "path": "."}
     http_payload = client.post("/tools/list_files", json=args).json()
-    mcp_response = await build_mcp().call_tool("list_files", args)
+    mcp_response = await _build_explicit_local_catalog_mcp().call_tool(
+        "list_files", args
+    )
     assert http_payload == _mcp_payload_data(mcp_response)
 
 
@@ -344,11 +349,13 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    client = TestClient(_build_explicit_local_catalog_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     args = {"session_id": session["session_id"]}
     http_payload = client.get("/tools/todo", params=args).json()
-    mcp_response = await build_mcp().call_tool("read_todos", args)
+    mcp_response = await _build_explicit_local_catalog_mcp().call_tool(
+        "read_todos", args
+    )
 
     assert http_payload == _mcp_payload_data(mcp_response)
 
@@ -361,11 +368,13 @@ async def test_http_secret_scan_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    client = TestClient(_build_explicit_local_catalog_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     args = {"session_id": session["session_id"], "cwd": ".", "max_results": 10}
     http_payload = client.post("/tools/secret_scan", json=args).json()
-    mcp_response = await build_mcp().call_tool("secret_scan", args)
+    mcp_response = await _build_explicit_local_catalog_mcp().call_tool(
+        "secret_scan", args
+    )
 
     assert http_payload == _mcp_payload_data(mcp_response)
 
@@ -376,7 +385,7 @@ def test_http_tool_name_is_not_request_overridable(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    client = TestClient(_build_explicit_local_catalog_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.get(
         "/tools/todo",
@@ -442,7 +451,7 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
     clock = {"now": 1_000.0}
     monkeypatch.setattr(download_ops, "now_s", lambda: clock["now"])
 
-    client = TestClient(build_http_app())
+    client = TestClient(_build_explicit_local_catalog_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     create_response = client.post(
         "/tools/file_link/create",
@@ -506,7 +515,7 @@ def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    client = TestClient(_build_explicit_local_catalog_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.post(
         "/tools/read",

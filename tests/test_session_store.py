@@ -215,6 +215,84 @@ def test_change_session_workdir_updates_session_and_clears_snapshots(
     assert store.get_snapshot(session.session_id, record.snapshot_id) is None
 
 
+def test_change_session_workdir_crash_after_snapshot_invalidation_keeps_old_cwd(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    clear_settings_cache()
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    store = store_module.ToolSessionStore()
+    session = store.create_session(workdir="first")
+    snapshot = store.record_file_snapshot(
+        session_id=session.session_id,
+        path="a.txt",
+        file_sha256="abc",
+        total_lines=1,
+        seen_ranges=((1, 1),),
+    )
+    remove_snapshots = store._snapshot_repository.remove_session
+
+    def crash_after_snapshot_invalidation(session_id: str) -> None:
+        remove_snapshots(session_id)
+        raise RuntimeError("simulated crash after snapshot invalidation")
+
+    monkeypatch.setattr(
+        store._snapshot_repository,
+        "remove_session",
+        crash_after_snapshot_invalidation,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        store.change_session_workdir(session.session_id, "second")
+
+    restarted = store_module.ToolSessionStore()
+    surviving = restarted.require_session(session.session_id)
+    assert surviving.workdir == str(first_dir)
+    assert (
+        restarted.get_snapshot(session.session_id, snapshot.snapshot_id) is None
+    )
+
+
+def test_change_session_workdir_crash_after_cwd_persist_keeps_new_cwd(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    clear_settings_cache()
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    store = store_module.ToolSessionStore()
+    session = store.create_session(workdir="first")
+    snapshot = store.record_file_snapshot(
+        session_id=session.session_id,
+        path="a.txt",
+        file_sha256="abc",
+        total_lines=1,
+        seen_ranges=((1, 1),),
+    )
+    write_session = store._write_session_locked
+
+    def crash_after_cwd_persist(updated) -> None:
+        write_session(updated)
+        raise RuntimeError("simulated crash after cwd persistence")
+
+    monkeypatch.setattr(store, "_write_session_locked", crash_after_cwd_persist)
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        store.change_session_workdir(session.session_id, "second")
+
+    restarted = store_module.ToolSessionStore()
+    surviving = restarted.require_session(session.session_id)
+    assert surviving.workdir == str(second_dir)
+    assert (
+        restarted.get_snapshot(session.session_id, snapshot.snapshot_id) is None
+    )
+
+
 def test_update_remote_session_workdir_clears_snapshots(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()

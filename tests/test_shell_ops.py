@@ -13,14 +13,15 @@ from mcp.server.fastmcp.exceptions import ToolError
 import workgate.control.http.tool_routes as http_tool_routes_module
 import workgate.ops.shell as shell_ops
 from tests.helpers import (
+    build_paired_http_app,
+    build_paired_mcp,
     mcp_structured,
 )
 from tests.helpers import (
     python_shell_command as _python_shell_command,
 )
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
-from workgate.control.mcp.app import build_mcp
 from workgate.ops.shell import (
     SHELL_TIMEOUT_CLEANUP_GRACE_S,
     _shared_tail_bytes,
@@ -567,7 +568,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import workgate.ops.shell as shell_ops
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 
 workspace = Path(__import__("sys").argv[1])
 active_path = Path(__import__("sys").argv[2])
@@ -703,7 +704,7 @@ from pathlib import Path
 
 import workgate.ops.shell as shell_ops
 import workgate.terminal.conpty as conpty
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.terminal.runtime import build_terminal_runtime
 from workgate.tool_session.store import get_tool_session_store
 
@@ -1032,6 +1033,79 @@ async def test_list_owned_shells_returns_none_on_unknown_tmux_failure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("durable_shell_ids", "expected"),
+    [([], []), (["owned-shell"], None)],
+)
+async def test_list_owned_shells_handles_unavailable_tmux_from_durable_ownership(
+    monkeypatch,
+    durable_shell_ids,
+    expected,
+):
+    monkeypatch.setattr(
+        shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
+    )
+    monkeypatch.setattr(
+        shell_ops,
+        "resolve_tmux",
+        lambda: SimpleNamespace(path=None, source="unavailable"),
+    )
+    monkeypatch.setattr(
+        shell_ops,
+        "get_tool_session_store",
+        lambda: SimpleNamespace(
+            require_session=lambda session_id: SimpleNamespace(
+                session_id=session_id,
+                persistent_shell_ids=list(durable_shell_ids),
+            )
+        ),
+    )
+
+    assert (
+        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        == expected
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("durable_shell_ids", "expected"),
+    [([], []), (["owned-shell"], None)],
+)
+async def test_list_owned_shells_handles_unavailable_conpty_from_durable_ownership(
+    monkeypatch,
+    durable_shell_ids,
+    expected,
+):
+    monkeypatch.setattr(
+        shell_ops, "_use_conpty_persistent_shell_backend", lambda: True
+    )
+    monkeypatch.setattr(
+        shell_ops,
+        "get_tool_session_store",
+        lambda: SimpleNamespace(
+            require_session=lambda session_id: SimpleNamespace(
+                session_id=session_id,
+                persistent_shell_ids=list(durable_shell_ids),
+            )
+        ),
+    )
+
+    async def list_owned(_session_id):
+        return list(durable_shell_ids)
+
+    monkeypatch.setattr(shell_ops.conpty, "list_owned_shell_ids", list_owned)
+    monkeypatch.setattr(
+        shell_ops.conpty, "authoritative_shell_ids", lambda: None
+    )
+
+    assert (
+        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        == expected
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_owned_shells_treats_absent_server_as_authoritative_empty(
     monkeypatch,
 ):
@@ -1318,7 +1392,7 @@ async def test_bash_rejects_timeout_above_public_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    mcp = build_mcp()
+    mcp, _harness = build_paired_mcp(get_settings())
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
@@ -1353,7 +1427,7 @@ async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    mcp = build_mcp()
+    mcp, _harness = build_paired_mcp(get_settings())
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
@@ -1388,12 +1462,16 @@ def test_rest_shell_timeout_returns_partial_output_after_cleanup(
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    clear_settings_cache()
+
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
+    session_id = client.post(
+        "/tools/session_start", json={"workdir": "."}
+    ).json()["session_id"]
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "3")
     clear_settings_cache()
-
-    client = TestClient(build_http_app())
-    session_id = get_tool_session_store().create_session(workdir=".").session_id
     command = _python_shell_command(
         'import sys, time; print("partial-out", flush=True); '
         'print("partial-err", file=sys.stderr, flush=True); time.sleep(10)'
@@ -1440,11 +1518,19 @@ def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     clear_settings_cache()
 
-    client = TestClient(build_http_app())
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
 
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
+
+    original_call = harness.call
+
+    async def blocking_call(executor_id, op, args=None, **kwargs):
+        if op == "list_files":
+            await asyncio.sleep(0.2)
+        return await original_call(executor_id, op, args, **kwargs)
 
     async def blocking_list_dir(*args, **kwargs):
         await asyncio.sleep(0.2)
@@ -1452,6 +1538,9 @@ def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         fs_tools_module, "list_files_dispatch_execute", blocking_list_dir
+    )
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", blocking_call
     )
     response = client.post(
         "/tools/list_files",
@@ -1507,7 +1596,7 @@ async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    mcp = build_mcp()
+    mcp, harness = build_paired_mcp(get_settings())
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
@@ -1515,12 +1604,22 @@ async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
+    original_call = harness.call
+
+    async def blocking_call(executor_id, op, args=None, **kwargs):
+        if op == "list_files":
+            await asyncio.sleep(0.2)
+        return await original_call(executor_id, op, args, **kwargs)
+
     async def blocking_list_dir(*args, **kwargs):
         await asyncio.sleep(0.2)
         return []
 
     monkeypatch.setattr(
         fs_tools_module, "list_files_dispatch_execute", blocking_list_dir
+    )
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", blocking_call
     )
     with pytest.raises(
         ToolError, match="list_files exceeded 0.01 second tool timeout"

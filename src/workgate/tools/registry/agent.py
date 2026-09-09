@@ -101,7 +101,7 @@ async def activate_agent_skill(
     name: AgentSkillNameArg,
     session_id: AgentSessionIdArg = None,
 ) -> ActivateAgentSkillOutput:
-    """Load one exact Skill from the same local or remote session registry used by list_agent_skills."""
+    """Load one exact Skill from the executor-backed session registry used by list_agent_skills."""
     return await activate_agent_skill_dispatch_execute(name, session_id)
 
 

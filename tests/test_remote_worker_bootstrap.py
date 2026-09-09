@@ -141,9 +141,15 @@ def test_execute_worker_tool_imports_registry_lazily(monkeypatch):
 @pytest.mark.asyncio
 async def test_worker_dispatches_persistent_shell_resize(monkeypatch):
     from workgate.ops import shell as shell_ops
-    from workgate.remote_worker.dispatch import execute_worker_tool
+    from workgate.remote_worker import dispatch as worker_dispatch
 
     calls = []
+    admissions = []
+    monkeypatch.setattr(
+        worker_dispatch,
+        "_admit_session_activity",
+        lambda session_id: admissions.append(session_id),
+    )
 
     async def fake_resize(shell_id: str, cols: int, rows: int):
         calls.append((shell_id, cols, rows))
@@ -159,21 +165,41 @@ async def test_worker_dispatches_persistent_shell_resize(monkeypatch):
         shell_ops, "resize_persistent_shell_execute", fake_resize
     )
 
-    result = await execute_worker_tool(
+    async def owned_shells(session_id: str):
+        assert session_id == "sess_test"
+        return ["shell-1"]
+
+    monkeypatch.setattr(
+        shell_ops, "list_owned_persistent_shell_ids_execute", owned_shells
+    )
+
+    result = await worker_dispatch.execute_worker_tool(
         "resize_persistent_shell",
-        {"shell_id": "shell-1", "cols": 132, "rows": 38},
+        {
+            "session_id": "sess_test",
+            "shell_id": "shell-1",
+            "cols": 132,
+            "rows": 38,
+        },
     )
 
     assert result["resized"] is True
     assert calls == [("shell-1", 132, 38)]
+    assert admissions == ["sess_test"]
 
 
 @pytest.mark.asyncio
 async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
     from workgate.ops import shell as shell_ops
-    from workgate.remote_worker.dispatch import execute_worker_tool
+    from workgate.remote_worker import dispatch as worker_dispatch
 
     calls = []
+    admissions = []
+    monkeypatch.setattr(
+        worker_dispatch,
+        "_admit_session_activity",
+        lambda session_id: admissions.append(session_id),
+    )
 
     async def fake_read(
         shell_id: str,
@@ -191,9 +217,22 @@ async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
         shell_ops, "read_persistent_shell_output_execute", fake_read
     )
 
-    result = await execute_worker_tool(
+    async def owned_shells(session_id: str):
+        assert session_id == "sess_test"
+        return ["shell-1"]
+
+    monkeypatch.setattr(
+        shell_ops, "list_owned_persistent_shell_ids_execute", owned_shells
+    )
+
+    result = await worker_dispatch.execute_worker_tool(
         "read_persistent_shell_output",
-        {"shell_id": "shell-1", "lines": 500, "preserve_ansi": True},
+        {
+            "session_id": "sess_test",
+            "shell_id": "shell-1",
+            "lines": 500,
+            "preserve_ansi": True,
+        },
     )
 
     assert result == {
@@ -201,11 +240,16 @@ async def test_worker_dispatches_persistent_shell_read_with_ansi(monkeypatch):
         "output": "\x1b[32mready\x1b[0m",
     }
     assert calls == [("shell-1", 500, True)]
+    assert admissions == ["sess_test"]
 
     with pytest.raises(ValueError, match="preserve_ansi must be a boolean"):
-        await execute_worker_tool(
+        await worker_dispatch.execute_worker_tool(
             "read_persistent_shell_output",
-            {"shell_id": "shell-1", "preserve_ansi": "true"},
+            {
+                "session_id": "sess_test",
+                "shell_id": "shell-1",
+                "preserve_ansi": "true",
+            },
         )
 
 
@@ -216,8 +260,14 @@ async def test_worker_dispatches_persistent_shell_start(monkeypatch):
 
     calls = []
 
-    async def fake_start(cwd: str, name: str | None, command: str | None):
-        calls.append((cwd, name, command))
+    async def fake_start(
+        cwd: str,
+        name: str | None,
+        command: str | None,
+        *,
+        owner_session_id: str | None = None,
+    ):
+        calls.append((cwd, name, command, owner_session_id))
         return {
             "shell_id": "edge-shell",
             "name": name,
@@ -233,7 +283,7 @@ async def test_worker_dispatches_persistent_shell_start(monkeypatch):
     )
 
     assert result["shell_id"] == "edge-shell"
-    assert calls == [("/edge", "edge", "bash")]
+    assert calls == [("/edge", "edge", "bash", None)]
 
 
 @pytest.mark.asyncio

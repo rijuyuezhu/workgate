@@ -88,6 +88,9 @@ def _send_terminal(
     command: str,
     marker: str,
 ) -> None:
+    assert marker not in command, (
+        "marker must prove shell output, not terminal echo"
+    )
     page = harness.page
     expect(page.locator("#terminal-input")).to_be_enabled()
     websocket_event_start = len(harness.websocket_events)
@@ -114,7 +117,7 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
         harness,
         "local",
         local_shell,
-        "printf 'local-terminal-e2e\\n'",
+        "printf 'local-terminal-%s\\n' e2e",
         "local-terminal-e2e",
     )
     initial_resize_start = len(harness.websocket_events)
@@ -144,11 +147,13 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     assert resized["status"] == 200
     assert resized["payload"]["data"]["cols"] == 111
 
-    page.locator("#terminal-input").fill("printf '%s\\n' {1..180}")
-    page.locator("#terminal-input-form").get_by_role(
-        "button", name="Send"
-    ).click()
-    _wait_terminal_output(harness, "local", local_shell, "180")
+    _send_terminal(
+        harness,
+        "local",
+        local_shell,
+        "printf '%s\\n' {1..180}; printf 'scroll-%s\\n' complete",
+        "scroll-complete",
+    )
     viewport = page.locator("#terminal-xterm .xterm-viewport")
     expect(viewport).to_be_visible()
     screen = page.locator("#terminal-xterm .xterm-screen")
@@ -170,6 +175,7 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     assert sent
     page.keyboard.press("End")
 
+    reload_websocket_start = len(harness.websocket_events)
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
     session_button = page.locator(
@@ -179,7 +185,13 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     session_button.click()
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
     expect(page.locator("#terminal-xterm .xterm")).to_be_visible()
-    _wait_terminal_output(harness, "local", local_shell, "local-terminal-e2e")
+    _wait_terminal_output(
+        harness,
+        "local",
+        local_shell,
+        "scroll-complete",
+        websocket_event_start=reload_websocket_start,
+    )
     # Legacy remote-worker enrollment UI was retired in PR5. Browser coverage
     # now stays on the local Human UI path until final executor-backed remote
     # file/session/terminal routing lands in the later migration PRs. The

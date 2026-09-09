@@ -105,6 +105,51 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     assert session_entry_box is not None and session_detail_box is not None
     assert abs(session_entry_box["y"] - session_detail_box["y"]) < 1
 
+    availability_override = "missing_on_executor"
+
+    def project_session_availability(route: Route) -> None:
+        if "/api/ui/sessions/snapshot" in route.request.url:
+            route.continue_()
+            return
+        response = route.fetch()
+        payload = response.json()
+        for row in payload.get("data", {}).get("sessions", []):
+            if row.get("session_id") == session_id:
+                row["availability"] = availability_override
+                row["active"] = True
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/sessions**", project_session_availability)
+    page.locator("#session-refresh").click()
+    expect(page.locator("#session-detail-status")).to_have_text(
+        "Unavailable · missing on executor"
+    )
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"] .session-entry-meta'
+        )
+    ).to_contain_text("missing on executor")
+    expect(page.locator("#todo-refresh")).to_be_disabled()
+    expect(page.locator("#todo-add")).to_be_disabled()
+    expect(page.locator("#session-audit-refresh")).to_be_disabled()
+    expect(page.locator("#session-terminate")).to_be_enabled()
+
+    availability_override = "executor_offline"
+    page.locator("#session-refresh").click()
+    expect(page.locator("#session-detail-status")).to_have_text(
+        "Unavailable · executor offline"
+    )
+    expect(page.locator("#session-terminate")).to_be_disabled()
+
+    page.unroute("**/api/ui/sessions**", project_session_availability)
+    page.locator("#session-refresh").click()
+    expect(page.locator("#session-detail-status")).to_have_text(
+        "Active · responded within the last 5 hours"
+    )
+    expect(page.locator("#todo-add")).to_be_enabled()
+    expect(page.locator("#session-audit-refresh")).to_be_enabled()
+    expect(page.locator("#session-terminate")).to_be_enabled()
+
     page.locator("#todo-add").click()
     row = page.locator("#todo-list .todo-row").last
     row.locator("input").fill("verify browser todos")
@@ -201,9 +246,17 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     assert scroll_extent["scrollHeight"] > scroll_extent["height"]
     request_body.focus()
+    expect(request_body).to_be_focused()
     request_body.press("PageDown")
-    page.wait_for_timeout(100)
-    assert request_body.evaluate("element => element.scrollTop") > 0
+    scroll_deadline = time.monotonic() + 2
+    while time.monotonic() < scroll_deadline:
+        if request_body.evaluate("element => element.scrollTop") > 0:
+            break
+        page.wait_for_timeout(50)
+    else:
+        raise AssertionError(
+            "focused audit request body did not scroll on PageDown"
+        )
     detail_style = page.locator(
         "#session-audit-detail-body .audit-detail-json"
     ).first.evaluate(
@@ -325,15 +378,18 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#session-terminate").click()
     expect(page.locator("#session-detail-status")).to_contain_text(
-        "Immediate termination requested"
+        "Ended · executor confirmed session absence"
     )
     blocked = harness.api(
         "POST",
         "/tools/read",
         body={"session_id": session_id, "path": "notes.txt"},
     )
-    assert blocked["status"] == 409
-    assert blocked["payload"]["error"] == "session_termination_requested"
+    assert blocked["status"] == 400
+    assert blocked["payload"]["error"] == "validation_error"
+    assert "is ended" in blocked["payload"]["message"]
     harness.console_errors = [
-        line for line in harness.console_errors if "409 (Conflict)" not in line
+        line
+        for line in harness.console_errors
+        if "400 (Bad Request)" not in line
     ]

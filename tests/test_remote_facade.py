@@ -472,7 +472,7 @@ async def test_remote_session_dispatch_surfaces_worker_error(monkeypatch):
         fake_call,
     )
 
-    with pytest.raises(RuntimeError, match="FileNotFoundError: missing.txt"):
+    with pytest.raises(FileNotFoundError, match="missing.txt"):
         await read_ops.read_execute("missing.txt", control.session_id)
 
 

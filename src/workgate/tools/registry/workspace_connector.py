@@ -1,5 +1,6 @@
 """ChatGPT connector-compatible read-only workspace search/fetch tools."""
 
+from ...schemas.input_models.session import SessionIdArg
 from ..declarative import DeclarativeToolRegistry
 from ..ops.workspace_connector import (
     fetch_error_output,
@@ -48,8 +49,10 @@ workspace_connector_tool = WorkspaceConnectorToolRegistry.get_tool_decorator()
     annotations="read_only",
     mcp_error_handler=search_error_output,
 )
-async def workspace_search(query: ConnectorSearchQueryArg) -> SearchOutput:
-    """Search workspace text files and return connector-compatible result cards. Use this sessionless read-only tool for connector-style document retrieval clients that expect a search -> fetch workflow: call workspace_search first, then pass a returned result id to fetch. This is a broad literal text search from the configured workspace root and returns at most one card per matched file. For coding-agent work inside an explicit session, prefer session-bound tree_view/glob_search for path discovery, search for content matches with grounding metadata, and read for precise file ranges."""
+async def workspace_search(
+    session_id: SessionIdArg, query: ConnectorSearchQueryArg
+) -> SearchOutput:
+    """Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id."""
     return await search_execute(query)
 
 
@@ -61,6 +64,8 @@ async def workspace_search(query: ConnectorSearchQueryArg) -> SearchOutput:
     annotations="read_only",
     mcp_error_handler=fetch_error_output,
 )
-async def fetch(id: ConnectorFetchIdArg) -> FetchOutput:
-    """Fetch one UTF-8 workspace text file as a connector-compatible document. The id should normally come from a prior workspace_search result card; fetch is the second step in the connector search -> fetch workflow. This tool is sessionless and read-only for connector clients. For coding-agent work that already has a session_id, prefer read(session_id, path) because it supports line selectors, hashline output, and grounding metadata for hashline_edit/edit_lines."""
+async def fetch(
+    session_id: SessionIdArg, id: ConnectorFetchIdArg
+) -> FetchOutput:
+    """Fetch one UTF-8 workspace text file from the executor bound to session_id. The id should normally come from workspace_search on the same session. For coding-agent work, prefer read because it returns grounding metadata for safe edits."""
     return await fetch_execute(id)

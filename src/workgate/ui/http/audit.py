@@ -243,6 +243,24 @@ def _remote_session_projection(machine: str) -> dict[str, str]:
     }
 
 
+def _final_session_record(
+    request: Request, machine: str, session_id: str
+) -> Any | None:
+    if not session_id:
+        return None
+    runtime = getattr(request.app.state, "control_runtime", None)
+    if runtime is None:
+        return None
+    record = runtime.control_state.snapshot_sessions().get(session_id)
+    if record is None:
+        return None
+    if machine != "local" and str(record.executor_id) != machine:
+        raise ValueError(
+            f"session {session_id} does not belong to executor {machine}"
+        )
+    return record
+
+
 def _normalize_entry(
     machine: str,
     value: Any,
@@ -418,13 +436,21 @@ async def _query(
     args: dict[str, Any],
     *,
     log_session_id: str | None = None,
+    final_session: bool = False,
     include_selected: bool = False,
     selected_id: str = "",
 ) -> dict[str, Any]:
     query_args = dict(args)
     if log_session_id:
         query_args.pop("session", None)
-    if machine == "local":
+    if final_session:
+        assert log_session_id
+        value = await asyncio.to_thread(
+            query_audit, **{**query_args, "session": log_session_id}
+        )
+        if include_selected:
+            value = audit_query_snapshot(value, selected_id=selected_id)
+    elif machine == "local":
         if log_session_id:
             value = await asyncio.to_thread(
                 query_session_audit, log_session_id, **query_args
@@ -485,8 +511,18 @@ async def _detail(
     *,
     include_full_payloads: bool = False,
     log_session_id: str | None = None,
+    final_session: bool = False,
 ) -> dict[str, Any]:
-    if machine == "local":
+    if final_session:
+        assert log_session_id
+        value = await asyncio.to_thread(
+            get_audit_entry,
+            entry_id,
+            include_full_payloads=include_full_payloads,
+        )
+        if str(value.get("session") or "") != log_session_id:
+            raise ValueError(f"Unknown audit entry: {entry_id}")
+    elif machine == "local":
         if log_session_id:
             value = await asyncio.to_thread(
                 get_session_audit_entry,
@@ -582,6 +618,11 @@ async def api_audit(request: Request) -> Response:
         log_session_id = str(args.get("session") or "")
         if scope == "session" and not log_session_id:
             raise ValueError("session is required when scope=session")
+        final_session = bool(
+            scope == "session"
+            and _final_session_record(request, machine, log_session_id)
+            is not None
+        )
         include_selected = _bool_arg(
             request.query_params.get("include_selected")
         )
@@ -594,6 +635,7 @@ async def api_audit(request: Request) -> Response:
             machine,
             args,
             log_session_id=(log_session_id if scope == "session" else None),
+            final_session=final_session,
             include_selected=include_selected,
             selected_id=selected_id,
         )
@@ -649,10 +691,16 @@ async def api_audit_detail(request: Request) -> Response:
         )
         if scope == "session" and not log_session_id:
             raise ValueError("session is required when scope=session")
+        final_session = bool(
+            scope == "session"
+            and _final_session_record(request, machine, log_session_id)
+            is not None
+        )
         entry = await _detail(
             machine,
             entry_id,
             log_session_id=(log_session_id if scope == "session" else None),
+            final_session=final_session,
         )
         _require_scopes(*_detail_scopes(machine, entry))
         include_full_payloads = str(
@@ -665,6 +713,7 @@ async def api_audit_detail(request: Request) -> Response:
                 entry_id,
                 include_full_payloads=True,
                 log_session_id=(log_session_id if scope == "session" else None),
+                final_session=final_session,
             )
         preview_request = image_preview_request(request.query_params)
         entry = await asyncio.to_thread(

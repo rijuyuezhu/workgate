@@ -223,9 +223,9 @@ remote_tool = RemoteToolRegistry.get_tool_decorator()
 
 def _remote_admin_description(context: McpToolContext) -> str:
     del context
-    return """Run legacy remote-worker control-plane actions for already-enrolled workers: action=\"list\" discovers connected worker names for session_start(target=\"remote\", machine=...), action=\"revoke\" removes a stale or untrusted worker, action=\"rename\" gives a worker a stable name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.
+    return """Run migration-only control-plane actions for already-enrolled legacy remote workers: action=\"list\" inspects legacy worker inventory, action=\"revoke\" removes stale or untrusted legacy trust, action=\"rename\" updates a legacy worker name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.
 
-New machines must pair with `workgate executor connect <control-url>`; remote_admin no longer creates enrollment invites. Do not use remote_admin for normal remote code work. For that, create a remote agent/workspace session with session_start(target=\"remote\", machine=..., workdir=...) and then use ordinary session-bound tools. Reconnect commands contain no invite or bearer credential."""
+New machines pair with `workgate executor connect <control-url>`. `remote_admin` does not create enrollment invites and is not a normal machine-execution selector. Start normal work with executor-backed `session_start(workdir=..., executor_id=...)` and then use ordinary session-bound tools."""
 
 
 @remote_tool(

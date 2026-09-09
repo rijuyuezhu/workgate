@@ -73,3 +73,19 @@ async def test_managed_jobs_runtime_close_drains_tasks_and_stops_admission(
         await jobs_ops._retry_managed_job(session_id, started.job_id)
     with pytest.raises(RuntimeError, match="closed"):
         runtime.register_handler("late", handler)
+    with pytest.raises(RuntimeError, match="cannot be restarted after close"):
+        await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_managed_jobs_runtime_rejects_a_second_event_loop() -> None:
+    runtime = ManagedJobsRuntime()
+    foreign_loop = asyncio.new_event_loop()
+    runtime._loop = foreign_loop
+    try:
+        with pytest.raises(RuntimeError, match="cannot span event loops"):
+            await runtime.start()
+        with pytest.raises(RuntimeError, match="owning event loop"):
+            await runtime.aclose()
+    finally:
+        foreign_loop.close()

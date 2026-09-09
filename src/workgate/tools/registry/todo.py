@@ -26,7 +26,7 @@ todo_tool = TodoToolRegistry.get_tool_decorator()
     oauth_scopes=("shell:read",),
 )
 async def read_todos(session_id: SessionIdArg) -> ReadTodosOutput:
-    """Read the structured todo list owned by one explicit agent/workspace session. Pass the session_id returned by session_start. Use this when resuming or checking multi-step work in the current session before deciding what to do next. Todos are session-scoped: items from one session are not shared with another local or remote session, and shell_id/job_id values are not valid here. For changing the list, use write_todos with the complete replacement list."""
+    """Read the structured todo list owned by one explicit executor-backed agent/workspace session. Pass the shared session_id returned by session_start. Use this when resuming or checking multi-step work in the current session before deciding what to do next. Todos are session-scoped: items from one session are not shared with another session, and shell_id/job_id values are not valid here. For changing the list, use write_todos with the complete replacement list."""
     return await asyncio.to_thread(read_todos_execute, session_id)
 
 

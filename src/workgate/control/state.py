@@ -161,6 +161,17 @@ class ControlState:
             self._write_sessions(candidate)
             self._sessions = candidate
 
+    def remove_session(self, session_id: str) -> None:
+        """Durably forget a checkpoint only when no executor side effect exists."""
+        with self._lock:
+            self._require_started()
+            if session_id not in self._sessions:
+                return
+            candidate = dict(self._sessions)
+            candidate.pop(session_id, None)
+            self._write_sessions(candidate)
+            self._sessions = candidate
+
     def _require_started(self) -> None:
         if self._closed or not self._started:
             raise RuntimeError("ControlState is not running")

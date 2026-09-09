@@ -27,6 +27,7 @@ from .records import (
     new_snapshot_id,
     session_from_payload,
     snapshot_from_payload,
+    valid_session_id,
 )
 from .records import (
     generate_session_id as _generate_session_id,
@@ -176,6 +177,8 @@ class ToolSessionStore:
         active_job_session_ids: set[str] | None,
     ) -> bool:
         """Return whether a freshly loaded session remains expiry-eligible."""
+        if session.session_id.startswith("sess_"):
+            return False
         return expired_prune_eligible(
             session, now, retention_s, active_job_session_ids
         )
@@ -187,6 +190,8 @@ class ToolSessionStore:
         active_job_session_ids: set[str] | None,
     ) -> bool:
         """Return whether a freshly loaded session remains overflow-eligible."""
+        if session.session_id.startswith("sess_"):
+            return False
         return overflow_prune_eligible(
             session,
             now,
@@ -245,6 +250,7 @@ class ToolSessionStore:
                     session
                     for session in sessions.values()
                     if session.target == "local"
+                    and not session.session_id.startswith("sess_")
                     and session.updated_at < now - SESSION_ACTIVE_WINDOW_S
                     and not session.persistent_shell_ids
                     and not self._session_has_active_jobs(
@@ -326,6 +332,7 @@ class ToolSessionStore:
     def create_session(
         self,
         *,
+        session_id: str | None = None,
         target: SessionTarget = "local",
         workdir: str | Path = ".",
         machine: str | None = None,
@@ -334,6 +341,11 @@ class ToolSessionStore:
         expires_at: float | None = None,
     ) -> AgentSession:
         """Create and durably store one explicit agent workspace session."""
+        if (
+            session_id is not None
+            and valid_session_id(session_id) != session_id
+        ):
+            raise ValueError("session_id is invalid")
         if target == "local":
             resolved_workdir = resolve_path(workdir, must_exist=True)
             if not resolved_workdir.is_dir():
@@ -361,21 +373,40 @@ class ToolSessionStore:
             registry = self._state_store.layout.sessions_dir / ".registry"
             with self._state_store.transaction(registry):
                 now = time.time()
-                sessions = self._prune_sessions_locked(now, reserve_slots=1)
+                # Control-managed final sessions must never disappear from the
+                # executor merely because its local retention clock advanced.
+                # The control lifecycle owns desired-absence cleanup for these
+                # explicitly allocated shared IDs.
+                sessions = (
+                    list(self._read_all_sessions_locked().values())
+                    if session_id is not None
+                    else self._prune_sessions_locked(now, reserve_slots=1)
+                )
                 maximum = int(self._settings().max_agent_sessions)
                 if len(sessions) >= maximum:
                     raise RuntimeError(
                         "agent session limit reached: "
                         f"{maximum}; end an active session or wait for retention cleanup"
                     )
-                for _ in range(16):
-                    session_id = _generate_session_id()
-                    if not self._metadata_path(session_id).exists():
-                        break
+                if session_id is None:
+                    for _ in range(16):
+                        allocated_session_id = _generate_session_id()
+                        if not self._metadata_path(
+                            allocated_session_id
+                        ).exists():
+                            break
+                    else:
+                        raise RuntimeError(
+                            "failed to allocate a unique session_id"
+                        )
                 else:
-                    raise RuntimeError("failed to allocate a unique session_id")
+                    allocated_session_id = session_id
+                    if self._metadata_path(allocated_session_id).exists():
+                        raise ValueError(
+                            f"session_id {allocated_session_id!r} already exists"
+                        )
                 session = AgentSession(
-                    session_id=session_id,
+                    session_id=allocated_session_id,
                     target=target,
                     workdir=display_workdir,
                     machine=normalized_machine,
@@ -388,7 +419,7 @@ class ToolSessionStore:
                     persistent_shell_ids=(),
                 )
                 with self._state_store.transaction(
-                    self._transaction_path(session_id)
+                    self._transaction_path(allocated_session_id)
                 ):
                     self._write_session_locked(session)
                     return session
@@ -645,6 +676,32 @@ class ToolSessionStore:
         """Admit one active session using the authoritative tool-work policy."""
         return self.admit_tool_sessions((session_id,))[0]
 
+    def session_cleanup_metadata(
+        self, session_id: str
+    ) -> tuple[float, bool, bool]:
+        """Return activity/resource facts used by control-owned auto cleanup."""
+        with self._lock:
+            self._reset_for_current_root_locked()
+            with (
+                self._state_store.transaction(
+                    self._transaction_path(session_id)
+                ),
+                self._state_store.transaction(
+                    self._state_store.layout.jobs_lock_path
+                ),
+            ):
+                session = self._require_session_locked(
+                    session_id, allow_expired=True
+                )
+                active_job_session_ids = self._active_job_session_ids_locked()
+                return (
+                    session.updated_at,
+                    bool(session.persistent_shell_ids),
+                    self._session_has_active_jobs(
+                        session_id, active_job_session_ids
+                    ),
+                )
+
     def require_cleanup_sessions(
         self, session_ids: tuple[str, ...]
     ) -> tuple[AgentSession, ...]:
@@ -697,8 +754,12 @@ class ToolSessionStore:
                     workdir=str(resolved_workdir),
                     updated_at=time.time(),
                 )
-                self._write_session_locked(updated)
+                # Grounding for the old cwd must be gone before the durable cwd
+                # can point anywhere else. A crash between these two mutations
+                # therefore leaves either old cwd + no snapshots, or new cwd +
+                # no old snapshots.
                 self._snapshot_repository.remove_session(session_id)
+                self._write_session_locked(updated)
                 return updated
 
     def update_remote_session_workdir(
@@ -720,8 +781,8 @@ class ToolSessionStore:
                     workdir=workdir,
                     updated_at=time.time(),
                 )
-                self._write_session_locked(updated)
                 self._snapshot_repository.remove_session(session_id)
+                self._write_session_locked(updated)
                 return updated
 
     def end_session(self, session_id: str) -> AgentSession:

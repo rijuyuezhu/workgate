@@ -8,7 +8,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import JsonValue
 
@@ -27,13 +27,28 @@ from .state import ControlState, ExecutorTrustRecord
 class ExecutorTransportError(RuntimeError):
     """One stable executor-protocol failure raised by the control transport."""
 
-    def __init__(self, code: ProtocolErrorCode, message: str) -> None:
+    def __init__(
+        self,
+        code: ProtocolErrorCode,
+        message: str,
+        *,
+        delivery_state: Literal["queued", "offered"] | None = None,
+    ) -> None:
         super().__init__(message)
         self.error = ProtocolError(code=code, message=message)
+        self.delivery_state = delivery_state
 
 
 class ExecutorTransportClosedError(RuntimeError):
     """Raised in pending callers when the process-local transport shuts down."""
+
+
+def abandoned_command_was_offered(exc: BaseException) -> bool:
+    """Return whether an interrupted call had crossed irreversible offer."""
+    state = getattr(exc, "delivery_state", None)
+    if state is None:
+        state = getattr(exc, "_workgate_executor_delivery_state", None)
+    return state == "offered"
 
 
 @dataclass
@@ -306,23 +321,28 @@ class ExecutorTransport:
                 return await waiter
             async with asyncio.timeout(timeout_s):
                 return await waiter
-        except asyncio.CancelledError, TimeoutError:
-            await self._abandon(executor_id, command.id)
+        except (asyncio.CancelledError, TimeoutError) as exc:
+            state = await self._abandon(executor_id, command.id)
+            cast(Any, exc)._workgate_executor_delivery_state = state
             raise
 
-    async def _abandon(self, executor_id: str, command_id: str) -> None:
+    async def _abandon(
+        self, executor_id: str, command_id: str
+    ) -> Literal["queued", "offered"] | None:
         channel = self._channels.get(executor_id)
         if channel is None:
-            return
+            return None
         async with channel.lock:
             pending = channel.pending.pop(command_id, None)
             if pending is None:
-                return
+                return None
+            state = pending.state
             if pending.state == "queued":
                 with contextlib.suppress(ValueError):
                     channel.queue.remove(command_id)
             if not pending.future.done():
                 pending.future.cancel()
+            return state
 
     async def submit_result(
         self, credential: str, result: ExecutorResult
@@ -433,4 +453,11 @@ class ExecutorTransport:
         channel.pending.clear()
         for item in pending:
             if not item.future.done():
-                item.future.set_exception(exc)
+                pending_exc = exc
+                if isinstance(exc, ExecutorTransportError):
+                    pending_exc = ExecutorTransportError(
+                        exc.error.code,
+                        str(exc),
+                        delivery_state=item.state,
+                    )
+                item.future.set_exception(pending_exc)

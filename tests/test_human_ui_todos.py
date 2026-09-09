@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import stat
@@ -14,8 +15,10 @@ import workgate.ops.todo as todo_module
 import workgate.ops.utils.remote_session as remote_session_module
 import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.todos as ui_todos_module
-from workgate.config.settings import clear_settings_cache
+from tests.helpers import build_paired_http_app
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
+from workgate.executor.hello import build_executor_hello
 from workgate.oauth.core.scopes import (
     SCOPE_REMOTE_USE,
     SCOPE_SHELL_READ,
@@ -28,6 +31,7 @@ from workgate.ops.todo import (
     todo_counts_execute,
     write_todos_execute,
 )
+from workgate.protocol.executor import SESSION_LOOKUP_OP
 from workgate.remote.tool_specs import (
     REMOTE_WORKER_ORIGIN_ARG,
     REMOTE_WORKER_ORIGIN_HUMAN_UI,
@@ -38,7 +42,6 @@ from workgate.schemas.result_models.remote import (
 )
 from workgate.tool_session.store import (
     SESSION_ACTIVE_WINDOW_S,
-    SESSION_TERMINATION_PROMPT,
     AgentSession,
     UnknownAgentSessionError,
     get_tool_session_store,
@@ -164,6 +167,48 @@ def test_local_todos_require_explicit_session_and_use_session_directory(
     assert not list(todo_path.parent.glob("*.tmp"))
     assert not (workspace / ".state" / "todos").exists()
     assert not (workspace / ".state" / "todos.json").exists()
+
+
+def test_final_shared_session_todos_route_to_bound_executor(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+
+    with TestClient(app, base_url=BASE_URL) as client:
+        started = client.post("/tools/session_start", json={"workdir": "."})
+        assert started.status_code == 200
+        session_id = started.json()["session_id"]
+        assert session_id.startswith("sess_")
+
+        initial = client.get(
+            "/api/ui/todos",
+            params={"machine": "local", "session_id": session_id},
+        )
+        saved = client.put(
+            "/api/ui/todos",
+            json={
+                "machine": "local",
+                "session_id": session_id,
+                "expected_revision": 0,
+                "todos": [_item("shared")],
+            },
+        )
+        current = client.get(
+            "/api/ui/todos",
+            params={"machine": harness.executor_id, "session_id": session_id},
+        )
+
+    assert initial.status_code == 200
+    assert initial.json()["data"]["revision"] == 0
+    assert (
+        initial.json()["data"]["session"]["executor_id"] == harness.executor_id
+    )
+    assert saved.status_code == 200
+    assert saved.json()["data"]["revision"] == 1
+    assert current.status_code == 200
+    assert current.json()["data"]["todos"][0]["id"] == "shared"
 
 
 def test_todos_are_isolated_between_ui_selected_sessions(monkeypatch, tmp_path):
@@ -688,10 +733,6 @@ def test_sessions_api_defaults_to_five_hour_activity_and_terminates_work(
         "/api/ui/sessions/terminate",
         json={"machine": "local", "session_id": active.session_id},
     )
-    blocked = client.post(
-        "/tools/read",
-        json={"session_id": active.session_id, "path": "missing.txt"},
-    )
 
     assert [row["session_id"] for row in recent.json()["data"]["sessions"]] == [
         active.session_id
@@ -707,10 +748,385 @@ def test_sessions_api_defaults_to_five_hour_activity_and_terminates_work(
     ] == [active.session_id]
     assert terminated.status_code == 200
     assert terminated.json()["data"]["session"]["termination_requested"]
-    assert blocked.status_code == 409
-    assert blocked.json()["error"] == "session_termination_requested"
-    assert SESSION_TERMINATION_PROMPT in blocked.json()["message"]
     assert store.require_session(active.session_id).termination_requested_at
+
+
+def test_sessions_api_uses_final_control_sessions_and_terminates_executor_work(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "final-ui"}
+    )
+    assert started.status_code == 200
+    session = started.json()
+    session_id = session["session_id"]
+
+    inventory = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    rows = inventory.json()["data"]["sessions"]
+    assert [row["session_id"] for row in rows] == [session_id]
+    assert rows[0]["executor_id"] == session["executor_id"]
+    assert rows[0]["status"] == "active"
+    assert rows[0]["availability"] == "available"
+    assert rows[0]["target"] is None
+
+    async def missing_inventory(_executor_id: str):
+        return build_executor_hello(harness.executor.config, sessions=())
+
+    monkeypatch.setattr(
+        harness.control.executor_transport,
+        "inventory",
+        missing_inventory,
+    )
+    asyncio.run(
+        harness.control.session_coordinator.reconcile_hello(
+            session["executor_id"]
+        )
+    )
+    missing_inventory_response = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    missing_row = missing_inventory_response.json()["data"]["sessions"][0]
+    assert missing_row["status"] == "active"
+    assert missing_row["availability"] == "missing_on_executor"
+    assert (
+        harness.control.control_state.snapshot_sessions()[session_id].status
+        == "active"
+    )
+
+    terminated = client.post(
+        "/api/ui/sessions/terminate",
+        json={"machine": "local", "session_id": session_id},
+    )
+    assert terminated.status_code == 200
+    terminated_session = terminated.json()["data"]["session"]
+    assert terminated_session["status"] == "ended"
+    assert terminated_session["availability"] == "ended"
+    assert terminated_session["termination_requested"] is True
+    assert (
+        harness.control.control_state.snapshot_sessions()[session_id].status
+        == "ended"
+    )
+
+    blocked = client.post(
+        "/tools/read", json={"session_id": session_id, "path": "missing.txt"}
+    )
+    assert blocked.status_code == 400
+    assert blocked.json()["error"] == "validation_error"
+    assert "is ended" in blocked.json()["message"]
+
+
+def test_sessions_api_uses_executor_activity_for_final_recent_filter(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "recent-final"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    lifecycle_record = harness.control.control_state.snapshot_sessions()[
+        session_id
+    ]
+    old_lifecycle_at = time.time() - SESSION_ACTIVE_WINDOW_S - 60
+    harness.control.control_state.put_session(
+        lifecycle_record.model_copy(update={"updated_at": old_lifecycle_at})
+    )
+
+    write = client.post(
+        "/tools/write_file",
+        json={
+            "session_id": session_id,
+            "path": "fresh.txt",
+            "content": "fresh",
+        },
+    )
+    assert write.status_code == 200
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    rows = recent.json()["data"]["sessions"]
+    row = next(item for item in rows if item["session_id"] == session_id)
+    assert row["status"] == "active"
+    assert row["availability"] == "available"
+    assert row["active"] is True
+    assert row["activity_known"] is True
+    assert row["last_active_at"] > old_lifecycle_at
+    assert row["updated_at"] == pytest.approx(old_lifecycle_at)
+    assert harness.control.control_state.snapshot_sessions()[
+        session_id
+    ].updated_at == pytest.approx(old_lifecycle_at)
+
+
+def test_successful_persistent_shell_inventory_refreshes_executor_activity(
+    monkeypatch, tmp_path
+):
+    from workgate.ops import shell as shell_ops
+    from workgate.schemas.result_models.shell import ListPersistentShellsOutput
+
+    async def no_owned_shells(_session_id: str):
+        return []
+
+    async def no_shells():
+        return ListPersistentShellsOutput(shells=[])
+
+    monkeypatch.setattr(
+        shell_ops, "list_owned_persistent_shell_ids_execute", no_owned_shells
+    )
+    monkeypatch.setattr(shell_ops, "list_persistent_shells_execute", no_shells)
+
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "shell-activity"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+
+    listed = client.get(
+        "/tools/list_persistent_shells", params={"session_id": session_id}
+    )
+    assert listed.status_code == 200
+    executor_after = harness.executor.sessions.lookup(session_id)
+    assert executor_after is not None
+    assert executor_after.last_active_at is not None
+    assert executor_after.last_active_at > executor_before.last_active_at
+
+    availability, projected_activity = asyncio.run(
+        harness.control.session_coordinator.session_activity_projection(
+            session_id
+        )
+    )
+    assert availability == "available"
+    assert projected_activity is not None
+    assert projected_activity >= executor_after.last_active_at
+
+
+def test_sessions_api_counts_executor_operation_errors_as_activity(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "error-active"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    old_activity_at = time.time() - SESSION_ACTIVE_WINDOW_S - 60
+    harness.control.session_coordinator._activity_by_session[session_id] = (
+        old_activity_at
+    )
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+
+    failed = client.post(
+        "/tools/read",
+        json={"session_id": session_id, "path": "missing.txt"},
+    )
+    assert failed.status_code == 400
+    assert failed.json()["error"] == "FileNotFoundError"
+    executor_after = harness.executor.sessions.lookup(session_id)
+    assert executor_after is not None
+    assert executor_after.last_active_at is not None
+    assert executor_after.last_active_at > executor_before.last_active_at
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    assert recent.status_code == 200
+    rows = recent.json()["data"]["sessions"]
+    row = next(item for item in rows if item["session_id"] == session_id)
+    assert row["availability"] == "available"
+    assert row["active"] is True
+    assert row["activity_known"] is True
+    assert row["last_active_at"] == pytest.approx(executor_after.last_active_at)
+
+
+def test_sessions_api_preserves_activity_for_pre_touch_operation_error(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start", json={"workdir": ".", "label": "cwd-error"}
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+    harness.control.session_coordinator._activity_by_session[session_id] = (
+        executor_before.last_active_at + 1000.0
+    )
+
+    failed = client.post(
+        "/tools/session_change_cwd",
+        json={"session_id": session_id, "workdir": "missing-dir"},
+    )
+    assert failed.status_code == 400
+    assert failed.json()["error"] == "FileNotFoundError"
+    executor_after = harness.executor.sessions.lookup(session_id)
+    assert executor_after is not None
+    assert executor_after.last_active_at == pytest.approx(
+        executor_before.last_active_at
+    )
+
+    availability, activity = asyncio.run(
+        harness.control.session_coordinator.session_activity_projection(
+            session_id
+        )
+    )
+    assert availability == "available"
+    assert activity == pytest.approx(executor_before.last_active_at)
+
+
+def test_sessions_api_marks_missing_executor_session_without_refreshing_activity(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start",
+        json={"workdir": ".", "label": "missing-session"},
+    )
+    assert started.status_code == 200
+    session_id = started.json()["session_id"]
+    executor_before = harness.executor.sessions.lookup(session_id)
+    assert executor_before is not None
+    assert executor_before.last_active_at is not None
+    harness.control.session_coordinator._activity_by_session[session_id] = (
+        executor_before.last_active_at + 1000.0
+    )
+    harness.executor.services.tool_session_store.end_session(session_id)
+    assert harness.executor.sessions.lookup(session_id) is None
+
+    with pytest.raises(RuntimeError, match="UnknownAgentSessionError"):
+        asyncio.run(
+            harness.control.session_coordinator.call_session_tool(
+                "read",
+                {"session_id": session_id, "path": "missing.txt"},
+            )
+        )
+
+    availability, activity = asyncio.run(
+        harness.control.session_coordinator.session_activity_projection(
+            session_id
+        )
+    )
+    assert availability == "missing_on_executor"
+    assert activity is None
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    assert recent.status_code == 200
+    rows = recent.json()["data"]["sessions"]
+    row = next(item for item in rows if item["session_id"] == session_id)
+    assert row["availability"] == "missing_on_executor"
+    assert row["active"] is False
+    assert row["activity_known"] is False
+    assert row["last_active_at"] is None
+
+
+def test_sessions_api_does_not_lookup_each_final_session(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    session_ids = []
+    for index in range(5):
+        started = client.post(
+            "/tools/session_start",
+            json={"workdir": ".", "label": f"final-{index}"},
+        )
+        assert started.status_code == 200
+        session_ids.append(started.json()["session_id"])
+
+    original_call = harness.control.executor_transport.call
+    lookup_calls = 0
+
+    async def observe_call(*args, **kwargs):
+        nonlocal lookup_calls
+        op = args[1] if len(args) > 1 else kwargs.get("op")
+        if op == SESSION_LOOKUP_OP:
+            lookup_calls += 1
+        return await original_call(*args, **kwargs)
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", observe_call
+    )
+
+    inventory = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    assert inventory.status_code == 200
+    rows = inventory.json()["data"]["sessions"]
+    assert {row["session_id"] for row in rows} == set(session_ids)
+    assert lookup_calls == 0
+
+
+def test_sessions_api_merges_final_and_legacy_sessions_during_migration(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    _configure(monkeypatch, workspace)
+    legacy = _local_session(workspace, label="legacy-before-final")
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+
+    started = client.post(
+        "/tools/session_start",
+        json={"workdir": ".", "label": "final-after-legacy"},
+    )
+    assert started.status_code == 200
+    final_session_id = started.json()["session_id"]
+
+    recent = client.get("/api/ui/sessions", params={"machine": "local"})
+    inventory = client.get(
+        "/api/ui/sessions",
+        params={"machine": "local", "include_inactive": "true"},
+    )
+    recent_rows = recent.json()["data"]["sessions"]
+    rows = inventory.json()["data"]["sessions"]
+    expected_ids = {legacy.session_id, final_session_id}
+    assert {row["session_id"] for row in recent_rows} == expected_ids
+    assert {row["session_id"] for row in rows} == expected_ids
+    legacy_row = next(
+        row for row in rows if row["session_id"] == legacy.session_id
+    )
+    final_row = next(
+        row for row in rows if row["session_id"] == final_session_id
+    )
+    assert legacy_row["target"] == "local"
+    assert final_row["target"] is None
+    assert final_row["executor_id"] is not None
 
 
 def test_todo_api_enforces_local_remote_and_write_scopes(monkeypatch, tmp_path):
