@@ -27,9 +27,9 @@ from ..utils.runtime_identity import (
     ManagedJobLease,
     managed_job_lease_state,
 )
-from . import lifecycle as job_lifecycle
 from . import persistence as job_persistence
 from . import recovery as job_recovery
+from . import status as job_status
 from .persistence import (
     TERMINAL_STATUSES,
 )
@@ -82,7 +82,7 @@ from .state import (
 MANAGED_JOB_STORE_RETRY_ATTEMPTS = 2
 JOB_STORE_LOCK_RETRY_INTERVAL_S = job_recovery.JOB_STORE_LOCK_RETRY_INTERVAL_S
 _apply_managed_update = job_recovery.apply_managed_update
-_clear_pending_retry = job_lifecycle._clear_pending_retry
+_clear_pending_retry = job_status._clear_pending_retry
 type ManagedJobHandler = Callable[
     [ManagedJobContext, dict[str, Any]], Awaitable[dict[str, Any] | None]
 ]
@@ -288,7 +288,7 @@ def _refresh_job_status(
     now: float | None = None,
 ) -> MutableJobRow:
     """Reconcile one row using this runtime's authoritative managed liveness."""
-    return job_lifecycle._refresh_job_status(
+    return job_status._refresh_job_status(
         job,
         active_shells,
         now,
@@ -954,7 +954,7 @@ async def managed_job_tail_execute(
             raise RuntimeError(f"job is not controller-managed: {job_id}")
         public = _public_job(job)
         log_path = str(job.get("log_path") or "")
-    output = job_lifecycle._read_log_tail(log_path, lines)
+    output = job_status._read_log_tail(log_path, lines)
     message = None
     if public.status in TERMINAL_STATUSES:
         message = (

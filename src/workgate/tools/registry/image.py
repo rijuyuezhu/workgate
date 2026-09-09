@@ -1,8 +1,5 @@
 """Native MCP image-viewing tool registry."""
 
-from typing import cast
-
-from ...ops.image import view_image_dispatch_execute
 from ...schemas.input_models.image import ImagePathArg
 from ...schemas.input_models.session import SessionIdArg
 from ...schemas.result_models.image import ViewImageOutput
@@ -30,7 +27,5 @@ async def view_image(
     path: ImagePathArg,
 ) -> ViewImageOutput:
     """View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the shared session workdir on its bound executor; use this instead of read when visual inspection is needed."""
-    return cast(
-        ViewImageOutput,
-        await view_image_dispatch_execute(path, session_id),
-    )
+    del session_id, path
+    raise RuntimeError("view_image requires control routing")

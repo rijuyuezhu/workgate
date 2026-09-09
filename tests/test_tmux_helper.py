@@ -1,6 +1,10 @@
 import pytest
 
-from workgate.terminal import tmux as tmux_helper
+import workgate.executor.shell as shell
+from workgate.config.settings import Settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.runtime import build_executor_runtime
+from workgate.executor.terminal import tmux as tmux_helper
 
 
 def test_detached_tmux_env_removes_enclosing_client_markers(
@@ -44,41 +48,39 @@ def test_require_tmux_reports_unavailable(monkeypatch: pytest.MonkeyPatch):
         tmux_helper.require_tmux("tmux")
 
 
-def test_resolve_tmux_reads_settings(
+def test_resolve_tmux_uses_explicit_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    class Settings:
-        tmux_bin = "configured-tmux"
-
-    monkeypatch.setattr(tmux_helper, "get_settings", lambda: Settings())
     monkeypatch.setattr(
         tmux_helper.shutil,
         "which",
         lambda value: "/opt/tmux" if value == "configured-tmux" else None,
     )
-    assert tmux_helper.resolve_tmux() == tmux_helper.TmuxSelection(
-        "/opt/tmux", "configured", "configured-tmux"
-    )
+    assert tmux_helper.resolve_tmux(
+        "configured-tmux"
+    ) == tmux_helper.TmuxSelection("/opt/tmux", "configured", "configured-tmux")
 
 
 @pytest.mark.asyncio
 async def test_shell_tmux_uses_resolved_executable(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from workgate.ops import shell
-
+    config = resolve_executor_config(Settings(tmux_bin="tmux"))
     expected = object()
     calls: list[tuple[list[str], str, int | None, dict[str, str] | None]] = []
     monkeypatch.setattr(
         shell,
         "require_tmux",
-        lambda: tmux_helper.TmuxSelection("/opt/tmux", "system", "tmux"),
+        lambda _configured: tmux_helper.TmuxSelection(
+            "/opt/tmux", "system", "tmux"
+        ),
     )
     monkeypatch.setattr(
-        shell, "_resolved_tmux_shell", lambda _cwd=".": "/bin/bash"
+        shell, "_resolved_tmux_shell", lambda _config, _cwd=".": "/bin/bash"
     )
 
     async def fake_run_exec(
+        _config,
         argv: list[str],
         *,
         cwd: str = ".",
@@ -89,7 +91,7 @@ async def test_shell_tmux_uses_resolved_executable(
         return expected
 
     monkeypatch.setattr(shell, "_run_exec", fake_run_exec)
-    assert await shell.tmux(["list-sessions"], timeout_s=7) is expected
+    assert await shell.tmux(config, ["list-sessions"], timeout_s=7) is expected
     assert calls == [
         (
             ["/opt/tmux", "list-sessions"],
@@ -104,20 +106,25 @@ async def test_shell_tmux_uses_resolved_executable(
 async def test_list_persistent_shells_is_empty_when_default_tmux_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from workgate.ops import shell
-
+    runtime = build_executor_runtime(
+        Settings(remote_enabled=False), enable_control_connection=False
+    )
     monkeypatch.setattr(
         shell, "_use_conpty_persistent_shell_backend", lambda: False
     )
     monkeypatch.setattr(
         shell,
         "resolve_tmux",
-        lambda: tmux_helper.TmuxSelection(None, "unavailable", "tmux"),
+        lambda _configured: tmux_helper.TmuxSelection(
+            None, "unavailable", "tmux"
+        ),
     )
     monkeypatch.setattr(
         shell,
         "tmux",
         lambda *args, **kwargs: pytest.fail("tmux must not be invoked"),
     )
-    result = await shell.list_persistent_shells_execute()
+    result = await shell.list_persistent_shells_execute(
+        runtime.config, runtime.services.tool_session_store
+    )
     assert result.shells == []

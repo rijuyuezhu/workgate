@@ -1,9 +1,9 @@
-import asyncio
 import base64
 import hashlib
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient as FastAPITestClient
@@ -12,108 +12,149 @@ from starlette.testclient import TestClient
 
 from tests.helpers import build_paired_http_app
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.mcp.app import build_mcp
-from workgate.http.downloads import (
-    _token_fingerprint,
-    download_routes,
+from workgate.control.download_snapshot import (
+    DownloadSnapshot,
+    new_staging_path,
+    open_private_staging,
+    snapshot_directory,
 )
-from workgate.ops.downloads import (
-    create_file_link_dispatch_execute,
+from workgate.control.download_store import backup_path
+from workgate.control.downloads import (
+    _list_file_links_owned,
+    _register_snapshot,
+    _revoke_file_link_owned,
     download_token_fingerprint,
-    list_file_links_execute,
-    revoke_file_link_execute,
 )
-from workgate.ops.utils.download_snapshot import snapshot_directory
-from workgate.ops.utils.download_store import backup_path
-from workgate.tool_session.store import get_tool_session_store
+from workgate.control.mcp.app import build_mcp
+from workgate.http.downloads import _token_fingerprint, download_routes
 
 
-def _reset(tmp_path, monkeypatch):
+def _reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://files.example.test")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     clear_settings_cache()
 
 
-def _create_file_link(*args, **kwargs):
-    """Exercise the real async dispatcher from synchronous HTTP tests."""
-    return asyncio.run(create_file_link_dispatch_execute(*args, **kwargs))
-
-
-def test_create_share_link_serves_file(tmp_path, monkeypatch):
-    _reset(tmp_path, monkeypatch)
-    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-
-    link = _create_file_link(
-        "hello.txt", ttl_s=60, filename="result.txt", max_downloads=2
+def _register_file(
+    source: Path,
+    *,
+    ttl_s: int = 60,
+    filename: str | None = None,
+    max_downloads: int | None = None,
+    inline: bool = False,
+    session_id: str | None = None,
+):
+    data = source.read_bytes()
+    staging = new_staging_path()
+    with open_private_staging(staging) as handle:
+        handle.write(data)
+    return _register_snapshot(
+        DownloadSnapshot(
+            staging_path=staging,
+            display_path=source.name,
+            source_name=source.name,
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        ),
+        ttl_s=ttl_s,
+        filename=filename,
+        max_downloads=max_downloads,
+        inline=inline,
+        session_id=session_id,
     )
 
-    assert link.url.startswith("https://files.example.test/download/")
-    app = Starlette(routes=download_routes())
-    response = TestClient(app).get(link.url)
 
+def _public_session(client: FastAPITestClient) -> str:
+    response = client.post("/tools/session_start", json={"workdir": "."})
+    assert response.status_code == 200
+    return str(response.json()["session_id"])
+
+
+def test_public_create_share_link_serves_executor_snapshot(
+    tmp_path, monkeypatch
+):
+    _reset(tmp_path, monkeypatch)
+    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
+    app, _harness = build_paired_http_app(get_settings())
+    client = FastAPITestClient(app)
+    session_id = _public_session(client)
+
+    created = client.post(
+        "/tools/file_link/create",
+        json={
+            "session_id": session_id,
+            "path": "hello.txt",
+            "ttl_s": 60,
+            "filename": "result.txt",
+            "max_downloads": 2,
+        },
+    )
+    assert created.status_code == 200
+    link = created.json()
+    assert link["url"].startswith("https://files.example.test/download/")
+
+    response = client.get(link["url"])
     assert response.status_code == 200
     assert response.text == "hello"
     assert "result.txt" in response.headers["content-disposition"]
 
 
-def test_share_link_expires_and_can_be_revoked(tmp_path, monkeypatch):
+def test_share_link_expiry_revocation_and_download_limit(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
-    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-
-    link = _create_file_link("hello.txt", ttl_s=1)
-    token = link.token
-    assert revoke_file_link_execute(token).revoked is True
-
-    app = Starlette(routes=download_routes())
-    assert TestClient(app).get(link.url).status_code == 404
-
-    link = _create_file_link("hello.txt", ttl_s=1)
-    time.sleep(1.05)
-    assert TestClient(app).get(link.url).status_code == 410
-
-
-def test_share_link_download_limit(tmp_path, monkeypatch):
-    _reset(tmp_path, monkeypatch)
-    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-    link = _create_file_link("hello.txt", ttl_s=60, max_downloads=1)
+    source = tmp_path / "hello.txt"
+    source.write_text("hello", encoding="utf-8")
     client = TestClient(Starlette(routes=download_routes()))
 
-    assert client.get(link.url).status_code == 200
-    assert client.get(link.url).status_code == 410
+    revoked = _register_file(source, ttl_s=60)
+    assert _revoke_file_link_owned(revoked.token).revoked is True
+    assert client.get(revoked.url).status_code == 404
+
+    expired = _register_file(source, ttl_s=1)
+    time.sleep(1.05)
+    assert client.get(expired.url).status_code == 410
+
+    once = _register_file(source, max_downloads=1)
+    assert client.get(once.url).status_code == 200
+    assert client.get(once.url).status_code == 410
 
 
-def test_share_link_can_be_disabled(tmp_path, monkeypatch):
+def test_file_links_are_shared_session_owned(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
-    monkeypatch.setenv("WORKGATE_FILE_DOWNLOAD_ENABLED", "false")
-    clear_settings_cache()
     (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
+    app, _harness = build_paired_http_app(get_settings())
+    client = FastAPITestClient(app)
+    first = _public_session(client)
+    second = _public_session(client)
 
-    with pytest.raises(PermissionError):
-        _create_file_link("hello.txt", ttl_s=60)
+    link = client.post(
+        "/tools/file_link/create",
+        json={"session_id": first, "path": "hello.txt"},
+    ).json()
 
+    first_links = client.get(
+        "/tools/file_link/list", params={"session_id": first}
+    ).json()["links"]
+    second_links = client.get(
+        "/tools/file_link/list", params={"session_id": second}
+    ).json()["links"]
+    assert [item["token"] for item in first_links] == [link["token"]]
+    assert second_links == []
 
-def test_file_links_are_session_owned(tmp_path, monkeypatch):
-    _reset(tmp_path, monkeypatch)
-    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-    store = get_tool_session_store()
-    store.clear()
-    first = store.create_session(workdir=".").session_id
-    second = store.create_session(workdir=".").session_id
-
-    link = _create_file_link("hello.txt", ttl_s=60, session_id=first)
-
-    assert [
-        item.token for item in list_file_links_execute(session_id=first).links
-    ] == [link.token]
-    assert list_file_links_execute(session_id=second).links == []
-    assert (
-        revoke_file_link_execute(link.token, session_id=second).revoked is False
+    wrong_owner = client.post(
+        "/tools/file_link/revoke",
+        json={"session_id": second, "token": link["token"]},
     )
-    assert (
-        revoke_file_link_execute(link.token, session_id=first).revoked is True
+    assert wrong_owner.status_code == 200
+    assert wrong_owner.json()["revoked"] is False
+    owner = client.post(
+        "/tools/file_link/revoke",
+        json={"session_id": first, "token": link["token"]},
     )
+    assert owner.status_code == 200
+    assert owner.json()["revoked"] is True
 
 
 @pytest.mark.asyncio
@@ -122,24 +163,22 @@ async def test_file_link_tools_are_registered(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
     clear_settings_cache()
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
-    names = set(tools)
 
-    assert {"create_file_link", "list_file_links", "revoke_file_link"} <= names
-
+    assert {"create_file_link", "list_file_links", "revoke_file_link"} <= set(
+        tools
+    )
     create_tool = tools["create_file_link"]
     list_tool = tools["list_file_links"]
     assert create_tool.outputSchema is not None
     assert list_tool.outputSchema is not None
     assert create_tool.outputSchema["title"] == "CreateFileLinkOutput"
     assert list_tool.outputSchema["title"] == "ListFileLinksOutput"
-    path_description = create_tool.inputSchema["properties"]["path"][
-        "description"
-    ]
-    assert "file" in path_description.lower()
-    assert "download" in path_description.lower()
+    description = create_tool.inputSchema["properties"]["path"]["description"]
+    assert "file" in description.lower()
+    assert "download" in description.lower()
     assert create_tool.inputSchema["properties"]["inline"]["default"] is False
-    assert "target" in create_tool.outputSchema["properties"]
     assert "url" in create_tool.outputSchema["properties"]
+    assert "target" not in create_tool.outputSchema["properties"]
 
 
 @pytest.mark.asyncio
@@ -148,7 +187,6 @@ async def test_file_link_tools_are_hidden_in_stdio(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "stdio")
     clear_settings_cache()
     names = {tool.name for tool in await build_mcp().list_tools()}
-
     assert {
         "create_file_link",
         "list_file_links",
@@ -158,52 +196,46 @@ async def test_file_link_tools_are_hidden_in_stdio(tmp_path, monkeypatch):
 
 def test_download_token_fingerprint_does_not_expose_token():
     token = "secret-download-token"
-
     fingerprint = _token_fingerprint(token)
-
     assert token not in fingerprint
     assert len(fingerprint) == 16
-    assert fingerprint == _token_fingerprint(token)
+    assert fingerprint == download_token_fingerprint(token)
 
 
 def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    clear_settings_cache()
     (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-
     app, _harness = build_paired_http_app(get_settings())
     client = FastAPITestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session_id = _public_session(client)
     link = client.post(
         "/tools/file_link/create",
-        json={"session_id": session["session_id"], "path": "hello.txt"},
+        json={"session_id": session_id, "path": "hello.txt"},
     ).json()
     token = link["token"]
-    assert token
     assert (
         client.post(
             "/tools/file_link/revoke",
-            json={"session_id": session["session_id"], "token": token},
+            json={"session_id": session_id, "token": token},
         ).status_code
         == 200
     )
 
     log_text = get_settings().audit_log_path.read_text(encoding="utf-8")
     records = [json.loads(line) for line in log_text.splitlines() if line]
-
+    fingerprint = download_token_fingerprint(token)
     assert token not in log_text
     assert link["url"] not in log_text
     assert "/download/<redacted>" in log_text
-    assert download_token_fingerprint(token) in log_text
+    assert fingerprint in log_text
     assert any(
         record.get("event") == "download_link_created"
-        and record.get("token_sha256") == download_token_fingerprint(token)
+        and record.get("token_sha256") == fingerprint
         for record in records
     )
     assert any(
         record.get("event") == "download_link_revoked"
-        and record.get("token_sha256") == download_token_fingerprint(token)
+        and record.get("token_sha256") == fingerprint
         for record in records
     )
 
@@ -212,20 +244,17 @@ def test_file_link_remains_available_after_executor_goes_offline(
     tmp_path, monkeypatch
 ):
     _reset(tmp_path, monkeypatch)
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    clear_settings_cache()
     source = tmp_path / "offline.txt"
     source.write_text("snapshot bytes", encoding="utf-8")
-
     app, harness = build_paired_http_app(get_settings())
     client = FastAPITestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
-    link_response = client.post(
+    session_id = _public_session(client)
+    response = client.post(
         "/tools/file_link/create",
-        json={"session_id": session["session_id"], "path": "offline.txt"},
+        json={"session_id": session_id, "path": "offline.txt"},
     )
-    assert link_response.status_code == 200
-    link = link_response.json()
+    assert response.status_code == 200
+    link = response.json()
 
     async def executor_offline(*args, **kwargs):
         raise RuntimeError("executor is offline")
@@ -234,170 +263,85 @@ def test_file_link_remains_available_after_executor_goes_offline(
         harness.control.executor_transport, "call", executor_offline
     )
     source.unlink()
-
-    response = client.get(link["url"])
-
-    assert response.status_code == 200
-    assert response.content == b"snapshot bytes"
+    download = client.get(link["url"])
+    assert download.status_code == 200
+    assert download.content == b"snapshot bytes"
 
 
-def test_file_link_serves_creation_time_snapshot(tmp_path, monkeypatch):
+def test_creation_time_snapshot_and_inline_headers(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
     source = tmp_path / "artifact.txt"
     source.write_text("original", encoding="utf-8")
-
-    link = _create_file_link("artifact.txt", ttl_s=60)
+    attachment = _register_file(source)
     source.write_text("changed after link creation", encoding="utf-8")
 
-    response = TestClient(Starlette(routes=download_routes())).get(link.url)
-
+    client = TestClient(Starlette(routes=download_routes()))
+    response = client.get(attachment.url)
     assert response.status_code == 200
     assert response.text == "original"
     assert response.headers["content-disposition"].startswith("attachment;")
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "content-security-policy" not in response.headers
-    assert link.inline is False
-    assert link.media_type == "text/plain"
-    assert link.target == "local"
-    assert link.machine is None
+    assert attachment.media_type == "text/plain"
 
-
-def test_inline_link_uses_sandbox_and_filename_mime_fallback(
-    tmp_path, monkeypatch
-):
-    _reset(tmp_path, monkeypatch)
     payload = b"\x89PNG\r\n\x1a\nmock-png"
-    (tmp_path / "rendered").write_bytes(payload)
-    link = _create_file_link(
-        "rendered",
-        ttl_s=60,
-        filename="plot.png",
-        inline=True,
-    )
-    client = TestClient(Starlette(routes=download_routes()))
-
-    head = client.head(link.url)
-    response = client.get(link.url)
-
+    rendered = tmp_path / "rendered"
+    rendered.write_bytes(payload)
+    inline = _register_file(rendered, filename="plot.png", inline=True)
+    head = client.head(inline.url)
+    shown = client.get(inline.url)
     assert head.status_code == 200
-    assert response.status_code == 200
-    assert response.content == payload
-    assert response.headers["content-type"] == "image/png"
-    assert response.headers["content-disposition"].startswith("inline;")
-    assert response.headers["content-security-policy"] == "sandbox"
-    assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["referrer-policy"] == "no-referrer"
-    assert link.inline is True
-    assert link.media_type == "image/png"
-    assert list_file_links_execute().links[0].downloads == 1
+    assert shown.content == payload
+    assert shown.headers["content-type"] == "image/png"
+    assert shown.headers["content-disposition"].startswith("inline;")
+    assert shown.headers["content-security-policy"] == "sandbox"
+    assert shown.headers["referrer-policy"] == "no-referrer"
+    assert _list_file_links_owned().links[0].downloads == 1
 
 
-def test_source_extension_takes_precedence_over_display_filename(
+def test_source_extension_precedes_display_filename_for_mime(
     tmp_path, monkeypatch
 ):
     _reset(tmp_path, monkeypatch)
-    (tmp_path / "notes.txt").write_text("text", encoding="utf-8")
-
-    link = _create_file_link(
-        "notes.txt", ttl_s=60, filename="pretend.png", inline=True
-    )
-
+    source = tmp_path / "notes.txt"
+    source.write_text("text", encoding="utf-8")
+    link = _register_file(source, filename="pretend.png", inline=True)
     assert link.media_type == "text/plain"
 
 
-def test_final_download_deletes_private_snapshot(tmp_path, monkeypatch):
+def test_final_download_deletes_snapshot_and_tampering_is_rejected(
+    tmp_path, monkeypatch
+):
     _reset(tmp_path, monkeypatch)
-    (tmp_path / "once.txt").write_text("once", encoding="utf-8")
-    link = _create_file_link("once.txt", ttl_s=60, max_downloads=1)
+    source = tmp_path / "once.txt"
+    source.write_text("once", encoding="utf-8")
+    once = _register_file(source, max_downloads=1)
     client = TestClient(Starlette(routes=download_routes()))
-
     assert len(list(snapshot_directory().glob("*.bin"))) == 1
-    assert client.get(link.url).text == "once"
+    assert client.get(once.url).text == "once"
     assert list(snapshot_directory().glob("*.bin")) == []
-    assert client.get(link.url).status_code == 410
+    assert client.get(once.url).status_code == 410
 
-
-def test_tampered_private_snapshot_is_rejected(tmp_path, monkeypatch):
-    _reset(tmp_path, monkeypatch)
-    (tmp_path / "stable.txt").write_text("stable", encoding="utf-8")
-    link = _create_file_link("stable.txt", ttl_s=60)
+    stable = tmp_path / "stable.txt"
+    stable.write_text("stable", encoding="utf-8")
+    link = _register_file(stable)
     snapshot = next(snapshot_directory().glob("*.bin"))
     snapshot.write_bytes(b"stolen")
-
-    response = TestClient(Starlette(routes=download_routes())).get(link.url)
-
-    assert response.status_code == 404
-    assert response.json()["error"] == "download_missing"
-    assert list_file_links_execute().links == []
-
-
-@pytest.mark.asyncio
-async def test_remote_file_link_streams_validated_snapshot(
-    tmp_path, monkeypatch
-):
-    _reset(tmp_path, monkeypatch)
-    payload = b"remote snapshot bytes"
-    digest = hashlib.sha256(payload).hexdigest()
-    store = get_tool_session_store()
-    store.clear()
-    remote = store.create_session(
-        target="remote",
-        workdir="/remote/project",
-        machine="worker-a",
-        worker_session_id="WORKER12",
-    )
-
-    async def fake_remote_call(session, tool, args):
-        assert session.session_id == remote.session_id
-        if tool == "transfer_stat":
-            return {
-                "path": "artifact.bin",
-                "type": "file",
-                "size": len(payload),
-                "modified": 0.0,
-                "sha256": digest,
-            }
-        assert tool == "transfer_read_chunk"
-        offset = int(args["offset"])
-        limit = int(args["chunk_size"])
-        data = payload[offset : offset + limit]
-        return {
-            "path": "artifact.bin",
-            "offset": offset,
-            "bytes": len(data),
-            "size": len(payload),
-            "eof": offset + len(data) >= len(payload),
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "data_b64": base64.b64encode(data).decode("ascii"),
-        }
-
-    monkeypatch.setattr(
-        "workgate.ops.utils.download_snapshot.call_remote_session_tool",
-        fake_remote_call,
-    )
-    link = await create_file_link_dispatch_execute(
-        "artifact.bin",
-        ttl_s=60,
-        session_id=remote.session_id,
-    )
-
-    response = TestClient(Starlette(routes=download_routes())).get(link.url)
-
-    assert response.status_code == 200
-    assert response.content == payload
-    assert link.target == "remote"
-    assert link.machine == "worker-a"
+    rejected = client.get(link.url)
+    assert rejected.status_code == 404
+    assert rejected.json()["error"] == "download_missing"
+    assert _list_file_links_owned().links == []
 
 
 def test_download_store_recovers_from_backup(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
-    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-    link = _create_file_link("hello.txt", ttl_s=60)
+    source = tmp_path / "hello.txt"
+    source.write_text("hello", encoding="utf-8")
+    link = _register_file(source)
     download_store_path = get_settings().state_dir / "downloads.json"
     download_store_path.write_text("{broken", encoding="utf-8")
 
-    recovered = list_file_links_execute()
-
+    recovered = _list_file_links_owned()
     assert [item.token for item in recovered.links] == [link.token]
     assert json.loads(download_store_path.read_text())["version"] == 2
     assert backup_path().exists()
@@ -407,29 +351,30 @@ def test_download_store_recovers_from_backup(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_invalid_remote_chunk_removes_staging_snapshot(
+async def test_invalid_executor_chunk_removes_staging_snapshot(
     tmp_path, monkeypatch
 ):
     _reset(tmp_path, monkeypatch)
-    payload = b"remote bytes"
-    store = get_tool_session_store()
-    store.clear()
-    remote = store.create_session(
-        target="remote",
-        workdir="/remote/project",
-        machine="worker-a",
-        worker_session_id="WORKER12",
+    payload = b"executor bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    _app, harness = build_paired_http_app(get_settings())
+    session = await harness.control.session_coordinator.start_session(
+        workdir="."
     )
+    assert isinstance(session, dict)
+    session_id = str(session["session_id"])
+    record = harness.control.control_state.snapshot_sessions()[session_id]
 
-    async def fake_remote_call(_session, tool, args):
-        if tool == "transfer_stat":
+    async def fake_call(_record, op: str, args: dict):
+        if op == "transfer_stat":
             return {
                 "path": "artifact.bin",
                 "type": "file",
                 "size": len(payload),
                 "modified": 0.0,
-                "sha256": hashlib.sha256(payload).hexdigest(),
+                "sha256": digest,
             }
+        assert op == "transfer_read_chunk"
         return {
             "path": "artifact.bin",
             "offset": int(args["offset"]),
@@ -440,16 +385,11 @@ async def test_invalid_remote_chunk_removes_staging_snapshot(
             "data_b64": base64.b64encode(payload).decode("ascii"),
         }
 
-    monkeypatch.setattr(
-        "workgate.ops.utils.download_snapshot.call_remote_session_tool",
-        fake_remote_call,
-    )
-
-    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
-        await create_file_link_dispatch_execute(
-            "artifact.bin", ttl_s=60, session_id=remote.session_id
+    monkeypatch.setattr(harness.control.download_service, "_call", fake_call)
+    with pytest.raises(RuntimeError, match="changed while creating snapshot"):
+        await harness.control.download_service._export_snapshot(
+            record, "artifact.bin"
         )
-
     assert list(snapshot_directory().iterdir()) == []
 
 
@@ -457,13 +397,9 @@ def test_download_filename_is_header_safe_and_rfc5987_encoded(
     tmp_path, monkeypatch
 ):
     _reset(tmp_path, monkeypatch)
-    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
-    link = _create_file_link(
-        "hello.txt",
-        ttl_s=60,
-        filename='报告 "final"\\name.txt',
-    )
-
+    source = tmp_path / "hello.txt"
+    source.write_text("hello", encoding="utf-8")
+    link = _register_file(source, filename='报告 "final"\\name.txt')
     response = TestClient(Starlette(routes=download_routes())).get(link.url)
     disposition = response.headers["content-disposition"]
 

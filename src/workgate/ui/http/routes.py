@@ -20,7 +20,6 @@ from starlette.routing import BaseRoute, Route, WebSocketRoute
 from ...config.settings import Settings, get_settings
 from ...oauth.core.scopes import default_scope
 from ...oauth.core.urls import issuer_url, resource_url
-from ...remote.manager import remote_manager
 from ...version import version_info
 from ..runtime import tui_runtime_available
 from ..security import UI_API_PREFIX
@@ -41,7 +40,6 @@ from .files import (
     api_files,
 )
 from .opentui import ui_opentui_websocket
-from .remotes import api_remote_action, api_remotes
 from .session import (
     api_ui_session_logout,
     api_ui_session_oauth,
@@ -82,7 +80,6 @@ def _ui_asset_revision() -> str:
         "web.js",
         "dashboard.js",
         "executors.js",
-        "remotes.js",
         "audit_view.js",
         "audit.js",
         "sessions.js",
@@ -201,35 +198,71 @@ async def ui_asset(request: Request) -> Response:
     )
 
 
-def _machine_rows(settings: Settings) -> dict[str, Any]:
-    """Return one normalized local/remote machine inventory for UI clients."""
-    rows: list[dict[str, Any]] = [
-        {
-            "name": "local",
-            "status": "online",
-            "workdir": str(settings.workspace_root),
-            "last_seen": time.time(),
-            "last_seen_age_s": 0.0,
-            "queue_depth": 0,
-            "capabilities": ["dashboard", "local", "terminals"],
-            "info": {
-                "target": "local",
-                "version": version_info().get("version"),
-            },
-        }
-    ]
-    if settings.remote_enabled:
-        remote = remote_manager().list_machines().model_dump(mode="json")
-        rows.extend(remote["machines"])
-    online = sum(row.get("status") == "online" for row in rows)
-    offline = len(rows) - online
+def _control_runtime(request: Request) -> Any:
+    runtime = getattr(request.app.state, "control_runtime", None)
+    if runtime is None:
+        raise RuntimeError("Human UI requires the control runtime")
+    return runtime
+
+
+async def _executor_targets(request: Request) -> dict[str, Any]:
+    """Return trusted executor targets used by Human UI machine-facing views."""
+    runtime = _control_runtime(request)
+    records = sorted(
+        (
+            record
+            for record in runtime.control_state.snapshot_executors().values()
+            if record.revoked_at is None
+        ),
+        key=lambda record: (record.name.casefold(), record.executor_id),
+    )
+    now = time.time()
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        inventory = await runtime.executor_transport.inventory(
+            record.executor_id
+        )
+        online = await runtime.executor_transport.is_online(record.executor_id)
+        last_seen = await runtime.executor_transport.last_seen_at(
+            record.executor_id
+        )
+        rows.append(
+            {
+                "executor_id": record.executor_id,
+                "name": record.name,
+                "status": "online" if online else "offline",
+                "workspace_root": (
+                    "" if inventory is None else inventory.workspace_root
+                ),
+                "last_seen_at": last_seen,
+                "last_seen_age_s": (
+                    None if last_seen is None else max(0.0, now - last_seen)
+                ),
+                "queue_depth": await runtime.executor_transport.pending_count(
+                    record.executor_id
+                ),
+                "capabilities": (
+                    [] if inventory is None else list(inventory.capabilities)
+                ),
+                "runtime": (
+                    None
+                    if inventory is None
+                    else inventory.runtime.model_dump(mode="json")
+                ),
+            }
+        )
+    online_count = sum(row["status"] == "online" for row in rows)
     return {
-        "machines": rows,
-        "counts": {"online": online, "offline": offline, "total": len(rows)},
+        "executor_targets": rows,
+        "executor_counts": {
+            "online": online_count,
+            "offline": len(rows) - online_count,
+            "total": len(rows),
+        },
     }
 
 
-async def api_bootstrap(request: Request) -> Response:  # noqa: ARG001
+async def api_bootstrap(request: Request) -> Response:
     """Return initial authenticated state for browser and native UI clients."""
     settings = get_settings()
     return _json_ok(
@@ -241,11 +274,8 @@ async def api_bootstrap(request: Request) -> Response:  # noqa: ARG001
                 "auth_mode": settings.auth_mode,
                 "features": {
                     "dashboard": True,
-                    "remote_dashboard": True,
-                    "machines": True,
-                    "remotes": True,
+                    "executors": True,
                     "terminals": True,
-                    "remote_terminals": True,
                     "terminal_websocket": True,
                     "files": True,
                     "file_preview": True,
@@ -257,24 +287,14 @@ async def api_bootstrap(request: Request) -> Response:  # noqa: ARG001
                     "file_copy": True,
                     "file_move": True,
                     "file_rename": True,
-                    "remote_files": True,
-                    "remote_file_editor": True,
                     "sessions": True,
-                    "remote_sessions": True,
                     "todos": True,
-                    "remote_todos": True,
                     "audit": True,
-                    "remote_audit": True,
                 },
             },
-            **_machine_rows(settings),
+            **await _executor_targets(request),
         }
     )
-
-
-async def api_machines(request: Request) -> Response:  # noqa: ARG001
-    """Return the current local and remote machine inventory."""
-    return _json_ok(_machine_rows(get_settings()))
 
 
 def human_ui_routes(
@@ -313,7 +333,6 @@ def human_ui_routes(
         WebSocketRoute(ui_path + "/ws/opentui", ui_opentui_websocket),
         Route(UI_API_PREFIX + "/bootstrap", api_bootstrap, methods=["GET"]),
         Route(UI_API_PREFIX + "/dashboard", api_dashboard, methods=["GET"]),
-        Route(UI_API_PREFIX + "/machines", api_machines, methods=["GET"]),
         Route(UI_API_PREFIX + "/sessions", api_sessions, methods=["GET"]),
         Route(
             UI_API_PREFIX + "/sessions/snapshot",
@@ -323,12 +342,6 @@ def human_ui_routes(
         Route(
             UI_API_PREFIX + "/sessions/{action}",
             api_session_action,
-            methods=["POST"],
-        ),
-        Route(UI_API_PREFIX + "/remotes", api_remotes, methods=["GET"]),
-        Route(
-            UI_API_PREFIX + "/remotes/{action}",
-            api_remote_action,
             methods=["POST"],
         ),
         Route(UI_API_PREFIX + "/files", api_files, methods=["GET"]),

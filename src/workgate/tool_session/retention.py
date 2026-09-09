@@ -5,7 +5,7 @@ from typing import Any
 
 from ..persistence import StateStore
 from ..utils.runtime_identity import managed_job_lease_state
-from .records import AgentSession, valid_session_id
+from .records import valid_session_id
 
 JOB_STORE_READ_MAX_BYTES = 64 * 1024 * 1024
 ACTIVE_JOB_STATUSES = {"starting", "running", "stopping", "retrying"}
@@ -129,48 +129,4 @@ def session_has_active_jobs(
     """Conservatively treat unreadable durable-job state as active ownership."""
     return (
         active_job_session_ids is None or session_id in active_job_session_ids
-    )
-
-
-def session_expired_by_policy(
-    session: AgentSession, now: float, retention_s: int
-) -> bool:
-    """Return expiry before persistent-resource and durable-job protection."""
-    return (session.expires_at is not None and session.expires_at <= now) or (
-        retention_s > 0 and session.updated_at < now - retention_s
-    )
-
-
-def expired_prune_eligible(
-    session: AgentSession,
-    now: float,
-    retention_s: int,
-    active_job_session_ids: set[str] | None,
-) -> bool:
-    """Return whether one freshly loaded session may be expiry-pruned."""
-    return (
-        session.target == "local"
-        and session_expired_by_policy(session, now, retention_s)
-        and not session.persistent_shell_ids
-        and not session_has_active_jobs(
-            session.session_id, active_job_session_ids
-        )
-    )
-
-
-def overflow_prune_eligible(
-    session: AgentSession,
-    now: float,
-    active_job_session_ids: set[str] | None,
-    *,
-    active_window_s: int,
-) -> bool:
-    """Return whether one freshly loaded session may be capacity-pruned."""
-    return (
-        session.target == "local"
-        and session.updated_at < now - active_window_s
-        and not session.persistent_shell_ids
-        and not session_has_active_jobs(
-            session.session_id, active_job_session_ids
-        )
     )

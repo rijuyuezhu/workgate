@@ -51,15 +51,15 @@ async def test_real_same_executor_large_session_copy(tmp_path: Path) -> None:
                 "chunk_size": 64 * 1024,
             },
         )
-        assert copied["transport"] == "same_worker"
+        assert copied["transport"] == "same_executor"
         assert copied["relation"]["route"] == "same_executor"
         assert copied["relation"]["same_executor"] is True
         assert copied["source"]["session_id"] == source["session_id"]
         assert copied["destination"]["session_id"] == destination["session_id"]
         assert copied["source"]["executor_id"] == executor.executor_id
         assert copied["destination"]["executor_id"] == executor.executor_id
-        assert copied["source"]["target"] is None
-        assert copied["destination"]["target"] is None
+        assert "target" not in copied["source"]
+        assert "target" not in copied["destination"]
         assert copied["bytes"] == len(payload)
         assert copied["sha256"] == hashlib.sha256(payload).hexdigest()
         assert copied["chunks"] > 1
@@ -80,7 +80,7 @@ async def test_real_same_executor_large_session_copy(tmp_path: Path) -> None:
                 "chunk_size": 64 * 1024,
             },
         )
-        assert directory_copy["transport"] == "same_worker"
+        assert directory_copy["transport"] == "same_executor"
         assert directory_copy["relation"]["route"] == "same_executor"
         assert directory_copy["chunks"] > 1
         assert (
@@ -123,7 +123,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "chunk_size": 64 * 1024,
             },
         )
-        assert copied["transport"] == "worker_rpc"
+        assert copied["transport"] == "executor_rpc"
         assert copied["relation"]["route"] == "different_executors"
         assert copied["relation"]["same_executor"] is False
         assert copied["source"]["executor_id"] == source_executor.executor_id
@@ -153,7 +153,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "chunk_size": 64 * 1024,
             },
         )
-        assert directory_copy["transport"] == "worker_rpc"
+        assert directory_copy["transport"] == "executor_rpc"
         assert directory_copy["relation"]["route"] == "different_executors"
         assert directory_copy["chunks"] > 1
         assert (

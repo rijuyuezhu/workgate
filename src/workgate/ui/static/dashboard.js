@@ -7,16 +7,16 @@ export function createDashboardController({
   onAuthenticationRequired,
 }) {
   const controllerState = {
-    machine: "local",
+    executorId: "",
     generation: 0,
     loading: false,
-    machineStates: new Map([["local", "online"]]),
+    executorStates: new Map(),
     history: [],
     timer: null,
   };
 
-  function dashboardMachineOnline(machine = controllerState.machine) {
-    return machine === "local" || controllerState.machineStates.get(machine) === "online";
+  function dashboardExecutorOnline(executorId = controllerState.executorId) {
+    return Boolean(executorId) && controllerState.executorStates.get(executorId) === "online";
   }
 
   function dashboardNumber(value) {
@@ -69,9 +69,9 @@ export function createDashboardController({
   }
 
   function setDashboardControls() {
-    const online = dashboardMachineOnline();
+    const online = dashboardExecutorOnline();
     elements.dashboardRefresh.disabled = controllerState.loading || !online;
-    elements.dashboardMachine.disabled = controllerState.loading;
+    elements.dashboardExecutor.disabled = controllerState.loading;
   }
 
   function stopDashboardPolling() {
@@ -84,7 +84,7 @@ export function createDashboardController({
   function startDashboardPolling() {
     stopDashboardPolling();
     controllerState.timer = window.setInterval(() => {
-      if ((authMode !== "oauth" || isAuthenticated()) && dashboardMachineOnline()) {
+      if ((authMode !== "oauth" || isAuthenticated()) && dashboardExecutorOnline()) {
         refreshDashboardInBackground();
       }
     }, 5000);
@@ -131,13 +131,13 @@ export function createDashboardController({
     element.parentElement?.classList.toggle("dashboard-resource-missing", number === null);
   }
 
-  function resetDashboardWorkspace(machine) {
-    controllerState.machine = machine || "local";
+  function resetDashboardExecutor(executorId = "") {
+    controllerState.executorId = executorId;
     controllerState.loading = false;
     controllerState.generation += 1;
     controllerState.history = [];
-    elements.dashboardMachine.value = controllerState.machine;
-    elements.dashboardState.textContent = `Not loaded · ${controllerState.machine}`;
+    elements.dashboardExecutor.value = controllerState.executorId;
+    elements.dashboardState.textContent = `Not loaded · ${controllerState.executorId}`;
     elements.dashboardHealth.textContent = "—";
     elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
     elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
@@ -174,63 +174,35 @@ export function createDashboardController({
       elements.dashboardDiskTrend,
       elements.dashboardNetworkTrend,
     ]) trend.replaceChildren();
-    dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.machine} are not loaded.`);
-    dashboardEmpty(elements.dashboardActivity, `Activity for ${controllerState.machine} is not loaded.`);
+    dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
+    dashboardEmpty(elements.dashboardActivity, `Activity for ${controllerState.executorId} is not loaded.`);
     setDashboardControls();
   }
 
-  function renderDashboardMachines(machines) {
-    const available = Array.isArray(machines) ? machines : [];
-    controllerState.machineStates = new Map([["local", "online"]]);
-    elements.dashboardMachine.replaceChildren();
-    let localPresent = false;
-    let currentPresent = false;
-    let currentOnline = controllerState.machine === "local";
-    for (const machine of available) {
-      const name = text(machine.name, "");
-      if (!name) continue;
-      if (name === "local") localPresent = true;
-      const state = name === "local" ? "online" : text(machine.status, "offline");
-      const online = name === "local" || state === "online";
-      controllerState.machineStates.set(name, state);
+  function renderDashboardExecutors(targets) {
+    const available = Array.isArray(targets) ? targets : [];
+    controllerState.executorStates = new Map();
+    elements.dashboardExecutor.replaceChildren();
+    for (const executor of available) {
+      const executorId = text(executor.executor_id, "");
+      if (!executorId) continue;
+      const state = text(executor.status, "offline");
+      controllerState.executorStates.set(executorId, state);
       const option = document.createElement("option");
-      option.value = name;
-      option.textContent = online ? name : `${name} (${state})`;
-      option.disabled = !online;
-      option.selected = name === controllerState.machine;
-      if (option.selected) {
-        currentPresent = true;
-        currentOnline = online;
-      }
-      elements.dashboardMachine.append(option);
+      option.value = executorId;
+      const label = text(executor.name, executorId);
+      option.textContent = state === "online" ? label : `${label} (${state})`;
+      option.disabled = state !== "online";
+      elements.dashboardExecutor.append(option);
     }
-    if (!localPresent) {
-      const local = document.createElement("option");
-      local.value = "local";
-      local.textContent = "local";
-      local.selected = controllerState.machine === "local";
-      elements.dashboardMachine.prepend(local);
-      if (local.selected) {
-        currentPresent = true;
-        currentOnline = true;
-      }
+    if (!dashboardExecutorOnline()) {
+      const firstOnline = available.find((item) => item.status === "online");
+      resetDashboardExecutor(firstOnline?.executor_id || "");
+      if (controllerState.executorId) refreshDashboardInBackground({ force: true });
+      return;
     }
-    if (!currentPresent && controllerState.machine !== "local") {
-      const stale = document.createElement("option");
-      stale.value = controllerState.machine;
-      stale.textContent = `${controllerState.machine} (unavailable)`;
-      stale.disabled = true;
-      stale.selected = true;
-      elements.dashboardMachine.append(stale);
-    }
-    if (!currentPresent || !currentOnline) {
-      const changed = controllerState.machine !== "local";
-      resetDashboardWorkspace("local");
-      if (changed) refreshDashboardInBackground({ force: true });
-    } else {
-      elements.dashboardMachine.value = controllerState.machine;
-      setDashboardControls();
-    }
+    elements.dashboardExecutor.value = controllerState.executorId;
+    setDashboardControls();
   }
 
   function dashboardListItem(kind, titleText, detailText, metaText = "") {
@@ -274,8 +246,8 @@ export function createDashboardController({
     elements.dashboardHealth.textContent = health;
     elements.dashboardHealthCard.className = `dashboard-card dashboard-health-card dashboard-health-${health}`;
     elements.dashboardHealthDetail.textContent = alerts.length
-      ? `${alerts.length} alert${alerts.length === 1 ? "" : "s"} on ${controllerState.machine}`
-      : `No active alerts on ${controllerState.machine}`;
+      ? `${alerts.length} alert${alerts.length === 1 ? "" : "s"} on ${controllerState.executorId}`
+      : `No active alerts on ${controllerState.executorId}`;
     elements.dashboardCpu.textContent = dashboardPercent(system.cpu_percent);
     elements.dashboardMemory.textContent = dashboardPercent(system.memory_percent);
     elements.dashboardDisk.textContent = dashboardPercent(system.disk_percent);
@@ -337,7 +309,7 @@ export function createDashboardController({
             text(alert.severity, "info"),
             text(alert.title, "Dashboard alert"),
             text(alert.detail, ""),
-            text(alert.node, controllerState.machine),
+            text(alert.node, controllerState.executorId),
           ),
         );
       }
@@ -361,33 +333,33 @@ export function createDashboardController({
       }
     }
     elements.dashboardSourceState.textContent = `system ${text(sources.system, "unknown")} · audit ${text(sources.audit, "unknown")}`;
-    elements.dashboardState.textContent = `${controllerState.machine} · ${health} · updated ${new Date().toLocaleTimeString()}`;
+    elements.dashboardState.textContent = `${controllerState.executorId} · ${health} · updated ${new Date().toLocaleTimeString()}`;
   }
 
   function dashboardQueryPath() {
-    const params = new URLSearchParams({ machine: controllerState.machine });
+    const params = new URLSearchParams({ executor_id: controllerState.executorId });
     return `/dashboard?${params.toString()}`;
   }
 
   async function refreshDashboard({ force = false } = {}) {
-    if ((controllerState.loading && !force) || !dashboardMachineOnline()) return null;
+    if ((controllerState.loading && !force) || !dashboardExecutorOnline()) return null;
     const generation = ++controllerState.generation;
-    const requestedMachine = controllerState.machine;
+    const requestedExecutor = controllerState.executorId;
     controllerState.loading = true;
     setDashboardControls();
-    elements.dashboardState.textContent = `Loading ${requestedMachine}`;
+    elements.dashboardState.textContent = `Loading ${requestedExecutor}`;
     try {
       const payload = await request(dashboardQueryPath());
-      if (generation !== controllerState.generation || requestedMachine !== controllerState.machine) return null;
+      if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
       renderDashboard(payload);
       return payload;
     } catch (error) {
       if (error.authenticationRequired) throw error;
-      if (generation !== controllerState.generation || requestedMachine !== controllerState.machine) return null;
+      if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
       elements.dashboardState.textContent = error instanceof Error ? error.message : String(error);
       elements.dashboardHealth.textContent = "unavailable";
       elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card dashboard-health-attention";
-      elements.dashboardHealthDetail.textContent = `Telemetry for ${requestedMachine} could not be loaded`;
+      elements.dashboardHealthDetail.textContent = `Telemetry for ${requestedExecutor} could not be loaded`;
       return null;
     } finally {
       if (generation === controllerState.generation) {
@@ -411,9 +383,9 @@ export function createDashboardController({
   }
 
   function bind() {
-    elements.dashboardMachine.addEventListener("change", () => {
+    elements.dashboardExecutor.addEventListener("change", () => {
       if (controllerState.loading) return;
-      resetDashboardWorkspace(elements.dashboardMachine.value || "local");
+      resetDashboardExecutor(elements.dashboardExecutor.value);
       refreshDashboardInBackground({ force: true });
     });
     elements.dashboardRefresh.addEventListener("click", () => {
@@ -425,8 +397,8 @@ export function createDashboardController({
     bind,
     invalidate,
     refresh: refreshDashboard,
-    renderMachines: renderDashboardMachines,
-    reset: resetDashboardWorkspace,
+    renderExecutors: renderDashboardExecutors,
+    reset: resetDashboardExecutor,
     startPolling: startDashboardPolling,
     stopPolling: stopDashboardPolling,
   };

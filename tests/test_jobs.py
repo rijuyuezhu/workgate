@@ -10,20 +10,23 @@ from typing import Any, cast
 import pytest
 
 from tests.helpers import python_shell_command
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.jobs import ExecutorJobService
 from workgate.jobs import lifecycle as job_lifecycle
 from workgate.jobs import managed as job_managed
 from workgate.jobs import persistence as job_persistence
+from workgate.jobs import recovery as job_recovery
 from workgate.jobs import runner as job_runner
 from workgate.jobs import runner_bootstrap
-from workgate.jobs import runtime as jobs_ops
 from workgate.jobs import shell as job_shell
 from workgate.jobs import state as job_state
+from workgate.protocol.ids import new_session_id
 from workgate.schemas.result_models.jobs import (
     JobInfo,
     JobListOutput,
-    JobOutput,
     JobRetryOutput,
+    JobStartOutput,
     JobStopOutput,
     JobTailOutput,
 )
@@ -33,7 +36,6 @@ from workgate.schemas.result_models.shell import (
     StartPersistentShellOutput,
 )
 from workgate.tool_session.store import get_tool_session_store
-from workgate.tools.ops import jobs as job_tool_ops
 
 pytestmark = pytest.mark.usefixtures("managed_jobs_runtime_owner")
 
@@ -59,7 +61,123 @@ def test_job_operation_cleanup_uses_one_authoritative_state_set():
 
 def _create_session(workdir: str = ".") -> str:
     store = get_tool_session_store()
-    return store.create_session(workdir=workdir).session_id
+    return store.create_session(
+        session_id=str(new_session_id()), workdir=workdir
+    ).session_id
+
+
+_TEST_JOB_DEPS = SimpleNamespace(get_store=get_tool_session_store)
+
+
+def _executor_job_dependencies():
+    return resolve_executor_config(get_settings()), _TEST_JOB_DEPS.get_store()
+
+
+def _test_refresh_job_status(
+    job: dict[str, Any],
+    active_shells: set[str] | None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        job_lifecycle._refresh_job_status(
+            job,
+            active_shells,
+            now,
+            managed_job_has_local_task=job_managed._managed_job_has_local_task,
+            managed_job_liveness=job_managed._managed_job_liveness,
+            read_status=job_lifecycle._read_status,
+            read_status_path=job_lifecycle._read_status_path,
+        ),
+    )
+
+
+def _has_shell_job(session_id: str) -> bool:
+    with job_shell._store_transaction() as store:
+        rows = store.get("jobs", [])
+        return any(
+            isinstance(row, dict)
+            and str(row.get("session_id") or "") == session_id
+            and str(row.get("kind") or "shell") != "managed"
+            for row in rows
+        )
+
+
+async def _test_job_start_execute(
+    session_id: str,
+    command: str,
+    cwd: str = ".",
+    name: str | None = None,
+) -> JobStartOutput:
+    async with job_shell.session_lifecycle_lock(session_id):
+        return await job_shell.start_shell_job_unlocked(
+            *_executor_job_dependencies(),
+            session_id,
+            command,
+            cwd=cwd,
+            name=name,
+        )
+
+
+async def _test_job_list_execute(
+    session_id: str, include_finished: bool = True
+) -> JobListOutput:
+    managed = await job_managed.managed_job_list_execute(
+        session_id, include_finished, touch_session=False
+    )
+    shell = JobListOutput(jobs=[], counts={})
+    if _has_shell_job(session_id):
+        async with job_shell.session_lifecycle_lock(session_id):
+            shell = await job_shell.list_shell_jobs_unlocked(
+                *_executor_job_dependencies(),
+                session_id,
+                include_finished=include_finished,
+            )
+    rows = [*shell.jobs, *managed.jobs]
+    rows.sort(key=lambda row: row.created_at, reverse=True)
+    counts = dict(shell.counts)
+    for status, count in managed.counts.items():
+        counts[status] = counts.get(status, 0) + count
+    return JobListOutput(jobs=rows, counts=counts)
+
+
+async def _test_job_tail_execute(
+    session_id: str, job_id: str, lines: int = 200
+) -> JobTailOutput:
+    if job_id in job_managed.managed_job_id_set(session_id, [job_id]):
+        return await job_managed.managed_job_tail_execute(
+            session_id, job_id, lines
+        )
+    async with job_shell.session_lifecycle_lock(session_id):
+        return await job_shell.tail_shell_job_unlocked(
+            *_executor_job_dependencies(), session_id, job_id, lines
+        )
+
+
+async def _test_job_stop_execute(session_id: str, job_id: str) -> JobStopOutput:
+    async with job_shell.session_lifecycle_lock(session_id):
+        if job_id in job_managed.managed_job_id_set(session_id, [job_id]):
+            return await job_managed.stop_managed_job_without_session_admission(
+                session_id, job_id
+            )
+        return await job_shell.stop_shell_job_unlocked(
+            *_executor_job_dependencies(), session_id, job_id
+        )
+
+
+async def _test_job_retry_execute(
+    session_id: str, job_id: str
+) -> JobRetryOutput:
+    async with job_shell.session_lifecycle_lock(session_id):
+        if job_id in job_managed.managed_job_id_set(session_id, [job_id]):
+            return (
+                await job_managed.retry_managed_job_without_session_admission(
+                    session_id, job_id
+                )
+            )
+        return await job_shell.retry_shell_job_unlocked(
+            *_executor_job_dependencies(), session_id, job_id
+        )
 
 
 def test_runner_command_quotes_powershell_arguments():
@@ -97,10 +215,14 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
         "log": tmp_path / "job.log",
         "status": tmp_path / "status.json",
     }
-    argv = job_lifecycle._runner_argv(paths, tmp_path)
+    argv = job_lifecycle._runner_argv(
+        resolve_executor_config(get_settings()), paths, tmp_path
+    )
     assert argv[:2] == [job_lifecycle.sys.executable, "job-runner"]
     monkeypatch.setattr(job_lifecycle.sys, "frozen", False, raising=False)
-    argv = job_lifecycle._runner_argv(paths, tmp_path)
+    argv = job_lifecycle._runner_argv(
+        resolve_executor_config(get_settings()), paths, tmp_path
+    )
     assert argv[0] == job_lifecycle.sys.executable
     assert Path(argv[1]).name == "runner_bootstrap.py"
     assert Path(argv[1]).is_absolute()
@@ -161,15 +283,18 @@ def _job_info(job_id: str = "job_1", session_id: str = "ABC12345") -> JobInfo:
 
 
 @pytest.mark.asyncio
-async def test_job_execute_dispatches_companion_actions(monkeypatch):
-    calls = []
+async def test_executor_job_execute_dispatches_companion_actions(monkeypatch):
+    calls: list[tuple[Any, ...]] = []
     job = _job_info()
+    service = ExecutorJobService(
+        resolve_executor_config(get_settings()), get_tool_session_store()
+    )
 
-    async def fake_list(session_id: str, include_finished=True):
+    async def fake_list(session_id: str, include_finished: bool = True):
         calls.append(("list", session_id, include_finished))
         return JobListOutput(jobs=[job], counts={"running": 1})
 
-    async def fake_tail(session_id: str, job_id: str, lines: int):
+    async def fake_tail(session_id: str, job_id: str, lines: int = 200):
         calls.append(("poll", session_id, job_id, lines))
         return JobTailOutput(job=job, output=f"{job_id}:{lines}")
 
@@ -183,56 +308,60 @@ async def test_job_execute_dispatches_companion_actions(monkeypatch):
         data.update(job_id=job_id, attempts=2)
         return JobRetryOutput.model_validate(data)
 
-    monkeypatch.setattr(jobs_ops, "job_list_execute", fake_list)
-    monkeypatch.setattr(jobs_ops, "job_tail_execute", fake_tail)
-    monkeypatch.setattr(jobs_ops, "job_stop_execute", fake_stop)
-    monkeypatch.setattr(jobs_ops, "job_retry_execute", fake_retry)
+    monkeypatch.setattr(service, "list", fake_list)
+    monkeypatch.setattr(service, "tail", fake_tail)
+    monkeypatch.setattr(service, "stop", fake_stop)
+    monkeypatch.setattr(service, "retry", fake_retry)
 
-    list_result = await job_tool_ops.job_execute(
-        "ABC12345", include_finished=False
+    listed = await service.execute(
+        {"session_id": "ABC12345", "include_finished": False}
     )
-    assert list_result.operation == "list"
-    assert list_result.jobs == [job]
-    assert list_result.counts == {"running": 1}
+    assert listed.operation == "list"
+    assert listed.jobs == [job]
+    assert listed.counts == {"running": 1}
     assert calls == [("list", "ABC12345", False)]
 
     calls.clear()
-    poll_result = await job_tool_ops.job_execute(
-        "ABC12345", poll=["job_1", "job_2"], lines=5
+    polled = await service.execute(
+        {"session_id": "ABC12345", "poll": ["job_1", "job_2"], "lines": 5}
     )
-    assert poll_result.operation == "poll"
-    assert [entry.output for entry in poll_result.outputs] == [
-        "job_1:5",
-        "job_2:5",
-    ]
+    assert [entry.output for entry in polled.outputs] == ["job_1:5", "job_2:5"]
     assert calls == [
         ("poll", "ABC12345", "job_1", 5),
         ("poll", "ABC12345", "job_2", 5),
     ]
 
     calls.clear()
-    cancel_result = await job_tool_ops.job_execute("ABC12345", cancel=["job_1"])
-    assert cancel_result.operation == "cancel"
-    assert cancel_result.cancelled[0].killed is True
+    cancelled = await service.execute(
+        {"session_id": "ABC12345", "cancel": ["job_1"]}
+    )
+    assert cancelled.cancelled[0].killed is True
     assert calls == [("cancel", "ABC12345", "job_1")]
 
     calls.clear()
-    retry_result = await job_tool_ops.job_execute("ABC12345", retry=["job_1"])
-    assert retry_result.operation == "retry"
-    assert retry_result.retried[0].attempts == 2
+    retried = await service.execute(
+        {"session_id": "ABC12345", "retry": ["job_1"]}
+    )
+    assert retried.retried[0].attempts == 2
     assert calls == [("retry", "ABC12345", "job_1")]
 
 
 @pytest.mark.asyncio
-async def test_job_execute_rejects_combined_actions():
+async def test_executor_job_execute_rejects_combined_actions():
+    service = ExecutorJobService(
+        resolve_executor_config(get_settings()), get_tool_session_store()
+    )
     with pytest.raises(ValueError, match="list_jobs cannot be combined"):
-        await job_tool_ops.job_execute(
-            "ABC12345", list_jobs=True, poll=["job_1"]
+        await service.execute(
+            {"session_id": "ABC12345", "list_jobs": True, "poll": ["job_1"]}
         )
-
     with pytest.raises(ValueError, match="mutually exclusive"):
-        await job_tool_ops.job_execute(
-            "ABC12345", poll=["job_1"], cancel=["job_2"]
+        await service.execute(
+            {
+                "session_id": "ABC12345",
+                "poll": ["job_1"],
+                "cancel": ["job_2"],
+            }
         )
 
 
@@ -249,6 +378,8 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
     session_counter = 0
 
     async def fake_start_shell(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -270,15 +401,15 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
             }
         )
 
-    async def fake_active_shell_ids():
+    async def fake_active_shell_ids(*_args):
         return set(active_sessions)
 
-    async def fake_read_shell(shell_id: str, lines: int):
+    async def fake_read_shell(_config, shell_id: str, lines: int):
         return ReadPersistentShellOutput(
             shell_id=shell_id, output=f"tail {shell_id}\n", lines=lines
         )
 
-    async def fake_kill_shell(shell_id: str):
+    async def fake_kill_shell(_config, _store, shell_id: str):
         active_sessions.discard(shell_id)
         return KillPersistentShellOutput(
             shell_id=shell_id, killed=True, stderr=""
@@ -288,7 +419,7 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
         job_shell, "start_persistent_shell_execute", fake_start_shell
     )
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         fake_active_shell_ids,
     )
@@ -298,13 +429,13 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
         fake_active_shell_ids,
     )
     monkeypatch.setattr(
-        jobs_ops, "read_persistent_shell_output_execute", fake_read_shell
+        job_shell, "read_persistent_shell_output_execute", fake_read_shell
     )
     monkeypatch.setattr(
         job_shell, "kill_persistent_shell_execute", fake_kill_shell
     )
 
-    started = await jobs_ops.job_start_execute(
+    started = await _test_job_start_execute(
         session_id, "python -m http.server", ".", "serve"
     )
 
@@ -315,29 +446,27 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
     assert started.attempts == 1
     assert started.kind == "shell"
 
-    listed = await jobs_ops.job_list_execute(session_id)
+    listed = await _test_job_list_execute(session_id)
     assert listed.counts == {"running": 1}
     assert listed.jobs[0].job_id == started.job_id
     assert listed.jobs[0].session_id == session_id
 
-    tailed = await jobs_ops.job_tail_execute(
-        session_id, started.job_id, lines=5
-    )
+    tailed = await _test_job_tail_execute(session_id, started.job_id, lines=5)
     assert tailed.output == "tail shell_1\n"
     assert tailed.job.status == "running"
     assert tailed.job.session_id == session_id
 
-    stopped = await jobs_ops.job_stop_execute(session_id, started.job_id)
+    stopped = await _test_job_stop_execute(session_id, started.job_id)
     assert stopped.killed is True
     assert stopped.job.status == "stopped"
 
-    running_only = await jobs_ops.job_list_execute(
+    running_only = await _test_job_list_execute(
         session_id, include_finished=False
     )
     assert running_only.jobs == []
     assert running_only.counts == {"stopped": 1}
 
-    retried = await jobs_ops.job_retry_execute(session_id, started.job_id)
+    retried = await _test_job_retry_execute(session_id, started.job_id)
     assert retried.status == "running"
     assert retried.attempts == 2
     assert retried.session_id == session_id
@@ -356,6 +485,8 @@ async def test_tracked_jobs_are_isolated_by_agent_session(
     second_session = _create_session()
 
     async def fake_start_shell(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -374,23 +505,23 @@ async def test_tracked_jobs_are_isolated_by_agent_session(
         job_shell, "start_persistent_shell_execute", fake_start_shell
     )
 
-    started = await jobs_ops.job_start_execute(
+    started = await _test_job_start_execute(
         first_session, "sleep 60", ".", "first-job"
     )
 
-    first_list = await jobs_ops.job_list_execute(first_session)
-    second_list = await jobs_ops.job_list_execute(second_session)
+    first_list = await _test_job_list_execute(first_session)
+    second_list = await _test_job_list_execute(second_session)
 
     assert [job.job_id for job in first_list.jobs] == [started.job_id]
     assert second_list.jobs == []
     assert second_list.counts == {}
 
     with pytest.raises(KeyError, match="job not found in session"):
-        await jobs_ops.job_tail_execute(second_session, started.job_id)
+        await _test_job_tail_execute(second_session, started.job_id)
     with pytest.raises(KeyError, match="job not found in session"):
-        await jobs_ops.job_stop_execute(second_session, started.job_id)
+        await _test_job_stop_execute(second_session, started.job_id)
     with pytest.raises(KeyError, match="job not found in session"):
-        await jobs_ops.job_retry_execute(second_session, started.job_id)
+        await _test_job_retry_execute(second_session, started.job_id)
 
 
 @pytest.mark.asyncio
@@ -405,6 +536,8 @@ async def test_tracked_job_is_lost_when_shell_disappears_without_status(
     session_id = _create_session()
 
     async def fake_start_shell(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -416,14 +549,14 @@ async def test_tracked_job_is_lost_when_shell_disappears_without_status(
             shell_id="missing-shell", name=name, cwd=cwd, command=command
         )
 
-    async def no_active_shell_ids():
+    async def no_active_shell_ids(*_args):
         return set()
 
     monkeypatch.setattr(
         job_shell, "start_persistent_shell_execute", fake_start_shell
     )
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         no_active_shell_ids,
     )
@@ -433,10 +566,8 @@ async def test_tracked_job_is_lost_when_shell_disappears_without_status(
         no_active_shell_ids,
     )
 
-    started = await jobs_ops.job_start_execute(
-        session_id, "echo done", ".", None
-    )
-    listed = await jobs_ops.job_list_execute(session_id)
+    started = await _test_job_start_execute(session_id, "echo done", ".", None)
+    listed = await _test_job_list_execute(session_id)
 
     assert listed.jobs[0].job_id == started.job_id
     assert listed.jobs[0].status == "lost"
@@ -544,7 +675,7 @@ async def test_terminal_job_output_remains_available_after_shell_exit(
     )
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": "job_done",
@@ -565,14 +696,10 @@ async def test_terminal_job_output_remains_available_after_shell_exit(
         }
     )
 
-    async def no_shells():
+    async def no_shells(*_args):
         return set()
 
-    monkeypatch.setattr(
-        jobs_ops, "authoritative_persistent_shell_ids_execute", no_shells
-    )
-
-    result = await jobs_ops.job_tail_execute(session_id, "job_done", lines=20)
+    result = await _test_job_tail_execute(session_id, "job_done", lines=20)
 
     assert result.job.status == "succeeded"
     assert result.job.exit_code == 0
@@ -603,7 +730,7 @@ def test_job_store_recovers_from_backup_and_migrates_v1(tmp_path, monkeypatch):
 
     store = _load_store_untyped()
 
-    assert store["version"] == jobs_ops.JOB_STORE_VERSION
+    assert store["version"] == job_persistence.JOB_STORE_VERSION
     assert store["jobs"][0]["job_id"] == "legacy"
 
 
@@ -628,7 +755,7 @@ def test_job_store_retention_keeps_active_and_newest_finished(
     for path in [*old_paths.values(), *new_paths.values()]:
         path.write_text("artifact", encoding="utf-8")
     store = {
-        "version": jobs_ops.JOB_STORE_VERSION,
+        "version": job_persistence.JOB_STORE_VERSION,
         "jobs": [
             {
                 "job_id": "active",
@@ -664,7 +791,7 @@ def test_job_store_retention_keeps_unconfirmed_lost_shell(
 ):
     _configure_job_state(tmp_path, monkeypatch, max_jobs=1)
     store = {
-        "version": jobs_ops.JOB_STORE_VERSION,
+        "version": job_persistence.JOB_STORE_VERSION,
         "jobs": [
             {
                 "job_id": "lost-live",
@@ -698,6 +825,8 @@ async def test_job_start_failure_is_persisted_as_failed(tmp_path, monkeypatch):
     session_id = _create_session()
 
     async def fail_start(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -710,7 +839,7 @@ async def test_job_start_failure_is_persisted_as_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(job_shell, "start_persistent_shell_execute", fail_start)
 
     with pytest.raises(RuntimeError, match="tmux unavailable"):
-        await jobs_ops.job_start_execute(session_id, "echo hello")
+        await _test_job_start_execute(session_id, "echo hello")
 
     rows = _load_store_untyped()["jobs"]
     assert len(rows) == 1
@@ -725,7 +854,7 @@ async def test_interrupted_start_recovers_active_shell(tmp_path, monkeypatch):
     session_id = _create_session()
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": "recover",
@@ -746,16 +875,16 @@ async def test_interrupted_start_recovers_active_shell(tmp_path, monkeypatch):
         }
     )
 
-    async def active_shell_ids():
+    async def active_shell_ids(*_args):
         return {"recover-shell"}
 
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         active_shell_ids,
     )
 
-    result = await jobs_ops.job_list_execute(session_id)
+    result = await _test_job_list_execute(session_id)
 
     assert result.jobs[0].status == "running"
     assert result.jobs[0].last_started_at is not None
@@ -770,7 +899,7 @@ async def test_job_retry_failure_is_persisted_and_clears_pending_state(
     session_id = _create_session()
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": "retry-failure",
@@ -789,10 +918,12 @@ async def test_job_retry_failure_is_persisted_and_clears_pending_state(
         }
     )
 
-    async def no_shells():
+    async def no_shells(*_args):
         return set()
 
     async def fail_start(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -808,7 +939,7 @@ async def test_job_retry_failure_is_persisted_and_clears_pending_state(
     monkeypatch.setattr(job_shell, "start_persistent_shell_execute", fail_start)
 
     with pytest.raises(RuntimeError, match="retry shell unavailable"):
-        await jobs_ops.job_retry_execute(session_id, "retry-failure")
+        await _test_job_retry_execute(session_id, "retry-failure")
 
     job = _load_store_untyped()["jobs"][0]
     assert job["status"] == "failed"
@@ -830,7 +961,7 @@ async def test_interrupted_retry_adopts_active_pending_attempt(
     paths = _attempt_paths_untyped("retry-recover", 2)
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": "retry-recover",
@@ -856,16 +987,16 @@ async def test_interrupted_retry_adopts_active_pending_attempt(
         }
     )
 
-    async def active_shell_ids():
+    async def active_shell_ids(*_args):
         return {"retry-shell"}
 
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         active_shell_ids,
     )
 
-    result = await jobs_ops.job_list_execute(session_id)
+    result = await _test_job_list_execute(session_id)
 
     recovered = result.jobs[0]
     assert recovered.status == "running"
@@ -885,7 +1016,7 @@ def test_concurrent_job_store_transactions_do_not_lose_records(
     _configure_job_state(tmp_path, monkeypatch, max_jobs=100)
 
     def append(index: int) -> None:
-        with jobs_ops._store_transaction() as store:
+        with job_recovery.store_transaction() as store:
             store["jobs"].append(
                 {
                     "job_id": f"job-{index}",
@@ -935,7 +1066,7 @@ async def test_job_start_does_not_launch_shell_for_invalid_store(
     monkeypatch.setattr(job_shell, "start_persistent_shell_execute", fake_start)
 
     with pytest.raises(RuntimeError, match="refusing to reset"):
-        await jobs_ops.job_start_execute(session_id, "echo must-not-run")
+        await _test_job_start_execute(session_id, "echo must-not-run")
 
     assert started is False
     runtime_dir = job_persistence.job_runtime_dir()
@@ -951,6 +1082,8 @@ async def test_job_start_kills_shell_when_running_state_cannot_be_committed(
     killed: list[str] = []
 
     async def corrupt_after_launch(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -967,7 +1100,7 @@ async def test_job_start_kills_shell_when_running_state_cannot_be_committed(
             shell_id="launched-shell", name=name, cwd=cwd, command=command
         )
 
-    async def fake_kill(shell_id: str):
+    async def fake_kill(_config, _store, shell_id: str):
         killed.append(shell_id)
         return KillPersistentShellOutput(
             shell_id=shell_id, killed=True, stderr=""
@@ -979,7 +1112,7 @@ async def test_job_start_kills_shell_when_running_state_cannot_be_committed(
     monkeypatch.setattr(job_shell, "kill_persistent_shell_execute", fake_kill)
 
     with pytest.raises(RuntimeError, match="refusing to reset"):
-        await jobs_ops.job_start_execute(session_id, "echo launched")
+        await _test_job_start_execute(session_id, "echo launched")
 
     assert killed == ["launched-shell"]
     assert not list(job_persistence.job_runtime_dir().iterdir())
@@ -993,9 +1126,6 @@ async def test_managed_job_tracks_progress_stop_retry_and_result(
     session_id = _create_session()
     release = asyncio.Event()
 
-    async def no_shells():
-        return set()
-
     async def handler(context, payload):
         await context.log(f"started {payload['value']}")
         await context.update_progress(phase="waiting", value=payload["value"])
@@ -1003,12 +1133,9 @@ async def test_managed_job_tracks_progress_stop_retry_and_result(
         await context.log("finished")
         return {"value": payload["value"]}
 
-    monkeypatch.setattr(
-        jobs_ops, "authoritative_persistent_shell_ids_execute", no_shells
-    )
-    jobs_ops.register_managed_job_handler("test-managed-lifecycle", handler)
+    job_managed.register_managed_job_handler("test-managed-lifecycle", handler)
 
-    started = await jobs_ops.start_managed_job(
+    started = await job_managed.start_managed_job(
         session_id,
         "test-managed-lifecycle",
         {"value": 7},
@@ -1021,18 +1148,18 @@ async def test_managed_job_tracks_progress_stop_retry_and_result(
     tailed = None
     for _ in range(100):
         await asyncio.sleep(0.01)
-        tailed = await jobs_ops.job_tail_execute(session_id, started.job_id)
+        tailed = await _test_job_tail_execute(session_id, started.job_id)
         if tailed.job.progress == {"phase": "waiting", "value": 7}:
             break
     assert tailed is not None
     assert "started 7" in tailed.output
     assert tailed.job.progress == {"phase": "waiting", "value": 7}
 
-    stopped = await jobs_ops.job_stop_execute(session_id, started.job_id)
+    stopped = await _test_job_stop_execute(session_id, started.job_id)
     assert stopped.killed is True
     assert stopped.job.status == "stopped"
 
-    retried = await jobs_ops.job_retry_execute(session_id, started.job_id)
+    retried = await _test_job_retry_execute(session_id, started.job_id)
     assert retried.kind == "managed"
     assert retried.status == "running"
     assert retried.attempts == 2
@@ -1041,7 +1168,7 @@ async def test_managed_job_tracks_progress_stop_retry_and_result(
     current = retried
     for _ in range(100):
         await asyncio.sleep(0.01)
-        current = (await jobs_ops.job_list_execute(session_id)).jobs[0]
+        current = (await _test_job_list_execute(session_id)).jobs[0]
         if current.status == "succeeded":
             break
     assert current.status == "succeeded"
@@ -1062,24 +1189,24 @@ async def test_managed_reference_stop_cancels_job_owned_by_source_session(
         entered.set()
         await asyncio.Event().wait()
 
-    jobs_ops.register_managed_job_handler("test-managed-reference", handler)
-    started = await jobs_ops.start_managed_job(
+    job_managed.register_managed_job_handler("test-managed-reference", handler)
+    started = await job_managed.start_managed_job(
         source_session_id,
         "test-managed-reference",
         {"dst_session_id": destination_session_id},
     )
     await entered.wait()
 
-    stopped = await jobs_ops.job_stop_managed_references_execute(
+    stopped = await job_managed.job_stop_managed_references_execute(
         destination_session_id,
         managed_kind="test-managed-reference",
         payload_key="dst_session_id",
     )
 
     assert stopped == [started.job_id]
-    current = (await jobs_ops.job_list_execute(source_session_id)).jobs[0]
+    current = (await _test_job_list_execute(source_session_id)).jobs[0]
     assert current.status == "stopped"
-    assert jobs_ops._job_lifecycle_session_ids(
+    assert job_managed.managed_job_referenced_session_ids(
         source_session_id, started.job_id
     ) == tuple(sorted((source_session_id, destination_session_id)))
 
@@ -1159,7 +1286,7 @@ async def test_managed_reference_stop_filters_unrelated_rows(monkeypatch):
         job_managed, "_stop_managed_job_without_session_admission", fake_stop
     )
 
-    assert await jobs_ops.job_stop_managed_references_execute(
+    assert await job_managed.job_stop_managed_references_execute(
         "DEST0001", managed_kind="copy", payload_key="dst_session_id"
     ) == ["job_target"]
     assert unrelated_shell["status"] == "running"
@@ -1193,16 +1320,23 @@ async def test_reconcile_shell_jobs_marks_only_missing_shells_terminal(
     def fake_transaction():
         yield store
 
-    async def fake_inventory():
+    async def fake_inventory(*_args):
         return {"live-shell"}
 
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
         job_shell, "authoritative_persistent_shell_ids_execute", fake_inventory
     )
-    monkeypatch.setattr(job_shell, "_prune_store", lambda _store: None)
+    monkeypatch.setattr(
+        job_shell, "_prune_store", lambda _store, **_kwargs: None
+    )
 
-    assert await jobs_ops.job_reconcile_shell_jobs_execute() is True
+    assert (
+        await job_shell.reconcile_shell_jobs_execute(
+            *_executor_job_dependencies()
+        )
+        is True
+    )
     assert stale["status"] == "lost"
     assert live["status"] == "running"
     assert managed["status"] == "running"
@@ -1238,7 +1372,7 @@ async def test_reconcile_shell_jobs_samples_inventory_under_owner_lock(
         finally:
             active_locks.remove(session_id)
 
-    async def fake_inventory():
+    async def fake_inventory(*_args):
         inventory_lock_states.append(tuple(active_locks))
         return {"pending-shell"} if active_locks else set()
 
@@ -1249,9 +1383,16 @@ async def test_reconcile_shell_jobs_samples_inventory_under_owner_lock(
     monkeypatch.setattr(
         job_shell, "authoritative_persistent_shell_ids_execute", fake_inventory
     )
-    monkeypatch.setattr(job_shell, "_prune_store", lambda _store: None)
+    monkeypatch.setattr(
+        job_shell, "_prune_store", lambda _store, **_kwargs: None
+    )
 
-    assert await jobs_ops.job_reconcile_shell_jobs_execute() is True
+    assert (
+        await job_shell.reconcile_shell_jobs_execute(
+            *_executor_job_dependencies()
+        )
+        is True
+    )
     assert held == ["SESSION1"]
     assert inventory_lock_states == [("SESSION1",), ()]
     assert row["status"] == "running"
@@ -1273,7 +1414,7 @@ async def test_reconcile_shell_jobs_is_conservative_without_inventory(
     def fake_transaction():
         yield store
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     monkeypatch.setattr(
@@ -1282,9 +1423,16 @@ async def test_reconcile_shell_jobs_is_conservative_without_inventory(
         uncertain_inventory,
     )
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
-    monkeypatch.setattr(job_shell, "_prune_store", lambda _store: None)
+    monkeypatch.setattr(
+        job_shell, "_prune_store", lambda _store, **_kwargs: None
+    )
 
-    assert await jobs_ops.job_reconcile_shell_jobs_execute() is False
+    assert (
+        await job_shell.reconcile_shell_jobs_execute(
+            *_executor_job_dependencies()
+        )
+        is False
+    )
     assert row["status"] == "running"
 
 
@@ -1304,7 +1452,7 @@ async def test_reconcile_shell_jobs_applies_durable_completion_without_inventory
     def fake_transaction():
         yield store
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     monkeypatch.setattr(
@@ -1313,7 +1461,9 @@ async def test_reconcile_shell_jobs_applies_durable_completion_without_inventory
         uncertain_inventory,
     )
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
-    monkeypatch.setattr(job_shell, "_prune_store", lambda _store: None)
+    monkeypatch.setattr(
+        job_shell, "_prune_store", lambda _store, **_kwargs: None
+    )
     monkeypatch.setattr(
         job_shell,
         "_read_status",
@@ -1326,7 +1476,12 @@ async def test_reconcile_shell_jobs_applies_durable_completion_without_inventory
         },
     )
 
-    assert await jobs_ops.job_reconcile_shell_jobs_execute() is False
+    assert (
+        await job_shell.reconcile_shell_jobs_execute(
+            *_executor_job_dependencies()
+        )
+        is False
+    )
     assert row["status"] == "succeeded"
     assert row["exit_code"] == 0
     assert row["completed_at"] == 5.0
@@ -1349,7 +1504,7 @@ async def test_stop_shell_job_keeps_lost_job_when_inventory_is_uncertain(
     def fake_transaction():
         yield store
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
@@ -1366,7 +1521,9 @@ async def test_stop_shell_job_keeps_lost_job_when_inventory_is_uncertain(
         ),
     )
 
-    result = await job_shell.stop_shell_job_unlocked("SESSION1", "lost-job")
+    result = await job_shell.stop_shell_job_unlocked(
+        *_executor_job_dependencies(), "SESSION1", "lost-job"
+    )
 
     assert result.killed is False
     assert result.job.status == "lost"
@@ -1389,7 +1546,7 @@ async def test_stop_shell_job_returns_terminal_job_without_killing(
     def fake_transaction():
         yield store
 
-    async def empty_inventory():
+    async def empty_inventory(*_args):
         return set()
 
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
@@ -1406,7 +1563,9 @@ async def test_stop_shell_job_returns_terminal_job_without_killing(
         ),
     )
 
-    result = await job_shell.stop_shell_job_unlocked("SESSION1", "failed-job")
+    result = await job_shell.stop_shell_job_unlocked(
+        *_executor_job_dependencies(), "SESSION1", "failed-job"
+    )
 
     assert result.killed is False
     assert result.job.status == "failed"
@@ -1429,7 +1588,7 @@ async def test_stop_shell_job_rejects_managed_row(monkeypatch):
     def fake_transaction():
         yield store
 
-    async def empty_inventory():
+    async def empty_inventory(*_args):
         return set()
 
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
@@ -1440,7 +1599,9 @@ async def test_stop_shell_job_rejects_managed_row(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="not shell-backed"):
-        await job_shell.stop_shell_job_unlocked("SESSION1", "managed-job")
+        await job_shell.stop_shell_job_unlocked(
+            *_executor_job_dependencies(), "SESSION1", "managed-job"
+        )
 
 
 @pytest.mark.asyncio
@@ -1473,7 +1634,7 @@ async def test_managed_reference_stop_rejects_unconfirmed_result(
     )
 
     with pytest.raises(RuntimeError, match=f"status='{status}'"):
-        await jobs_ops.job_stop_managed_references_execute(
+        await job_managed.job_stop_managed_references_execute(
             "DEST0001", managed_kind="copy", payload_key="dst_session_id"
         )
 
@@ -1525,25 +1686,29 @@ async def test_job_list_samples_inventory_under_owner_lock_only(
         finally:
             active_locks.remove(session_id)
 
-    async def fake_inventory():
+    async def fake_inventory(*_args):
         inventory_lock_states.append(tuple(active_locks))
         return {"requested-shell"} if active_locks else set()
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "session_lifecycle_lock", fake_lifecycle_lock)
-    monkeypatch.setattr(jobs_ops, "_store_transaction", fake_transaction)
-    monkeypatch.setattr(jobs_ops, "_prune_store", lambda _store: None)
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell, "session_lifecycle_lock", fake_lifecycle_lock
+    )
+    monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
+    monkeypatch.setattr(
+        job_shell, "_prune_store", lambda _store, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         fake_inventory,
     )
 
-    result = await jobs_ops.job_list_execute("SESSION1")
+    result = await _test_job_list_execute("SESSION1")
 
     assert inventory_lock_states == [("SESSION1",)]
     assert [job.job_id for job in result.jobs] == ["requested-job"]
@@ -1574,23 +1739,25 @@ async def test_job_list_preserves_running_state_when_inventory_is_uncertain(
     def fake_transaction():
         yield store
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "_store_transaction", fake_transaction)
-    monkeypatch.setattr(jobs_ops, "_prune_store", lambda _store: None)
+    monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell, "_prune_store", lambda _store, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         uncertain_inventory,
     )
 
-    result = await jobs_ops.job_list_execute("SESSION1")
+    result = await _test_job_list_execute("SESSION1")
 
     assert result.jobs[0].status == "running"
     assert row["status"] == "running"
@@ -1617,7 +1784,7 @@ async def test_job_list_applies_durable_completion_when_inventory_is_uncertain(
     )
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": "job_durable",
@@ -1637,16 +1804,16 @@ async def test_job_list_applies_durable_completion_when_inventory_is_uncertain(
         }
     )
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         uncertain_inventory,
     )
 
-    result = await jobs_ops.job_list_execute(session_id)
+    result = await _test_job_list_execute(session_id)
 
     assert result.jobs[0].status == "succeeded"
     assert result.jobs[0].exit_code == 0
@@ -1676,21 +1843,21 @@ async def test_job_stop_attempts_kill_when_inventory_is_uncertain(monkeypatch):
     def fake_transaction():
         yield store
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
-    async def fake_kill(shell_id: str):
+    async def fake_kill(_config, _store, shell_id: str):
         killed.append(shell_id)
         return SimpleNamespace(
             model_dump=lambda: {"killed": True, "stderr": ""}
         )
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "managed_job_id_set", lambda *_args: set())
+    monkeypatch.setattr(job_managed, "managed_job_id_set", lambda *_args: set())
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
         job_shell,
@@ -1699,7 +1866,7 @@ async def test_job_stop_attempts_kill_when_inventory_is_uncertain(monkeypatch):
     )
     monkeypatch.setattr(job_shell, "kill_persistent_shell_execute", fake_kill)
 
-    result = await jobs_ops.job_stop_execute("SESSION1", "job_one")
+    result = await _test_job_stop_execute("SESSION1", "job_one")
 
     assert result.killed is True
     assert result.job.status == "stopped"
@@ -1728,10 +1895,10 @@ async def test_job_stop_keeps_job_running_when_kill_is_unconfirmed(monkeypatch):
     def fake_transaction():
         yield store
 
-    async def inventory():
+    async def inventory(*_args):
         return next(inventories)
 
-    async def failed_kill(_shell_id: str):
+    async def failed_kill(_config, _store, _shell_id: str):
         return SimpleNamespace(
             model_dump=lambda: {
                 "killed": False,
@@ -1740,18 +1907,18 @@ async def test_job_stop_keeps_job_running_when_kill_is_unconfirmed(monkeypatch):
         )
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "managed_job_id_set", lambda *_args: set())
+    monkeypatch.setattr(job_managed, "managed_job_id_set", lambda *_args: set())
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
         job_shell, "authoritative_persistent_shell_ids_execute", inventory
     )
     monkeypatch.setattr(job_shell, "kill_persistent_shell_execute", failed_kill)
 
-    result = await jobs_ops.job_stop_execute("SESSION1", "job_one")
+    result = await _test_job_stop_execute("SESSION1", "job_one")
 
     assert result.killed is False
     assert result.job.status == "running"
@@ -1784,28 +1951,28 @@ async def test_job_stop_retries_lost_shell_when_inventory_confirms_it_live(
     def fake_transaction():
         yield store
 
-    async def inventory():
+    async def inventory(*_args):
         return {"shell_one"}
 
-    async def fake_kill(shell_id: str):
+    async def fake_kill(_config, _store, shell_id: str):
         killed.append(shell_id)
         return SimpleNamespace(
             model_dump=lambda: {"killed": True, "stderr": ""}
         )
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "managed_job_id_set", lambda *_args: set())
+    monkeypatch.setattr(job_managed, "managed_job_id_set", lambda *_args: set())
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
         job_shell, "authoritative_persistent_shell_ids_execute", inventory
     )
     monkeypatch.setattr(job_shell, "kill_persistent_shell_execute", fake_kill)
 
-    result = await jobs_ops.job_stop_execute("SESSION1", "job_one")
+    result = await _test_job_stop_execute("SESSION1", "job_one")
 
     assert result.killed is True
     assert result.job.status == "stopped"
@@ -1834,15 +2001,15 @@ async def test_job_stop_confirms_lost_shell_absent_without_kill(monkeypatch):
     def fake_transaction():
         yield store
 
-    async def inventory():
+    async def inventory(*_args):
         return set()
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "managed_job_id_set", lambda *_args: set())
+    monkeypatch.setattr(job_managed, "managed_job_id_set", lambda *_args: set())
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
         job_shell, "authoritative_persistent_shell_ids_execute", inventory
@@ -1853,7 +2020,7 @@ async def test_job_stop_confirms_lost_shell_absent_without_kill(monkeypatch):
         lambda *_args: pytest.fail("absent shell must not be killed"),
     )
 
-    result = await jobs_ops.job_stop_execute("SESSION1", "job_one")
+    result = await _test_job_stop_execute("SESSION1", "job_one")
 
     assert result.killed is False
     assert result.job.status == "stopped"
@@ -1880,13 +2047,15 @@ async def test_job_start_preserves_existing_jobs_when_inventory_is_uncertain(
         "attempts": 1,
     }
     job_persistence.save_store(
-        {"version": jobs_ops.JOB_STORE_VERSION, "jobs": [existing]}
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [existing]}
     )
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     async def fake_start_shell(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -1907,7 +2076,7 @@ async def test_job_start_preserves_existing_jobs_when_inventory_is_uncertain(
         job_shell, "start_persistent_shell_execute", fake_start_shell
     )
 
-    started = await jobs_ops.job_start_execute(session_id, "echo new")
+    started = await _test_job_start_execute(session_id, "echo new")
     rows = _load_store_untyped()["jobs"]
 
     assert started.status == "running"
@@ -1939,13 +2108,15 @@ async def test_job_start_does_not_refresh_other_owner_transitions(
         "attempts": 1,
     }
     job_persistence.save_store(
-        {"version": jobs_ops.JOB_STORE_VERSION, "jobs": [unrelated]}
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [unrelated]}
     )
 
-    async def empty_inventory():
+    async def empty_inventory(*_args):
         return set()
 
     async def fake_start_shell(
+        _config,
+        _store,
         cwd: str,
         name: str | None,
         command: str | None,
@@ -1966,7 +2137,7 @@ async def test_job_start_does_not_refresh_other_owner_transitions(
         job_shell, "start_persistent_shell_execute", fake_start_shell
     )
 
-    await jobs_ops.job_start_execute(session_id, "echo new")
+    await _test_job_start_execute(session_id, "echo new")
     rows = _load_store_untyped()["jobs"]
     unrelated_after = next(
         row for row in rows if row["job_id"] == "job_unrelated"
@@ -2007,26 +2178,32 @@ async def test_job_tail_samples_inventory_under_owner_lock(monkeypatch):
         finally:
             active_locks.remove(session_id)
 
-    async def live_inventory():
+    async def live_inventory(*_args):
         inventory_lock_states.append(tuple(active_locks))
         return {"shell_running"}
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "session_lifecycle_lock", fake_lifecycle_lock)
-    monkeypatch.setattr(jobs_ops, "managed_job_id_set", lambda *_args: set())
-    monkeypatch.setattr(jobs_ops, "_store_transaction", fake_transaction)
-    monkeypatch.setattr(jobs_ops, "_read_log_tail", lambda *_args: "ready")
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell, "session_lifecycle_lock", fake_lifecycle_lock
+    )
+    monkeypatch.setattr(job_managed, "managed_job_id_set", lambda *_args: set())
+    monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
+    monkeypatch.setattr(
+        job_shell.job_status,
+        "_read_log_tail",
+        lambda *_args, **_kwargs: "ready",
+    )
+    monkeypatch.setattr(
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         live_inventory,
     )
 
-    result = await jobs_ops.job_tail_execute("SESSION1", "job_running")
+    result = await _test_job_tail_execute("SESSION1", "job_running")
 
     assert inventory_lock_states == [("SESSION1",)]
     assert result.job.status == "running"
@@ -2063,21 +2240,23 @@ async def test_job_stop_samples_inventory_under_owner_lock(monkeypatch):
         finally:
             active_locks.remove(session_id)
 
-    async def live_inventory():
+    async def live_inventory(*_args):
         inventory_lock_states.append(tuple(active_locks))
         return {"shell_running"}
 
-    async def fake_kill(shell_id: str):
+    async def fake_kill(_config, _store, shell_id: str):
         assert active_locks == ["SESSION1"]
         return KillPersistentShellOutput(shell_id=shell_id, killed=True)
 
     monkeypatch.setattr(
-        jobs_ops,
-        "get_tool_session_store",
+        _TEST_JOB_DEPS,
+        "get_store",
         lambda: SimpleNamespace(touch_session=lambda _session_id: None),
     )
-    monkeypatch.setattr(jobs_ops, "session_lifecycle_lock", fake_lifecycle_lock)
-    monkeypatch.setattr(jobs_ops, "managed_job_id_set", lambda *_args: set())
+    monkeypatch.setattr(
+        job_shell, "session_lifecycle_lock", fake_lifecycle_lock
+    )
+    monkeypatch.setattr(job_managed, "managed_job_id_set", lambda *_args: set())
     monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
     monkeypatch.setattr(
         job_shell,
@@ -2087,7 +2266,7 @@ async def test_job_stop_samples_inventory_under_owner_lock(monkeypatch):
     monkeypatch.setattr(job_shell, "kill_persistent_shell_execute", fake_kill)
     monkeypatch.setattr(job_shell, "audit", lambda *_args, **_kwargs: None)
 
-    result = await jobs_ops.job_stop_execute("SESSION1", "job_running")
+    result = await _test_job_stop_execute("SESSION1", "job_running")
 
     assert inventory_lock_states == [("SESSION1",)]
     assert result.killed is True
@@ -2115,25 +2294,25 @@ async def test_job_tail_preserves_running_state_when_inventory_is_uncertain(
         "attempts": 1,
     }
     job_persistence.save_store(
-        {"version": jobs_ops.JOB_STORE_VERSION, "jobs": [row]}
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [row]}
     )
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
-    async def failed_tail(_shell_id: str, _lines: int):
+    async def failed_tail(_config, _shell_id: str, _lines: int):
         raise RuntimeError("temporary shell backend failure")
 
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         uncertain_inventory,
     )
     monkeypatch.setattr(
-        jobs_ops, "read_persistent_shell_output_execute", failed_tail
+        job_shell, "read_persistent_shell_output_execute", failed_tail
     )
 
-    result = await jobs_ops.job_tail_execute(session_id, "job_running")
+    result = await _test_job_tail_execute(session_id, "job_running")
 
     assert result.job.status == "running"
     assert _load_store_untyped()["jobs"][0]["status"] == "running"
@@ -2160,25 +2339,25 @@ async def test_job_tail_preserves_running_state_when_live_shell_capture_fails(
         "attempts": 1,
     }
     job_persistence.save_store(
-        {"version": jobs_ops.JOB_STORE_VERSION, "jobs": [row]}
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [row]}
     )
 
-    async def live_inventory():
+    async def live_inventory(*_args):
         return {"shell_running"}
 
-    async def failed_tail(_shell_id: str, _lines: int):
+    async def failed_tail(_config, _shell_id: str, _lines: int):
         raise RuntimeError("temporary shell backend failure")
 
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         live_inventory,
     )
     monkeypatch.setattr(
-        jobs_ops, "read_persistent_shell_output_execute", failed_tail
+        job_shell, "read_persistent_shell_output_execute", failed_tail
     )
 
-    result = await jobs_ops.job_tail_execute(session_id, "job_running")
+    result = await _test_job_tail_execute(session_id, "job_running")
     stored = _load_store_untyped()["jobs"][0]
 
     assert result.job.status == "running"
@@ -2208,25 +2387,25 @@ async def test_job_tail_marks_lost_only_after_authoritative_shell_absence(
         "attempts": 1,
     }
     job_persistence.save_store(
-        {"version": jobs_ops.JOB_STORE_VERSION, "jobs": [row]}
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [row]}
     )
 
-    async def absent_inventory():
+    async def absent_inventory(*_args):
         return set()
 
-    async def failed_tail(_shell_id: str, _lines: int):
+    async def failed_tail(_config, _shell_id: str, _lines: int):
         raise RuntimeError("shell disappeared")
 
     monkeypatch.setattr(
-        jobs_ops,
+        job_shell,
         "authoritative_persistent_shell_ids_execute",
         absent_inventory,
     )
     monkeypatch.setattr(
-        jobs_ops, "read_persistent_shell_output_execute", failed_tail
+        job_shell, "read_persistent_shell_output_execute", failed_tail
     )
 
-    result = await jobs_ops.job_tail_execute(session_id, "job_running")
+    result = await _test_job_tail_execute(session_id, "job_running")
     stored = _load_store_untyped()["jobs"][0]
 
     assert result.job.status == "lost"
@@ -2244,7 +2423,7 @@ def test_refresh_lost_shell_job_recovers_live_shell():
         "error": "capture failed",
     }
 
-    refreshed = jobs_ops._refresh_job_status(row, {"shell_live"}, now=3.0)
+    refreshed = _test_refresh_job_status(row, {"shell_live"}, now=3.0)
 
     assert refreshed["status"] == "running"
     assert refreshed["completed_at"] is None
@@ -2259,7 +2438,7 @@ def test_refresh_lost_shell_job_records_authoritative_absence():
         "shell_id": "shell_missing",
     }
 
-    refreshed = jobs_ops._refresh_job_status(row, set(), now=3.0)
+    refreshed = _test_refresh_job_status(row, set(), now=3.0)
 
     assert refreshed["status"] == "lost"
     assert refreshed["shell_absence_confirmed"] is True
@@ -2285,10 +2464,10 @@ async def test_job_retry_rejects_running_job_when_inventory_is_uncertain(
         "attempts": 1,
     }
     job_persistence.save_store(
-        {"version": jobs_ops.JOB_STORE_VERSION, "jobs": [row]}
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [row]}
     )
 
-    async def uncertain_inventory():
+    async def uncertain_inventory(*_args):
         return None
 
     monkeypatch.setattr(
@@ -2305,7 +2484,7 @@ async def test_job_retry_rejects_running_job_when_inventory_is_uncertain(
     )
 
     with pytest.raises(RuntimeError, match="job is still active"):
-        await jobs_ops.job_retry_execute(session_id, "job_running")
+        await _test_job_retry_execute(session_id, "job_running")
 
     assert _load_store_untyped()["jobs"][0]["status"] == "running"
 
@@ -2318,19 +2497,19 @@ def test_managed_job_validation_and_legacy_lost_recovery():
         return payload
 
     with pytest.raises(ValueError, match="must not be empty"):
-        jobs_ops.register_managed_job_handler("   ", first_handler)
-    jobs_ops.register_managed_job_handler(
+        job_managed.register_managed_job_handler("   ", first_handler)
+    job_managed.register_managed_job_handler(
         "test-managed-validation", first_handler
     )
-    jobs_ops.register_managed_job_handler(
+    job_managed.register_managed_job_handler(
         "test-managed-validation", first_handler
     )
     with pytest.raises(ValueError, match="already registered"):
-        jobs_ops.register_managed_job_handler(
+        job_managed.register_managed_job_handler(
             "test-managed-validation", second_handler
         )
 
-    running = jobs_ops._refresh_job_status(
+    running = _test_refresh_job_status(
         {
             "job_id": "job_managed_lost",
             "kind": "managed",
@@ -2343,7 +2522,7 @@ def test_managed_job_validation_and_legacy_lost_recovery():
     assert running["completed_at"] == 10.0
     assert "retry it" in running["error"]
 
-    stopping = jobs_ops._refresh_job_status(
+    stopping = _test_refresh_job_status(
         {
             "job_id": "job_managed_stopping",
             "kind": "managed",
@@ -2366,21 +2545,21 @@ async def test_legacy_managed_job_migrates_to_lost_and_can_retry(
     async def handler(_context, payload):
         return payload
 
-    jobs_ops.register_managed_job_handler("test-legacy-retry", handler)
-    started = await jobs_ops.start_managed_job(
+    job_managed.register_managed_job_handler("test-legacy-retry", handler)
+    started = await job_managed.start_managed_job(
         session_id, "test-legacy-retry", {"value": 7}
     )
     current = None
     for _ in range(100):
         await asyncio.sleep(0.01)
-        current = (await jobs_ops.job_list_execute(session_id)).jobs[0]
+        current = (await _test_job_list_execute(session_id)).jobs[0]
         if current.status == "succeeded":
             break
     assert current is not None
     assert current.status == "succeeded"
 
-    with jobs_ops._store_transaction() as store:
-        row = jobs_ops._find_session_job(store, session_id, started.job_id)
+    with job_recovery.store_transaction() as store:
+        row = job_state.find_session_job(store, session_id, started.job_id)
         row.update(
             {
                 "status": "running",
@@ -2391,16 +2570,16 @@ async def test_legacy_managed_job_migrates_to_lost_and_can_retry(
         )
         row.pop("managed_lease_version", None)
 
-    migrated = (await jobs_ops.job_list_execute(session_id)).jobs[0]
+    migrated = (await _test_job_list_execute(session_id)).jobs[0]
     assert migrated.status == "lost"
     assert "retry it" in str(migrated.error)
 
-    retried = await jobs_ops.job_retry_execute(session_id, started.job_id)
+    retried = await _test_job_retry_execute(session_id, started.job_id)
     assert retried.attempts == 2
     current = None
     for _ in range(100):
         await asyncio.sleep(0.01)
-        current = (await jobs_ops.job_list_execute(session_id)).jobs[0]
+        current = (await _test_job_list_execute(session_id)).jobs[0]
         if current.status == "succeeded":
             break
     assert current is not None
@@ -2483,129 +2662,37 @@ def test_launch_managed_job_releases_new_lease_when_task_creation_fails(
 
 
 @pytest.mark.asyncio
-async def test_remote_job_companion_merges_controller_managed_and_worker_jobs(
-    tmp_path, monkeypatch
-):
-    _configure_job_state(tmp_path, monkeypatch)
-    store = get_tool_session_store()
-    remote_session = store.create_session(
-        target="remote",
-        workdir="/remote/project",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-    )
-    release = asyncio.Event()
-    calls: list[dict] = []
-
-    async def no_shells():
-        return set()
-
-    async def handler(context, payload):
-        await context.update_progress(phase="waiting")
-        await release.wait()
-        return payload
-
-    remote_job = _job_info("job_remote", remote_session.session_id)
-
-    async def fake_remote_call(session, tool, args):
-        assert session.session_id == remote_session.session_id
-        assert tool == "job"
-        calls.append(args)
-        if args.get("list_jobs") or not any(
-            args.get(name) is not None for name in ("poll", "cancel", "retry")
-        ):
-            return JobOutput(
-                operation="list",
-                jobs=[remote_job],
-                counts={"running": 1},
-            ).model_dump(mode="json")
-        requested = args.get("poll") or []
-        return JobOutput(
-            operation="poll",
-            outputs=[
-                JobTailOutput(job=remote_job, output="remote output")
-                for item in requested
-                if item == remote_job.job_id
-            ],
-        ).model_dump(mode="json")
-
-    monkeypatch.setattr(
-        jobs_ops, "authoritative_persistent_shell_ids_execute", no_shells
-    )
-    monkeypatch.setattr(
-        job_tool_ops, "call_remote_session_tool", fake_remote_call
-    )
-    jobs_ops.register_managed_job_handler("test-remote-managed", handler)
-    managed = await jobs_ops.start_managed_job(
-        remote_session.session_id,
-        "test-remote-managed",
-        {"source": "controller"},
-    )
-
-    listed = await job_tool_ops.job_execute(remote_session.session_id)
-    assert [job.job_id for job in listed.jobs] == [
-        managed.job_id,
-        remote_job.job_id,
-    ]
-    assert listed.counts == {"running": 2}
-
-    polled = await job_tool_ops.job_execute(
-        remote_session.session_id,
-        poll=[managed.job_id, remote_job.job_id],
-        lines=7,
-    )
-    assert [row.job.job_id for row in polled.outputs] == [
-        managed.job_id,
-        remote_job.job_id,
-    ]
-    assert calls[-1]["poll"] == [remote_job.job_id]
-
-    before = len(calls)
-    cancelled = await job_tool_ops.job_execute(
-        remote_session.session_id, cancel=[managed.job_id]
-    )
-    assert cancelled.cancelled[0].job.status == "stopped"
-    assert len(calls) == before
-
-
-@pytest.mark.asyncio
 async def test_managed_job_failure_result_bounds_and_launch_rollback(
     tmp_path, monkeypatch
 ):
     _configure_job_state(tmp_path, monkeypatch)
     session_id = _create_session()
 
-    async def no_shells():
-        return set()
-
     async def failing_handler(context, payload):  # noqa: ARG001
         raise RuntimeError("managed failure")
 
     async def oversized_handler(context, payload):  # noqa: ARG001
-        return {"value": "x" * (jobs_ops._MANAGED_STATE_MAX_BYTES + 1)}
+        return {"value": "x" * (job_state.MANAGED_STATE_MAX_BYTES + 1)}
 
     async def oversized_progress_handler(context, payload):  # noqa: ARG001
         await context.update_progress(
-            value="x" * (jobs_ops._MANAGED_STATE_MAX_BYTES + 1)
+            value="x" * (job_state.MANAGED_STATE_MAX_BYTES + 1)
         )
         return payload
 
     async def idle_handler(context, payload):  # noqa: ARG001
         return payload
 
-    monkeypatch.setattr(
-        jobs_ops, "authoritative_persistent_shell_ids_execute", no_shells
-    )
-    jobs_ops.register_managed_job_handler(
+    job_managed.register_managed_job_handler(
         "test-managed-failure", failing_handler
     )
-    failed = await jobs_ops.start_managed_job(
+    failed = await job_managed.start_managed_job(
         session_id, "test-managed-failure", {}
     )
     current = failed
     for _ in range(100):
         await asyncio.sleep(0.01)
-        current = (await jobs_ops.job_list_execute(session_id)).jobs[0]
+        current = (await _test_job_list_execute(session_id)).jobs[0]
         if current.status == "failed":
             break
     assert current.status == "failed"
@@ -2613,19 +2700,19 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
     assert current.error == "RuntimeError: managed failure"
     assert (
         "managed failure"
-        in (await jobs_ops.job_tail_execute(session_id, failed.job_id)).output
+        in (await _test_job_tail_execute(session_id, failed.job_id)).output
     )
 
-    jobs_ops.register_managed_job_handler(
+    job_managed.register_managed_job_handler(
         "test-managed-oversized-result", oversized_handler
     )
-    oversized = await jobs_ops.start_managed_job(
+    oversized = await job_managed.start_managed_job(
         session_id, "test-managed-oversized-result", {}
     )
     oversized_row = oversized
     for _ in range(100):
         await asyncio.sleep(0.01)
-        rows = await jobs_ops.job_list_execute(session_id)
+        rows = await _test_job_list_execute(session_id)
         oversized_row = next(
             row for row in rows.jobs if row.job_id == oversized.job_id
         )
@@ -2634,16 +2721,16 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
     assert oversized_row.status == "failed"
     assert "managed job result exceeds" in str(oversized_row.error)
 
-    jobs_ops.register_managed_job_handler(
+    job_managed.register_managed_job_handler(
         "test-managed-oversized-progress", oversized_progress_handler
     )
-    progress_job = await jobs_ops.start_managed_job(
+    progress_job = await job_managed.start_managed_job(
         session_id, "test-managed-oversized-progress", {}
     )
     progress_row = progress_job
     for _ in range(100):
         await asyncio.sleep(0.01)
-        rows = await jobs_ops.job_list_execute(session_id)
+        rows = await _test_job_list_execute(session_id)
         progress_row = next(
             row for row in rows.jobs if row.job_id == progress_job.job_id
         )
@@ -2652,16 +2739,16 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
     assert progress_row.status == "failed"
     assert "managed job progress exceeds" in str(progress_row.error)
 
-    jobs_ops.register_managed_job_handler(
+    job_managed.register_managed_job_handler(
         "test-managed-payload-bound", idle_handler
     )
     with pytest.raises(ValueError, match="managed job payload exceeds"):
-        await jobs_ops.start_managed_job(
+        await job_managed.start_managed_job(
             session_id,
             "test-managed-payload-bound",
-            {"value": "x" * (jobs_ops._MANAGED_STATE_MAX_BYTES + 1)},
+            {"value": "x" * (job_state.MANAGED_STATE_MAX_BYTES + 1)},
         )
-    jobs_ops.register_managed_job_handler(
+    job_managed.register_managed_job_handler(
         "test-managed-launch-failure", idle_handler
     )
 
@@ -2670,14 +2757,14 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
 
     monkeypatch.setattr(job_managed, "_launch_managed_job", fail_launch)
     before = {
-        row.job_id for row in (await jobs_ops.job_list_execute(session_id)).jobs
+        row.job_id for row in (await _test_job_list_execute(session_id)).jobs
     }
     with pytest.raises(RuntimeError, match="launch failed"):
-        await jobs_ops.start_managed_job(
+        await job_managed.start_managed_job(
             session_id, "test-managed-launch-failure", {}
         )
     after = {
-        row.job_id for row in (await jobs_ops.job_list_execute(session_id)).jobs
+        row.job_id for row in (await _test_job_list_execute(session_id)).jobs
     }
     assert after == before
     runtime_files = {
@@ -2689,49 +2776,6 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
         f"{oversized.job_id}-attempt-1.log",
         f"{progress_job.job_id}-attempt-1.log",
     }
-
-
-@pytest.mark.asyncio
-async def test_remote_job_list_keeps_controller_jobs_when_worker_is_offline(
-    tmp_path, monkeypatch
-):
-    _configure_job_state(tmp_path, monkeypatch)
-    store = get_tool_session_store()
-    remote_session = store.create_session(
-        target="remote",
-        workdir="/remote/project",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-    )
-    release = asyncio.Event()
-
-    async def handler(context, payload):
-        await context.update_progress(phase="waiting")
-        await release.wait()
-        return payload
-
-    async def offline(*args, **kwargs):  # noqa: ARG001
-        raise RuntimeError("worker offline")
-
-    jobs_ops.register_managed_job_handler("test-offline-managed", handler)
-    managed = await jobs_ops.start_managed_job(
-        remote_session.session_id, "test-offline-managed", {"value": 1}
-    )
-    monkeypatch.setattr(job_tool_ops, "call_remote_session_tool", offline)
-
-    listed = await job_tool_ops.job_execute(remote_session.session_id)
-    assert [row.job_id for row in listed.jobs] == [managed.job_id]
-    assert listed.counts == {"running": 1}
-    assert listed.message is not None and "worker offline" in listed.message
-
-    polled = await job_tool_ops.job_execute(
-        remote_session.session_id, poll=[managed.job_id]
-    )
-    assert polled.outputs[0].job.job_id == managed.job_id
-    cancelled = await job_tool_ops.job_execute(
-        remote_session.session_id, cancel=[managed.job_id]
-    )
-    assert cancelled.cancelled[0].job.status == "stopped"
 
 
 @pytest.mark.asyncio
@@ -2747,40 +2791,40 @@ async def test_managed_actions_do_not_query_shell_inventory(
         await release.wait()
         return payload
 
-    jobs_ops.register_managed_job_handler("test-no-shell-inventory", handler)
-    started = await jobs_ops.start_managed_job(
+    job_managed.register_managed_job_handler("test-no-shell-inventory", handler)
+    started = await job_managed.start_managed_job(
         session_id,
         "test-no-shell-inventory",
         {"value": 9},
     )
 
-    async def fail_inventory():
+    async def fail_inventory(*_args):
         raise AssertionError("managed action queried shell inventory")
 
     monkeypatch.setattr(
-        jobs_ops, "authoritative_persistent_shell_ids_execute", fail_inventory
+        job_shell, "authoritative_persistent_shell_ids_execute", fail_inventory
     )
 
-    tailed = await jobs_ops.job_tail_execute(session_id, started.job_id)
+    tailed = await _test_job_tail_execute(session_id, started.job_id)
     for _ in range(100):
         if tailed.job.progress == {"phase": "waiting"}:
             break
         await asyncio.sleep(0.01)
-        tailed = await jobs_ops.job_tail_execute(session_id, started.job_id)
+        tailed = await _test_job_tail_execute(session_id, started.job_id)
     assert tailed.job.progress == {"phase": "waiting"}
 
-    stopped = await jobs_ops.job_stop_execute(session_id, started.job_id)
+    stopped = await _test_job_stop_execute(session_id, started.job_id)
     assert stopped.job.status == "stopped"
 
-    retried = await jobs_ops.job_retry_execute(session_id, started.job_id)
+    retried = await _test_job_retry_execute(session_id, started.job_id)
     assert retried.status == "running"
     release.set()
 
-    completed = await jobs_ops.job_tail_execute(session_id, started.job_id)
+    completed = await _test_job_tail_execute(session_id, started.job_id)
     for _ in range(100):
         if completed.job.status == "succeeded":
             break
         await asyncio.sleep(0.01)
-        completed = await jobs_ops.job_tail_execute(session_id, started.job_id)
+        completed = await _test_job_tail_execute(session_id, started.job_id)
     assert completed.job.status == "succeeded"
     assert completed.job.result == {"value": 9}

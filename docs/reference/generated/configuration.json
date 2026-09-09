@@ -697,7 +697,7 @@
           {
             "code": "60"
           },
-          "Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded cleanup time beyond run_shell_max_timeout_s."
+          "Base control-owned MCP/HTTP tool watchdog timeout in seconds."
         ],
         [
           {
@@ -2508,7 +2508,7 @@
       "cli": "--tool-timeout-s",
       "default": 60,
       "default_display": "60",
-      "description": "Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded cleanup time beyond run_shell_max_timeout_s.",
+      "description": "Base control-owned MCP/HTTP tool watchdog timeout in seconds.",
       "env": "WORKGATE_TOOL_TIMEOUT_S",
       "name": "tool_timeout_s",
       "nullable": false,

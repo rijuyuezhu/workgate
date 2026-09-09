@@ -11,7 +11,8 @@ from workgate.config.settings import clear_settings_cache
 from workgate.jobs import managed as jobs_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as jobs_recovery
-from workgate.jobs import runtime as jobs_ops
+from workgate.jobs import state as job_state
+from workgate.protocol.ids import new_session_id
 from workgate.tool_session.store import get_tool_session_store
 from workgate.utils import private_files
 
@@ -24,7 +25,9 @@ def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    return store.create_session(workdir=".").session_id
+    return store.create_session(
+        session_id=str(new_session_id()), workdir="."
+    ).session_id
 
 
 def _seed_managed_job(
@@ -39,7 +42,7 @@ def _seed_managed_job(
     now = time.time()
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": job_id,
@@ -74,7 +77,7 @@ def _seed_managed_job(
 
 def _stored_job(session_id: str, job_id: str) -> dict[str, object]:
     store = job_persistence.load_store()
-    return jobs_ops._find_session_job(store, session_id, job_id)
+    return dict(job_state.find_session_job(store, session_id, job_id))
 
 
 def test_private_file_lock_retries_and_times_out(
@@ -308,7 +311,6 @@ def test_managed_updates_defer_in_order_and_replay_once(
             (path.stat().st_mode & 0o077) == 0 for path in deferred_paths
         )
 
-    monkeypatch.setattr(jobs_ops, "_store_transaction", original_transaction)
     original_remove = jobs_recovery.remove_managed_deferred_updates
     monkeypatch.setattr(
         jobs_recovery, "remove_managed_deferred_updates", lambda _paths: None
@@ -453,8 +455,8 @@ async def test_managed_stop_reconciles_deferred_cancellation_updates(
         started_handler.set()
         await __import__("asyncio").Event().wait()
 
-    jobs_ops.register_managed_job_handler("test-deferred-stop", handler)
-    started = await jobs_ops.start_managed_job(
+    jobs_managed.register_managed_job_handler("test-deferred-stop", handler)
+    started = await jobs_managed.start_managed_job(
         session_id,
         "test-deferred-stop",
         {},
@@ -477,7 +479,9 @@ async def test_managed_stop_reconciles_deferred_cancellation_updates(
         )
 
     monkeypatch.setattr(jobs_managed, "_managed_store_update", defer_update)
-    stopped = await jobs_ops.job_stop_execute(session_id, started.job_id)
+    stopped = await jobs_managed.stop_managed_job_without_session_admission(
+        session_id, started.job_id
+    )
 
     assert stopped.job.status == "stopped"
     assert stopped.job.error is None

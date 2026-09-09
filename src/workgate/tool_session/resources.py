@@ -14,12 +14,6 @@ def normalize_shell_id(shell_id: str) -> str:
     return normalized
 
 
-def require_local_session(session: AgentSession) -> None:
-    """Reject persistent resources attached to a remote session."""
-    if session.target != "local":
-        raise ValueError("persistent shells require a local session")
-
-
 def bind_shell(
     session: AgentSession,
     shell_id: str,
@@ -27,7 +21,6 @@ def bind_shell(
     updated_at: float,
 ) -> AgentSession:
     """Bind one shell id while preserving insertion order and refreshing activity."""
-    require_local_session(session)
     normalized = normalize_shell_id(shell_id)
     return replace(
         session,
@@ -63,7 +56,6 @@ def reserve_shell(
     updated_at: float,
 ) -> tuple[AgentSession, bool]:
     """Reserve one shell id and report whether the durable row changed."""
-    require_local_session(session)
     normalized = normalize_shell_id(shell_id)
     if normalized in session.persistent_shell_ids:
         return session, False
@@ -93,8 +85,7 @@ def release_shell(session: AgentSession, shell_id: str) -> AgentSession:
 def replace_shells(
     session: AgentSession, owned_shell_ids: set[str]
 ) -> AgentSession:
-    """Replace one local session's ownership with an authoritative shell set."""
-    require_local_session(session)
+    """Replace one session's ownership with an authoritative shell set."""
     normalized = tuple(
         sorted(
             {

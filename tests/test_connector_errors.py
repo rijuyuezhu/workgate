@@ -4,7 +4,7 @@ import pytest
 
 from tests.helpers import build_paired_mcp, mcp_structured
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.remote_worker.dispatch import WorkerDispatcher
+from workgate.executor.dispatch import ExecutorDispatcher
 
 
 def _override_connector_handlers(harness, search, fetch) -> None:
@@ -18,7 +18,7 @@ def _override_connector_handlers(harness, search, fetch) -> None:
 
     handlers["workspace_search"] = search_handler
     handlers["fetch"] = fetch_handler
-    harness.executor.dispatcher = WorkerDispatcher(handlers)
+    harness.executor.dispatcher = ExecutorDispatcher(handlers)
 
 
 @pytest.mark.asyncio

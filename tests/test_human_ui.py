@@ -13,9 +13,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-import workgate.ui.http.routes as human_ui_module
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
+from workgate.control.state import ExecutorTrustRecord
 from workgate.oauth.core.scopes import default_scope
 from workgate.oauth.core.state import (
     OAuthState,
@@ -26,6 +26,11 @@ from workgate.oauth.protocol.token_codec import (
     issue_access_token,
     validate_bearer_token,
 )
+from workgate.protocol.credentials import (
+    executor_credential_verifier,
+    new_executor_credential,
+)
+from workgate.protocol.ids import new_executor_id
 from workgate.ui.security import (
     UI_LOCAL_TOKEN_HEADER,
     get_or_create_ui_local_token,
@@ -103,20 +108,16 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'data-view="audit"' in index.text
     assert 'data-app-view="overview"' in index.text
     assert 'id="dashboard-panel"' in index.text
-    assert 'id="dashboard-machine"' in index.text
+    assert 'id="dashboard-executor"' in index.text
     assert 'id="dashboard-cpu-trend"' in index.text
     assert 'id="dashboard-alerts"' in index.text
     assert 'id="dashboard-activity"' in index.text
     assert 'id="executors-panel"' in index.text
+    assert 'id="executor-list"' in index.text
     assert 'id="executor-pair-dialog"' in index.text
     assert 'id="executor-rename-dialog"' in index.text
     assert 'id="executor-revoke-dialog"' in index.text
-    assert 'id="remotes-panel"' in index.text
-    assert 'id="remote-reconnect-copy"' in index.text
-    assert 'id="remote-detail-reconnect"' in index.text
-    assert 'id="remote-rename-dialog"' in index.text
-    assert 'id="remote-revoke-dialog"' in index.text
-    assert 'id="terminal-machine"' in index.text
+    assert 'id="terminal-executor"' in index.text
     assert 'id="terminal-xterm"' in index.text
     assert 'id="terminal-latest"' in index.text
     assert 'id="terminal-keyboard"' in index.text
@@ -129,7 +130,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="opentui-panel"' in index.text
     assert 'id="opentui-terminal"' in index.text
     assert 'id="file-panel"' in index.text
-    assert 'id="file-machine"' in index.text
+    assert 'id="file-executor"' in index.text
     assert 'id="file-editor-form"' in index.text
     assert 'id="file-copy"' in index.text
     assert 'id="file-move"' in index.text
@@ -188,7 +189,6 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "await Promise.all([" in script.text
     assert 'import(assetUrl("dashboard.js"))' in script.text
     assert 'import(assetUrl("executors.js"))' in script.text
-    assert 'import(assetUrl("remotes.js"))' in script.text
     assert 'import(assetUrl("audit_view.js"))' in script.text
     assert 'import(assetUrl("audit.js"))' in script.text
     assert 'import(assetUrl("sessions.js"))' in script.text
@@ -203,10 +203,6 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert executors_script.status_code == 200
     assert executors_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createExecutorsController" in executors_script.text
-    remotes_script = client.get("/ui/assets/remotes.js")
-    assert remotes_script.status_code == 200
-    assert remotes_script.headers["x-content-type-options"] == "nosniff"
-    assert "export function createRemotesController" in remotes_script.text
     audit_view_script = client.get("/ui/assets/audit_view.js")
     assert audit_view_script.status_code == 200
     assert audit_view_script.headers["x-content-type-options"] == "nosniff"
@@ -241,16 +237,13 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "payload.message || payload.detail" in script.text
     assert "controllerState.generation" in dashboard_script.text
     assert (
-        "requestedMachine !== controllerState.machine" in dashboard_script.text
+        "requestedExecutor !== controllerState.executorId"
+        in dashboard_script.text
     )
     assert "refreshDashboardInBackground" in dashboard_script.text
     assert "request(dashboardQueryPath())" in dashboard_script.text
     assert "createElementNS" in dashboard_script.text
     assert "dashboardNumber" in dashboard_script.text
-    assert "controllerState.generation" in remotes_script.text
-    assert "generation !== controllerState.generation" in remotes_script.text
-    assert "startRemotePolling" in remotes_script.text
-    assert "inviteCommand" not in remotes_script.text
     assert 'request("/executors")' in executors_script.text
     assert (
         "request(`/pair?code=${encodeURIComponent(code)}`)"
@@ -262,12 +255,15 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'request("/executors/revoke"' in executors_script.text
     assert "credential" not in executors_script.text.lower()
     assert "innerHTML" not in script.text
-    assert "controllerState.terminalMachineStates" in terminal_script.text
+    assert "controllerState.terminalExecutorStates" in terminal_script.text
     assert (
-        "requestedMachine !== controllerState.terminalMachine"
+        "requestedExecutor !== controllerState.terminalExecutorId"
         in terminal_script.text
     )
-    assert 'url.searchParams.set("machine", machine)' in terminal_script.text
+    assert (
+        'url.searchParams.set("executor_id", executorId)'
+        in terminal_script.text
+    )
     assert 'url.searchParams.set("mode", "auto")' in terminal_script.text
     assert 'socket.binaryType = "arraybuffer"' in terminal_script.text
     assert "controllerState.terminalReady" in terminal_script.text
@@ -283,7 +279,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     )
     assert "allowNonHttpProtocols: false" in terminal_script.text
     assert (
-        "controllerState.terminalSocketMachine === controllerState.terminalMachine"
+        "controllerState.terminalSocketExecutorId === controllerState.terminalExecutorId"
         in terminal_script.text
     )
     assert "bridge_id" not in terminal_script.text
@@ -300,11 +296,12 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     )
     assert "controllerState.fileListGeneration" in files_script.text
     assert (
-        "requestedMachine !== controllerState.fileMachine" in files_script.text
+        "requestedExecutor !== controllerState.fileExecutorId"
+        in files_script.text
     )
     assert 'fileQuery("/files/preview"' in files_script.text
-    assert "machine: controllerState.fileMachine" in files_script.text
-    assert "renderFileMachines" in files_script.text
+    assert "executor_id: controllerState.fileExecutorId" in files_script.text
+    assert "renderFileExecutors" in files_script.text
     assert "controllerState.fileMutations" in files_script.text
     assert 'fileAction("copy"' in files_script.text
     assert 'fileAction("move"' in files_script.text
@@ -350,7 +347,7 @@ def test_disabled_auth_ignores_stale_ui_session_cookie(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    assert response.json()["data"]["machines"][0]["name"] == "local"
+    assert response.json()["data"]["executor_targets"] == []
 
 
 def test_localhost_bypass_ignores_ui_session_cookies(monkeypatch, tmp_path):
@@ -385,7 +382,7 @@ def test_localhost_bypass_ignores_ui_session_cookies(monkeypatch, tmp_path):
         validate_bearer_token(bearer), UI_SESSION_BINDING
     )
     reduced_scope = client.get(
-        "/api/ui/remotes",
+        "/api/ui/executors",
         headers={
             "Cookie": f"{cookie_name}={session_token}",
             UI_SESSION_BINDING_HEADER: UI_SESSION_BINDING,
@@ -578,7 +575,7 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
         },
     )
     assert bootstrap.status_code == 200
-    assert bootstrap.json()["data"]["machines"][0]["name"] == "local"
+    assert bootstrap.json()["data"]["executor_targets"] == []
 
     csrf_rejected = client.post(
         "/api/ui/terminals/start",
@@ -911,7 +908,7 @@ def test_local_ui_token_bypasses_oauth_only_on_loopback(monkeypatch, tmp_path):
     loopback = TestClient(build_http_app(), client=("127.0.0.1", 50000))
     response = loopback.get("/api/ui/bootstrap", headers=headers)
     assert response.status_code == 200
-    assert response.json()["data"]["machines"][0]["name"] == "local"
+    assert response.json()["data"]["executor_targets"] == []
 
     unrelated = loopback.get("/tools/list_persistent_shells", headers=headers)
     assert unrelated.status_code == 401
@@ -953,11 +950,8 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
         "auth_mode": "none",
         "features": {
             "dashboard": True,
-            "remote_dashboard": True,
-            "machines": True,
-            "remotes": True,
+            "executors": True,
             "terminals": True,
-            "remote_terminals": True,
             "terminal_websocket": True,
             "files": True,
             "file_preview": True,
@@ -969,18 +963,13 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
             "file_copy": True,
             "file_move": True,
             "file_rename": True,
-            "remote_files": True,
-            "remote_file_editor": True,
             "sessions": True,
-            "remote_sessions": True,
             "todos": True,
-            "remote_todos": True,
             "audit": True,
-            "remote_audit": True,
         },
     }
-    assert payload["counts"] == {"online": 1, "offline": 0, "total": 1}
-    assert payload["machines"][0]["workdir"] == str(tmp_path)
+    assert payload["executor_counts"] == {"online": 0, "offline": 0, "total": 0}
+    assert payload["executor_targets"] == []
 
 
 def test_human_ui_can_be_disabled(monkeypatch, tmp_path):
@@ -991,40 +980,33 @@ def test_human_ui_can_be_disabled(monkeypatch, tmp_path):
     assert client.get("/api/ui/bootstrap").status_code == 404
 
 
-def test_machine_inventory_includes_remote_rows(monkeypatch, tmp_path):
-    _configure_ui(monkeypatch, tmp_path, remote_enabled=True)
+def test_bootstrap_includes_trusted_offline_executor(monkeypatch, tmp_path):
+    _configure_ui(monkeypatch, tmp_path)
+    app = build_http_app()
+    credential = new_executor_credential()
+    executor_id = new_executor_id()
+    with TestClient(app) as client:
+        app.state.control_runtime.control_state.put_executor(
+            ExecutorTrustRecord(
+                executor_id=executor_id,
+                name="executor-a",
+                credential_verifier=executor_credential_verifier(credential),
+                created_at=1,
+            )
+        )
+        payload = client.get("/api/ui/bootstrap").json()["data"]
 
-    class FakeInventory:
-        def model_dump(self, *, mode):
-            assert mode == "json"
-            return {
-                "machines": [
-                    {
-                        "name": "worker-a",
-                        "status": "offline",
-                        "workdir": "/srv/work",
-                        "last_seen": 0,
-                        "last_seen_age_s": None,
-                        "offline_after_s": 60,
-                        "queue_depth": 0,
-                        "capabilities": ["shell"],
-                        "info": {"platform": "linux"},
-                    }
-                ],
-                "counts": {"online": 0, "offline": 1, "total": 1},
-            }
-
-    class FakeManager:
-        def list_machines(self):
-            return FakeInventory()
-
-    monkeypatch.setattr(human_ui_module, "remote_manager", FakeManager)
-    payload = (
-        TestClient(build_http_app()).get("/api/ui/machines").json()["data"]
-    )
-
-    assert [item["name"] for item in payload["machines"]] == [
-        "local",
-        "worker-a",
+    assert payload["executor_counts"] == {"online": 0, "offline": 1, "total": 1}
+    assert payload["executor_targets"] == [
+        {
+            "executor_id": executor_id,
+            "name": "executor-a",
+            "status": "offline",
+            "workspace_root": "",
+            "last_seen_at": None,
+            "last_seen_age_s": None,
+            "queue_depth": 0,
+            "capabilities": [],
+            "runtime": None,
+        }
     ]
-    assert payload["counts"] == {"online": 1, "offline": 1, "total": 2}

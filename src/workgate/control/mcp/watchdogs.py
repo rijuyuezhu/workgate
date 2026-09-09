@@ -16,9 +16,9 @@ from ...audit import (
     new_audit_call_id,
 )
 from ...errors import public_error_type
-from ...ops.shell import tool_timeout_s
 from ...tools.declarative import mcp_handler_error_handler
 from ...utils.serialization import to_jsonable
+from ..tool_timeouts import tool_timeout_s
 
 
 class AuditedMcpToolFn(Protocol):

@@ -2,27 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
-from ..ops.session import (
-    _session_output,
-    session_change_cwd_execute,
-    session_end_execute,
-)
-from ..ops.utils.path import resolve_path_with_policy
+from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
+from ..tool_session.lifecycle import session_lifecycle_lock
 from ..tool_session.store import ToolSessionStore, UnknownAgentSessionError
 from .config import ExecutorConfig
 from .errors import ExecutorOperationFailure
+from .path import resolve_path_with_policy
+from .session_orientation import change_session_cwd, session_output
+from .shell_service import ShellService
 
 
 class ExecutorSessionService:
     """Own final shared session IDs and their executor-side durable state."""
 
-    def __init__(self, config: ExecutorConfig, store: ToolSessionStore) -> None:
+    def __init__(
+        self,
+        config: ExecutorConfig,
+        store: ToolSessionStore,
+        shell: ShellService,
+    ) -> None:
         self._config = config
         self._store = store
+        self._shell = shell
 
     def inventory(self) -> tuple[SessionInventorySummary, ...]:
         """Return the complete final-session inventory for hello reconciliation."""
@@ -52,11 +58,12 @@ class ExecutorSessionService:
         try:
             session = self._store.create_session(
                 session_id=session_id,
-                target="local",
                 workdir=resolved,
                 label=label,
             )
-            return _session_output(session)
+            return await asyncio.to_thread(
+                session_output, self._config, session
+            )
         except BaseException as exc:
             if self._confirm_absent_after_failed_create(session_id):
                 raise ExecutorOperationFailure(
@@ -70,20 +77,55 @@ class ExecutorSessionService:
     async def terminate(self, session_id: str) -> dict[str, Any]:
         """Converge one shared session to desired absence idempotently."""
         try:
-            ended = await session_end_execute(session_id)
+            async with session_lifecycle_lock(session_id):
+                self._store.prepare_session_termination(session_id)
+                stopped_jobs = await self._stop_owned_jobs(session_id)
+                stopped_shells = await self._shell.stop_owned(session_id)
+                self._store.end_session(session_id)
         except UnknownAgentSessionError:
             return {"session_id": session_id, "absent": True}
         return {
             "session_id": session_id,
             "absent": True,
-            "stopped_jobs": ended.stopped_jobs,
-            "stopped_shells": ended.stopped_shells,
+            "stopped_jobs": stopped_jobs,
+            "stopped_shells": stopped_shells,
         }
+
+    async def _stop_owned_jobs(self, session_id: str) -> list[str]:
+        """Stop executor-owned shell jobs before the session is removed."""
+        listed = await self._shell.jobs.list_unlocked(
+            session_id, include_finished=True
+        )
+        stopped: list[str] = []
+        for job in listed.jobs:
+            if job.status in CONFIRMED_TERMINAL_STATUSES:
+                continue
+            result = await self._shell.jobs.stop_unlocked(
+                session_id, job.job_id
+            )
+            if (
+                result.killed
+                or result.job.status in CONFIRMED_TERMINAL_STATUSES
+            ):
+                stopped.append(job.job_id)
+                continue
+            raise RuntimeError(
+                "tracked job could not be confirmed stopped: "
+                f"{job.job_id}: status={result.job.status!r}"
+            )
+        return stopped
 
     async def change_cwd(self, session_id: str, workdir: str) -> Any:
         """Resolve against fixed executor root, then mutate cwd crash-safely."""
         resolved = self._resolve_workdir(workdir)
-        return await session_change_cwd_execute(session_id, str(resolved))
+        async with session_lifecycle_lock(session_id):
+            return await asyncio.to_thread(
+                change_session_cwd,
+                self._config,
+                self._store,
+                session_id,
+                str(resolved),
+            )
 
     def _resolve_workdir(self, workdir: str) -> Path:
         resolved = resolve_path_with_policy(

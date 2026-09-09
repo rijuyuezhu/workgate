@@ -1,13 +1,16 @@
 import json
+import sys
 from typing import Any, cast
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from tests.helpers import build_paired_mcp, mcp_structured, mcp_text
+from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.control import agent_bridge as control_agent_bridge_module
 from workgate.control.mcp.app import build_mcp
 from workgate.tools.registry import agent as tools_module
 
@@ -16,6 +19,18 @@ def _payload(response: Any) -> dict[str, Any]:
     if isinstance(response, tuple):
         return cast(dict[str, Any], response[1])
     return cast(dict[str, Any], json.loads(mcp_text(response)))
+
+
+@pytest.fixture(autouse=True)
+def _share_agent_mcp_manager_test_factory(monkeypatch):
+    """Keep legacy tool-registry fakes visible at the new control-owned seam."""
+
+    def factory(timeout_s):
+        return tools_module.AgentMcpClientManager(timeout_s)
+
+    monkeypatch.setattr(
+        control_agent_bridge_module, "AgentMcpClientManager", factory
+    )
 
 
 REALISTIC_SECRET_ERROR = (
@@ -282,6 +297,138 @@ async def test_activate_agent_skill_returns_skill_content(
 
     assert "Find root causes." in payload
     assert "skills/debugging/SKILL.md" in payload
+
+
+@pytest.mark.asyncio
+async def test_control_dynamic_skills_exclude_project_local_source(
+    tmp_path, monkeypatch
+):
+    config_dir = app_paths().agent_config_dir
+    managed_skill = config_dir / "skills" / "managed"
+    managed_skill.mkdir(parents=True)
+    (managed_skill / "SKILL.md").write_text(
+        "# Managed\n\nManaged skill.\n", encoding="utf-8"
+    )
+    (config_dir / "config.json").write_text(
+        json.dumps({"version": 1}), encoding="utf-8"
+    )
+    workspace = tmp_path / "workspace"
+    project_skill = workspace / ".agents" / "skills" / "project-local"
+    project_skill.mkdir(parents=True)
+    (project_skill / "SKILL.md").write_text(
+        "# Project Local\n\nSession-local skill.\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+
+    tool_names = {tool.name for tool in await build_mcp().list_tools()}
+
+    assert "activate_skill__managed" in tool_names
+    assert "activate_skill__project_local" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_session_bound_stdio_mcp_runs_on_executor_with_executor_secret(
+    tmp_path, monkeypatch
+):
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = tmp_path / "stdio-started"
+    server_script = tmp_path / "stdio_server.py"
+    server_script.write_text(
+        """import os
+from pathlib import Path
+
+from mcp.server.fastmcp import FastMCP
+
+Path(os.environ["START_MARKER"]).write_text("started", encoding="utf-8")
+mcp = FastMCP("executor-secret-test")
+
+@mcp.tool()
+def reveal_secret() -> dict[str, str]:
+    return {"secret": os.environ["TOKEN"]}
+
+if __name__ == "__main__":
+    mcp.run()
+""",
+        encoding="utf-8",
+    )
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "stdio": {
+                        "type": "stdio",
+                        "command": sys.executable,
+                        "args": [str(server_script)],
+                        "env": {
+                            "TOKEN": {"secret": "token"},
+                            "START_MARKER": str(marker),
+                        },
+                        "auth": {"mode": "secret"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+
+    settings = get_settings()
+    mcp, harness = build_paired_mcp(settings)
+    AgentAuthStore(settings.agent_auth_dir).set_secret(
+        "stdio", "token", "control-secret"
+    )
+    AgentAuthStore(harness.executor.config.agent_auth_dir).set_secret(
+        "stdio", "token", "executor-secret"
+    )
+    try:
+        assert _payload(await mcp.call_tool("list_agent_mcp_servers", {})) == {}
+        assert not marker.exists()
+
+        session = mcp_structured(
+            await mcp.call_tool("session_start", {"workdir": "."})
+        )
+        session_id = session["session_id"]
+        servers = _payload(
+            await mcp.call_tool(
+                "list_agent_mcp_servers", {"session_id": session_id}
+            )
+        )
+        assert servers["stdio"]["available"] is True
+        assert marker.read_text(encoding="utf-8") == "started"
+
+        tools = _payload(
+            await mcp.call_tool(
+                "list_agent_mcp_tools", {"session_id": session_id}
+            )
+        )["tools"]
+        assert [(row["server"], row["tool"]) for row in tools] == [
+            ("stdio", "reveal_secret")
+        ]
+
+        result = _payload(
+            await mcp.call_tool(
+                "call_agent_mcp_tool",
+                {
+                    "session_id": session_id,
+                    "server": "stdio",
+                    "tool": "reveal_secret",
+                    "args": {},
+                },
+            )
+        )
+        assert result["structured_content"] == {"secret": "executor-secret"}
+        assert "control-secret" not in json.dumps(result)
+    finally:
+        await harness.executor.aclose()
+        await harness.control.aclose()
 
 
 @pytest.mark.asyncio

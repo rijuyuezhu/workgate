@@ -29,15 +29,22 @@ def skill_sources(
     managed_config_dir: Path,
     managed_directory: str,
     environ: Mapping[str, str] | None = None,
+    include_project: bool = True,
 ) -> tuple[SkillSource, ...]:
     """Return deduplicated Skill roots in project, managed, then global order."""
-    candidates = (
-        SkillSource("project", Path(project_root), PROJECT_SKILLS_DIRECTORY),
+    candidates = [
         SkillSource("managed", Path(managed_config_dir), managed_directory),
         SkillSource(
             "global", _global_config_home(environ), GLOBAL_SKILLS_DIRECTORY
         ),
-    )
+    ]
+    if include_project:
+        candidates.insert(
+            0,
+            SkillSource(
+                "project", Path(project_root), PROJECT_SKILLS_DIRECTORY
+            ),
+        )
     unique: list[SkillSource] = []
     seen_paths: set[Path] = set()
     for source in candidates:

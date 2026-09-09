@@ -158,14 +158,17 @@ def job_is_retention_terminal(job: Mapping[str, Any]) -> bool:
     )
 
 
-def prune_store(store: MutableJobStore) -> None:
+def prune_store(store: MutableJobStore, *, max_jobs: int | None = None) -> None:
     """Bound retained terminal jobs while never deleting active operations."""
     jobs = [
         cast(JobRow, row)
         for row in store.get("jobs", [])
         if isinstance(row, dict)
     ]
-    max_jobs = max(0, int(get_settings().max_jobs))
+    limit = max(
+        0,
+        int(get_settings().max_jobs if max_jobs is None else max_jobs),
+    )
     active = [row for row in jobs if not job_is_retention_terminal(row)]
     finished = sorted(
         (row for row in jobs if job_is_retention_terminal(row)),
@@ -174,7 +177,7 @@ def prune_store(store: MutableJobStore) -> None:
         ),
         reverse=True,
     )
-    keep_finished = finished[: max(0, max_jobs - len(active))]
+    keep_finished = finished[: max(0, limit - len(active))]
     keep_objects = {id(row) for row in [*active, *keep_finished]}
     removed = [row for row in jobs if id(row) not in keep_objects]
     store["jobs"] = [row for row in jobs if id(row) in keep_objects]

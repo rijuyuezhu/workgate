@@ -203,16 +203,6 @@ class StateLayout:
         return self.root / "downloads"
 
     @property
-    def remote_workers_path(self) -> Path:
-        """Return the registered remote-worker state path."""
-        return self.root / "remote-workers.json"
-
-    @property
-    def remote_transfers_dir(self) -> Path:
-        """Return the private durable HTTP transfer directory."""
-        return self.root / "remote_transfers"
-
-    @property
     def agent_auth_dir(self) -> Path:
         """Return the private Agent Bridge credential directory."""
         return self.root / "agent_auth"

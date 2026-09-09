@@ -5,9 +5,12 @@ from pathlib import Path
 
 import pytest
 
-import workgate.ops.shell as shell_ops
-import workgate.terminal.conpty as conpty
-from workgate.config.settings import clear_settings_cache
+import workgate.executor.shell as shell_ops
+import workgate.executor.terminal.conpty as conpty
+from workgate.config.settings import Settings, clear_settings_cache
+from workgate.executor.runtime import build_executor_runtime
+from workgate.executor.terminal.runtime import build_terminal_runtime
+from workgate.persistence import get_state_store
 from workgate.schemas.result_models.shell import (
     KillPersistentShellOutput,
     ListPersistentShellsOutput,
@@ -16,8 +19,6 @@ from workgate.schemas.result_models.shell import (
     SendPersistentShellInputOutput,
     StartPersistentShellOutput,
 )
-from workgate.terminal.runtime import build_terminal_runtime
-from workgate.tool_session.store import get_tool_session_store
 
 
 class FakePty:
@@ -92,10 +93,13 @@ class FakePtyWithoutResize:
 @pytest.fixture(autouse=True)
 async def _terminal_runtime(monkeypatch):
     monkeypatch.setattr(conpty, "audit", lambda *args, **kwargs: None)
-    monkeypatch.setattr(conpty, "relative_display", lambda path: str(path))
     monkeypatch.setattr(conpty, "is_available", lambda: True)
-    monkeypatch.setattr(conpty, "_shell_executable", lambda: "cmd.exe")
-    runtime = build_terminal_runtime()
+    monkeypatch.setattr(
+        conpty, "_shell_executable", lambda _configured=None: "cmd.exe"
+    )
+    runtime = build_terminal_runtime(
+        get_state_store(), workspace_root=Path.cwd()
+    )
     await runtime.start()
     try:
         yield
@@ -122,7 +126,7 @@ def test_conpty_shell_lease_reports_live_then_dead(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
-    lease = conpty._ConPtyShellLease("leased-shell")
+    lease = conpty._ConPtyShellLease(get_state_store(), "leased-shell")
 
     lease.acquire()
     try:
@@ -500,7 +504,9 @@ def test_conpty_raw_subscriber_overflow_finishes_stream(monkeypatch):
 
 
 def test_conpty_shell_argument_rendering(monkeypatch):
-    monkeypatch.setattr(conpty, "_shell_executable", lambda: "cmd.exe")
+    monkeypatch.setattr(
+        conpty, "_shell_executable", lambda _configured=None: "cmd.exe"
+    )
     assert conpty._persistent_shell_args(None) == ["cmd.exe"]
     assert conpty._persistent_shell_args("echo hello") == [
         "cmd.exe",
@@ -509,7 +515,9 @@ def test_conpty_shell_argument_rendering(monkeypatch):
         "echo hello",
     ]
 
-    monkeypatch.setattr(conpty, "_shell_executable", lambda: "pwsh.exe")
+    monkeypatch.setattr(
+        conpty, "_shell_executable", lambda _configured=None: "pwsh.exe"
+    )
     assert conpty._persistent_shell_args("Write-Output hello") == [
         "pwsh.exe",
         "-NoProfile",
@@ -531,7 +539,9 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
     )
     monkeypatch.setattr(conpty, "is_available", lambda: True)
     monkeypatch.setattr(
-        conpty, "initial_command", lambda command: command or "cmd.exe"
+        conpty,
+        "initial_command",
+        lambda command, _shell_executable=None: command or "cmd.exe",
     )
 
     calls: list[tuple[str, tuple, dict]] = []
@@ -600,11 +610,22 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
     monkeypatch.setattr(conpty, "resize_shell", fake_resize)
     monkeypatch.setattr(conpty, "read_shell", fake_read)
     monkeypatch.setattr(conpty, "kill_shell", fake_kill)
-    store = get_tool_session_store()
-    store.clear()
-    owner = store.create_session(workdir=tmp_path)
+    runtime = build_executor_runtime(
+        Settings(
+            workspace_root=tmp_path,
+            state_dir=tmp_path / ".state",
+            remote_enabled=False,
+        ),
+        enable_control_connection=False,
+    )
+    store = runtime.services.tool_session_store
+    owner = store.create_session(
+        session_id="sess_0000000000000000000001", workdir=tmp_path
+    )
 
     started = await shell_ops.start_persistent_shell_execute(
+        runtime.config,
+        store,
         cwd=".",
         name="windows-demo",
         command=None,
@@ -612,15 +633,17 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
     )
     assert started.backend == "conpty"
     await shell_ops.send_persistent_shell_input_execute(
-        "windows-demo", "echo hello", False
+        runtime.config, "windows-demo", "echo hello", False
     )
     resized = await shell_ops.resize_persistent_shell_execute(
-        "windows-demo", 120, 40
+        runtime.config, "windows-demo", 120, 40
     )
     read = await shell_ops.read_persistent_shell_output_execute(
-        "windows-demo", 50, preserve_ansi=True
+        runtime.config, "windows-demo", 50, preserve_ansi=True
     )
-    killed = await shell_ops.kill_persistent_shell_execute("windows-demo")
+    killed = await shell_ops.kill_persistent_shell_execute(
+        runtime.config, store, "windows-demo"
+    )
 
     assert resized.resized is False
     assert read.output == "windows output"
@@ -638,4 +661,5 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
     assert start_kwargs["cwd"] == tmp_path
     assert start_kwargs["command"] is None
     assert start_kwargs["owner_session_id"] == owner.session_id
+    assert start_kwargs["shell_executable"] == runtime.config.shell_executable
     clear_settings_cache()

@@ -18,7 +18,6 @@ EXPECTED_BUILTIN_REGISTRIES = (
     "jobs",
     "patch",
     "read",
-    "remote",
     "search",
     "secret_scan",
     "session",

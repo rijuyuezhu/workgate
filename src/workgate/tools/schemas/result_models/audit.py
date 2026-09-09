@@ -1,19 +1,15 @@
-"""Typed outputs for session-bound audit queries."""
+"""Typed outputs for control-owned audit queries."""
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class AuditTailOutput(BaseModel):
-    """Bounded logical audit query result for one local or remote target."""
+    """Bounded logical audit query result from canonical control history."""
 
     session_id: str
-    """Explicit agent session used to select the local or remote audit target."""
-    target: Literal["local", "remote"]
-    """Audit target selected by the explicit session."""
-    machine: str | None = None
-    """Configured remote worker name, or None for a local session."""
+    """Explicit shared session used to authorize and scope the query."""
     entries: list[dict[str, Any]] = Field(default_factory=list)
     """Bounded logical audit entries with references or resolved sanitized values."""
     count: int

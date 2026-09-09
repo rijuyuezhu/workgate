@@ -303,3 +303,7 @@ class AgentCapabilityRegistry:
     """Public MCP tool names mapped to upstream tools."""
     client_manager: Any
     """MCP client-session manager used to call upstream tools."""
+    include_project_skills: bool = True
+    """Whether this snapshot includes the project/session-local Skill source."""
+    mcp_server_types: frozenset[str] | None = None
+    """Optional transport allowlist used to keep integration execution in its owner plane."""

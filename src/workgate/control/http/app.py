@@ -14,8 +14,6 @@ from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
-from ...remote.http import remote_routes
-from ...remote.transfer_gateway import build_transfer_gateway_router
 from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..runtime import ControlRuntime, build_control_runtime
@@ -63,12 +61,6 @@ def _install_public_routes(
                 runtime.executor_transport, runtime.executor_pairing
             )
             if runtime is not None
-            else ()
-        ),
-        *(remote_routes() if settings.remote_enabled else ()),
-        *(
-            build_transfer_gateway_router()
-            if settings.remote_enabled and settings.remote_http_transfer_enabled
             else ()
         ),
         *oauth_public_routes(),

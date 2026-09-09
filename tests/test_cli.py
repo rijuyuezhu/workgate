@@ -7,6 +7,7 @@ from mcp.shared.auth import OAuthToken
 
 import workgate.agent_bridge.cli as agent_cli
 import workgate.control.cli as server_cli
+import workgate.executor.cli as executor_cli
 import workgate.jobs.cli as jobs_cli
 import workgate.main as cli
 import workgate.ui.cli as tui_cli
@@ -108,7 +109,7 @@ def test_root_help_lists_registered_commands():
         "server",
         "tui",
         "mcp",
-        "worker",
+        "executor",
         "version",
         "job-runner",
     ):
@@ -205,28 +206,25 @@ def test_bool_cli_values_parse_explicitly():
     )
 
 
-def test_worker_subcommand_parse_to_worker_handler():
+def test_executor_connect_subcommand_parses_final_pairing_contract():
     args = cli._build_parser().parse_args(
         [
-            "worker",
+            "executor",
             "connect",
-            "--server",
             "https://example.com",
-            "--invite",
-            "workgate_inv_xxxxx",
             "--name",
             "npu-4card",
-            "--workdir",
+            "--workspace-root",
             "/home/user/project",
         ]
     )
 
-    assert args.worker_command == "connect"
-    assert args.server == "https://example.com"
-    assert args.invite == "workgate_inv_xxxxx"
+    assert args.handler is executor_cli._connect_from_args
+    assert args.executor_command == "connect"
+    assert args.control_url == "https://example.com"
     assert args.name == "npu-4card"
-    assert args.workdir == "/home/user/project"
-    assert not hasattr(args, "persist")
+    assert args.workspace_root == "/home/user/project"
+    assert not hasattr(args, "invite")
 
 
 def test_tui_subcommand_parses_loopback_api_base():

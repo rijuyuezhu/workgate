@@ -4,20 +4,18 @@ from mcp.server.fastmcp import FastMCP
 
 from ...agent_bridge.mcp import AgentMcpClientManager
 from ...agent_bridge.models import AgentCapabilityRegistry
-from ...agent_bridge.service import build_agent_registry_from_settings
+from ...agent_bridge.service import (
+    agent_config_status_payload,
+    build_agent_registry_from_settings,
+    call_agent_mcp_tool_payload,
+    list_agent_mcp_servers_payload,
+    list_agent_mcp_tools_payload,
+)
 from ...agent_bridge.tools import register_agent_bridge_dynamic_tools
 from ...config.settings import Settings
 from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
-from ...ops.agent import (
-    activate_agent_skill_dispatch_execute,
-    agent_config_status_execute,
-    call_agent_mcp_tool_execute,
-    list_agent_mcp_servers_execute,
-    list_agent_mcp_tools_execute,
-    list_agent_skills_dispatch_execute,
-    read_agent_skill_file_dispatch_execute,
-)
 from ...schemas.input_models.agent import (
+    AgentMcpSessionIdArg,
     AgentServerArg,
     AgentServerFilterArg,
     AgentSessionIdArg,
@@ -42,7 +40,10 @@ from ..metadata import oauth_security_meta
 
 def _agent_registry() -> AgentCapabilityRegistry:
     return build_agent_registry_from_settings(
-        client_manager_factory=AgentMcpClientManager
+        client_manager_factory=AgentMcpClientManager,
+        allow_stdio=False,
+        include_project_skills=False,
+        mcp_server_types=frozenset({"http", "sse"}),
     )
 
 
@@ -75,7 +76,7 @@ agent_bridge_tool = AgentBridgeToolRegistry.get_tool_decorator()
 )
 async def agent_config_status() -> AgentConfigStatusOutput:
     """Return agent bridge configuration status, discovered skills, configured MCP servers, and load errors."""
-    return agent_config_status_execute(_agent_registry())
+    return agent_config_status_payload(_agent_registry())
 
 
 @agent_bridge_tool(
@@ -85,10 +86,10 @@ async def agent_config_status() -> AgentConfigStatusOutput:
     annotations="read_only",
 )
 async def list_agent_skills(
-    session_id: AgentSessionIdArg = None,
+    session_id: AgentSessionIdArg,
 ) -> ListAgentSkillsOutput:
     """List Skills in project/session, managed, then global priority order without loading instructions."""
-    return await list_agent_skills_dispatch_execute(session_id)
+    raise RuntimeError("list_agent_skills requires control executor routing")
 
 
 @agent_bridge_tool(
@@ -99,10 +100,10 @@ async def list_agent_skills(
 )
 async def activate_agent_skill(
     name: AgentSkillNameArg,
-    session_id: AgentSessionIdArg = None,
+    session_id: AgentSessionIdArg,
 ) -> ActivateAgentSkillOutput:
     """Load one exact Skill from the executor-backed session registry used by list_agent_skills."""
-    return await activate_agent_skill_dispatch_execute(name, session_id)
+    raise RuntimeError("activate_agent_skill requires control executor routing")
 
 
 @agent_bridge_tool(
@@ -114,10 +115,12 @@ async def activate_agent_skill(
 async def read_agent_skill_file(
     name: AgentSkillNameArg,
     path: AgentSkillFilePathArg,
-    session_id: AgentSessionIdArg = None,
+    session_id: AgentSessionIdArg,
 ) -> ReadAgentSkillFileOutput:
     """Read a bounded related file from the same selected Skill source; activate the Skill first."""
-    return await read_agent_skill_file_dispatch_execute(name, path, session_id)
+    raise RuntimeError(
+        "read_agent_skill_file requires control executor routing"
+    )
 
 
 @agent_bridge_tool(
@@ -126,9 +129,15 @@ async def read_agent_skill_file(
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
-async def list_agent_mcp_servers() -> ListAgentMcpServersOutput:
-    """List configured agent MCP servers. Use to find exact server names and connection status before listing or calling bridged MCP tools."""
-    return list_agent_mcp_servers_execute(_agent_registry())
+async def list_agent_mcp_servers(
+    session_id: AgentMcpSessionIdArg = None,
+) -> ListAgentMcpServersOutput:
+    """List control-owned network MCP servers and, with session_id, executor-owned stdio servers."""
+    if session_id is not None:
+        raise RuntimeError(
+            "session-bound agent MCP listing requires control routing"
+        )
+    return list_agent_mcp_servers_payload(_agent_registry())
 
 
 @agent_bridge_tool(
@@ -139,9 +148,14 @@ async def list_agent_mcp_servers() -> ListAgentMcpServersOutput:
 )
 async def list_agent_mcp_tools(
     server: AgentServerFilterArg = None,
+    session_id: AgentMcpSessionIdArg = None,
 ) -> ListAgentMcpToolsOutput:
-    """List tools exposed by configured agent MCP servers. Parameter server is optional; omit it for all servers or pass an exact server name before call_agent_mcp_tool."""
-    return list_agent_mcp_tools_execute(server, _agent_registry())
+    """List tools from control-owned network MCP servers or session-bound executor stdio servers."""
+    if session_id is not None:
+        raise RuntimeError(
+            "session-bound agent MCP listing requires control routing"
+        )
+    return list_agent_mcp_tools_payload(_agent_registry(), server)
 
 
 @agent_bridge_tool(
@@ -150,11 +164,18 @@ async def list_agent_mcp_tools(
     enabled=_agent_bridge_enabled,
 )
 async def call_agent_mcp_tool(
-    server: AgentServerArg, tool: AgentToolArg, args: AgentToolArgsArg = None
+    server: AgentServerArg,
+    tool: AgentToolArg,
+    args: AgentToolArgsArg = None,
+    session_id: AgentMcpSessionIdArg = None,
 ) -> CallAgentMcpToolOutput:
-    """Call a tool on a configured agent MCP server. Parameters: server and tool must match list_agent_mcp_tools; args is a JSON object matching that tool schema, or empty for no-argument tools."""
-    return await call_agent_mcp_tool_execute(
-        server, tool, args, _agent_registry()
+    """Call a control-owned network MCP tool or, with session_id, an executor-owned stdio tool."""
+    if session_id is not None:
+        raise RuntimeError(
+            "session-bound agent MCP calls require control routing"
+        )
+    return await call_agent_mcp_tool_payload(
+        _agent_registry(), server, tool, args or {}
     )
 
 
@@ -164,7 +185,11 @@ def register_agent_bridge_dynamic_mcp(
     """Register dynamic MCP tools for this tool group."""
     settings = context.settings
     registry = build_agent_registry_from_settings(
-        settings, AgentMcpClientManager
+        settings,
+        AgentMcpClientManager,
+        allow_stdio=False,
+        include_project_skills=False,
+        mcp_server_types=frozenset({"http", "sse"}),
     )
     register_agent_bridge_dynamic_tools(
         mcp,

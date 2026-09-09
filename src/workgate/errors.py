@@ -81,6 +81,9 @@ def workspace_path_not_found_error(
 
 def public_error_type(exc: BaseException) -> str:
     """Return the stable public error name for typed internal subclasses."""
+    remote_type = getattr(exc, "workgate_public_error_type", None)
+    if isinstance(remote_type, str) and remote_type:
+        return remote_type
     if isinstance(exc, FileNotFoundError):
         return "FileNotFoundError"
     return type(exc).__name__
@@ -140,8 +143,18 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
     if status == "not_found":
         return PathNotFoundError(str(data.get("path") or message))
     error_type = str(data.get("error_type") or "remote_error")
+    from .protocol.terminal import (
+        TerminalBridgeBusyError,
+        TerminalBridgeNotFoundError,
+        TerminalBridgeUnsupportedError,
+    )
+
     public_types: dict[str, type[Exception]] = {
+        "TerminalBridgeBusyError": TerminalBridgeBusyError,
+        "TerminalBridgeNotFoundError": TerminalBridgeNotFoundError,
+        "TerminalBridgeUnsupportedError": TerminalBridgeUnsupportedError,
         "FileNotFoundError": FileNotFoundError,
+        "FileExistsError": FileExistsError,
         "IsADirectoryError": IsADirectoryError,
         "NotADirectoryError": NotADirectoryError,
         "PermissionError": PermissionError,
@@ -152,4 +165,6 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
     }
     if exception_type := public_types.get(error_type):
         return exception_type(message)
-    return RuntimeError(f"{error_type}: {message}")
+    reconstructed = RuntimeError(message)
+    reconstructed.workgate_public_error_type = error_type  # type: ignore[attr-defined]
+    return reconstructed

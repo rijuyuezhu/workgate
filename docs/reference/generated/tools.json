@@ -1,11 +1,11 @@
 {
-  "count": 41,
+  "count": 40,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "41"
+          "code": "40"
         },
         "."
       ],
@@ -35,11 +35,11 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string / null, optional)"
+                "note": "(string, required)"
               }
             ]
           },
@@ -73,6 +73,13 @@
                 "note": "(string, required)"
               },
               {
+                "description": "Optional shared session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
                 "description": "Exact upstream tool name exposed by the selected agent MCP server.",
                 "head": {
                   "code": "tool"
@@ -81,14 +88,24 @@
               }
             ]
           },
-          "Call a tool on a configured agent MCP server. Parameters: server and tool must match list_agent_mcp_tools; args is a JSON object matching that tool schema, or empty for no-argument tools."
+          "Call a control-owned network MCP tool or, with session_id, an executor-owned stdio tool."
         ],
         [
           {
             "code": "list_agent_mcp_servers"
           },
-          "none",
-          "List configured agent MCP servers. Use to find exact server names and connection status before listing or calling bridged MCP tools."
+          {
+            "items": [
+              {
+                "description": "Optional shared session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              }
+            ]
+          },
+          "List control-owned network MCP servers and, with session_id, executor-owned stdio servers."
         ],
         [
           {
@@ -102,10 +119,17 @@
                   "code": "server"
                 },
                 "note": "(string / null, optional)"
+              },
+              {
+                "description": "Optional shared session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
               }
             ]
           },
-          "List tools exposed by configured agent MCP servers. Parameter server is optional; omit it for all servers or pass an exact server name before call_agent_mcp_tool."
+          "List tools from control-owned network MCP servers or session-bound executor stdio servers."
         ],
         [
           {
@@ -114,11 +138,11 @@
           {
             "items": [
               {
-                "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string / null, optional)"
+                "note": "(string, required)"
               }
             ]
           },
@@ -145,11 +169,11 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string / null, optional)"
+                "note": "(string, required)"
               }
             ]
           },
@@ -252,7 +276,7 @@
               }
             ]
           },
-          "Read bounded, coalesced audit history for the executor-backed target selected by an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."
+          "Read bounded canonical control audit history through an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."
         ]
       ]
     },
@@ -369,7 +393,7 @@
       ]
     },
     {
-      "body": "Register file operation tools.",
+      "body": "Register file operation tool declarations.",
       "headers": [
         "Tool",
         "Parameters",
@@ -666,7 +690,7 @@
               }
             ]
           },
-          "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates controller-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a controller-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Remote-session lists merge worker shell jobs with controller-managed jobs, and controller-managed jobs remain inspectable when the worker is offline. Do not combine actions in one call."
+          "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates controller-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a controller-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call."
         ]
       ]
     },
@@ -714,7 +738,7 @@
       ]
     },
     {
-      "body": "Register the read tool with selector support.",
+      "body": "Register the high-level read tool declaration.",
       "headers": [
         "Tool",
         "Parameters",
@@ -746,42 +770,6 @@
             ]
           },
           "Read one file or list one directory inside an explicit agent/workspace session with optional selector suffixes in the path. Use this for normal code context when you know one path, especially before hashline_edit. Use search for content discovery across files, tree_view/list_files/glob_search for path discovery, and connector fetch only when consuming an id from workspace_search. Put ranges in the path selector and preserve the hashline output for edits: `[path#snapshot_id]` plus `line:text` rows can be copied directly into hashline_edit. Use edit_lines only when you already have exact structured path/start/end/replacement data. Supported selectors: path:50, path:50-80, path:50+20, path:5-16,960-973, path:raw, path:50-80:raw, and path:5-16,960-973:raw. Comma-separated ranges apply only within the same file, not across multiple files; ranges must be ordered and non-overlapping; call read separately for each file. Current per-file read cap: 512000 bytes."
-        ]
-      ]
-    },
-    {
-      "body": "Register remote-worker control-plane tools.",
-      "headers": [
-        "Tool",
-        "Parameters",
-        "Description"
-      ],
-      "heading": "Remote",
-      "kind": "table",
-      "rows": [
-        [
-          {
-            "code": "remote_admin"
-          },
-          {
-            "items": [
-              {
-                "description": "Legacy remote control-plane action: list, revoke, rename, or retrieve a reconnect command. New enrollment uses `workgate executor connect`.",
-                "head": {
-                  "code": "action"
-                },
-                "note": "(list / revoke / rename / reconnect_command, required)"
-              },
-              {
-                "description": "Action-specific control-plane arguments. list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name.",
-                "head": {
-                  "code": "args"
-                },
-                "note": "(object, required)"
-              }
-            ]
-          },
-          "Run migration-only control-plane actions for already-enrolled legacy remote workers: action=\"list\" inspects legacy worker inventory, action=\"revoke\" removes stale or untrusted legacy trust, action=\"rename\" updates a legacy worker name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines pair with `workgate executor connect <control-url>`. `remote_admin` does not create enrollment invites and is not a normal machine-execution selector. Start normal work with executor-backed `session_start(workdir=..., executor_id=...)` and then use ordinary session-bound tools."
         ]
       ]
     },
@@ -1623,21 +1611,14 @@
             "type": "string"
           },
           "session_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
-            "title": "Session Id"
+            "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+            "title": "Session Id",
+            "type": "string"
           }
         },
         "required": [
-          "name"
+          "name",
+          "session_id"
         ],
         "title": "activate_agent_skillArguments",
         "type": "object"
@@ -1958,7 +1939,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read bounded, coalesced audit history for the executor-backed target selected by an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot.",
+      "description": "Read bounded canonical control audit history through an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot.",
       "inputSchema": {
         "properties": {
           "audit_session": {
@@ -2110,7 +2091,7 @@
       },
       "name": "audit_tail",
       "outputSchema": {
-        "description": "Bounded logical audit query result for one local or remote target.",
+        "description": "Bounded logical audit query result from canonical control history.",
         "properties": {
           "count": {
             "title": "Count",
@@ -2145,28 +2126,8 @@
             "title": "Full Payloads",
             "type": "boolean"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Machine"
-          },
           "session_id": {
             "title": "Session Id",
-            "type": "string"
-          },
-          "target": {
-            "enum": [
-              "local",
-              "remote"
-            ],
-            "title": "Target",
             "type": "string"
           },
           "total_matched": {
@@ -2176,7 +2137,6 @@
         },
         "required": [
           "session_id",
-          "target",
           "count",
           "total_matched",
           "failed_matched"
@@ -2361,7 +2321,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Call a tool on a configured agent MCP server. Parameters: server and tool must match list_agent_mcp_tools; args is a JSON object matching that tool schema, or empty for no-argument tools.",
+      "description": "Call a control-owned network MCP tool or, with session_id, an executor-owned stdio tool.",
       "inputSchema": {
         "properties": {
           "args": {
@@ -2382,6 +2342,19 @@
             "description": "Exact configured agent MCP server name.",
             "title": "Server",
             "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional shared session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
           },
           "tool": {
             "description": "Exact upstream tool name exposed by the selected agent MCP server.",
@@ -2571,18 +2544,6 @@
             "title": "Inline",
             "type": "boolean"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Remote worker machine for remote snapshots, otherwise null.",
-            "title": "Machine"
-          },
           "max_downloads": {
             "description": "Maximum allowed downloads, or 0 for unlimited.",
             "title": "Max Downloads",
@@ -2612,15 +2573,6 @@
             "description": "Workspace-relative source file path.",
             "title": "Path"
           },
-          "target": {
-            "description": "Session target from which the snapshot was created.",
-            "enum": [
-              "local",
-              "remote"
-            ],
-            "title": "Target",
-            "type": "string"
-          },
           "token": {
             "description": "Sensitive token identifying the download link.",
             "title": "Token",
@@ -2649,9 +2601,7 @@
           "expires_at",
           "ttl_remaining_s",
           "downloads",
-          "max_downloads",
-          "target",
-          "machine"
+          "max_downloads"
         ],
         "title": "CreateFileLinkOutput",
         "type": "object"
@@ -3579,7 +3529,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates controller-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a controller-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Remote-session lists merge worker shell jobs with controller-managed jobs, and controller-managed jobs remain inspectable when the worker is offline. Do not combine actions in one call.",
+      "description": "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates controller-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a controller-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call.",
       "inputSchema": {
         "properties": {
           "cancel": {
@@ -4262,9 +4212,23 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "List configured agent MCP servers. Use to find exact server names and connection status before listing or calling bridged MCP tools.",
+      "description": "List control-owned network MCP servers and, with session_id, executor-owned stdio servers.",
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional shared session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
+          }
+        },
         "title": "list_agent_mcp_serversArguments",
         "type": "object"
       },
@@ -4300,7 +4264,7 @@
         "openWorldHint": true,
         "readOnlyHint": true
       },
-      "description": "List tools exposed by configured agent MCP servers. Parameter server is optional; omit it for all servers or pass an exact server name before call_agent_mcp_tool.",
+      "description": "List tools from control-owned network MCP servers or session-bound executor stdio servers.",
       "inputSchema": {
         "properties": {
           "server": {
@@ -4315,6 +4279,19 @@
             "default": null,
             "description": "Optional exact agent MCP server name to filter listed tools.",
             "title": "Server"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional shared session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
           }
         },
         "title": "list_agent_mcp_toolsArguments",
@@ -4369,19 +4346,14 @@
       "inputSchema": {
         "properties": {
           "session_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
-            "title": "Session Id"
+            "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+            "title": "Session Id",
+            "type": "string"
           }
         },
+        "required": [
+          "session_id"
+        ],
         "title": "list_agent_skillsArguments",
         "type": "object"
       },
@@ -4550,18 +4522,6 @@
                 "title": "Inline",
                 "type": "boolean"
               },
-              "machine": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Remote worker machine for remote snapshots, otherwise null.",
-                "title": "Machine"
-              },
               "max_downloads": {
                 "description": "Maximum allowed downloads, or 0 for unlimited.",
                 "title": "Max Downloads",
@@ -4591,15 +4551,6 @@
                 "description": "Workspace-relative source file path.",
                 "title": "Path"
               },
-              "target": {
-                "description": "Session target from which the snapshot was created.",
-                "enum": [
-                  "local",
-                  "remote"
-                ],
-                "title": "Target",
-                "type": "string"
-              },
               "token": {
                 "description": "Sensitive token identifying the download link.",
                 "title": "Token",
@@ -4628,9 +4579,7 @@
               "expires_at",
               "ttl_remaining_s",
               "downloads",
-              "max_downloads",
-              "target",
-              "machine"
+              "max_downloads"
             ],
             "title": "FileLinkSummary",
             "type": "object"
@@ -5308,22 +5257,15 @@
             "type": "string"
           },
           "session_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional explicit shared session id. When provided, the bound executor adds <workdir>/.agents/skills as the highest-priority source.",
-            "title": "Session Id"
+            "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+            "title": "Session Id",
+            "type": "string"
           }
         },
         "required": [
           "name",
-          "path"
+          "path",
+          "session_id"
         ],
         "title": "read_agent_skill_fileArguments",
         "type": "object"
@@ -5596,75 +5538,6 @@
           "todos"
         ],
         "title": "ReadTodosOutput",
-        "type": "object"
-      }
-    },
-    {
-      "annotations": {
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true,
-        "readOnlyHint": false
-      },
-      "description": "Run migration-only control-plane actions for already-enrolled legacy remote workers: action=\"list\" inspects legacy worker inventory, action=\"revoke\" removes stale or untrusted legacy trust, action=\"rename\" updates a legacy worker name, and action=\"reconnect_command\" returns a credential-free command for an existing legacy profile.\n\nNew machines pair with `workgate executor connect <control-url>`. `remote_admin` does not create enrollment invites and is not a normal machine-execution selector. Start normal work with executor-backed `session_start(workdir=..., executor_id=...)` and then use ordinary session-bound tools.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "description": "Legacy remote control-plane action: list, revoke, rename, or retrieve a reconnect command. New enrollment uses `workgate executor connect`.",
-            "enum": [
-              "list",
-              "revoke",
-              "rename",
-              "reconnect_command"
-            ],
-            "title": "Action",
-            "type": "string"
-          },
-          "args": {
-            "additionalProperties": true,
-            "description": "Action-specific control-plane arguments. list accepts {}; revoke and reconnect_command accept machine; rename accepts machine and new_name.",
-            "title": "Args",
-            "type": "object"
-          }
-        },
-        "required": [
-          "action",
-          "args"
-        ],
-        "title": "remote_adminArguments",
-        "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "remote:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
-      "name": "remote_admin",
-      "outputSchema": {
-        "description": "Remote control-plane result.",
-        "properties": {
-          "action": {
-            "description": "Remote control-plane action requested by the caller.",
-            "title": "Action",
-            "type": "string"
-          },
-          "data": {
-            "additionalProperties": true,
-            "description": "Structured output returned by the control-plane action.",
-            "title": "Data",
-            "type": "object"
-          }
-        },
-        "required": [
-          "action",
-          "data"
-        ],
-        "title": "RemoteAdminOutput",
         "type": "object"
       }
     },
@@ -6725,82 +6598,22 @@
             "type": "object"
           },
           "SessionCapabilitiesEnvironment": {
-            "description": "Effective feature support relevant to choosing session tools.",
+            "description": "Executor-local feature support relevant to choosing session tools.",
             "properties": {
-              "agent_bridge": {
-                "description": "Whether Agent Bridge is enabled.",
-                "title": "Agent Bridge",
-                "type": "boolean"
-              },
-              "audit_full_payload": {
-                "description": "Whether protected full audit-entry recovery is supported.",
-                "title": "Audit Full Payload",
-                "type": "boolean"
-              },
-              "browser_console": {
-                "description": "Whether the browser terminal console can be used.",
-                "title": "Browser Console",
-                "type": "boolean"
-              },
-              "browser_ui": {
-                "description": "Whether the authenticated browser Human UI is mounted.",
-                "title": "Browser Ui",
-                "type": "boolean"
-              },
               "conpty": {
                 "description": "Whether Windows ConPTY is available.",
                 "title": "Conpty",
-                "type": "boolean"
-              },
-              "http_transfer": {
-                "description": "Whether authenticated HTTP file transfer links are available.",
-                "title": "Http Transfer",
-                "type": "boolean"
-              },
-              "native_opentui": {
-                "description": "Whether native OpenTUI can be started.",
-                "title": "Native Opentui",
-                "type": "boolean"
-              },
-              "oauth_authorized_mcp_servers": {
-                "description": "Number of OAuth upstream MCP servers with usable stored authorization.",
-                "title": "Oauth Authorized Mcp Servers",
-                "type": "integer"
-              },
-              "oauth_configured_mcp_servers": {
-                "description": "Number of configured OAuth upstream MCP servers.",
-                "title": "Oauth Configured Mcp Servers",
-                "type": "integer"
-              },
-              "oauth_mcp_clients": {
-                "description": "Whether OAuth-backed upstream MCP clients are supported.",
-                "title": "Oauth Mcp Clients",
                 "type": "boolean"
               },
               "raw_pty": {
                 "description": "Whether a raw persistent-terminal backend is available.",
                 "title": "Raw Pty",
                 "type": "boolean"
-              },
-              "remote_worker": {
-                "description": "Whether remote-worker routing is enabled.",
-                "title": "Remote Worker",
-                "type": "boolean"
               }
             },
             "required": [
-              "remote_worker",
               "raw_pty",
-              "conpty",
-              "browser_ui",
-              "native_opentui",
-              "browser_console",
-              "agent_bridge",
-              "oauth_mcp_clients",
-              "oauth_configured_mcp_servers",
-              "oauth_authorized_mcp_servers",
-              "http_transfer",
-              "audit_full_payload"
+              "conpty"
             ],
             "title": "SessionCapabilitiesEnvironment",
             "type": "object"
@@ -6840,40 +6653,21 @@
             "type": "object"
           },
           "SessionPolicyEnvironment": {
-            "description": "Safe effective limits and modes that influence tool selection.",
+            "description": "Safe executor-owned limits and modes that influence tool selection.",
             "properties": {
-              "agent_session_retention_s": {
-                "description": "Idle retention for durable agent/workspace sessions.",
-                "title": "Agent Session Retention S",
-                "type": "integer"
-              },
-              "authentication_mode": {
-                "description": "Inbound server authentication mode.",
-                "enum": [
-                  "none",
-                  "oauth"
-                ],
-                "title": "Authentication Mode",
-                "type": "string"
-              },
               "full_control": {
-                "description": "Whether full-control mode is active.",
+                "description": "Whether executor full-control path policy is active.",
                 "title": "Full Control",
                 "type": "boolean"
               },
-              "max_agent_sessions": {
-                "description": "Maximum durable agent/workspace sessions.",
-                "title": "Max Agent Sessions",
-                "type": "integer"
-              },
-              "max_audit_event_bytes": {
-                "description": "Maximum retained bytes for one audit event.",
-                "title": "Max Audit Event Bytes",
-                "type": "integer"
-              },
               "max_concurrent_commands": {
-                "description": "Concurrent command limit.",
+                "description": "Concurrent executor command limit.",
                 "title": "Max Concurrent Commands",
+                "type": "integer"
+              },
+              "max_directory_entries": {
+                "description": "Maximum directory entries returned by one listing.",
+                "title": "Max Directory Entries",
                 "type": "integer"
               },
               "max_file_read_bytes": {
@@ -6886,9 +6680,19 @@
                 "title": "Max File Write Bytes",
                 "type": "integer"
               },
-              "max_http_request_bytes": {
-                "description": "Inbound HTTP request-body limit.",
-                "title": "Max Http Request Bytes",
+              "max_glob_results": {
+                "description": "Maximum glob-search result count.",
+                "title": "Max Glob Results",
+                "type": "integer"
+              },
+              "max_job_log_bytes": {
+                "description": "Maximum durable log bytes retained for one shell job.",
+                "title": "Max Job Log Bytes",
+                "type": "integer"
+              },
+              "max_jobs": {
+                "description": "Maximum retained tracked shell-job records.",
+                "title": "Max Jobs",
                 "type": "integer"
               },
               "max_output_bytes": {
@@ -6902,7 +6706,7 @@
                 "type": "integer"
               },
               "max_search_results": {
-                "description": "Maximum search result count.",
+                "description": "Maximum text-search result count.",
                 "title": "Max Search Results",
                 "type": "integer"
               },
@@ -6926,32 +6730,15 @@
                 "title": "Max Transfer Unpacked Bytes",
                 "type": "integer"
               },
-              "network_policy": {
-                "const": "tool_scoped",
-                "description": "Network access policy; network use remains tool-scoped.",
-                "title": "Network Policy",
-                "type": "string"
-              },
-              "remote_job_timeout_s": {
-                "description": "Remote job result timeout in seconds.",
-                "title": "Remote Job Timeout S",
+              "max_tree_entries": {
+                "description": "Maximum tree-view entry count.",
+                "title": "Max Tree Entries",
                 "type": "integer"
               },
-              "remote_max_pending_jobs": {
-                "description": "Pending or in-flight remote jobs allowed per worker.",
-                "title": "Remote Max Pending Jobs",
+              "max_view_image_bytes": {
+                "description": "Maximum image bytes accepted by view_image.",
+                "title": "Max View Image Bytes",
                 "type": "integer"
-              },
-              "server_mode": {
-                "description": "Configured server transport mode.",
-                "enum": [
-                  "mcp",
-                  "http",
-                  "both",
-                  "stdio"
-                ],
-                "title": "Server Mode",
-                "type": "string"
               },
               "shell_default_timeout_s": {
                 "description": "Default bounded shell timeout in seconds.",
@@ -6962,37 +6749,28 @@
                 "description": "Maximum bounded shell timeout in seconds.",
                 "title": "Shell Max Timeout S",
                 "type": "integer"
-              },
-              "tool_timeout_s": {
-                "description": "Base tool watchdog timeout in seconds.",
-                "title": "Tool Timeout S",
-                "type": "number"
               }
             },
             "required": [
-              "server_mode",
-              "authentication_mode",
               "full_control",
-              "network_policy",
-              "tool_timeout_s",
               "shell_default_timeout_s",
               "shell_max_timeout_s",
               "max_output_bytes",
-              "max_agent_sessions",
-              "agent_session_retention_s",
+              "max_jobs",
+              "max_job_log_bytes",
               "max_session_snapshots",
               "max_session_snapshot_bytes",
               "max_file_read_bytes",
               "max_file_write_bytes",
+              "max_view_image_bytes",
               "max_search_results",
+              "max_glob_results",
+              "max_tree_entries",
+              "max_directory_entries",
               "max_concurrent_commands",
               "max_persistent_shells",
-              "max_http_request_bytes",
-              "max_audit_event_bytes",
               "max_transfer_archive_entries",
-              "max_transfer_unpacked_bytes",
-              "remote_job_timeout_s",
-              "remote_max_pending_jobs"
+              "max_transfer_unpacked_bytes"
             ],
             "title": "SessionPolicyEnvironment",
             "type": "object"
@@ -7123,31 +6901,11 @@
             "type": "object"
           },
           "SessionToolsEnvironment": {
-            "description": "Allowlisted executable and runtime probes relevant to tool choice.",
+            "description": "Allowlisted executable probes owned by the session executor.",
             "properties": {
-              "bun": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Bun probe."
-              },
-              "chromium": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Chromium runtime probe."
-              },
-              "curl": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "curl probe."
-              },
               "git": {
                 "$ref": "#/$defs/SessionToolProbe",
                 "description": "Git probe."
-              },
-              "opentui": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Native OpenTUI runtime probe."
-              },
-              "playwright": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Python Playwright probe."
               },
               "ripgrep": {
                 "$ref": "#/$defs/SessionToolProbe",
@@ -7166,115 +6924,18 @@
               "shell",
               "git",
               "ripgrep",
-              "tmux",
-              "curl",
-              "bun",
-              "chromium",
-              "playwright",
-              "opentui"
+              "tmux"
             ],
             "title": "SessionToolsEnvironment",
             "type": "object"
           },
-          "SessionWorkerRuntime": {
-            "description": "Remote-worker runtime identity without tokens, paths, or digests.",
-            "properties": {
-              "active": {
-                "description": "Whether this environment was collected inside a remote worker.",
-                "title": "Active",
-                "type": "boolean"
-              },
-              "bundle_version": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Installed source-bundle version, when available.",
-                "title": "Bundle Version"
-              },
-              "service_kind": {
-                "description": "Remote-worker process or service kind.",
-                "enum": [
-                  "none",
-                  "manual",
-                  "systemd",
-                  "launchd",
-                  "windows_startup",
-                  "managed"
-                ],
-                "title": "Service Kind",
-                "type": "string"
-              },
-              "service_status": {
-                "description": "Normalized remote-worker service status.",
-                "enum": [
-                  "not_applicable",
-                  "running",
-                  "unknown"
-                ],
-                "title": "Service Status",
-                "type": "string"
-              },
-              "worker_version": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Remote worker workgate version, when active.",
-                "title": "Worker Version"
-              }
-            },
-            "required": [
-              "active",
-              "service_kind",
-              "service_status"
-            ],
-            "title": "SessionWorkerRuntime",
-            "type": "object"
-          },
           "SessionWorkspaceEnvironment": {
-            "description": "Workspace orientation for the runtime that owns the session.",
+            "description": "Workspace orientation reported by the executor that owns the session.",
             "properties": {
-              "machine": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Configured remote-worker name, when remote.",
-                "title": "Machine"
-              },
-              "target": {
-                "description": "Execution target represented by this environment.",
-                "enum": [
-                  "local",
-                  "remote"
-                ],
-                "title": "Target",
-                "type": "string"
-              },
               "workdir": {
                 "description": "Canonical workdir on the execution target.",
                 "title": "Workdir",
                 "type": "string"
-              },
-              "worker_runtime": {
-                "$ref": "#/$defs/SessionWorkerRuntime",
-                "description": "Worker runtime and service identity for this environment."
               },
               "workspace_root": {
                 "description": "Canonical workspace root on the execution target.",
@@ -7284,9 +6945,7 @@
             },
             "required": [
               "workspace_root",
-              "workdir",
-              "target",
-              "worker_runtime"
+              "workdir"
             ],
             "title": "SessionWorkspaceEnvironment",
             "type": "object"
@@ -7316,19 +6975,6 @@
             "description": "Stable executor id bound to this shared session.",
             "title": "Executor Id"
           },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional Unix timestamp when the session expires.",
-            "title": "Expires At"
-          },
           "git": {
             "$ref": "#/$defs/GitSessionInfo",
             "description": "Lightweight git orientation for the session workdir."
@@ -7354,19 +7000,6 @@
             "description": "Optional human-readable session label.",
             "title": "Label"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Legacy remote-worker projection; final executor sessions do not use this for routing.",
-            "title": "Machine"
-          },
           "message": {
             "description": "Short model-facing instruction for using this session.",
             "title": "Message",
@@ -7375,15 +7008,6 @@
           "session_id": {
             "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
             "title": "Session Id",
-            "type": "string"
-          },
-          "target": {
-            "description": "Legacy executor-local orientation projection; public routing uses executor_id.",
-            "enum": [
-              "local",
-              "remote"
-            ],
-            "title": "Target",
             "type": "string"
           },
           "updated_at": {
@@ -7404,7 +7028,6 @@
         },
         "required": [
           "session_id",
-          "target",
           "workdir",
           "created_at",
           "updated_at",
@@ -7709,19 +7332,6 @@
                 "description": "Stable final executor identity for this endpoint, when applicable.",
                 "title": "Executor Id"
               },
-              "machine": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Legacy remote-worker machine name, omitted for final executor-bound sessions.",
-                "title": "Machine"
-              },
               "path": {
                 "description": "Caller-provided path inside the session workdir.",
                 "title": "Path",
@@ -7744,23 +7354,6 @@
                 "description": "Agent/workspace session id for this endpoint.",
                 "title": "Session Id",
                 "type": "string"
-              },
-              "target": {
-                "anyOf": [
-                  {
-                    "enum": [
-                      "local",
-                      "remote"
-                    ],
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Legacy local/remote target, omitted for final executor-bound sessions.",
-                "title": "Target"
               },
               "workdir": {
                 "description": "Session workdir used for path resolution.",
@@ -7890,12 +7483,10 @@
                 "description": "Source copy endpoint."
               },
               "transport": {
-                "description": "Actual data transport used by the copy operation.",
+                "description": "Actual executor-level data transport used by the copy operation.",
                 "enum": [
-                  "local",
-                  "same_worker",
-                  "worker_rpc",
-                  "http_stream"
+                  "same_executor",
+                  "executor_rpc"
                 ],
                 "title": "Transport",
                 "type": "string"
@@ -7917,13 +7508,8 @@
             "description": "Relationship between the source and destination sessions.",
             "properties": {
               "route": {
-                "description": "Final executor relation, or a legacy local/remote transfer route.",
+                "description": "Relationship between the source and destination executors.",
                 "enum": [
-                  "local_to_local",
-                  "local_to_remote",
-                  "remote_to_local",
-                  "remote_to_remote_same_machine",
-                  "remote_to_remote_different_machines",
                   "same_executor",
                   "different_executors"
                 ],
@@ -7936,36 +7522,10 @@
                 "title": "Same Executor",
                 "type": "boolean"
               },
-              "same_machine": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Legacy remote-worker machine relation; omitted for final executor-bound sessions.",
-                "title": "Same Machine"
-              },
               "same_session": {
                 "description": "Whether source and destination are the same agent session.",
                 "title": "Same Session",
                 "type": "boolean"
-              },
-              "same_target": {
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Legacy local/remote target relation; omitted for final executor-bound sessions.",
-                "title": "Same Target"
               }
             },
             "required": [
@@ -8065,32 +7625,6 @@
             "title": "Force Released",
             "type": "boolean"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Legacy remote-worker projection, when available.",
-            "title": "Machine"
-          },
-          "remote_cleanup_succeeded": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Legacy remote-worker cleanup projection, when applicable.",
-            "title": "Remote Cleanup Succeeded"
-          },
           "session_id": {
             "description": "Ended agent/workspace session id.",
             "title": "Session Id",
@@ -8111,23 +7645,6 @@
             },
             "title": "Stopped Shells",
             "type": "array"
-          },
-          "target": {
-            "anyOf": [
-              {
-                "enum": [
-                  "local",
-                  "remote"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Legacy execution-target projection, when available.",
-            "title": "Target"
           }
         },
         "required": [
@@ -8258,82 +7775,22 @@
             "type": "object"
           },
           "SessionCapabilitiesEnvironment": {
-            "description": "Effective feature support relevant to choosing session tools.",
+            "description": "Executor-local feature support relevant to choosing session tools.",
             "properties": {
-              "agent_bridge": {
-                "description": "Whether Agent Bridge is enabled.",
-                "title": "Agent Bridge",
-                "type": "boolean"
-              },
-              "audit_full_payload": {
-                "description": "Whether protected full audit-entry recovery is supported.",
-                "title": "Audit Full Payload",
-                "type": "boolean"
-              },
-              "browser_console": {
-                "description": "Whether the browser terminal console can be used.",
-                "title": "Browser Console",
-                "type": "boolean"
-              },
-              "browser_ui": {
-                "description": "Whether the authenticated browser Human UI is mounted.",
-                "title": "Browser Ui",
-                "type": "boolean"
-              },
               "conpty": {
                 "description": "Whether Windows ConPTY is available.",
                 "title": "Conpty",
-                "type": "boolean"
-              },
-              "http_transfer": {
-                "description": "Whether authenticated HTTP file transfer links are available.",
-                "title": "Http Transfer",
-                "type": "boolean"
-              },
-              "native_opentui": {
-                "description": "Whether native OpenTUI can be started.",
-                "title": "Native Opentui",
-                "type": "boolean"
-              },
-              "oauth_authorized_mcp_servers": {
-                "description": "Number of OAuth upstream MCP servers with usable stored authorization.",
-                "title": "Oauth Authorized Mcp Servers",
-                "type": "integer"
-              },
-              "oauth_configured_mcp_servers": {
-                "description": "Number of configured OAuth upstream MCP servers.",
-                "title": "Oauth Configured Mcp Servers",
-                "type": "integer"
-              },
-              "oauth_mcp_clients": {
-                "description": "Whether OAuth-backed upstream MCP clients are supported.",
-                "title": "Oauth Mcp Clients",
                 "type": "boolean"
               },
               "raw_pty": {
                 "description": "Whether a raw persistent-terminal backend is available.",
                 "title": "Raw Pty",
                 "type": "boolean"
-              },
-              "remote_worker": {
-                "description": "Whether remote-worker routing is enabled.",
-                "title": "Remote Worker",
-                "type": "boolean"
               }
             },
             "required": [
-              "remote_worker",
               "raw_pty",
-              "conpty",
-              "browser_ui",
-              "native_opentui",
-              "browser_console",
-              "agent_bridge",
-              "oauth_mcp_clients",
-              "oauth_configured_mcp_servers",
-              "oauth_authorized_mcp_servers",
-              "http_transfer",
-              "audit_full_payload"
+              "conpty"
             ],
             "title": "SessionCapabilitiesEnvironment",
             "type": "object"
@@ -8373,40 +7830,21 @@
             "type": "object"
           },
           "SessionPolicyEnvironment": {
-            "description": "Safe effective limits and modes that influence tool selection.",
+            "description": "Safe executor-owned limits and modes that influence tool selection.",
             "properties": {
-              "agent_session_retention_s": {
-                "description": "Idle retention for durable agent/workspace sessions.",
-                "title": "Agent Session Retention S",
-                "type": "integer"
-              },
-              "authentication_mode": {
-                "description": "Inbound server authentication mode.",
-                "enum": [
-                  "none",
-                  "oauth"
-                ],
-                "title": "Authentication Mode",
-                "type": "string"
-              },
               "full_control": {
-                "description": "Whether full-control mode is active.",
+                "description": "Whether executor full-control path policy is active.",
                 "title": "Full Control",
                 "type": "boolean"
               },
-              "max_agent_sessions": {
-                "description": "Maximum durable agent/workspace sessions.",
-                "title": "Max Agent Sessions",
-                "type": "integer"
-              },
-              "max_audit_event_bytes": {
-                "description": "Maximum retained bytes for one audit event.",
-                "title": "Max Audit Event Bytes",
-                "type": "integer"
-              },
               "max_concurrent_commands": {
-                "description": "Concurrent command limit.",
+                "description": "Concurrent executor command limit.",
                 "title": "Max Concurrent Commands",
+                "type": "integer"
+              },
+              "max_directory_entries": {
+                "description": "Maximum directory entries returned by one listing.",
+                "title": "Max Directory Entries",
                 "type": "integer"
               },
               "max_file_read_bytes": {
@@ -8419,9 +7857,19 @@
                 "title": "Max File Write Bytes",
                 "type": "integer"
               },
-              "max_http_request_bytes": {
-                "description": "Inbound HTTP request-body limit.",
-                "title": "Max Http Request Bytes",
+              "max_glob_results": {
+                "description": "Maximum glob-search result count.",
+                "title": "Max Glob Results",
+                "type": "integer"
+              },
+              "max_job_log_bytes": {
+                "description": "Maximum durable log bytes retained for one shell job.",
+                "title": "Max Job Log Bytes",
+                "type": "integer"
+              },
+              "max_jobs": {
+                "description": "Maximum retained tracked shell-job records.",
+                "title": "Max Jobs",
                 "type": "integer"
               },
               "max_output_bytes": {
@@ -8435,7 +7883,7 @@
                 "type": "integer"
               },
               "max_search_results": {
-                "description": "Maximum search result count.",
+                "description": "Maximum text-search result count.",
                 "title": "Max Search Results",
                 "type": "integer"
               },
@@ -8459,32 +7907,15 @@
                 "title": "Max Transfer Unpacked Bytes",
                 "type": "integer"
               },
-              "network_policy": {
-                "const": "tool_scoped",
-                "description": "Network access policy; network use remains tool-scoped.",
-                "title": "Network Policy",
-                "type": "string"
-              },
-              "remote_job_timeout_s": {
-                "description": "Remote job result timeout in seconds.",
-                "title": "Remote Job Timeout S",
+              "max_tree_entries": {
+                "description": "Maximum tree-view entry count.",
+                "title": "Max Tree Entries",
                 "type": "integer"
               },
-              "remote_max_pending_jobs": {
-                "description": "Pending or in-flight remote jobs allowed per worker.",
-                "title": "Remote Max Pending Jobs",
+              "max_view_image_bytes": {
+                "description": "Maximum image bytes accepted by view_image.",
+                "title": "Max View Image Bytes",
                 "type": "integer"
-              },
-              "server_mode": {
-                "description": "Configured server transport mode.",
-                "enum": [
-                  "mcp",
-                  "http",
-                  "both",
-                  "stdio"
-                ],
-                "title": "Server Mode",
-                "type": "string"
               },
               "shell_default_timeout_s": {
                 "description": "Default bounded shell timeout in seconds.",
@@ -8495,37 +7926,28 @@
                 "description": "Maximum bounded shell timeout in seconds.",
                 "title": "Shell Max Timeout S",
                 "type": "integer"
-              },
-              "tool_timeout_s": {
-                "description": "Base tool watchdog timeout in seconds.",
-                "title": "Tool Timeout S",
-                "type": "number"
               }
             },
             "required": [
-              "server_mode",
-              "authentication_mode",
               "full_control",
-              "network_policy",
-              "tool_timeout_s",
               "shell_default_timeout_s",
               "shell_max_timeout_s",
               "max_output_bytes",
-              "max_agent_sessions",
-              "agent_session_retention_s",
+              "max_jobs",
+              "max_job_log_bytes",
               "max_session_snapshots",
               "max_session_snapshot_bytes",
               "max_file_read_bytes",
               "max_file_write_bytes",
+              "max_view_image_bytes",
               "max_search_results",
+              "max_glob_results",
+              "max_tree_entries",
+              "max_directory_entries",
               "max_concurrent_commands",
               "max_persistent_shells",
-              "max_http_request_bytes",
-              "max_audit_event_bytes",
               "max_transfer_archive_entries",
-              "max_transfer_unpacked_bytes",
-              "remote_job_timeout_s",
-              "remote_max_pending_jobs"
+              "max_transfer_unpacked_bytes"
             ],
             "title": "SessionPolicyEnvironment",
             "type": "object"
@@ -8656,31 +8078,11 @@
             "type": "object"
           },
           "SessionToolsEnvironment": {
-            "description": "Allowlisted executable and runtime probes relevant to tool choice.",
+            "description": "Allowlisted executable probes owned by the session executor.",
             "properties": {
-              "bun": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Bun probe."
-              },
-              "chromium": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Chromium runtime probe."
-              },
-              "curl": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "curl probe."
-              },
               "git": {
                 "$ref": "#/$defs/SessionToolProbe",
                 "description": "Git probe."
-              },
-              "opentui": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Native OpenTUI runtime probe."
-              },
-              "playwright": {
-                "$ref": "#/$defs/SessionToolProbe",
-                "description": "Python Playwright probe."
               },
               "ripgrep": {
                 "$ref": "#/$defs/SessionToolProbe",
@@ -8699,115 +8101,18 @@
               "shell",
               "git",
               "ripgrep",
-              "tmux",
-              "curl",
-              "bun",
-              "chromium",
-              "playwright",
-              "opentui"
+              "tmux"
             ],
             "title": "SessionToolsEnvironment",
             "type": "object"
           },
-          "SessionWorkerRuntime": {
-            "description": "Remote-worker runtime identity without tokens, paths, or digests.",
-            "properties": {
-              "active": {
-                "description": "Whether this environment was collected inside a remote worker.",
-                "title": "Active",
-                "type": "boolean"
-              },
-              "bundle_version": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Installed source-bundle version, when available.",
-                "title": "Bundle Version"
-              },
-              "service_kind": {
-                "description": "Remote-worker process or service kind.",
-                "enum": [
-                  "none",
-                  "manual",
-                  "systemd",
-                  "launchd",
-                  "windows_startup",
-                  "managed"
-                ],
-                "title": "Service Kind",
-                "type": "string"
-              },
-              "service_status": {
-                "description": "Normalized remote-worker service status.",
-                "enum": [
-                  "not_applicable",
-                  "running",
-                  "unknown"
-                ],
-                "title": "Service Status",
-                "type": "string"
-              },
-              "worker_version": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Remote worker workgate version, when active.",
-                "title": "Worker Version"
-              }
-            },
-            "required": [
-              "active",
-              "service_kind",
-              "service_status"
-            ],
-            "title": "SessionWorkerRuntime",
-            "type": "object"
-          },
           "SessionWorkspaceEnvironment": {
-            "description": "Workspace orientation for the runtime that owns the session.",
+            "description": "Workspace orientation reported by the executor that owns the session.",
             "properties": {
-              "machine": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Configured remote-worker name, when remote.",
-                "title": "Machine"
-              },
-              "target": {
-                "description": "Execution target represented by this environment.",
-                "enum": [
-                  "local",
-                  "remote"
-                ],
-                "title": "Target",
-                "type": "string"
-              },
               "workdir": {
                 "description": "Canonical workdir on the execution target.",
                 "title": "Workdir",
                 "type": "string"
-              },
-              "worker_runtime": {
-                "$ref": "#/$defs/SessionWorkerRuntime",
-                "description": "Worker runtime and service identity for this environment."
               },
               "workspace_root": {
                 "description": "Canonical workspace root on the execution target.",
@@ -8817,9 +8122,7 @@
             },
             "required": [
               "workspace_root",
-              "workdir",
-              "target",
-              "worker_runtime"
+              "workdir"
             ],
             "title": "SessionWorkspaceEnvironment",
             "type": "object"
@@ -8849,19 +8152,6 @@
             "description": "Stable executor id bound to this shared session.",
             "title": "Executor Id"
           },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional Unix timestamp when the session expires.",
-            "title": "Expires At"
-          },
           "git": {
             "$ref": "#/$defs/GitSessionInfo",
             "description": "Lightweight git orientation for the session workdir."
@@ -8887,19 +8177,6 @@
             "description": "Optional human-readable session label.",
             "title": "Label"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Legacy remote-worker projection; final executor sessions do not use this for routing.",
-            "title": "Machine"
-          },
           "message": {
             "description": "Short model-facing instruction for using this session.",
             "title": "Message",
@@ -8908,15 +8185,6 @@
           "session_id": {
             "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
             "title": "Session Id",
-            "type": "string"
-          },
-          "target": {
-            "description": "Legacy executor-local orientation projection; public routing uses executor_id.",
-            "enum": [
-              "local",
-              "remote"
-            ],
-            "title": "Target",
             "type": "string"
           },
           "updated_at": {
@@ -8937,7 +8205,6 @@
         },
         "required": [
           "session_id",
-          "target",
           "workdir",
           "created_at",
           "updated_at",
@@ -9217,19 +8484,6 @@
             "title": "Bytes",
             "type": "integer"
           },
-          "machine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Remote worker name when target is remote.",
-            "title": "Machine"
-          },
           "mime_type": {
             "description": "Detected image MIME type from file magic.",
             "title": "Mime Type",
@@ -9241,23 +8495,13 @@
             "type": "string"
           },
           "session_id": {
-            "description": "Control-server agent session id.",
+            "description": "Shared control/executor session id.",
             "title": "Session Id",
-            "type": "string"
-          },
-          "target": {
-            "description": "Whether the image came from the control workspace or a remote worker.",
-            "enum": [
-              "local",
-              "remote"
-            ],
-            "title": "Target",
             "type": "string"
           }
         },
         "required": [
           "session_id",
-          "target",
           "path",
           "mime_type",
           "bytes"

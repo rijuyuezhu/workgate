@@ -9,6 +9,7 @@ import workgate.tools.declarative as declarative_module
 from workgate.config.settings import clear_settings_cache
 from workgate.oauth.core.context import (
     bind_oauth_claims,
+    require_oauth_scopes,
     reset_oauth_claims,
 )
 from workgate.tool_session import (
@@ -190,6 +191,44 @@ async def test_mcp_handler_enforces_required_oauth_scopes():
         reset_oauth_claims(claims_token)
 
 
+@pytest.mark.asyncio
+async def test_dynamic_oauth_scope_failures_use_standard_tool_error_shape():
+    async def sample_tool() -> dict[str, bool]:
+        require_oauth_scopes(("shell:execute",))
+        return {"ok": True}
+
+    definition = ToolDefinition(
+        func=sample_tool,
+        name="sample_tool",
+        http_method="POST",
+        http_path="/tools/sample_tool",
+        oauth_scopes=("shell:read",),
+    )
+    claims_token = bind_oauth_claims({"scope": "shell:read"})
+    try:
+        with pytest.raises(HTTPException) as http_exc:
+            await definition.call_from_mapping({})
+        assert http_exc.value.status_code == 403
+        assert (
+            http_exc.value.detail
+            == "Missing required OAuth scope: shell:execute"
+        )
+
+        mcp = _FakeMcp()
+        definition.register_mcp(cast(Any, mcp), _sample_context())
+        assert mcp.handler is not None
+        handler = cast(Callable[[], Awaitable[dict[str, bool]]], mcp.handler)
+        with pytest.raises(HTTPException) as mcp_exc:
+            await handler()
+        assert mcp_exc.value.status_code == 403
+        assert (
+            mcp_exc.value.detail
+            == "Missing required OAuth scope: shell:execute"
+        )
+    finally:
+        reset_oauth_claims(claims_token)
+
+
 def test_tool_definition_rejects_unknown_mcp_security_profile():
     definition = ToolDefinition(
         func=_sample_tool,
@@ -229,7 +268,9 @@ async def test_http_style_tool_dispatch_stops_terminated_sessions(
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    session = store.create_session(workdir=tmp_path)
+    session = store.create_session(
+        session_id="sess_0000000000000000000001", workdir=tmp_path
+    )
     store.request_termination(session.session_id)
     called = False
 
@@ -260,7 +301,9 @@ async def test_tool_dispatch_ignores_session_like_values_in_free_form_data(
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    session = store.create_session(workdir=tmp_path)
+    session = store.create_session(
+        session_id="sess_0000000000000000000002", workdir=tmp_path
+    )
     called = False
 
     async def sample_tool(
@@ -297,7 +340,9 @@ async def test_mcp_tool_dispatch_stops_terminated_sessions(
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    session = store.create_session(workdir=tmp_path)
+    session = store.create_session(
+        session_id="sess_0000000000000000000003", workdir=tmp_path
+    )
     store.request_termination(session.session_id)
     called = False
 

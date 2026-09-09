@@ -1,13 +1,6 @@
 """Tokenized public file download link tool registry."""
 
-import asyncio
-
 from ...config.settings import Settings
-from ...ops.downloads import (
-    create_file_link_dispatch_execute,
-    list_file_links_execute,
-    revoke_file_link_execute,
-)
 from ...schemas.input_models.downloads import (
     DownloadFilenameArg,
     DownloadPathArg,
@@ -62,14 +55,8 @@ async def create_file_link(
     inline: InlineDownloadArg = False,
 ) -> CreateFileLinkOutput:
     """Create a tokenized snapshot URL for one file in an executor-backed session."""
-    return await create_file_link_dispatch_execute(
-        path=path,
-        ttl_s=ttl_s,
-        filename=filename,
-        max_downloads=max_downloads,
-        session_id=session_id,
-        inline=inline,
-    )
+    del session_id, path, ttl_s, filename, max_downloads, inline
+    raise RuntimeError("create_file_link requires control routing")
 
 
 @download_tool(
@@ -84,9 +71,8 @@ async def list_file_links(
     include_expired: IncludeExpiredArg = False,
 ) -> ListFileLinksOutput:
     """List tokenized file download links created by this session."""
-    return await asyncio.to_thread(
-        list_file_links_execute, include_expired, session_id
-    )
+    del session_id, include_expired
+    raise RuntimeError("list_file_links requires control routing")
 
 
 @download_tool(
@@ -99,4 +85,5 @@ async def revoke_file_link(
     session_id: SessionIdArg, token: DownloadTokenArg
 ) -> RevokeFileLinkOutput:
     """Revoke a tokenized file download link created by this session."""
-    return await asyncio.to_thread(revoke_file_link_execute, token, session_id)
+    del session_id, token
+    raise RuntimeError("revoke_file_link requires control routing")

@@ -50,28 +50,28 @@ export function createExecutorsController({
     for (const executor of state.executors) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "remote-row";
+      button.className = "executor-row";
       const selected = executor.executor_id === state.selectedId;
-      if (selected) button.classList.add("remote-row-selected");
+      if (selected) button.classList.add("executor-row-selected");
       button.setAttribute("aria-pressed", selected ? "true" : "false");
 
       const indicator = document.createElement("span");
       const live = !executor.revoked_at && executor.online === true;
       indicator.className = live
-        ? "remote-row-status remote-row-status-online"
-        : "remote-row-status";
+        ? "executor-row-status executor-row-status-online"
+        : "executor-row-status";
       indicator.setAttribute(
         "aria-label",
         executor.revoked_at ? "revoked" : live ? "online" : "offline",
       );
 
       const main = document.createElement("span");
-      main.className = "remote-row-main";
+      main.className = "executor-row-main";
       const name = document.createElement("strong");
-      name.className = "remote-row-name";
+      name.className = "executor-row-name";
       name.textContent = executor.name || executor.executor_id;
       const meta = document.createElement("span");
-      meta.className = "remote-row-meta";
+      meta.className = "executor-row-meta";
       meta.textContent = executor.revoked_at
         ? "revoked"
         : executor.online
@@ -80,7 +80,7 @@ export function createExecutorsController({
       main.append(name, meta);
 
       const version = document.createElement("span");
-      version.className = "remote-row-version";
+      version.className = "executor-row-version";
       version.textContent = executor.runtime?.workgate_version || "version —";
       button.append(indicator, main, version);
       button.addEventListener("click", () => {

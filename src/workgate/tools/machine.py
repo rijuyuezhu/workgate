@@ -36,9 +36,6 @@ MACHINE_TOOL_NAMES = frozenset(
         "transfer_copy_file",
         "transfer_delete_temp_path",
         "transfer_finish_write",
-        "transfer_http_abort_download",
-        "transfer_http_download",
-        "transfer_http_upload",
         "transfer_pack_dir",
         "transfer_read_chunk",
         "transfer_stat",
@@ -49,5 +46,16 @@ MACHINE_TOOL_NAMES = frozenset(
         "workspace_search",
         "write_file",
         "write_terminal_bridge",
+    }
+)
+
+# Internal executor-only operations used by mixed-placement public integrations.
+# They are not themselves public machine tools, so control may keep HTTP/SSE
+# Agent Bridge calls local while routing only session-bound stdio work here.
+EXECUTOR_AGENT_MCP_OPERATION_NAMES = frozenset(
+    {
+        "agent_mcp.list_servers",
+        "agent_mcp.list_tools",
+        "agent_mcp.call_tool",
     }
 )

@@ -43,12 +43,17 @@ type McpErrorHandler = Callable[
 _MCP_HANDLER_ERROR_HANDLER_ATTR = "__workgate_error_handler__"
 
 
+def _oauth_scope_http_error(exc: MissingOAuthScopeError) -> HTTPException:
+    """Return the transport error shape for one missing OAuth scope."""
+    return HTTPException(status_code=403, detail=str(exc))
+
+
 def _enforce_oauth_scopes(required_scopes: tuple[str, ...]) -> None:
     """Translate OAuth scope failures to the transport error shape."""
     try:
         require_oauth_scopes(required_scopes)
     except MissingOAuthScopeError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise _oauth_scope_http_error(exc) from exc
 
 
 def mark_mcp_handler_error_handler(
@@ -160,8 +165,8 @@ class ToolDefinition:
 
     @property
     def signature(self) -> inspect.Signature:
-        """Return the typed public signature advertised to MCP clients."""
-        return inspect.signature(self.func)
+        """Return the fully resolved public signature advertised to adapters."""
+        return inspect.signature(self.func, eval_str=True)
 
     def is_enabled(self, settings: Settings) -> bool:
         """Return whether this tool should be exposed for current settings."""
@@ -197,9 +202,12 @@ class ToolDefinition:
             enforce_tool_session_control(
                 dict(args), termination_cleanup=self.name == "session_end"
             )
-        return await self.func(
-            **_tool_kwargs_from_mapping(self.signature, args)
-        )
+        try:
+            return await self.func(
+                **_tool_kwargs_from_mapping(self.signature, args)
+            )
+        except MissingOAuthScopeError as exc:
+            raise _oauth_scope_http_error(exc) from exc
 
     def http_handler(self) -> Callable[[dict[str, Any]], Awaitable[Any]]:
         """Return a HTTP invocation handler for this tool."""
@@ -260,6 +268,8 @@ class ToolDefinition:
                 return await self.func(*args, **kwargs)
             except SessionTerminationRequestedError:
                 raise
+            except MissingOAuthScopeError as exc:
+                raise _oauth_scope_http_error(exc) from exc
             except Exception as exc:
                 if self.mcp_error_handler is not None:
                     return self.mcp_error_handler(exc, args, kwargs)

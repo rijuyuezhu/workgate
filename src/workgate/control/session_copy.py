@@ -15,7 +15,7 @@ from ..jobs.managed import (
     ManagedJobHandler,
     start_managed_job_without_session_admission,
 )
-from ..ops.transfer import normalize_chunk_size
+from ..protocol.transfer import normalize_chunk_size
 from ..schemas.result_models.jobs import JobStartOutput
 from ..schemas.result_models.session import (
     SessionCopyEndpoint,
@@ -565,7 +565,7 @@ class ControlSessionCopyService:
         same_executor = src.executor_id == dst.executor_id
         return SessionCopyOutput(
             kind=kind,
-            transport="same_worker" if same_executor else "worker_rpc",
+            transport="same_executor" if same_executor else "executor_rpc",
             resumed_bytes=0,
             source=SessionCopyEndpoint(
                 session_id=str(src.session_id),

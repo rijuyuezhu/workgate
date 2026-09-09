@@ -1,6 +1,5 @@
 """Secret scanning tool registry."""
 
-from ...ops.secret_scan import secret_scan_execute
 from ...schemas.input_models.secret_scan import (
     SecretScanCwdArg,
     SecretScanGlobArg,
@@ -41,4 +40,5 @@ async def secret_scan(
     max_results: SecretScanMaxResultsArg = 200,
 ) -> SecretScanOutput:
     """Scan session workdir text files for common secret-like strings."""
-    return await secret_scan_execute(cwd, glob, max_results, session_id)
+    del session_id, cwd, glob, max_results
+    raise RuntimeError("secret_scan requires control routing")

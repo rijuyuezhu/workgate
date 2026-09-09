@@ -2,72 +2,33 @@ from dataclasses import replace
 
 import pytest
 
-from workgate.tool_session.bindings import (
-    LocalSessionBinding,
-    RemoteSessionBinding,
-    binding_from_record,
-)
-from workgate.tool_session.records import (
-    AgentSession,
-    session_to_payload,
-)
+from workgate.tool_session.bindings import SessionBinding, binding_from_record
+from workgate.tool_session.records import AgentSession, session_to_payload
 
 
-def _local_record() -> AgentSession:
+def _record() -> AgentSession:
     return AgentSession(
-        session_id="LOCAL001",
-        target="local",
-        workdir="/workspace/local",
-        machine=None,
-        worker_session_id=None,
+        session_id="sess_0000000000000000000001",
+        workdir="/workspace/project",
         created_at=1.0,
         updated_at=2.0,
     )
 
 
-def _remote_record() -> AgentSession:
-    return AgentSession(
-        session_id="REMOTE01",
-        target="remote",
-        workdir="/workspace/remote",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-        created_at=1.0,
-        updated_at=2.0,
+def test_binding_from_record_returns_shared_session_binding() -> None:
+    binding = binding_from_record(_record())
+
+    assert binding == SessionBinding(
+        session_id="sess_0000000000000000000001",
+        workdir="/workspace/project",
     )
-
-
-def test_binding_from_record_returns_discriminated_local_binding() -> None:
-    binding = binding_from_record(_local_record())
-
-    assert binding == LocalSessionBinding(
-        session_id="LOCAL001", workdir="/workspace/local"
-    )
-    assert binding.target == "local"
-
-
-def test_binding_from_record_returns_complete_remote_binding() -> None:
-    binding = binding_from_record(_remote_record())
-
-    assert binding == RemoteSessionBinding(
-        session_id="REMOTE01",
-        workdir="/workspace/remote",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-    )
-    assert binding.target == "remote"
 
 
 @pytest.mark.parametrize(
     "record, message",
     [
-        (replace(_remote_record(), machine=None), "missing its worker binding"),
-        (
-            replace(_remote_record(), worker_session_id=None),
-            "missing its worker binding",
-        ),
-        (replace(_local_record(), machine="worker-a"), "remote worker binding"),
-        (replace(_local_record(), workdir=""), "empty workdir"),
+        (replace(_record(), session_id="invalid"), "invalid session_id"),
+        (replace(_record(), workdir=""), "empty workdir"),
     ],
 )
 def test_binding_from_record_rejects_impossible_record_shapes(
@@ -77,6 +38,15 @@ def test_binding_from_record_rejects_impossible_record_shapes(
         binding_from_record(record)
 
 
-def test_session_to_payload_rejects_noncanonical_record() -> None:
-    with pytest.raises(ValueError, match="not canonical"):
-        session_to_payload(replace(_local_record(), machine="worker-a"))
+def test_session_to_payload_round_trips_canonical_record() -> None:
+    record = _record()
+
+    assert session_to_payload(record) == {
+        "session_id": record.session_id,
+        "workdir": record.workdir,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "label": None,
+        "termination_requested_at": None,
+        "persistent_shell_ids": [],
+    }

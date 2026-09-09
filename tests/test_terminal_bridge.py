@@ -10,9 +10,8 @@ from typing import Any, cast
 
 import pytest
 
-import workgate.terminal.bridge as bridge_module
-from workgate.config.settings import clear_settings_cache
-from workgate.terminal.bridge import (
+import workgate.executor.terminal.bridge as bridge_module
+from workgate.executor.terminal.bridge import (
     TERMINAL_BRIDGE_BACKEND,
     TerminalBridgeBusyError,
     TerminalBridgeNotFoundError,
@@ -22,32 +21,41 @@ from workgate.terminal.bridge import (
     resize_terminal_bridge_execute,
     write_terminal_bridge_execute,
 )
-from workgate.terminal.runtime import build_terminal_runtime
+from workgate.executor.terminal.runtime import build_terminal_runtime
+from workgate.persistence import get_state_store
 
 
 @pytest.fixture(autouse=True)
 async def _terminal_runtime(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    monkeypatch.setenv("WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S", "60")
-    clear_settings_cache()
-    runtime = build_terminal_runtime()
+    runtime = build_terminal_runtime(
+        get_state_store(), workspace_root=tmp_path, idle_timeout_s=60
+    )
     await runtime.start()
     try:
         yield
     finally:
         await runtime.aclose()
-        clear_settings_cache()
 
 
-def test_terminal_bridge_orphan_lease_is_bounded(monkeypatch):
-    monkeypatch.setenv("WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S", "0")
-    clear_settings_cache()
-    assert bridge_module._idle_timeout_s() == 300
+def test_terminal_bridge_policy_is_bounded_at_composition():
+    disabled = bridge_module.TerminalBridgeRegistry(
+        idle_timeout_s=0, max_connections=0
+    )
+    oversized = bridge_module.TerminalBridgeRegistry(
+        idle_timeout_s=1200, max_connections=999
+    )
+    short = bridge_module.TerminalBridgeRegistry(
+        idle_timeout_s=1, max_connections=7
+    )
 
-    monkeypatch.setenv("WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S", "1200")
-    clear_settings_cache()
-    assert bridge_module._idle_timeout_s() == 300
+    assert disabled.idle_timeout_s == 300
+    assert disabled.max_connections == 1
+    assert oversized.idle_timeout_s == 300
+    assert oversized.max_connections == 128
+    assert short.idle_timeout_s == 60
+    assert short.max_connections == 7
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
@@ -277,8 +285,6 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         "unset PROMPT_COMMAND\nPS1='BRIDGE_READY> '\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_TMUX_BIN", tmux)
-    clear_settings_cache()
     subprocess.run(
         [
             tmux,

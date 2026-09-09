@@ -115,7 +115,6 @@ async def test_control_runtime_restores_only_durable_product_facts(
         }
         assert second.oauth_state.codes == {}
         assert second.human_ui_runtime.terminal_connections.active_count() == 0
-        assert second.human_ui_runtime.remote_files.snapshot() == ()
         assert await second.executor_transport.pending_count(executor_id) == 0
         assert not await second.executor_transport.is_online(executor_id)
         assert await second.executor_transport.inventory(executor_id) is None

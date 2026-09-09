@@ -194,6 +194,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     session_meta = tools["session_start"].meta
     assert "environment_info" not in tools
     assert "remote" not in tools
+    assert "remote_admin" not in tools
     assert search_meta is not None
     assert session_meta is not None
     assert search_meta["securitySchemes"][0]["type"] == "noauth"
@@ -218,7 +219,6 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
         "shell:read",
         "file:share",
     ]
-    assert tool_oauth_scopes("remote_admin") == ["remote:use"]
     assert tool_oauth_scopes("audit_tail") == ["audit:read"]
     assert all(tool.outputSchema is not None for tool in tools.values())
     bash_schema = tools["bash"].outputSchema
@@ -261,7 +261,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     )
     assert re.fullmatch(r"sess_[A-Za-z0-9_-]{22,}", structured["session_id"])
     assert structured["executor_id"] == harness.executor_id
-    assert structured["target"] == "local"
+    assert "target" not in structured
     assert structured["workdir"] == str(tmp_path)
     assert structured["workspace_root"] == str(tmp_path)
     assert "session_id" in structured["message"]

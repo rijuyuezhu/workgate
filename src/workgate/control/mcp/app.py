@@ -17,9 +17,6 @@ from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
-from ...ops.shell import tool_timeout_s
-from ...remote.http import remote_routes
-from ...remote.transfer_gateway import build_transfer_gateway_router
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
@@ -27,6 +24,7 @@ from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..http.executor_admin import executor_admin_routes
 from ..http.executor_routes import executor_routes
 from ..runtime import ControlRuntime, build_control_runtime
+from ..tool_timeouts import tool_timeout_s
 from .instructions import SERVER_INSTRUCTIONS
 from .session_limits import McpSessionLimitMiddleware
 from .transport_security import transport_security_settings
@@ -133,13 +131,6 @@ def _add_public_routes_to_mcp_http_app(
                 runtime.executor_pairing,
             )
             if runtime is not None
-            else ()
-        ),
-        *(remote_routes() if active_settings.remote_enabled else ()),
-        *(
-            build_transfer_gateway_router()
-            if active_settings.remote_enabled
-            and active_settings.remote_http_transfer_enabled
             else ()
         ),
         *oauth_public_routes(),

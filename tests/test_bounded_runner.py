@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from workgate.ops.utils import bounded_runner
+from workgate.executor import bounded_runner
 
 
 def _install_fake_kqueue_capabilities(monkeypatch, queue_factory):

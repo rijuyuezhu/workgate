@@ -36,9 +36,11 @@ def _install_outer_stores(settings: Settings):
     return outer_state_store, outer_session_store
 
 
-def _assert_runtime_is_installed(runtime) -> None:
+def _assert_runtime_is_installed(runtime, outer_session_store) -> None:
     assert get_state_store() is runtime.services.state_store
-    assert get_tool_session_store() is runtime.services.tool_session_store
+    # Control owns no machine-session authority; executor-only compatibility
+    # state must remain untouched while the control runtime is installed.
+    assert get_tool_session_store() is outer_session_store
 
 
 def _assert_outer_is_restored(outer_state_store, outer_session_store) -> None:
@@ -62,7 +64,7 @@ def test_rest_http_host_owns_control_runtime_lifespan(tmp_path):
         _assert_outer_is_restored(outer_state_store, outer_session_store)
 
         with TestClient(app) as client:
-            _assert_runtime_is_installed(runtime)
+            _assert_runtime_is_installed(runtime, outer_session_store)
             assert client.get("/healthz").status_code == 200
 
         _assert_outer_is_restored(outer_state_store, outer_session_store)
@@ -154,7 +156,7 @@ async def test_stdio_fastmcp_server_run_lifespan_owns_control_runtime(
         _assert_outer_is_restored(outer_state_store, outer_session_store)
 
         async with mcp._mcp_server.lifespan(mcp._mcp_server):
-            _assert_runtime_is_installed(runtime)
+            _assert_runtime_is_installed(runtime, outer_session_store)
 
         _assert_outer_is_restored(outer_state_store, outer_session_store)
     finally:
@@ -201,7 +203,7 @@ def test_mcp_http_host_owns_control_runtime_once(tmp_path):
         _assert_outer_is_restored(outer_state_store, outer_session_store)
 
         with TestClient(app) as client:
-            _assert_runtime_is_installed(runtime)
+            _assert_runtime_is_installed(runtime, outer_session_store)
             assert client.get("/healthz").status_code == 200
 
         _assert_outer_is_restored(outer_state_store, outer_session_store)
@@ -226,7 +228,7 @@ def test_mcp_http_inner_startup_failure_closes_control_runtime(tmp_path):
     async def failing_sdk_lifespan(
         _app: Starlette,
     ) -> AsyncGenerator[None]:
-        _assert_runtime_is_installed(runtime)
+        _assert_runtime_is_installed(runtime, outer_session_store)
         raise RuntimeError("sdk startup failed")
         yield
 

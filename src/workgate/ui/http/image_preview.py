@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..image_preview import make_image_preview
+from ...utils.image_preview import make_image_preview
 from .common import bounded_int as _bounded_int
 
 

@@ -11,31 +11,94 @@ from typing import Any
 
 import pytest
 
-import workgate.ops.transfer as transfer_ops
-import workgate.remote_worker.http_transfer as worker_http_transfer
-import workgate.tools.registry.transfer as transfer_registry
-from workgate.config.settings import clear_settings_cache
+import workgate.executor.transfer as transfer_ops
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
-from workgate.ops.transfer import (
-    transfer_abort_write,
-    transfer_alloc_temp_path,
-    transfer_begin_write,
-    transfer_finish_write,
-    transfer_pack_dir,
-    transfer_read_chunk,
-    transfer_stat,
-    transfer_unpack_archive,
-    transfer_write_chunk,
-)
-from workgate.ops.utils.path import temp_dir
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.path import temp_dir as _executor_temp_dir
+from workgate.executor.transfer import TransferContext
+from workgate.tool_session.store import get_tool_session_store
+
+_TRANSFER_CONTEXT: TransferContext | None = None
+
+
+def _context() -> TransferContext:
+    assert _TRANSFER_CONTEXT is not None
+    return _TRANSFER_CONTEXT
+
+
+def _refresh_context() -> None:
+    global _TRANSFER_CONTEXT
+    current = _context()
+    _TRANSFER_CONTEXT = TransferContext(
+        resolve_executor_config(get_settings()), current.store
+    )
 
 
 def _workspace(tmp_path, monkeypatch):
+    global _TRANSFER_CONTEXT
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".workgate"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
+    store = get_tool_session_store()
+    store.clear()
+    _TRANSFER_CONTEXT = TransferContext(
+        resolve_executor_config(get_settings()), store
+    )
     return tmp_path
+
+
+def transfer_stat(*args, **kwargs):
+    return transfer_ops.transfer_stat(*args, context=_context(), **kwargs)
+
+
+def transfer_read_chunk(*args, **kwargs):
+    return transfer_ops.transfer_read_chunk(*args, context=_context(), **kwargs)
+
+
+def transfer_begin_write(*args, **kwargs):
+    return transfer_ops.transfer_begin_write(
+        *args, context=_context(), **kwargs
+    )
+
+
+def transfer_write_chunk(*args, **kwargs):
+    return transfer_ops.transfer_write_chunk(
+        *args, context=_context(), **kwargs
+    )
+
+
+def transfer_finish_write(*args, **kwargs):
+    return transfer_ops.transfer_finish_write(
+        *args, context=_context(), **kwargs
+    )
+
+
+def transfer_abort_write(*args, **kwargs):
+    return transfer_ops.transfer_abort_write(
+        *args, context=_context(), **kwargs
+    )
+
+
+def transfer_alloc_temp_path(*args, **kwargs):
+    return transfer_ops.transfer_alloc_temp_path(
+        *args, context=_context(), **kwargs
+    )
+
+
+def transfer_pack_dir(*args, **kwargs):
+    return transfer_ops.transfer_pack_dir(*args, context=_context(), **kwargs)
+
+
+def transfer_unpack_archive(*args, **kwargs):
+    return transfer_ops.transfer_unpack_archive(
+        *args, context=_context(), **kwargs
+    )
+
+
+def temp_dir():
+    return _executor_temp_dir(_context().config.temp_dir)
 
 
 def test_transfer_handle_identity_uses_platform_native_ids(
@@ -290,77 +353,6 @@ async def test_mcp_does_not_expose_remote_transfer_tools(tmp_path, monkeypatch):
     }.isdisjoint(tools)
 
 
-@pytest.mark.asyncio
-async def test_registered_transfer_handlers_reach_local_worker_clients(
-    tmp_path, monkeypatch
-):
-    _workspace(tmp_path, monkeypatch)
-    begin = transfer_begin_write("abort.bin", expected_bytes=1)
-    aborted = await transfer_registry.transfer_abort_write.func(
-        "abort.bin", begin.transfer_id
-    )
-    assert aborted.deleted is True
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def fake_upload_file(**kwargs):
-        calls.append(("upload", kwargs))
-        return {"ok": True, "direction": "upload"}
-
-    def fake_download_file(**kwargs):
-        calls.append(("download", kwargs))
-        return {"ok": True, "direction": "download"}
-
-    def fake_abort_download(**kwargs):
-        calls.append(("abort", kwargs))
-        return {"ok": True, "direction": "abort"}
-
-    monkeypatch.setattr(worker_http_transfer, "upload_file", fake_upload_file)
-    monkeypatch.setattr(
-        worker_http_transfer, "download_file", fake_download_file
-    )
-    monkeypatch.setattr(
-        worker_http_transfer, "abort_download", fake_abort_download
-    )
-
-    common = {
-        "path": "payload.bin",
-        "session_id": "SESSION1",
-        "url": "https://worker.example/transfer",
-        "controller_url": "https://controller.example",
-        "authorization": "Bearer token",
-        "worker": "worker-a",
-        "expected_bytes": 7,
-        "expected_sha256": "a" * 64,
-        "chunk_size": 1024,
-        "timeout_s": 5.0,
-    }
-    assert await transfer_registry.transfer_http_upload.func(**common) == {
-        "ok": True,
-        "direction": "upload",
-    }
-    assert await transfer_registry.transfer_http_download.func(
-        **common,
-        transfer_id="transfer-1",
-        overwrite=False,
-    ) == {"ok": True, "direction": "download"}
-    assert await transfer_registry.transfer_http_abort_download.func(
-        path="payload.bin",
-        session_id="SESSION1",
-        transfer_id="transfer-1",
-    ) == {"ok": True, "direction": "abort"}
-
-    assert [kind for kind, _ in calls] == ["upload", "download", "abort"]
-    assert calls[0][1]["expected_sha256"] == "a" * 64
-    assert calls[1][1]["transfer_id"] == "transfer-1"
-    assert calls[1][1]["overwrite"] is False
-    assert calls[2][1] == {
-        "path": "payload.bin",
-        "session_id": "SESSION1",
-        "transfer_id": "transfer-1",
-    }
-
-
 def _write_payload(
     path: str, transfer_id: str, offset: int, payload: bytes
 ) -> None:
@@ -529,6 +521,7 @@ def test_unpack_limits_preserve_existing_destination(tmp_path, monkeypatch):
     _archive_with_files(archive, {"payload.bin": b"1234"})
     monkeypatch.setenv("WORKGATE_MAX_TRANSFER_UNPACKED_BYTES", "3")
     clear_settings_cache()
+    _refresh_context()
 
     with pytest.raises(ValueError, match="expands to more than 3 bytes"):
         transfer_unpack_archive(
@@ -551,6 +544,7 @@ def test_unpack_entry_limit_preserves_existing_destination(
     _archive_with_files(archive, {"one.txt": b"1", "two.txt": b"2"})
     monkeypatch.setenv("WORKGATE_MAX_TRANSFER_ARCHIVE_ENTRIES", "1")
     clear_settings_cache()
+    _refresh_context()
 
     with pytest.raises(ValueError, match="more than 1 entries"):
         transfer_unpack_archive(
@@ -604,6 +598,7 @@ def test_transfer_temp_pruning_preserves_recent_active_files(
     monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "0")
     monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "0")
     clear_settings_cache()
+    _refresh_context()
     directory = temp_dir()
     stale = directory / "stale.bin"
     recent = directory / "recent.bin"

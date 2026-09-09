@@ -148,7 +148,7 @@ class Settings(BaseSettings):
     """Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP safety annotations remain conservative in this mode."""
     """Allow network-capable operations."""
     tool_timeout_s: float = 60
-    """Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded cleanup time beyond run_shell_max_timeout_s."""
+    """Base control-owned MCP/HTTP tool watchdog timeout in seconds."""
     run_shell_default_timeout_s: int = 10
     """Default timeout for bounded shell command calls in seconds."""
     run_shell_max_timeout_s: int = 120
@@ -349,11 +349,6 @@ class Settings(BaseSettings):
     def agent_auth_dir(self) -> Path:
         """Private Agent Bridge credential directory, derived from state_dir."""
         return StateLayout(self.state_dir).agent_auth_dir
-
-    @property
-    def remote_transfer_dir(self) -> Path:
-        """Private durable ticket and spool directory for HTTP transfers."""
-        return StateLayout(self.state_dir).remote_transfers_dir
 
     @property
     def config_dir(self) -> Path:

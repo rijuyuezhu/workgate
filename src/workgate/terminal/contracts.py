@@ -1,6 +1,0 @@
-"""Shared contracts for persistent interactive terminal dimensions."""
-
-PERSISTENT_SHELL_MIN_COLUMNS = 20
-PERSISTENT_SHELL_MAX_COLUMNS = 1600
-PERSISTENT_SHELL_MIN_ROWS = 3
-PERSISTENT_SHELL_MAX_ROWS = 500

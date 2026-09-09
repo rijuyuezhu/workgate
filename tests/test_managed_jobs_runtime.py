@@ -3,8 +3,9 @@ import asyncio
 import pytest
 
 from workgate.config.settings import get_settings
-from workgate.jobs import runtime as jobs_ops
+from workgate.jobs import managed as jobs_managed
 from workgate.jobs.managed import ManagedJobsRuntime
+from workgate.protocol.ids import new_session_id
 from workgate.tool_session.store import get_tool_session_store
 
 
@@ -38,7 +39,9 @@ async def test_managed_jobs_runtime_close_drains_tasks_and_stops_admission(
     get_settings().workspace_root.mkdir(parents=True, exist_ok=True)
     store = get_tool_session_store()
     store.clear()
-    session_id = store.create_session(workdir=".").session_id
+    session_id = store.create_session(
+        session_id=str(new_session_id()), workdir="."
+    ).session_id
     entered = asyncio.Event()
 
     async def handler(context, _payload):
@@ -47,7 +50,7 @@ async def test_managed_jobs_runtime_close_drains_tasks_and_stops_admission(
         await asyncio.Event().wait()
 
     runtime.register_handler("test-runtime-close", handler)
-    started = await jobs_ops.start_managed_job(
+    started = await jobs_managed.start_managed_job(
         session_id,
         "test-runtime-close",
         {},
@@ -61,16 +64,18 @@ async def test_managed_jobs_runtime_close_drains_tasks_and_stops_admission(
 
     assert runtime.tasks == {}
     assert runtime.leases == {}
-    listed = await jobs_ops.managed_job_list_execute(session_id, True)
+    listed = await jobs_managed.managed_job_list_execute(session_id, True)
     row = next(job for job in listed.jobs if job.job_id == started.job_id)
     assert row.status == "stopped"
     assert row.completed_at is not None
 
     await runtime.aclose()
     with pytest.raises(RuntimeError, match="not accepting new work"):
-        await jobs_ops.start_managed_job(session_id, "test-runtime-close", {})
+        await jobs_managed.start_managed_job(
+            session_id, "test-runtime-close", {}
+        )
     with pytest.raises(RuntimeError, match="not accepting new work"):
-        await jobs_ops._retry_managed_job(session_id, started.job_id)
+        await jobs_managed._retry_managed_job(session_id, started.job_id)
     with pytest.raises(RuntimeError, match="closed"):
         runtime.register_handler("late", handler)
     with pytest.raises(RuntimeError, match="cannot be restarted after close"):

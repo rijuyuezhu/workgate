@@ -4,7 +4,6 @@ from typing import Any
 import pytest
 
 import workgate.agent_bridge.sources as source_module
-import workgate.ops.agent as agent_ops
 from workgate.agent_bridge.models import SkillSource as ModelSkillSource
 from workgate.agent_bridge.registry import build_agent_registry
 from workgate.agent_bridge.sources import (
@@ -16,8 +15,8 @@ from workgate.agent_bridge.state import (
     agent_config_fingerprint,
     agent_registry_fingerprint,
 )
-from workgate.config.settings import clear_settings_cache
-from workgate.remote_worker.dispatch import execute_worker_tool
+from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.runtime import build_executor_runtime
 from workgate.tool_session.store import get_tool_session_store
 
 
@@ -243,133 +242,7 @@ def test_multi_source_scan_shares_entry_and_skill_budgets(
 
 
 @pytest.mark.asyncio
-async def test_local_session_adds_its_workdir_project_source(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    workspace = tmp_path / "workspace"
-    default_project = workspace / "default"
-    session_project = workspace / "session"
-    managed = tmp_path / "managed"
-    xdg = tmp_path / "xdg"
-    default_project.mkdir(parents=True)
-    session_project.mkdir(parents=True)
-    managed.mkdir()
-    _install_skill(
-        default_project, ".agents/skills", "default-skill", "default"
-    )
-    _install_skill(
-        session_project, ".agents/skills", "session-skill", "session"
-    )
-    _configure(
-        monkeypatch,
-        workspace=workspace,
-        state_dir=tmp_path / "state",
-        config_dir=managed,
-        xdg_config_home=xdg,
-    )
-    session = get_tool_session_store().create_session(workdir=session_project)
-
-    default = await agent_ops.list_agent_skills_dispatch_execute()
-    scoped = await agent_ops.list_agent_skills_dispatch_execute(
-        session.session_id
-    )
-    activated = await agent_ops.activate_agent_skill_dispatch_execute(
-        "session-skill", session.session_id
-    )
-
-    assert [row["name"] for row in default.skills] == []
-    assert [row["name"] for row in scoped.skills] == ["session-skill"]
-    assert scoped.skills[0]["source"] == "project"
-    assert activated.source == "project"
-    assert "session" in activated.content
-
-
-@pytest.mark.asyncio
-async def test_remote_session_dispatches_skill_operations_to_worker(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    managed = tmp_path / "managed"
-    managed.mkdir()
-    _configure(
-        monkeypatch,
-        workspace=workspace,
-        state_dir=tmp_path / "state",
-        config_dir=managed,
-        xdg_config_home=tmp_path / "xdg",
-    )
-    session = get_tool_session_store().create_session(
-        target="remote",
-        workdir="/srv/project",
-        machine="edge",
-        worker_session_id="worker123",
-    )
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def fake_call(remote_session, tool: str, args: dict[str, Any]):
-        assert remote_session.session_id == session.session_id
-        calls.append((tool, args))
-        source_path = "/srv/project/.agents/skills"
-        if tool == "list_agent_skills":
-            return {
-                "sources": [{"source": "project", "path": source_path}],
-                "skills": [
-                    {
-                        "name": "remote-skill",
-                        "source": "project",
-                        "source_path": source_path,
-                        "entry_path": ".agents/skills/remote-skill/SKILL.md",
-                        "description": "Remote.",
-                        "related_files": ["guide.md"],
-                    }
-                ],
-                "warnings": [],
-            }
-        if tool == "activate_agent_skill":
-            return {
-                "name": "remote-skill",
-                "source": "project",
-                "source_path": source_path,
-                "entry_path": ".agents/skills/remote-skill/SKILL.md",
-                "description": "Remote.",
-                "content": "# Remote\n",
-                "bytes": 9,
-                "related_files": ["guide.md"],
-            }
-        return {
-            "name": "remote-skill",
-            "source": "project",
-            "source_path": source_path,
-            "path": "guide.md",
-            "content": "guide",
-            "bytes": 5,
-        }
-
-    monkeypatch.setattr(agent_ops, "call_remote_session_tool", fake_call)
-
-    listed = await agent_ops.list_agent_skills_dispatch_execute(
-        session.session_id
-    )
-    activated = await agent_ops.activate_agent_skill_dispatch_execute(
-        "remote-skill", session.session_id
-    )
-    related = await agent_ops.read_agent_skill_file_dispatch_execute(
-        "remote-skill", "guide.md", session.session_id
-    )
-
-    assert listed.skills[0]["source"] == "project"
-    assert activated.content == "# Remote\n"
-    assert related.content == "guide"
-    assert calls == [
-        ("list_agent_skills", {}),
-        ("activate_agent_skill", {"name": "remote-skill"}),
-        ("read_agent_skill_file", {"name": "remote-skill", "path": "guide.md"}),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_worker_executes_session_scoped_skill_registry(
+async def test_executor_session_scopes_skill_registry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -377,7 +250,7 @@ async def test_worker_executes_session_scoped_skill_registry(
     project.mkdir(parents=True)
     managed = tmp_path / "managed"
     managed.mkdir()
-    _install_skill(project, ".agents/skills", "worker-skill", "worker")
+    _install_skill(project, ".agents/skills", "executor-skill", "executor")
     _configure(
         monkeypatch,
         workspace=workspace,
@@ -385,19 +258,35 @@ async def test_worker_executes_session_scoped_skill_registry(
         config_dir=managed,
         xdg_config_home=tmp_path / "xdg",
     )
-    session = get_tool_session_store().create_session(workdir=project)
-
-    listed = await execute_worker_tool(
-        "list_agent_skills", {"session_id": session.session_id}
+    runtime = build_executor_runtime(
+        get_settings(), enable_control_connection=False
     )
-    activated = await execute_worker_tool(
+    session_id = "sess_0000000000000000000001"
+    runtime.services.tool_session_store.create_session(
+        session_id=session_id, workdir=project
+    )
+
+    listed = await runtime.dispatcher.execute(
+        "list_agent_skills", {"session_id": session_id}
+    )
+    activated = await runtime.dispatcher.execute(
         "activate_agent_skill",
-        {"session_id": session.session_id, "name": "worker-skill"},
+        {"session_id": session_id, "name": "executor-skill"},
+    )
+    related = await runtime.dispatcher.execute(
+        "read_agent_skill_file",
+        {
+            "session_id": session_id,
+            "name": "executor-skill",
+            "path": "guide.md",
+        },
     )
 
-    assert listed.skills[0]["name"] == "worker-skill"
+    assert [row["name"] for row in listed.skills] == ["executor-skill"]
     assert listed.skills[0]["source"] == "project"
     assert activated.source == "project"
+    assert "executor" in activated.content
+    assert related.content == "executor"
 
 
 def test_registry_fingerprint_tracks_project_and_global_sources(

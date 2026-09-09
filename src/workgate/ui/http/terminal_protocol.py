@@ -9,6 +9,14 @@ from typing import Any, Literal
 from pydantic import ValidationError
 from starlette.websockets import WebSocket
 
+from ...protocol.terminal import (
+    PERSISTENT_SHELL_MAX_COLUMNS,
+    PERSISTENT_SHELL_MAX_ROWS,
+    PERSISTENT_SHELL_MIN_COLUMNS,
+    PERSISTENT_SHELL_MIN_ROWS,
+    TERMINAL_BRIDGE_BACKENDS,
+    TERMINAL_BRIDGE_MAX_CHUNK_BYTES,
+)
 from ...schemas.result_models.shell import (
     KillPersistentShellOutput,
     ListPersistentShellsOutput,
@@ -17,19 +25,6 @@ from ...schemas.result_models.shell import (
     SendPersistentShellInputOutput,
     StartPersistentShellOutput,
 )
-from ...terminal.bridge import (
-    TERMINAL_BRIDGE_BACKENDS,
-    TERMINAL_BRIDGE_MAX_CHUNK_BYTES,
-    TerminalBridgeBusyError,
-    TerminalBridgeNotFoundError,
-    TerminalBridgeUnsupportedError,
-)
-from ...terminal.contracts import (
-    PERSISTENT_SHELL_MAX_COLUMNS,
-    PERSISTENT_SHELL_MAX_ROWS,
-    PERSISTENT_SHELL_MIN_COLUMNS,
-    PERSISTENT_SHELL_MIN_ROWS,
-)
 from .common import bounded_text as _bounded_text
 
 UI_TERMINAL_SUBPROTOCOL = "workgate-ui-terminal"
@@ -37,12 +32,11 @@ UI_TERMINAL_INPUT_MAX_BYTES = 65_536
 UI_TERMINAL_READ_MAX_LINES = 5_000
 UI_TERMINAL_DEFAULT_LINES = 1_000
 UI_TERMINAL_POLL_INTERVAL_S = 0.25
-UI_TERMINAL_REMOTE_POLL_INTERVAL_S = 0.75
-UI_TERMINAL_MACHINE_MAX_BYTES = 255
+UI_TERMINAL_EXECUTOR_POLL_INTERVAL_S = 0.75
+UI_TERMINAL_EXECUTOR_MAX_BYTES = 255
 UI_TERMINAL_METADATA_MAX_BYTES = 4_096
 UI_TERMINAL_OUTPUT_MAX_BYTES = 4_000_000
 UI_TERMINAL_MAX_SHELLS = 256
-UI_TERMINAL_REMOTE_TIMEOUT_S = 60
 UI_TERMINAL_RAW_READ_WAIT_MS = 100
 UI_TERMINAL_MODES = frozenset({"snapshot", "auto", "pty"})
 _SHELL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -51,7 +45,7 @@ _BRIDGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
 
 @dataclass(frozen=True)
 class _TerminalBridgeHandle:
-    machine: str
+    executor_id: str
     shell_id: str
     bridge_id: str
     cols: int
@@ -63,8 +57,8 @@ class _TerminalBridgeHandle:
 class TerminalWebSocketRequest:
     """Validated connection parameters for one Human UI terminal WebSocket."""
 
-    machine: str
-    """Selected local or remote machine name."""
+    executor_id: str
+    """Stable executor identity selected for this terminal attachment."""
     shell_id: str
     """Persistent-shell identifier selected for attachment."""
     requested_mode: str
@@ -160,12 +154,11 @@ def _optional_text(value: Any, *, field: str) -> str | None:
     return normalized or None
 
 
-def _machine_arg(value: Any) -> str:
+def _executor_id_arg(value: Any) -> str:
     return _bounded_text(
         value,
-        field="machine",
-        max_bytes=UI_TERMINAL_MACHINE_MAX_BYTES,
-        default="local",
+        field="executor_id",
+        max_bytes=UI_TERMINAL_EXECUTOR_MAX_BYTES,
         allow_empty=False,
     )
 
@@ -188,7 +181,7 @@ def _terminal_mode(value: Any) -> str:
 
 def parse_terminal_websocket_request(
     *,
-    machine: Any,
+    executor_id: Any,
     shell_id: Any,
     mode: Any,
     lines: Any,
@@ -198,7 +191,7 @@ def parse_terminal_websocket_request(
     """Validate URL/query inputs for one terminal WebSocket attachment."""
     raw_mode = mode
     return TerminalWebSocketRequest(
-        machine=_machine_arg(machine),
+        executor_id=_executor_id_arg(executor_id),
         shell_id=_shell_id(shell_id),
         requested_mode=_terminal_mode(raw_mode),
         announce_mode=raw_mode is not None,
@@ -291,75 +284,12 @@ def parse_terminal_control(
     raise ValueError("Unsupported terminal control")
 
 
-def _remote_error_text(value: Any, *, fallback: str) -> str:
-    try:
-        return _bounded_text(
-            value,
-            field="remote terminal error",
-            max_bytes=UI_TERMINAL_METADATA_MAX_BYTES,
-            default=fallback,
-            allow_empty=False,
-        )
-    except ValueError:
-        return "Remote terminal error exceeded the response limit"
-
-
-def _raise_remote_terminal_error(
-    *,
-    tool: str,
-    error_type: str,
-    message: str,
-) -> None:
-    if "terminal_bridge" in tool:
-        normalized_message = message.lower()
-        if error_type in {"TerminalBridgeUnsupportedError", "ValueError"} and (
-            "unsupported remote worker tool" in normalized_message
-            or "require posix pty" in normalized_message
-        ):
-            raise TerminalBridgeUnsupportedError(message)
-        if error_type == "TerminalBridgeBusyError":
-            raise TerminalBridgeBusyError(message)
-        if error_type == "TerminalBridgeNotFoundError":
-            raise TerminalBridgeNotFoundError(message)
-    raise RuntimeError(f"{error_type}: {message}")
-
-
-def _remote_result_data(result: Any, *, machine: str, tool: str) -> Any:
-    fallback = f"remote {tool} failed on {machine}"
-    if not isinstance(result, dict):
-        raise RuntimeError(
-            f"Remote machine {machine} returned a malformed terminal envelope"
-        )
-    if not result.get("ok", False):
-        message = _remote_error_text(result.get("message"), fallback=fallback)
-        error_type = _remote_error_text(
-            result.get("error"), fallback="remote_error"
-        )
-        _raise_remote_terminal_error(
-            tool=tool,
-            error_type=error_type,
-            message=message,
-        )
-    data = result.get("data")
-    if isinstance(data, dict) and data.get("status") == "error":
-        error_type = _remote_error_text(
-            data.get("error_type"), fallback="remote_error"
-        )
-        message = _remote_error_text(data.get("message"), fallback=fallback)
-        _raise_remote_terminal_error(
-            tool=tool,
-            error_type=error_type,
-            message=message,
-        )
-    return data
-
-
 def _validate_model(model_type: Any, value: Any, *, label: str) -> Any:
     try:
         return model_type.model_validate(value)
     except (ValidationError, TypeError, ValueError) as exc:
         raise RuntimeError(
-            f"Machine returned malformed terminal {label}"
+            f"Executor returned malformed terminal {label}"
         ) from exc
 
 
@@ -369,7 +299,7 @@ def _normalize_shell_info(value: Any) -> dict[str, Any]:
     elif isinstance(value, dict):
         raw = value
     else:
-        raise RuntimeError("Machine returned malformed terminal inventory")
+        raise RuntimeError("Executor returned malformed terminal inventory")
     try:
         shell_id = _shell_id(raw.get("shell_id"))
         return {
@@ -382,38 +312,36 @@ def _normalize_shell_info(value: Any) -> dict[str, Any]:
         }
     except ValueError as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal inventory"
+            "Executor returned malformed terminal inventory"
         ) from exc
 
 
-def _normalize_list(machine: str, value: Any) -> dict[str, Any]:
+def _normalize_list(executor_id: str, value: Any) -> dict[str, Any]:
     model = _validate_model(
         ListPersistentShellsOutput,
         value,
         label="inventory",
     )
     if len(model.shells) > UI_TERMINAL_MAX_SHELLS:
-        raise RuntimeError("Machine returned too many terminal sessions")
+        raise RuntimeError("Executor returned too many terminal sessions")
     shells = [_normalize_shell_info(item) for item in model.shells]
     identifiers = [item["shell_id"] for item in shells]
     if len(identifiers) != len(set(identifiers)):
-        raise RuntimeError("Machine returned duplicate terminal sessions")
+        raise RuntimeError("Executor returned duplicate terminal sessions")
     return {
-        "machine": machine,
-        "remote": machine != "local",
+        "executor_id": executor_id,
         "shells": shells,
     }
 
 
-def _normalize_start(machine: str, value: Any) -> dict[str, Any]:
+def _normalize_start(executor_id: str, value: Any) -> dict[str, Any]:
     model = _validate_model(
         StartPersistentShellOutput, value, label="start data"
     )
     try:
         shell_id = _shell_id(model.shell_id)
         return {
-            "machine": machine,
-            "remote": machine != "local",
+            "executor_id": executor_id,
             "shell_id": shell_id,
             "name": _optional_text(model.name, field="shell name"),
             "cwd": _optional_text(model.cwd, field="shell cwd"),
@@ -421,11 +349,13 @@ def _normalize_start(machine: str, value: Any) -> dict[str, Any]:
         }
     except ValueError as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal start data"
+            "Executor returned malformed terminal start data"
         ) from exc
 
 
-def _normalize_send(machine: str, shell_id: str, value: Any) -> dict[str, Any]:
+def _normalize_send(
+    executor_id: str, shell_id: str, value: Any
+) -> dict[str, Any]:
     model = _validate_model(
         SendPersistentShellInputOutput,
         value,
@@ -435,16 +365,15 @@ def _normalize_send(machine: str, shell_id: str, value: Any) -> dict[str, Any]:
         returned_shell = _shell_id(model.shell_id)
     except ValueError as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal send data"
+            "Executor returned malformed terminal send data"
         ) from exc
     if (
         returned_shell != shell_id
         or not 0 <= model.sent_bytes <= UI_TERMINAL_INPUT_MAX_BYTES
     ):
-        raise RuntimeError("Machine returned malformed terminal send data")
+        raise RuntimeError("Executor returned malformed terminal send data")
     return {
-        "machine": machine,
-        "remote": machine != "local",
+        "executor_id": executor_id,
         "shell_id": returned_shell,
         "sent_bytes": model.sent_bytes,
         "enter": model.enter,
@@ -452,7 +381,7 @@ def _normalize_send(machine: str, shell_id: str, value: Any) -> dict[str, Any]:
 
 
 def _normalize_resize(
-    machine: str,
+    executor_id: str,
     shell_id: str,
     cols: int,
     rows: int,
@@ -467,13 +396,12 @@ def _normalize_resize(
         returned_shell = _shell_id(model.shell_id)
     except ValueError as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal resize data"
+            "Executor returned malformed terminal resize data"
         ) from exc
     if returned_shell != shell_id or model.cols != cols or model.rows != rows:
-        raise RuntimeError("Machine returned malformed terminal resize data")
+        raise RuntimeError("Executor returned malformed terminal resize data")
     return {
-        "machine": machine,
-        "remote": machine != "local",
+        "executor_id": executor_id,
         "shell_id": returned_shell,
         "cols": model.cols,
         "rows": model.rows,
@@ -483,7 +411,7 @@ def _normalize_resize(
 
 
 def _normalize_read(
-    machine: str,
+    executor_id: str,
     shell_id: str,
     lines: int,
     value: Any,
@@ -493,36 +421,36 @@ def _normalize_read(
         returned_shell = _shell_id(model.shell_id)
     except ValueError as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal read data"
+            "Executor returned malformed terminal read data"
         ) from exc
     if returned_shell != shell_id:
-        raise RuntimeError("Machine returned malformed terminal read data")
+        raise RuntimeError("Executor returned malformed terminal read data")
     output = str(model.output or "")
     if len(output.encode("utf-8")) > UI_TERMINAL_OUTPUT_MAX_BYTES:
-        raise RuntimeError("Machine returned oversized terminal output")
+        raise RuntimeError("Executor returned oversized terminal output")
     return {
-        "machine": machine,
-        "remote": machine != "local",
+        "executor_id": executor_id,
         "shell_id": returned_shell,
         "output": output,
         "lines": lines,
     }
 
 
-def _normalize_kill(machine: str, shell_id: str, value: Any) -> dict[str, Any]:
+def _normalize_kill(
+    executor_id: str, shell_id: str, value: Any
+) -> dict[str, Any]:
     model = _validate_model(KillPersistentShellOutput, value, label="kill data")
     try:
         returned_shell = _shell_id(model.shell_id)
         stderr = _optional_text(model.stderr, field="terminal stderr")
     except ValueError as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal kill data"
+            "Executor returned malformed terminal kill data"
         ) from exc
     if returned_shell != shell_id:
-        raise RuntimeError("Machine returned malformed terminal kill data")
+        raise RuntimeError("Executor returned malformed terminal kill data")
     return {
-        "machine": machine,
-        "remote": machine != "local",
+        "executor_id": executor_id,
         "shell_id": returned_shell,
         "killed": model.killed,
         "stderr": stderr,
@@ -532,7 +460,7 @@ def _normalize_kill(machine: str, shell_id: str, value: Any) -> dict[str, Any]:
 def _bridge_mapping(value: Any, *, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(
-            f"Machine returned malformed terminal bridge {label}"
+            f"Executor returned malformed terminal bridge {label}"
         )
     return value
 
@@ -541,17 +469,17 @@ def _bridge_result_id(value: Any, *, expected: str | None = None) -> str:
     bridge_id = str(value or "")
     if not _BRIDGE_ID_PATTERN.fullmatch(bridge_id):
         raise RuntimeError(
-            "Machine returned malformed terminal bridge capability"
+            "Executor returned malformed terminal bridge capability"
         )
     if expected is not None and bridge_id != expected:
         raise RuntimeError(
-            "Machine returned mismatched terminal bridge capability"
+            "Executor returned mismatched terminal bridge capability"
         )
     return bridge_id
 
 
 def _normalize_bridge_open(
-    machine: str,
+    executor_id: str,
     shell_id: str,
     cols: int,
     rows: int,
@@ -565,7 +493,7 @@ def _normalize_bridge_open(
         returned_rows = int(str(data.get("rows") or ""))
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal bridge open data"
+            "Executor returned malformed terminal bridge open data"
         ) from exc
     backend = str(data.get("backend") or "")
     if (
@@ -575,10 +503,10 @@ def _normalize_bridge_open(
         or backend not in TERMINAL_BRIDGE_BACKENDS
     ):
         raise RuntimeError(
-            "Machine returned malformed terminal bridge open data"
+            "Executor returned malformed terminal bridge open data"
         )
     return _TerminalBridgeHandle(
-        machine=machine,
+        executor_id=executor_id,
         shell_id=shell_id,
         bridge_id=bridge_id,
         cols=cols,
@@ -596,14 +524,14 @@ def _normalize_bridge_read(
     encoded = data.get("data_b64")
     if not isinstance(encoded, str) or len(encoded) > 90_000:
         raise RuntimeError(
-            "Machine returned malformed terminal bridge read data"
+            "Executor returned malformed terminal bridge read data"
         )
     try:
         raw = base64.b64decode(encoded, validate=True)
         count = int(str(data.get("bytes")))
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal bridge read data"
+            "Executor returned malformed terminal bridge read data"
         ) from exc
     eof = data.get("eof")
     if (
@@ -612,7 +540,7 @@ def _normalize_bridge_read(
         or len(raw) > TERMINAL_BRIDGE_MAX_CHUNK_BYTES
     ):
         raise RuntimeError(
-            "Machine returned malformed terminal bridge read data"
+            "Executor returned malformed terminal bridge read data"
         )
     return raw, eof
 
@@ -628,11 +556,11 @@ def _normalize_bridge_write(
         written = int(str(data.get("written_bytes") or ""))
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal bridge write data"
+            "Executor returned malformed terminal bridge write data"
         ) from exc
     if written != expected_bytes:
         raise RuntimeError(
-            "Machine returned malformed terminal bridge write data"
+            "Executor returned malformed terminal bridge write data"
         )
 
 
@@ -649,7 +577,7 @@ def _normalize_bridge_resize(
         returned_rows = int(str(data.get("rows") or ""))
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
-            "Machine returned malformed terminal bridge resize data"
+            "Executor returned malformed terminal bridge resize data"
         ) from exc
     resized = data.get("resized")
     if (
@@ -659,7 +587,7 @@ def _normalize_bridge_resize(
         or data.get("backend") != handle.backend
     ):
         raise RuntimeError(
-            "Machine returned malformed terminal bridge resize data"
+            "Executor returned malformed terminal bridge resize data"
         )
 
 
@@ -671,7 +599,7 @@ def _normalize_bridge_close(
     _bridge_result_id(data.get("bridge_id"), expected=handle.bridge_id)
     if not isinstance(data.get("closed"), bool):
         raise RuntimeError(
-            "Machine returned malformed terminal bridge close data"
+            "Executor returned malformed terminal bridge close data"
         )
 
 

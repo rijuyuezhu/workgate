@@ -55,13 +55,8 @@ async def managed_jobs_runtime_owner():
         ManagedJobsRuntime,
         configure_managed_jobs_runtime,
     )
-    from workgate.ops.utils.session_copy import (
-        session_copy_managed_job_registration,
-    )
 
     runtime = ManagedJobsRuntime()
-    kind, handler = session_copy_managed_job_registration()
-    runtime.register_handler(kind, handler)
     await runtime.start()
     previous = configure_managed_jobs_runtime(runtime)
     _reset_managed_deferred_sequence(job_recovery)

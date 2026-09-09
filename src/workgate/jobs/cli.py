@@ -3,7 +3,7 @@
 import argparse
 from typing import Any
 
-from ..ops.utils.bounded_runner import register_bounded_runner_cli
+from ..executor.bounded_runner import register_bounded_runner_cli
 from .runner import configure_job_runner_parser, run_job_runner_from_args
 
 

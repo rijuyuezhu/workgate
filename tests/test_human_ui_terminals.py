@@ -1,32 +1,22 @@
 import asyncio
 import base64
-import threading
-from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
-import workgate.ui.http.common as ui_common_module
 import workgate.ui.http.terminals as terminal_module
-from workgate.config.settings import Settings, clear_settings_cache
-from workgate.control.http.app import build_http_app
-from workgate.oauth.core.scopes import (
-    SCOPE_REMOTE_USE,
-    SCOPE_SHELL_EXECUTE,
-    SCOPE_SHELL_READ,
+from tests.helpers import PairedControlHarness, build_paired_http_app
+from workgate.config.settings import (
+    Settings,
+    clear_settings_cache,
+    get_settings,
 )
+from workgate.oauth.core.scopes import SCOPE_SHELL_EXECUTE, SCOPE_SHELL_READ
 from workgate.oauth.protocol.token_codec import issue_access_token
-from workgate.schemas.result_models.shell import (
-    KillPersistentShellOutput,
-    ListPersistentShellsOutput,
-    PersistentShellInfo,
-    ReadPersistentShellOutput,
-    ResizePersistentShellOutput,
-    SendPersistentShellInputOutput,
-    StartPersistentShellOutput,
-)
+from workgate.protocol.terminal import TerminalBridgeUnsupportedError
 from workgate.ui.http.live_state import (
     build_human_ui_runtime,
     configure_human_ui_runtime,
@@ -70,30 +60,156 @@ def _configure(monkeypatch, tmp_path, *, auth_mode="none", **values):
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "false")
     for name, value in values.items():
         monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value).lower())
     clear_settings_cache()
 
 
-def _client(monkeypatch, tmp_path, *, auth_mode="none", **values) -> TestClient:
+class _ExecutorTestClient(TestClient):
+    def __init__(self, *args: Any, executor_id: str, **kwargs: Any) -> None:
+        self.executor_id = executor_id
+        super().__init__(*args, **kwargs)
+
+    def request(self, method: str, url: Any, **kwargs: Any):
+        if method.upper() in {"GET", "HEAD"}:
+            params = dict(kwargs.get("params") or {})
+            params.setdefault("executor_id", self.executor_id)
+            kwargs["params"] = params
+        else:
+            body = kwargs.get("json")
+            if isinstance(body, dict):
+                body = dict(body)
+                body.setdefault("executor_id", self.executor_id)
+                kwargs["json"] = body
+        return super().request(method, url, **kwargs)
+
+
+class _TerminalExecutorBackend:
+    """Deterministic final executor-side terminal test double."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.failures: dict[str, Exception] = {}
+        self.overrides: dict[str, Any] = {}
+        self.shells: list[dict[str, Any]] = [
+            {
+                "shell_id": "demo",
+                "name": None,
+                "cwd": "/workspace",
+                "command": None,
+            }
+        ]
+        self.read_output = "hello"
+        self.bridge_id = "bridge_capability_1234567890"
+        self.bridge_backend = "tmux-pty"
+        self.bridge_reads: list[bytes] = []
+
+    async def execute(self, op: str, args: dict[str, Any]) -> Any:
+        args = dict(args)
+        self.calls.append((op, args))
+        failure = self.failures.get(op)
+        if failure is not None:
+            raise failure
+        if op in self.overrides:
+            return self.overrides[op]
+
+        if op == "ui.terminals.list":
+            return {"shells": self.shells}
+        if op == "ui.terminals.start":
+            return {
+                "shell_id": "created",
+                "name": args.get("name"),
+                "cwd": args.get("cwd", "."),
+                "command": args.get("command") or "/bin/sh",
+            }
+        if op == "ui.terminals.send":
+            input_text = str(args.get("input_text") or "")
+            return {
+                "shell_id": args.get("shell_id"),
+                "sent_bytes": len(input_text.encode()),
+                "enter": bool(args.get("enter", True)),
+            }
+        if op == "ui.terminals.resize":
+            return {
+                "shell_id": args.get("shell_id"),
+                "cols": args.get("cols"),
+                "rows": args.get("rows"),
+                "resized": True,
+                "backend": "tmux",
+            }
+        if op == "ui.terminals.read":
+            return {
+                "shell_id": args.get("shell_id"),
+                "output": self.read_output,
+            }
+        if op == "ui.terminals.kill":
+            return {
+                "shell_id": args.get("shell_id"),
+                "killed": True,
+                "stderr": None,
+            }
+        if op == "ui.terminals.bridge.open":
+            return {
+                "bridge_id": self.bridge_id,
+                "shell_id": args.get("shell_id"),
+                "cols": args.get("cols"),
+                "rows": args.get("rows"),
+                "backend": self.bridge_backend,
+            }
+        if op == "ui.terminals.bridge.read":
+            if self.bridge_reads:
+                payload = self.bridge_reads.pop(0)
+            else:
+                # A real executor long-polls for bytes. Blocking here prevents a
+                # test-only busy loop and is cancelled when the WebSocket closes.
+                await asyncio.sleep(60)
+                payload = b""
+            return {
+                "bridge_id": args.get("bridge_id"),
+                "data_b64": base64.b64encode(payload).decode("ascii"),
+                "bytes": len(payload),
+                "eof": False,
+            }
+        if op == "ui.terminals.bridge.write":
+            payload = base64.b64decode(str(args.get("data_b64") or ""))
+            return {
+                "bridge_id": args.get("bridge_id"),
+                "written_bytes": len(payload),
+            }
+        if op == "ui.terminals.bridge.resize":
+            return {
+                "bridge_id": args.get("bridge_id"),
+                "cols": args.get("cols"),
+                "rows": args.get("rows"),
+                "resized": True,
+                "backend": self.bridge_backend,
+            }
+        if op == "ui.terminals.bridge.close":
+            return {"bridge_id": args.get("bridge_id"), "closed": True}
+        raise AssertionError(f"unexpected terminal op: {op}")
+
+
+def _client(
+    monkeypatch, tmp_path, *, auth_mode="none", **values
+) -> tuple[_ExecutorTestClient, _TerminalExecutorBackend, PairedControlHarness]:
     _configure(monkeypatch, tmp_path, auth_mode=auth_mode, **values)
-    return TestClient(
-        build_http_app(),
+    app, harness = build_paired_http_app(get_settings())
+    backend = _TerminalExecutorBackend()
+    monkeypatch.setattr(
+        harness.executor.ui_terminals, "execute", backend.execute
+    )
+    client = _ExecutorTestClient(
+        app,
+        executor_id=harness.executor_id,
         base_url=BASE_URL,
         client=("203.0.113.10", 50000),
     )
+    return client, backend, harness
 
 
-def test_terminal_connection_limit(monkeypatch, tmp_path):
-    _configure(monkeypatch, tmp_path, ui_terminal_max_connections=1)
-    marker = terminal_module._reserve_connection()
-    assert marker is not None
-    assert terminal_module._reserve_connection() is None
-    terminal_module._release_connection(marker)
-    replacement = terminal_module._reserve_connection()
-    assert replacement is not None
-    terminal_module._release_connection(replacement)
+def _ws_path(client: _ExecutorTestClient, path: str) -> str:
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}executor_id={client.executor_id}"
 
 
 def _bearer_token(scope: str) -> str:
@@ -113,124 +229,109 @@ def _bearer_protocol(scope: str) -> str:
     return f"bearer.{encoded}"
 
 
-def test_terminal_http_surface_dispatches_bounded_actions(
+def test_terminal_connection_limit(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path, ui_terminal_max_connections=1)
+    marker = terminal_module._reserve_connection()
+    assert marker is not None
+    assert terminal_module._reserve_connection() is None
+    terminal_module._release_connection(marker)
+    replacement = terminal_module._reserve_connection()
+    assert replacement is not None
+    terminal_module._release_connection(replacement)
+
+
+def test_terminal_http_surface_dispatches_final_executor_ops(
     monkeypatch, tmp_path
 ):
-    calls: list[tuple] = []
-
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    async def fake_start(cwd=".", name=None, command=None):
-        calls.append(("start", cwd, name, command))
-        return StartPersistentShellOutput(
-            shell_id="created", cwd=cwd, command=command or "/bin/sh"
-        )
-
-    async def fake_send(shell_id, input_text, enter=True):
-        calls.append(("send", shell_id, input_text, enter))
-        return SendPersistentShellInputOutput(
-            shell_id=shell_id,
-            sent_bytes=len(input_text.encode()),
-            enter=enter,
-        )
-
-    async def fake_resize(shell_id, cols, rows):
-        calls.append(("resize", shell_id, cols, rows))
-        return ResizePersistentShellOutput(
-            shell_id=shell_id,
-            cols=cols,
-            rows=rows,
-            resized=True,
-            backend="tmux",
-        )
-
-    async def fake_read(shell_id, lines=200, *, preserve_ansi=False):
-        calls.append(("read", shell_id, lines, preserve_ansi))
-        return ReadPersistentShellOutput(shell_id=shell_id, output="hello")
-
-    async def fake_kill(shell_id):
-        calls.append(("kill", shell_id))
-        return KillPersistentShellOutput(shell_id=shell_id, killed=True)
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    monkeypatch.setattr(
-        terminal_module, "start_persistent_shell_execute", fake_start
-    )
-    monkeypatch.setattr(
-        terminal_module, "send_persistent_shell_input_execute", fake_send
-    )
-    monkeypatch.setattr(
-        terminal_module, "resize_persistent_shell_execute", fake_resize
-    )
-    monkeypatch.setattr(
-        terminal_module, "read_persistent_shell_output_execute", fake_read
-    )
-    monkeypatch.setattr(
-        terminal_module, "kill_persistent_shell_execute", fake_kill
-    )
-    client = _client(monkeypatch, tmp_path)
+    client, backend, _ = _client(monkeypatch, tmp_path)
 
     listed = client.get("/api/ui/terminals")
     assert listed.status_code == 200
-    assert listed.json()["data"]["shells"][0]["shell_id"] == "demo"
+    assert listed.json()["data"] == {
+        "executor_id": client.executor_id,
+        "shells": [
+            {
+                "shell_id": "demo",
+                "name": None,
+                "cwd": "/workspace",
+                "command": None,
+            }
+        ],
+    }
 
     started = client.post(
         "/api/ui/terminals/start",
         json={"cwd": ".", "name": "created", "command": "/bin/sh"},
     )
-    assert started.status_code == 200
-    assert started.json()["data"]["shell_id"] == "created"
-
     sent = client.post(
         "/api/ui/terminals/send",
         json={"shell_id": "demo", "input_text": "printf ok", "enter": False},
     )
-    assert sent.status_code == 200
-
     resized = client.post(
         "/api/ui/terminals/resize",
         json={"shell_id": "demo", "cols": 132, "rows": 41},
     )
-    assert resized.status_code == 200
-
     read = client.get(
         "/api/ui/terminals/read", params={"shell_id": "demo", "lines": 321}
     )
-    assert read.status_code == 200
-    assert read.json()["data"]["output"] == "hello"
-
     killed = client.post("/api/ui/terminals/kill", json={"shell_id": "demo"})
-    assert killed.status_code == 200
-    assert calls == [
-        ("start", ".", "created", "/bin/sh"),
-        ("send", "demo", "printf ok", False),
-        ("resize", "demo", 132, 41),
-        ("read", "demo", 321, True),
-        ("kill", "demo"),
+
+    assert [
+        response.status_code
+        for response in (started, sent, resized, read, killed)
+    ] == [200] * 5
+    assert started.json()["data"]["executor_id"] == client.executor_id
+    assert started.json()["data"]["shell_id"] == "created"
+    assert read.json()["data"] == {
+        "executor_id": client.executor_id,
+        "shell_id": "demo",
+        "output": "hello",
+        "lines": 321,
+    }
+    assert backend.calls == [
+        ("ui.terminals.list", {}),
+        (
+            "ui.terminals.start",
+            {"cwd": ".", "name": "created", "command": "/bin/sh"},
+        ),
+        (
+            "ui.terminals.send",
+            {"shell_id": "demo", "input_text": "printf ok", "enter": False},
+        ),
+        (
+            "ui.terminals.resize",
+            {"shell_id": "demo", "cols": 132, "rows": 41},
+        ),
+        ("ui.terminals.read", {"shell_id": "demo", "lines": 321}),
+        ("ui.terminals.kill", {"shell_id": "demo"}),
     ]
+    assert all("session_id" not in args for _, args in backend.calls)
+
+
+def test_terminal_http_requires_explicit_eligible_executor(
+    monkeypatch, tmp_path
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    raw_client = TestClient(
+        client.app,
+        base_url=BASE_URL,
+        client=("203.0.113.12", 50002),
+    )
+
+    missing = raw_client.get("/api/ui/terminals")
+    unknown = raw_client.get(
+        "/api/ui/terminals", params={"executor_id": "missing-executor"}
+    )
+
+    assert missing.status_code == 400
+    assert "executor_id is required" in missing.json()["message"]
+    assert unknown.status_code == 502
+    assert "not currently eligible" in unknown.json()["message"]
+    assert backend.calls == []
 
 
 def test_terminal_http_actions_require_execute_scope(monkeypatch, tmp_path):
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    async def fake_start(cwd=".", name=None, command=None):
-        return StartPersistentShellOutput(shell_id="created", cwd=cwd)
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    monkeypatch.setattr(
-        terminal_module, "start_persistent_shell_execute", fake_start
-    )
-    client = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
     read_headers = {
         "Authorization": f"Bearer {_bearer_token(SCOPE_SHELL_READ)}"
     }
@@ -247,72 +348,73 @@ def test_terminal_http_actions_require_execute_scope(monkeypatch, tmp_path):
     denied = client.post(
         "/api/ui/terminals/start", json={"cwd": "."}, headers=read_headers
     )
-    assert denied.status_code == 403
-    assert SCOPE_SHELL_EXECUTE in denied.text
     allowed = client.post(
         "/api/ui/terminals/start", json={"cwd": "."}, headers=execute_headers
     )
+
+    assert denied.status_code == 403
+    assert SCOPE_SHELL_EXECUTE in denied.text
     assert allowed.status_code == 200
+    assert [op for op, _ in backend.calls] == [
+        "ui.terminals.list",
+        "ui.terminals.start",
+    ]
 
 
 @pytest.mark.parametrize(
-    ("path", "payload", "message"),
+    ("method", "path", "kwargs", "message"),
     [
         (
-            "/api/ui/terminals/read?shell_id=bad%2Fid",
-            None,
+            "get",
+            "/api/ui/terminals/read",
+            {"params": {"shell_id": "bad/id"}},
             "shell_id must be",
         ),
         (
-            "/api/ui/terminals/read?shell_id=demo&lines=5001",
-            None,
+            "get",
+            "/api/ui/terminals/read",
+            {"params": {"shell_id": "demo", "lines": 5001}},
             "lines must be between",
         ),
         (
+            "post",
             "/api/ui/terminals/send",
             {
-                "shell_id": "demo",
-                "input_text": "x"
-                * (terminal_module.UI_TERMINAL_INPUT_MAX_BYTES + 1),
+                "json": {
+                    "shell_id": "demo",
+                    "input_text": "x"
+                    * (terminal_module.UI_TERMINAL_INPUT_MAX_BYTES + 1),
+                }
             },
             "input_text exceeds",
         ),
         (
+            "post",
             "/api/ui/terminals/resize",
-            {"shell_id": "demo", "cols": 19, "rows": 30},
+            {"json": {"shell_id": "demo", "cols": 19, "rows": 30}},
             "cols must be between",
         ),
     ],
 )
 def test_terminal_http_surface_rejects_invalid_bounds(
-    monkeypatch, tmp_path, path, payload, message
+    monkeypatch, tmp_path, method, path, kwargs, message
 ):
-    client = _client(monkeypatch, tmp_path)
-    response = (
-        client.get(path) if payload is None else client.post(path, json=payload)
-    )
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    response = client.request(method, path, **kwargs)
     assert response.status_code == 400
     assert message in response.json()["message"]
+    assert backend.calls == []
 
 
 def test_terminal_websocket_requires_oauth_and_execute_scope(
     monkeypatch, tmp_path
 ):
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    client = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    path = _ws_path(client, "/ui/ws/terminals/demo")
 
     with (
         pytest.raises(WebSocketDisconnect) as missing,
-        client.websocket_connect(
-            "/ui/ws/terminals/demo", subprotocols=["workgate-ui-terminal"]
-        ),
+        client.websocket_connect(path, subprotocols=["workgate-ui-terminal"]),
     ):
         pass
     assert missing.value.code == 4401
@@ -321,12 +423,13 @@ def test_terminal_websocket_requires_oauth_and_execute_scope(
     with (
         pytest.raises(WebSocketDisconnect) as insufficient,
         client.websocket_connect(
-            "/ui/ws/terminals/demo",
+            path,
             subprotocols=["workgate-ui-terminal", read_only],
         ),
     ):
         pass
     assert insufficient.value.code == 4403
+    assert backend.calls == []
 
 
 @pytest.mark.parametrize(
@@ -340,24 +443,8 @@ def test_terminal_websocket_requires_oauth_and_execute_scope(
 def test_terminal_websocket_accepts_ui_cookie_only_from_request_origin(
     monkeypatch, tmp_path, websocket_base
 ):
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    async def fake_read(shell_id, lines=200, *, preserve_ansi=False):
-        assert shell_id == "demo"
-        assert lines == 1000
-        assert preserve_ansi is True
-        return ReadPersistentShellOutput(shell_id=shell_id, output="prompt$ ")
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    monkeypatch.setattr(
-        terminal_module, "read_persistent_shell_output_execute", fake_read
-    )
-    client = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    backend.read_output = "prompt$ "
     token = _bearer_token(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
     session = client.post(
         "/api/ui/session/token",
@@ -372,11 +459,15 @@ def test_terminal_websocket_accepts_ui_cookie_only_from_request_origin(
     session_cookie = client.cookies.get(session_cookie_name)
     assert session_cookie
     cookie_header = f"{session_cookie_name}={session_cookie}"
+    path = _ws_path(
+        client,
+        f"{websocket_base}/ui/ws/terminals/demo?lines=1000",
+    )
 
     with (
         pytest.raises(WebSocketDisconnect) as wrong_origin,
         client.websocket_connect(
-            f"{websocket_base}/ui/ws/terminals/demo",
+            path,
             headers={
                 "Origin": "https://attacker.example",
                 "Cookie": cookie_header,
@@ -393,7 +484,7 @@ def test_terminal_websocket_accepts_ui_cookie_only_from_request_origin(
     with (
         pytest.raises(WebSocketDisconnect) as missing_binding,
         client.websocket_connect(
-            f"{websocket_base}/ui/ws/terminals/demo",
+            path,
             headers={"Origin": BASE_URL, "Cookie": cookie_header},
             subprotocols=["workgate-ui-terminal"],
         ),
@@ -402,7 +493,7 @@ def test_terminal_websocket_accepts_ui_cookie_only_from_request_origin(
     assert missing_binding.value.code == 4401
 
     with client.websocket_connect(
-        f"{websocket_base}/ui/ws/terminals/demo?lines=1000",
+        path,
         headers={"Origin": BASE_URL, "Cookie": cookie_header},
         subprotocols=[
             "workgate-ui-terminal",
@@ -412,7 +503,7 @@ def test_terminal_websocket_accepts_ui_cookie_only_from_request_origin(
         assert websocket.accepted_subprotocol == "workgate-ui-terminal"
         assert websocket.receive_json() == {
             "type": "snapshot",
-            "machine": "local",
+            "executor_id": client.executor_id,
             "shell_id": "demo",
             "output": "prompt$ ",
         }
@@ -422,17 +513,14 @@ def test_terminal_websocket_accepts_ui_cookie_only_from_request_origin(
 def test_terminal_websocket_reports_shell_inventory_failure(
     monkeypatch, tmp_path
 ):
-    async def fake_list():
-        raise RuntimeError("tmux unavailable")
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    backend.failures["ui.terminals.list"] = RuntimeError("tmux unavailable")
 
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    client = _client(monkeypatch, tmp_path)
     with (
         pytest.raises(WebSocketDisconnect) as failure,
         client.websocket_connect(
-            "/ui/ws/terminals/demo", subprotocols=["workgate-ui-terminal"]
+            _ws_path(client, "/ui/ws/terminals/demo"),
+            subprotocols=["workgate-ui-terminal"],
         ),
     ):
         pass
@@ -440,65 +528,39 @@ def test_terminal_websocket_reports_shell_inventory_failure(
     assert failure.value.reason == "Unable to inspect persistent shells"
 
 
+def test_terminal_websocket_rejects_shell_missing_from_executor_inventory(
+    monkeypatch, tmp_path
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    backend.shells = [{"shell_id": "other", "cwd": "/workspace"}]
+
+    with (
+        pytest.raises(WebSocketDisconnect) as failure,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/demo"),
+            subprotocols=["workgate-ui-terminal"],
+        ),
+    ):
+        pass
+    assert failure.value.code == 4404
+    assert failure.value.reason == "Persistent shell not found"
+
+
 def test_terminal_websocket_streams_snapshot_and_orders_controls(
     monkeypatch, tmp_path
 ):
-    calls: list[tuple] = []
-    input_seen = threading.Event()
-
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    async def fake_read(shell_id, lines=200, *, preserve_ansi=False):
-        assert preserve_ansi is True
-        return ReadPersistentShellOutput(
-            shell_id=shell_id, output="\x1b[32mprompt$ \x1b[0m"
-        )
-
-    async def fake_send(shell_id, input_text, enter=True):
-        calls.append(("send", shell_id, input_text, enter))
-        input_seen.set()
-        return SendPersistentShellInputOutput(
-            shell_id=shell_id,
-            sent_bytes=len(input_text.encode()),
-            enter=enter,
-        )
-
-    async def fake_resize(shell_id, cols, rows):
-        calls.append(("resize", shell_id, cols, rows))
-        return ResizePersistentShellOutput(
-            shell_id=shell_id,
-            cols=cols,
-            rows=rows,
-            resized=True,
-            backend="tmux",
-        )
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    monkeypatch.setattr(
-        terminal_module, "read_persistent_shell_output_execute", fake_read
-    )
-    monkeypatch.setattr(
-        terminal_module, "send_persistent_shell_input_execute", fake_send
-    )
-    monkeypatch.setattr(
-        terminal_module, "resize_persistent_shell_execute", fake_resize
-    )
-    client = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    backend.read_output = "\x1b[32mprompt$ \x1b[0m"
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
     with client.websocket_connect(
-        "/ui/ws/terminals/demo?lines=1000",
+        _ws_path(client, "/ui/ws/terminals/demo?lines=1000"),
         subprotocols=["workgate-ui-terminal", bearer],
     ) as websocket:
         assert websocket.accepted_subprotocol == "workgate-ui-terminal"
         assert websocket.receive_json() == {
             "type": "snapshot",
-            "machine": "local",
+            "executor_id": client.executor_id,
             "shell_id": "demo",
             "output": "\x1b[32mprompt$ \x1b[0m",
         }
@@ -509,22 +571,28 @@ def test_terminal_websocket_streams_snapshot_and_orders_controls(
         websocket.send_json({"type": "ping"})
         assert websocket.receive_json() == {
             "type": "pong",
-            "machine": "local",
+            "executor_id": client.executor_id,
             "shell_id": "demo",
         }
-        assert input_seen.wait(timeout=1)
         websocket.send_json({"type": "close"})
 
-    assert calls == [
-        ("send", "demo", "printf ok", True),
-        ("resize", "demo", 120, 36),
-    ]
+    send_call = (
+        "ui.terminals.send",
+        {"shell_id": "demo", "input_text": "printf ok", "enter": True},
+    )
+    resize_call = (
+        "ui.terminals.resize",
+        {"shell_id": "demo", "cols": 120, "rows": 36},
+    )
+    assert send_call in backend.calls
+    assert resize_call in backend.calls
+    assert backend.calls.index(send_call) < backend.calls.index(resize_call)
     assert human_ui_runtime().terminal_connections.active_count() == 0
 
 
 def test_terminal_bridge_read_normalization_accepts_empty_poll():
     handle = terminal_module._TerminalBridgeHandle(
-        machine="local",
+        executor_id="executor-a",
         shell_id="demo",
         bridge_id="bridge_capability_1234567890",
         cols=100,
@@ -545,7 +613,7 @@ def test_terminal_bridge_read_normalization_accepts_empty_poll():
 
 def test_terminal_bridge_normalization_accepts_conpty_without_resize():
     handle = terminal_module._normalize_bridge_open(
-        "edge",
+        "executor-a",
         "demo",
         100,
         30,
@@ -587,92 +655,25 @@ def test_terminal_bridge_normalization_accepts_conpty_without_resize():
 def test_terminal_websocket_raw_pty_streams_binary_and_closes_bridge(
     monkeypatch, tmp_path
 ):
-    calls: list[tuple] = []
-    read_count = 0
-
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    async def fake_open(shell_id, cols, rows):
-        calls.append(("open", shell_id, cols, rows))
-        return {
-            "bridge_id": "bridge_capability_1234567890",
-            "shell_id": shell_id,
-            "cols": cols,
-            "rows": rows,
-            "backend": "tmux-pty",
-        }
-
-    blocked_read = asyncio.Event()
-
-    async def fake_read(bridge_id, max_bytes=65_536, wait_ms=100):
-        nonlocal read_count
-        read_count += 1
-        if read_count > 1:
-            await blocked_read.wait()
-        await asyncio.sleep(0.01)
-        payload = b"\x1b[?1049hRAW\xff"
-        return {
-            "bridge_id": bridge_id,
-            "data_b64": base64.b64encode(payload).decode(),
-            "bytes": len(payload),
-            "eof": False,
-        }
-
-    async def fake_write(bridge_id, data_b64):
-        data = base64.b64decode(data_b64)
-        calls.append(("write", bridge_id, data))
-        return {"bridge_id": bridge_id, "written_bytes": len(data)}
-
-    async def fake_resize(bridge_id, cols, rows):
-        calls.append(("resize", bridge_id, cols, rows))
-        return {
-            "bridge_id": bridge_id,
-            "cols": cols,
-            "rows": rows,
-            "resized": True,
-            "backend": "tmux-pty",
-        }
-
-    async def fake_close(bridge_id):
-        calls.append(("close", bridge_id))
-        return {"bridge_id": bridge_id, "closed": True}
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    monkeypatch.setattr(
-        terminal_module, "open_terminal_bridge_execute", fake_open
-    )
-    monkeypatch.setattr(
-        terminal_module, "read_terminal_bridge_execute", fake_read
-    )
-    monkeypatch.setattr(
-        terminal_module, "write_terminal_bridge_execute", fake_write
-    )
-    monkeypatch.setattr(
-        terminal_module, "resize_terminal_bridge_execute", fake_resize
-    )
-    monkeypatch.setattr(
-        terminal_module, "close_terminal_bridge_execute", fake_close
-    )
-    client = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    payload = b"\x1b[?1049hRAW\xff"
+    backend.bridge_reads.append(payload)
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
     with client.websocket_connect(
-        "/ui/ws/terminals/demo?mode=auto&cols=90&rows=28",
+        _ws_path(client, "/ui/ws/terminals/demo?mode=auto&cols=90&rows=28"),
         subprotocols=["workgate-ui-terminal", bearer],
     ) as websocket:
-        assert websocket.receive_json() == {
+        ready = websocket.receive_json()
+        assert ready == {
             "type": "ready",
-            "machine": "local",
+            "executor_id": client.executor_id,
             "shell_id": "demo",
             "mode": "pty",
             "backend": "tmux-pty",
         }
-        assert websocket.receive_bytes() == b"\x1b[?1049hRAW\xff"
+        assert backend.bridge_id not in str(ready)
+        assert websocket.receive_bytes() == payload
         websocket.send_bytes(b"\xff\x00")
         websocket.send_json(
             {"type": "input", "data": "echo raw", "enter": True}
@@ -681,632 +682,113 @@ def test_terminal_websocket_raw_pty_streams_binary_and_closes_bridge(
         websocket.send_json({"type": "ping"})
         assert websocket.receive_json() == {
             "type": "pong",
-            "machine": "local",
+            "executor_id": client.executor_id,
             "shell_id": "demo",
             "mode": "pty",
         }
         websocket.send_json({"type": "close"})
 
-    bridge_id = "bridge_capability_1234567890"
-    assert calls[0] == ("open", "demo", 90, 28)
-    assert ("write", bridge_id, b"\xff\x00") in calls
-    assert ("write", bridge_id, b"echo raw\r") in calls
-    assert ("resize", bridge_id, 120, 36) in calls
-    assert calls[-1] == ("close", bridge_id)
+    write_payloads = [
+        base64.b64decode(str(args["data_b64"]))
+        for op, args in backend.calls
+        if op == "ui.terminals.bridge.write"
+    ]
+    assert b"\xff\x00" in write_payloads
+    assert b"echo raw\r" in write_payloads
+    assert (
+        "ui.terminals.bridge.resize",
+        {"bridge_id": backend.bridge_id, "cols": 120, "rows": 36},
+    ) in backend.calls
+    assert backend.calls[-1] == (
+        "ui.terminals.bridge.close",
+        {"bridge_id": backend.bridge_id},
+    )
+    assert all("session_id" not in args for _, args in backend.calls)
     assert human_ui_runtime().terminal_connections.active_count() == 0
 
 
 def test_terminal_websocket_auto_falls_back_to_snapshot(monkeypatch, tmp_path):
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[PersistentShellInfo(shell_id="demo")]
-        )
-
-    async def fake_open(shell_id, cols, rows):
-        raise terminal_module.TerminalBridgeUnsupportedError("PTY unavailable")
-
-    async def fake_read(shell_id, lines=200, *, preserve_ansi=False):
-        await asyncio.sleep(0.01)
-        return ReadPersistentShellOutput(shell_id=shell_id, output="fallback$ ")
-
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    backend.failures["ui.terminals.bridge.open"] = (
+        TerminalBridgeUnsupportedError("PTY unavailable")
     )
-    monkeypatch.setattr(
-        terminal_module, "open_terminal_bridge_execute", fake_open
-    )
-    monkeypatch.setattr(
-        terminal_module, "read_persistent_shell_output_execute", fake_read
-    )
-    client = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    backend.read_output = "fallback$ "
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
     with client.websocket_connect(
-        "/ui/ws/terminals/demo?mode=auto",
+        _ws_path(client, "/ui/ws/terminals/demo?mode=auto"),
         subprotocols=["workgate-ui-terminal", bearer],
     ) as websocket:
-        assert websocket.receive_json()["mode"] == "snapshot"
-        assert websocket.receive_json()["output"] == "fallback$ "
-        websocket.send_json({"type": "close"})
-
-
-class _RemoteTerminalManager:
-    def __init__(self, status: str = "online") -> None:
-        self.status = status
-
-    def list_machines(self):
-        return SimpleNamespace(
-            machines=[SimpleNamespace(name="edge", status=self.status)]
-        )
-
-
-class _RemoteTerminalCalls:
-    def __init__(self, *, malformed: str = "") -> None:
-        self.calls: list[tuple[str, str, dict, int]] = []
-        self.malformed = malformed
-
-    async def __call__(self, machine, tool, args, timeout_s):
-        self.calls.append((machine, tool, args, timeout_s))
-        if self.malformed == tool:
-            data = (
-                {"shells": [{"shell_id": "bad id"}]}
-                if tool == "list_persistent_shells"
-                else {"shell_id": "wrong"}
-            )
-            return {"ok": True, "data": data}
-        outputs = {
-            "list_persistent_shells": {
-                "shells": [
-                    {"shell_id": "shared", "name": "edge-shell", "cwd": "/edge"}
-                ]
-            },
-            "start_persistent_shell": {
-                "shell_id": "created",
-                "name": args.get("name"),
-                "cwd": args.get("cwd", "."),
-                "command": args.get("command") or "/bin/sh",
-            },
-            "send_persistent_shell_input": {
-                "shell_id": args.get("shell_id"),
-                "sent_bytes": len(str(args.get("input_text") or "").encode()),
-                "enter": bool(args.get("enter", True)),
-            },
-            "resize_persistent_shell": {
-                "shell_id": args.get("shell_id"),
-                "cols": args.get("cols"),
-                "rows": args.get("rows"),
-                "resized": True,
-                "backend": "tmux",
-            },
-            "read_persistent_shell_output": {
-                "shell_id": args.get("shell_id"),
-                "output": "\x1b[36medge$ \x1b[0m",
-            },
-            "kill_persistent_shell": {
-                "shell_id": args.get("shell_id"),
-                "killed": True,
-                "stderr": None,
-            },
+        assert websocket.receive_json() == {
+            "type": "ready",
+            "executor_id": client.executor_id,
+            "shell_id": "demo",
+            "mode": "snapshot",
+            "backend": "tmux-snapshot",
         }
-        return {"ok": True, "data": outputs[tool]}
-
-
-@pytest.mark.asyncio
-async def test_local_and_remote_terminal_adapters_share_normalized_contract(
-    monkeypatch, tmp_path
-):
-    async def fake_list():
-        return ListPersistentShellsOutput(
-            shells=[
-                PersistentShellInfo(
-                    shell_id="shared",
-                    name="edge-shell",
-                    cwd="/edge",
-                )
-            ]
-        )
-
-    async def fake_start(cwd=".", name=None, command=None):
-        return StartPersistentShellOutput(
-            shell_id="created",
-            name=name,
-            cwd=cwd,
-            command=command or "/bin/sh",
-        )
-
-    async def fake_send(shell_id, input_text, enter=True):
-        return SendPersistentShellInputOutput(
-            shell_id=shell_id,
-            sent_bytes=len(input_text.encode()),
-            enter=enter,
-        )
-
-    async def fake_resize(shell_id, cols, rows):
-        return ResizePersistentShellOutput(
-            shell_id=shell_id,
-            cols=cols,
-            rows=rows,
-            resized=True,
-            backend="tmux",
-        )
-
-    async def fake_read(shell_id, lines=200, *, preserve_ansi=False):
-        assert preserve_ansi is True
-        return ReadPersistentShellOutput(
-            shell_id=shell_id,
-            output="\x1b[36medge$ \x1b[0m",
-        )
-
-    async def fake_kill(shell_id):
-        return KillPersistentShellOutput(
-            shell_id=shell_id, killed=True, stderr=None
-        )
-
-    _configure(monkeypatch, tmp_path, remote_enabled=True)
-    monkeypatch.setattr(
-        ui_common_module,
-        "remote_manager",
-        lambda: _RemoteTerminalManager("online"),
-    )
-    remote_calls = _RemoteTerminalCalls()
-    monkeypatch.setattr(
-        terminal_module, "call_remote_worker_tool", remote_calls
-    )
-    monkeypatch.setattr(
-        terminal_module, "list_persistent_shells_execute", fake_list
-    )
-    monkeypatch.setattr(
-        terminal_module, "start_persistent_shell_execute", fake_start
-    )
-    monkeypatch.setattr(
-        terminal_module,
-        "send_persistent_shell_input_execute",
-        fake_send,
-    )
-    monkeypatch.setattr(
-        terminal_module, "resize_persistent_shell_execute", fake_resize
-    )
-    monkeypatch.setattr(
-        terminal_module,
-        "read_persistent_shell_output_execute",
-        fake_read,
-    )
-    monkeypatch.setattr(
-        terminal_module, "kill_persistent_shell_execute", fake_kill
-    )
-
-    local = [
-        await terminal_module._list_shells("local"),
-        await terminal_module._start_shell(
-            "local", cwd=".", name="created", command=None
-        ),
-        await terminal_module._send_shell(
-            "local", "shared", "printf ok", False
-        ),
-        await terminal_module._resize_shell("local", "shared", 120, 36),
-        await terminal_module._read_shell("local", "shared", 50),
-        await terminal_module._kill_shell("local", "shared"),
-    ]
-    remote = [
-        await terminal_module._list_shells("edge"),
-        await terminal_module._start_shell(
-            "edge", cwd=".", name="created", command=None
-        ),
-        await terminal_module._send_shell("edge", "shared", "printf ok", False),
-        await terminal_module._resize_shell("edge", "shared", 120, 36),
-        await terminal_module._read_shell("edge", "shared", 50),
-        await terminal_module._kill_shell("edge", "shared"),
-    ]
-
-    for local_result, remote_result in zip(local, remote, strict=True):
-        assert local_result["machine"] == "local"
-        assert local_result["remote"] is False
-        assert remote_result["machine"] == "edge"
-        assert remote_result["remote"] is True
-        assert {
-            key: value
-            for key, value in local_result.items()
-            if key not in {"machine", "remote"}
-        } == {
-            key: value
-            for key, value in remote_result.items()
-            if key not in {"machine", "remote"}
-        }
-
-
-def _remote_terminal_client(
-    monkeypatch,
-    tmp_path,
-    calls: _RemoteTerminalCalls,
-    *,
-    auth_mode: str = "none",
-    status: str = "online",
-):
-    client = _client(
-        monkeypatch,
-        tmp_path,
-        auth_mode=auth_mode,
-        remote_enabled=True,
-    )
-    monkeypatch.setattr(
-        ui_common_module,
-        "remote_manager",
-        lambda: _RemoteTerminalManager(status),
-    )
-    monkeypatch.setattr(terminal_module, "call_remote_worker_tool", calls)
-    return client
-
-
-def test_remote_terminal_http_is_machine_scoped_and_sessionless(
-    monkeypatch, tmp_path
-):
-    calls = _RemoteTerminalCalls()
-    client = _remote_terminal_client(monkeypatch, tmp_path, calls)
-
-    listed = client.get("/api/ui/terminals", params={"machine": "edge"})
-    started = client.post(
-        "/api/ui/terminals/start",
-        json={"machine": "edge", "cwd": ".", "name": "created"},
-    )
-    sent = client.post(
-        "/api/ui/terminals/send",
-        json={
-            "machine": "edge",
-            "shell_id": "shared",
-            "input_text": "printf ok",
-            "enter": False,
-        },
-    )
-    resized = client.post(
-        "/api/ui/terminals/resize",
-        json={"machine": "edge", "shell_id": "shared", "cols": 120, "rows": 36},
-    )
-    read = client.get(
-        "/api/ui/terminals/read",
-        params={"machine": "edge", "shell_id": "shared", "lines": 50},
-    )
-    killed = client.post(
-        "/api/ui/terminals/kill",
-        json={"machine": "edge", "shell_id": "shared"},
-    )
-
-    assert [
-        response.status_code
-        for response in (listed, started, sent, resized, read, killed)
-    ] == [200] * 6
-    assert listed.json()["data"] == {
-        "machine": "edge",
-        "remote": True,
-        "shells": [
-            {
-                "shell_id": "shared",
-                "name": "edge-shell",
-                "cwd": "/edge",
-                "command": None,
-            }
-        ],
-    }
-    assert started.json()["data"]["machine"] == "edge"
-    assert read.json()["data"]["output"] == "\x1b[36medge$ \x1b[0m"
-    assert all(
-        machine == "edge" and 1 <= timeout <= 60
-        for machine, _, _, timeout in calls.calls
-    )
-    assert all("session_id" not in args for _, _, args, _ in calls.calls)
-    assert [tool for _, tool, _, _ in calls.calls] == [
-        "list_persistent_shells",
-        "start_persistent_shell",
-        "send_persistent_shell_input",
-        "resize_persistent_shell",
-        "read_persistent_shell_output",
-        "kill_persistent_shell",
-    ]
-    assert calls.calls[4][2] == {
-        "shell_id": "shared",
-        "lines": 50,
-        "preserve_ansi": True,
-    }
-
-
-def test_remote_terminal_requires_scope_and_handles_offline_and_malformed(
-    monkeypatch, tmp_path
-):
-    calls = _RemoteTerminalCalls()
-    client = _remote_terminal_client(
-        monkeypatch, tmp_path, calls, auth_mode="oauth"
-    )
-    denied = client.get(
-        "/api/ui/terminals",
-        params={"machine": "edge"},
-        headers={"Authorization": f"Bearer {_bearer_token(SCOPE_SHELL_READ)}"},
-    )
-    allowed_scope = f"{SCOPE_SHELL_READ} {SCOPE_REMOTE_USE}"
-    allowed = client.get(
-        "/api/ui/terminals",
-        params={"machine": "edge"},
-        headers={"Authorization": f"Bearer {_bearer_token(allowed_scope)}"},
-    )
-    assert denied.status_code == 403
-    assert SCOPE_REMOTE_USE in denied.text
-    assert allowed.status_code == 200
-
-    malformed_calls = _RemoteTerminalCalls(malformed="list_persistent_shells")
-    malformed_client = _remote_terminal_client(
-        monkeypatch, tmp_path / "malformed", malformed_calls
-    )
-    malformed = malformed_client.get(
-        "/api/ui/terminals", params={"machine": "edge"}
-    )
-    assert malformed.status_code == 502
-
-    offline_calls = _RemoteTerminalCalls()
-    offline_client = _remote_terminal_client(
-        monkeypatch, tmp_path / "offline", offline_calls, status="offline"
-    )
-    offline = offline_client.get(
-        "/api/ui/terminals", params={"machine": "edge"}
-    )
-    assert offline.status_code == 503
-    assert offline_calls.calls == []
-
-
-def test_remote_terminal_websocket_uses_selected_machine(monkeypatch, tmp_path):
-    calls = _RemoteTerminalCalls()
-    client = _remote_terminal_client(
-        monkeypatch, tmp_path, calls, auth_mode="oauth"
-    )
-    scope = f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE} {SCOPE_REMOTE_USE}"
-    bearer = _bearer_protocol(scope)
-
-    with client.websocket_connect(
-        "/ui/ws/terminals/shared?machine=edge&lines=50",
-        subprotocols=["workgate-ui-terminal", bearer],
-    ) as websocket:
         assert websocket.receive_json() == {
             "type": "snapshot",
-            "machine": "edge",
-            "shell_id": "shared",
-            "output": "\x1b[36medge$ \x1b[0m",
-        }
-        websocket.send_json(
-            {"type": "input", "data": "echo edge", "enter": True}
-        )
-        websocket.send_json({"type": "resize", "cols": 100, "rows": 30})
-        websocket.send_json({"type": "ping"})
-        assert websocket.receive_json() == {
-            "type": "pong",
-            "machine": "edge",
-            "shell_id": "shared",
+            "executor_id": client.executor_id,
+            "shell_id": "demo",
+            "output": "fallback$ ",
         }
         websocket.send_json({"type": "close"})
 
-    tools = [tool for _, tool, _, _ in calls.calls]
-    assert tools[0] == "list_persistent_shells"
-    assert "read_persistent_shell_output" in tools
-    assert "send_persistent_shell_input" in tools
-    assert "resize_persistent_shell" in tools
-    assert all("session_id" not in args for _, _, args, _ in calls.calls)
-    read_args = [
-        args
-        for _, tool, args, _ in calls.calls
-        if tool == "read_persistent_shell_output"
-    ]
-    assert read_args
-    assert all(args.get("preserve_ansi") is True for args in read_args)
+    assert "ui.terminals.bridge.close" not in [op for op, _ in backend.calls]
 
 
-def test_remote_terminal_websocket_raw_bridge_is_sessionless(
+def test_terminal_http_rejects_malformed_executor_inventory(
     monkeypatch, tmp_path
 ):
-    bridge_id = "remote_bridge_capability_1234567890"
-    calls: list[tuple[str, str, dict, int]] = []
-    read_count = 0
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    backend.overrides["ui.terminals.list"] = {
+        "shells": [{"shell_id": "bad id"}]
+    }
 
-    async def remote_call(machine, tool, args, timeout_s):
-        nonlocal read_count
-        calls.append((machine, tool, args, timeout_s))
-        if tool == "list_persistent_shells":
-            data = {"shells": [{"shell_id": "shared", "cwd": "/edge"}]}
-        elif tool == "open_terminal_bridge":
-            data = {
-                "bridge_id": bridge_id,
-                "shell_id": "shared",
-                "cols": args["cols"],
-                "rows": args["rows"],
-                "backend": "tmux-pty",
-            }
-        elif tool == "read_terminal_bridge":
-            await asyncio.sleep(0.01)
-            read_count += 1
-            payload = b"REMOTE_RAW" if read_count == 1 else b""
-            data = {
-                "bridge_id": bridge_id,
-                "data_b64": base64.b64encode(payload).decode(),
-                "bytes": len(payload),
-                "eof": False,
-            }
-        elif tool == "write_terminal_bridge":
-            data = {
-                "bridge_id": bridge_id,
-                "written_bytes": len(base64.b64decode(args["data_b64"])),
-            }
-        elif tool == "resize_terminal_bridge":
-            data = {
-                "bridge_id": bridge_id,
-                "cols": args["cols"],
-                "rows": args["rows"],
-                "resized": True,
-                "backend": "tmux-pty",
-            }
-        elif tool == "close_terminal_bridge":
-            data = {"bridge_id": bridge_id, "closed": True}
-        else:
-            raise AssertionError(tool)
-        return {"ok": True, "data": data}
+    response = client.get("/api/ui/terminals")
 
-    client = _client(
-        monkeypatch,
-        tmp_path,
-        auth_mode="oauth",
-        remote_enabled=True,
-    )
-    monkeypatch.setattr(
-        ui_common_module,
-        "remote_manager",
-        lambda: _RemoteTerminalManager("online"),
-    )
-    monkeypatch.setattr(terminal_module, "call_remote_worker_tool", remote_call)
-    scope = f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE} {SCOPE_REMOTE_USE}"
-    bearer = _bearer_protocol(scope)
-
-    with client.websocket_connect(
-        "/ui/ws/terminals/shared?machine=edge&mode=auto&cols=100&rows=30",
-        subprotocols=["workgate-ui-terminal", bearer],
-    ) as websocket:
-        ready = websocket.receive_json()
-        assert ready == {
-            "type": "ready",
-            "machine": "edge",
-            "shell_id": "shared",
-            "mode": "pty",
-            "backend": "tmux-pty",
-        }
-        assert bridge_id not in str(ready)
-        assert websocket.receive_bytes() == b"REMOTE_RAW"
-        websocket.send_bytes(b"\xffremote")
-        websocket.send_json({"type": "resize", "cols": 110, "rows": 32})
-        websocket.send_json({"type": "close"})
-
-    tools = [tool for _, tool, _, _ in calls]
-    assert tools[0:2] == ["list_persistent_shells", "open_terminal_bridge"]
-    assert "read_terminal_bridge" in tools
-    assert "write_terminal_bridge" in tools
-    assert "resize_terminal_bridge" in tools
-    assert tools[-1] == "close_terminal_bridge"
-    assert all(machine == "edge" for machine, _, _, _ in calls)
-    assert all("session_id" not in args for _, _, args, _ in calls)
-    write_args = [
-        args for _, tool, args, _ in calls if tool == "write_terminal_bridge"
-    ]
-    assert base64.b64decode(write_args[0]["data_b64"]) == b"\xffremote"
-
-
-def test_remote_terminal_auto_falls_back_for_older_worker(
-    monkeypatch, tmp_path
-):
-    calls: list[tuple[str, str, dict, int]] = []
-
-    async def remote_call(machine, tool, args, timeout_s):
-        calls.append((machine, tool, args, timeout_s))
-        if tool == "list_persistent_shells":
-            return {
-                "ok": True,
-                "data": {"shells": [{"shell_id": "shared", "cwd": "/edge"}]},
-            }
-        if tool == "open_terminal_bridge":
-            return {
-                "ok": False,
-                "error": "ValueError",
-                "message": "Unsupported remote worker tool: open_terminal_bridge",
-            }
-        if tool == "read_persistent_shell_output":
-            return {
-                "ok": True,
-                "data": {"shell_id": "shared", "output": "legacy edge$ "},
-            }
-        raise AssertionError(tool)
-
-    client = _client(
-        monkeypatch,
-        tmp_path,
-        auth_mode="oauth",
-        remote_enabled=True,
-    )
-    monkeypatch.setattr(
-        ui_common_module,
-        "remote_manager",
-        lambda: _RemoteTerminalManager("online"),
-    )
-    monkeypatch.setattr(terminal_module, "call_remote_worker_tool", remote_call)
-    scope = f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE} {SCOPE_REMOTE_USE}"
-    bearer = _bearer_protocol(scope)
-
-    with client.websocket_connect(
-        "/ui/ws/terminals/shared?machine=edge&mode=auto",
-        subprotocols=["workgate-ui-terminal", bearer],
-    ) as websocket:
-        assert websocket.receive_json()["mode"] == "snapshot"
-        assert websocket.receive_json()["output"] == "legacy edge$ "
-        websocket.send_json({"type": "close"})
-
-    tools = [tool for _, tool, _, _ in calls]
-    assert tools[:3] == [
-        "list_persistent_shells",
-        "open_terminal_bridge",
-        "read_persistent_shell_output",
-    ]
-    assert "close_terminal_bridge" not in tools
-
-
-def test_remote_terminal_websocket_requires_remote_scope(monkeypatch, tmp_path):
-    calls = _RemoteTerminalCalls()
-    client = _remote_terminal_client(
-        monkeypatch, tmp_path, calls, auth_mode="oauth"
-    )
-    bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
-
-    with (
-        pytest.raises(WebSocketDisconnect) as exc_info,
-        client.websocket_connect(
-            "/ui/ws/terminals/shared?machine=edge",
-            subprotocols=["workgate-ui-terminal", bearer],
-        ),
-    ):
-        pass
-
-    assert exc_info.value.code == 4403
-    assert calls.calls == []
+    assert response.status_code == 502
+    assert "malformed terminal inventory" in response.json()["message"]
 
 
 @pytest.mark.asyncio
-async def test_terminal_bridge_malformed_open_is_closed(monkeypatch):
-    closed = []
-    bridge_id = "bridge_capability_1234567890"
-
-    async def fake_open(shell_id, cols, rows):
-        return {
-            "bridge_id": bridge_id,
-            "shell_id": shell_id,
-            "cols": cols + 1,
-            "rows": rows,
-            "backend": "tmux-pty",
-        }
-
-    async def fake_close(value):
-        closed.append(value)
-        return {"bridge_id": value, "closed": True}
-
-    monkeypatch.setattr(
-        terminal_module, "open_terminal_bridge_execute", fake_open
-    )
-    monkeypatch.setattr(
-        terminal_module, "close_terminal_bridge_execute", fake_close
-    )
+async def test_terminal_bridge_malformed_open_is_closed(monkeypatch, tmp_path):
+    client, backend, harness = _client(monkeypatch, tmp_path)
+    backend.overrides["ui.terminals.bridge.open"] = {
+        "bridge_id": backend.bridge_id,
+        "shell_id": "demo",
+        "cols": 81,
+        "rows": 24,
+        "backend": "tmux-pty",
+    }
 
     with pytest.raises(RuntimeError, match="malformed terminal bridge open"):
-        await terminal_module._open_bridge("local", "demo", 80, 24)
+        await terminal_module._open_bridge(
+            harness.control,
+            harness.executor_id,
+            "demo",
+            80,
+            24,
+        )
 
-    assert closed == [bridge_id]
+    assert backend.calls == [
+        (
+            "ui.terminals.bridge.open",
+            {"shell_id": "demo", "cols": 80, "rows": 24},
+        ),
+        (
+            "ui.terminals.bridge.close",
+            {"bridge_id": backend.bridge_id},
+        ),
+    ]
+    client.close()
 
 
-def test_remote_terminal_rejects_malformed_envelope_and_oversized_output():
-    with pytest.raises(RuntimeError, match="malformed terminal envelope"):
-        terminal_module._remote_result_data([], machine="edge", tool="list")
-
+def test_terminal_read_normalization_rejects_oversized_executor_output():
     oversized = {
-        "shell_id": "shared",
+        "shell_id": "demo",
         "output": "x" * (terminal_module.UI_TERMINAL_OUTPUT_MAX_BYTES + 1),
     }
 
     with pytest.raises(RuntimeError, match="oversized terminal output"):
-        terminal_module._normalize_read("edge", "shared", 50, oversized)
+        terminal_module._normalize_read("executor-a", "demo", 50, oversized)

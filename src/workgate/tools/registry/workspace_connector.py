@@ -4,9 +4,7 @@ from ...schemas.input_models.session import SessionIdArg
 from ..declarative import DeclarativeToolRegistry
 from ..ops.workspace_connector import (
     fetch_error_output,
-    fetch_execute,
     search_error_output,
-    search_execute,
 )
 from ..schemas.input_models.workspace_connector import (
     ConnectorFetchIdArg,
@@ -53,7 +51,8 @@ async def workspace_search(
     session_id: SessionIdArg, query: ConnectorSearchQueryArg
 ) -> SearchOutput:
     """Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id."""
-    return await search_execute(query)
+    del session_id, query
+    raise RuntimeError("workspace_search requires control routing")
 
 
 @workspace_connector_tool(
@@ -68,4 +67,5 @@ async def fetch(
     session_id: SessionIdArg, id: ConnectorFetchIdArg
 ) -> FetchOutput:
     """Fetch one UTF-8 workspace text file from the executor bound to session_id. The id should normally come from workspace_search on the same session. For coding-agent work, prefer read because it returns grounding metadata for safe edits."""
-    return await fetch_execute(id)
+    del session_id, id
+    raise RuntimeError("fetch requires control routing")

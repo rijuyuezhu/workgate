@@ -1,6 +1,5 @@
 """Patch application tool registry."""
 
-from ...ops.patch import apply_patch_dispatch_execute
 from ...schemas.input_models.patch import PatchCwdArg, PatchTextArg
 from ...schemas.input_models.session import SessionIdArg
 from ...schemas.result_models.patch import ApplyPatchOutput
@@ -36,4 +35,5 @@ async def apply_patch(
     cwd: PatchCwdArg = ".",
 ) -> ApplyPatchOutput:
     """Validate and apply a unified diff or apply_patch envelope."""
-    return await apply_patch_dispatch_execute(patch, cwd, session_id)
+    del session_id, patch, cwd
+    raise RuntimeError("apply_patch requires control routing")

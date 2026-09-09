@@ -48,45 +48,14 @@ class SessionRuntimeEnvironment(BaseModel):
     )
 
 
-class SessionWorkerRuntime(BaseModel):
-    """Remote-worker runtime identity without tokens, paths, or digests."""
-
-    active: bool = Field(
-        description="Whether this environment was collected inside a remote worker."
-    )
-    worker_version: str | None = Field(
-        default=None,
-        description="Remote worker workgate version, when active.",
-    )
-    bundle_version: str | None = Field(
-        default=None,
-        description="Installed source-bundle version, when available.",
-    )
-    service_kind: Literal[
-        "none", "manual", "systemd", "launchd", "windows_startup", "managed"
-    ] = Field(description="Remote-worker process or service kind.")
-    service_status: Literal["not_applicable", "running", "unknown"] = Field(
-        description="Normalized remote-worker service status."
-    )
-
-
 class SessionWorkspaceEnvironment(BaseModel):
-    """Workspace orientation for the runtime that owns the session."""
+    """Workspace orientation reported by the executor that owns the session."""
 
     workspace_root: str = Field(
         description="Canonical workspace root on the execution target."
     )
     workdir: str = Field(
         description="Canonical workdir on the execution target."
-    )
-    target: Literal["local", "remote"] = Field(
-        description="Execution target represented by this environment."
-    )
-    machine: str | None = Field(
-        default=None, description="Configured remote-worker name, when remote."
-    )
-    worker_runtime: SessionWorkerRuntime = Field(
-        description="Worker runtime and service identity for this environment."
     )
 
 
@@ -108,75 +77,28 @@ class SessionToolProbe(BaseModel):
 
 
 class SessionToolsEnvironment(BaseModel):
-    """Allowlisted executable and runtime probes relevant to tool choice."""
+    """Allowlisted executable probes owned by the session executor."""
 
     shell: SessionToolProbe = Field(description="Configured shell probe.")
     git: SessionToolProbe = Field(description="Git probe.")
     ripgrep: SessionToolProbe = Field(description="ripgrep probe.")
     tmux: SessionToolProbe = Field(description="tmux backend probe.")
-    curl: SessionToolProbe = Field(description="curl probe.")
-    bun: SessionToolProbe = Field(description="Bun probe.")
-    chromium: SessionToolProbe = Field(description="Chromium runtime probe.")
-    playwright: SessionToolProbe = Field(description="Python Playwright probe.")
-    opentui: SessionToolProbe = Field(
-        description="Native OpenTUI runtime probe."
-    )
 
 
 class SessionCapabilitiesEnvironment(BaseModel):
-    """Effective feature support relevant to choosing session tools."""
+    """Executor-local feature support relevant to choosing session tools."""
 
-    remote_worker: bool = Field(
-        description="Whether remote-worker routing is enabled."
-    )
     raw_pty: bool = Field(
         description="Whether a raw persistent-terminal backend is available."
     )
     conpty: bool = Field(description="Whether Windows ConPTY is available.")
-    browser_ui: bool = Field(
-        description="Whether the authenticated browser Human UI is mounted."
-    )
-    native_opentui: bool = Field(
-        description="Whether native OpenTUI can be started."
-    )
-    browser_console: bool = Field(
-        description="Whether the browser terminal console can be used."
-    )
-    agent_bridge: bool = Field(description="Whether Agent Bridge is enabled.")
-    oauth_mcp_clients: bool = Field(
-        description="Whether OAuth-backed upstream MCP clients are supported."
-    )
-    oauth_configured_mcp_servers: int = Field(
-        description="Number of configured OAuth upstream MCP servers."
-    )
-    oauth_authorized_mcp_servers: int = Field(
-        description="Number of OAuth upstream MCP servers with usable stored authorization."
-    )
-    http_transfer: bool = Field(
-        description="Whether authenticated HTTP file transfer links are available."
-    )
-    audit_full_payload: bool = Field(
-        description="Whether protected full audit-entry recovery is supported."
-    )
 
 
 class SessionPolicyEnvironment(BaseModel):
-    """Safe effective limits and modes that influence tool selection."""
+    """Safe executor-owned limits and modes that influence tool selection."""
 
-    server_mode: Literal["mcp", "http", "both", "stdio"] = Field(
-        description="Configured server transport mode."
-    )
-    authentication_mode: Literal["none", "oauth"] = Field(
-        description="Inbound server authentication mode."
-    )
     full_control: bool = Field(
-        description="Whether full-control mode is active."
-    )
-    network_policy: Literal["tool_scoped"] = Field(
-        description="Network access policy; network use remains tool-scoped."
-    )
-    tool_timeout_s: float = Field(
-        description="Base tool watchdog timeout in seconds."
+        description="Whether executor full-control path policy is active."
     )
     shell_default_timeout_s: int = Field(
         description="Default bounded shell timeout in seconds."
@@ -187,11 +109,11 @@ class SessionPolicyEnvironment(BaseModel):
     max_output_bytes: int = Field(
         description="Maximum bounded command output bytes."
     )
-    max_agent_sessions: int = Field(
-        description="Maximum durable agent/workspace sessions."
+    max_jobs: int = Field(
+        description="Maximum retained tracked shell-job records."
     )
-    agent_session_retention_s: int = Field(
-        description="Idle retention for durable agent/workspace sessions."
+    max_job_log_bytes: int = Field(
+        description="Maximum durable log bytes retained for one shell job."
     )
     max_session_snapshots: int = Field(
         description="Maximum grounding snapshots retained per session."
@@ -205,30 +127,30 @@ class SessionPolicyEnvironment(BaseModel):
     max_file_write_bytes: int = Field(
         description="Maximum bytes written to one file."
     )
-    max_search_results: int = Field(description="Maximum search result count.")
+    max_view_image_bytes: int = Field(
+        description="Maximum image bytes accepted by view_image."
+    )
+    max_search_results: int = Field(
+        description="Maximum text-search result count."
+    )
+    max_glob_results: int = Field(
+        description="Maximum glob-search result count."
+    )
+    max_tree_entries: int = Field(description="Maximum tree-view entry count.")
+    max_directory_entries: int = Field(
+        description="Maximum directory entries returned by one listing."
+    )
     max_concurrent_commands: int = Field(
-        description="Concurrent command limit."
+        description="Concurrent executor command limit."
     )
     max_persistent_shells: int = Field(
         description="Persistent-shell session limit."
-    )
-    max_http_request_bytes: int = Field(
-        description="Inbound HTTP request-body limit."
-    )
-    max_audit_event_bytes: int = Field(
-        description="Maximum retained bytes for one audit event."
     )
     max_transfer_archive_entries: int = Field(
         description="Maximum entries accepted from one transfer archive."
     )
     max_transfer_unpacked_bytes: int = Field(
         description="Maximum unpacked regular-file bytes for one transfer."
-    )
-    remote_job_timeout_s: int = Field(
-        description="Remote job result timeout in seconds."
-    )
-    remote_max_pending_jobs: int = Field(
-        description="Pending or in-flight remote jobs allowed per worker."
     )
 
 
@@ -263,23 +185,12 @@ class SessionStartOutput(BaseModel):
         default=None,
         description="Stable executor id bound to this shared session.",
     )
-    target: Literal["local", "remote"] = Field(
-        description="Legacy executor-local orientation projection; public routing uses executor_id."
-    )
     workdir: str = Field(description="Canonical workdir bound to this session.")
-    machine: str | None = Field(
-        default=None,
-        description="Legacy remote-worker projection; final executor sessions do not use this for routing.",
-    )
     created_at: float = Field(
         description="Unix timestamp when the session was created."
     )
     updated_at: float = Field(
         description="Unix timestamp when the session was last touched."
-    )
-    expires_at: float | None = Field(
-        default=None,
-        description="Optional Unix timestamp when the session expires.",
     )
     label: str | None = Field(
         default=None, description="Optional human-readable session label."
@@ -309,14 +220,6 @@ class SessionEndOutput(BaseModel):
         default=None,
         description="Stable executor id formerly bound to this shared session, when available.",
     )
-    target: Literal["local", "remote"] | None = Field(
-        default=None,
-        description="Legacy execution-target projection, when available.",
-    )
-    machine: str | None = Field(
-        default=None,
-        description="Legacy remote-worker projection, when available.",
-    )
     ended: bool = Field(
         description="Whether durable session state was removed."
     )
@@ -327,10 +230,6 @@ class SessionEndOutput(BaseModel):
     stopped_shells: list[str] = Field(
         default_factory=list,
         description="Persistent shell ids stopped before session removal.",
-    )
-    remote_cleanup_succeeded: bool | None = Field(
-        default=None,
-        description="Legacy remote-worker cleanup projection, when applicable.",
     )
     force_released: bool = Field(
         default=False,
@@ -343,14 +242,6 @@ class SessionCopyEndpoint(BaseModel):
 
     session_id: str = Field(
         description="Agent/workspace session id for this endpoint."
-    )
-    target: Literal["local", "remote"] | None = Field(
-        default=None,
-        description="Legacy local/remote target, omitted for final executor-bound sessions.",
-    )
-    machine: str | None = Field(
-        default=None,
-        description="Legacy remote-worker machine name, omitted for final executor-bound sessions.",
     )
     executor_id: str | None = Field(
         default=None,
@@ -371,27 +262,11 @@ class SessionCopyEndpoint(BaseModel):
 class SessionCopyRelation(BaseModel):
     """Relationship between the source and destination sessions."""
 
-    route: Literal[
-        "local_to_local",
-        "local_to_remote",
-        "remote_to_local",
-        "remote_to_remote_same_machine",
-        "remote_to_remote_different_machines",
-        "same_executor",
-        "different_executors",
-    ] = Field(
-        description="Final executor relation, or a legacy local/remote transfer route."
+    route: Literal["same_executor", "different_executors"] = Field(
+        description="Relationship between the source and destination executors."
     )
     same_session: bool = Field(
         description="Whether source and destination are the same agent session."
-    )
-    same_target: bool | None = Field(
-        default=None,
-        description="Legacy local/remote target relation; omitted for final executor-bound sessions.",
-    )
-    same_machine: bool | None = Field(
-        default=None,
-        description="Legacy remote-worker machine relation; omitted for final executor-bound sessions.",
     )
     same_executor: bool = Field(
         default=False,
@@ -405,8 +280,8 @@ class SessionCopyOutput(BaseModel):
     kind: Literal["file", "dir"] = Field(
         description="Resolved copied object kind."
     )
-    transport: Literal["local", "same_worker", "worker_rpc", "http_stream"] = (
-        Field(description="Actual data transport used by the copy operation.")
+    transport: Literal["same_executor", "executor_rpc"] = Field(
+        description="Actual executor-level data transport used by the copy operation."
     )
     resumed_bytes: int = Field(
         default=0,

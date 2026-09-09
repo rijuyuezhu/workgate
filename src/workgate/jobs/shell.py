@@ -6,19 +6,27 @@ from typing import Any
 
 from ..audit import audit
 from ..errors import public_error_type
-from ..ops.shell import (
+from ..executor.config import ExecutorConfig
+from ..executor.shell import (
     authoritative_persistent_shell_ids_execute,
     kill_persistent_shell_execute,
+    read_persistent_shell_output_execute,
     start_persistent_shell_execute,
 )
 from ..schemas.result_models.jobs import (
+    JobListOutput,
     JobRetryOutput,
     JobStartOutput,
     JobStopOutput,
+    JobTailOutput,
 )
 from ..tool_session.lifecycle import session_lifecycle_lock
-from ..tool_session.store import get_tool_session_store, resolve_session_path
+from ..tool_session.store import ToolSessionStore, resolve_session_path
 from . import lifecycle as job_lifecycle
+from . import status as job_status
+from .persistence import (
+    TERMINAL_STATUSES,
+)
 from .persistence import (
     prune_store as _prune_store,
 )
@@ -109,21 +117,142 @@ def _refresh_job_status(
     )
 
 
+async def list_shell_jobs_unlocked(
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
+    session_id: str,
+    include_finished: bool = True,
+) -> JobListOutput:
+    """List shell-backed jobs while the owner session lifecycle lock is held."""
+    session_store.touch_session(session_id)
+    active = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
+    now = _utc()
+    with _store_transaction() as store:
+        jobs = store.get("jobs", [])
+        if not isinstance(jobs, list):
+            jobs = []
+            store["jobs"] = jobs
+        owned: list[MutableJobRow] = []
+        for row in jobs:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("kind") or "shell") == "managed":
+                continue
+            if str(row.get("session_id") or "") != session_id:
+                continue
+            _refresh_job_status(row, active, now)
+            owned.append(row)
+        _prune_store(store, max_jobs=config.max_jobs)
+        rows = [
+            _public_job(row)
+            for row in owned
+            if include_finished or row.get("status") not in TERMINAL_STATUSES
+        ]
+        counts: dict[str, int] = {}
+        for row in owned:
+            status = str(row.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+    rows.sort(key=lambda item: item.created_at, reverse=True)
+    return JobListOutput(jobs=rows, counts=counts)
+
+
+async def tail_shell_job_unlocked(
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
+    session_id: str,
+    job_id: str,
+    lines: int = 200,
+) -> JobTailOutput:
+    """Read one shell-backed job while the owner session lifecycle lock is held."""
+    session_store.touch_session(session_id)
+    active = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
+    with _store_transaction() as store:
+        job = _find_session_job(store, session_id, job_id)
+        if str(job.get("kind") or "shell") == "managed":
+            raise RuntimeError(f"job is not shell-backed: {job_id}")
+        job = _refresh_job_status(job, active)
+        public = _public_job(job)
+        log_path = str(job.get("log_path") or "")
+        shell_id = _job_shell_id(job)
+        status = str(job.get("status") or "unknown")
+
+    output = job_status._read_log_tail(
+        log_path,
+        lines,
+        max_bytes=max(1, config.max_job_log_bytes),
+    )
+    if not output and status in ACTIVE_STATUSES and shell_id:
+        try:
+            tail = await read_persistent_shell_output_execute(
+                config, shell_id, lines
+            )
+            output = str(tail.model_dump().get("output", ""))
+        except Exception as exc:
+            if active is not None:
+                with _store_transaction() as store:
+                    current = _find_session_job(store, session_id, job_id)
+                    if (
+                        current.get("status") == "running"
+                        and _job_shell_id(current) == shell_id
+                    ):
+                        completed = _utc()
+                        if shell_id in active:
+                            current.update(
+                                {
+                                    "updated_at": completed,
+                                    "error": (
+                                        "persistent shell output capture failed: "
+                                        f"{exc}"
+                                    ),
+                                }
+                            )
+                        else:
+                            current.update(
+                                {
+                                    "status": "lost",
+                                    "updated_at": completed,
+                                    "completed_at": completed,
+                                    "error": str(exc),
+                                    "shell_absence_confirmed": True,
+                                }
+                            )
+                    public = _public_job(current)
+
+    message = None
+    if public.status in TERMINAL_STATUSES:
+        message = (
+            f"job completed with exit code {public.exit_code}"
+            if public.exit_code is not None
+            else f"job is {public.status}"
+        )
+    return JobTailOutput(job=public, output=output, message=message)
+
+
 async def start_shell_job_unlocked(
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
     session_id: str,
     command: str,
     cwd: str = ".",
     name: str | None = None,
 ) -> JobStartOutput:
     """Start one durable shell-backed job while its session lock is held."""
-    session = get_tool_session_store().touch_session(session_id)
+    session = session_store.touch_session(session_id)
     resolved_cwd = resolve_session_path(session, cwd, must_exist=True)
     job_id = _new_job_id()
     display_name = name or job_id
     shell_name = _shell_safe_name(f"{display_name}-{job_id}")
-    paths, runner_command = _prepare_attempt(job_id, 1, command, resolved_cwd)
+    paths, runner_command = _prepare_attempt(
+        config, job_id, 1, command, resolved_cwd
+    )
     now = _utc()
-    active_shells = await authoritative_persistent_shell_ids_execute()
+    active_shells = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
     job: JobRow = {
         "job_id": job_id,
         "kind": "shell",
@@ -161,7 +290,7 @@ async def start_shell_job_unlocked(
                     _refresh_job_status(row, active_shells, now)
                 retained.append(row)
             store["jobs"] = retained
-            _prune_store(store)
+            _prune_store(store, max_jobs=config.max_jobs)
             store["jobs"].append(job)
     except BaseException:
         _discard_job_operation(operation_id)
@@ -171,6 +300,8 @@ async def start_shell_job_unlocked(
     try:
         try:
             shell = await start_persistent_shell_execute(
+                config,
+                session_store,
                 str(resolved_cwd),
                 shell_name,
                 runner_command,
@@ -224,12 +355,16 @@ async def start_shell_job_unlocked(
                 public = _public_job(current)
         except Exception:
             with contextlib.suppress(Exception):
-                await kill_persistent_shell_execute(shell_data["shell_id"])
+                await kill_persistent_shell_execute(
+                    config, session_store, shell_data["shell_id"]
+                )
             _remove_attempt_paths(paths)
             raise
         if changed_while_starting:
             with contextlib.suppress(Exception):
-                await kill_persistent_shell_execute(shell_data["shell_id"])
+                await kill_persistent_shell_execute(
+                    config, session_store, shell_data["shell_id"]
+                )
             _remove_attempt_paths(paths)
             raise RuntimeError(f"job changed while starting: {job_id}")
         audit(
@@ -245,7 +380,9 @@ async def start_shell_job_unlocked(
         _discard_job_operation(operation_id)
 
 
-async def reconcile_shell_jobs_execute() -> bool:
+async def reconcile_shell_jobs_execute(
+    config: ExecutorConfig, session_store: ToolSessionStore
+) -> bool:
     """Reconcile durable shell-job state and authoritative shell membership."""
     with _store_transaction() as store:
         jobs = store.get("jobs", [])
@@ -264,7 +401,9 @@ async def reconcile_shell_jobs_execute() -> bool:
     inventory_authoritative = True
     for session_id in owner_session_ids:
         async with session_lifecycle_lock(session_id):
-            active_shells = await authoritative_persistent_shell_ids_execute()
+            active_shells = await authoritative_persistent_shell_ids_execute(
+                config, session_store
+            )
             if active_shells is None:
                 inventory_authoritative = False
             now = _utc()
@@ -281,7 +420,9 @@ async def reconcile_shell_jobs_execute() -> bool:
                         continue
                     _refresh_job_status(row, active_shells, now)
 
-    active_shells = await authoritative_persistent_shell_ids_execute()
+    active_shells = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
     if active_shells is None:
         inventory_authoritative = False
     now = _utc()
@@ -296,15 +437,20 @@ async def reconcile_shell_jobs_execute() -> bool:
                 if row.get("session_id"):
                     continue
                 _refresh_job_status(row, active_shells, now)
-        _prune_store(store)
+        _prune_store(store, max_jobs=config.max_jobs)
     return inventory_authoritative
 
 
 async def stop_shell_job_unlocked(
-    session_id: str, job_id: str
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
+    session_id: str,
+    job_id: str,
 ) -> JobStopOutput:
     """Stop one shell-backed job while its owner session lock is held."""
-    active = await authoritative_persistent_shell_ids_execute()
+    active = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
     operation_id = ""
     shell_id = ""
     try:
@@ -353,11 +499,15 @@ async def stop_shell_job_unlocked(
 
     try:
         try:
-            result = await kill_persistent_shell_execute(shell_id)
+            result = await kill_persistent_shell_execute(
+                config, session_store, shell_id
+            )
         except Exception as exc:
             still_active = True
             active_after_failure = (
-                await authoritative_persistent_shell_ids_execute()
+                await authoritative_persistent_shell_ids_execute(
+                    config, session_store
+                )
             )
             if active_after_failure is not None:
                 still_active = shell_id in active_after_failure
@@ -387,7 +537,9 @@ async def stop_shell_job_unlocked(
         active_after_stop: set[str] | None = None
         if not killed:
             active_after_stop = (
-                await authoritative_persistent_shell_ids_execute()
+                await authoritative_persistent_shell_ids_execute(
+                    config, session_store
+                )
             )
         with _store_transaction() as store:
             job = _find_session_job(store, session_id, job_id)
@@ -431,11 +583,16 @@ async def stop_shell_job_unlocked(
 
 
 async def retry_shell_job_unlocked(
-    session_id: str, job_id: str
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
+    session_id: str,
+    job_id: str,
 ) -> JobRetryOutput:
     """Retry one terminal shell-backed job while lifecycle locks are held."""
-    session = get_tool_session_store().touch_session(session_id)
-    active = await authoritative_persistent_shell_ids_execute()
+    session = session_store.touch_session(session_id)
+    active = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
     operation_id = ""
     try:
         with _store_transaction() as store:
@@ -469,7 +626,7 @@ async def retry_shell_job_unlocked(
     try:
         try:
             paths, runner_command = _prepare_attempt(
-                job_id, attempts, command, resolved_cwd
+                config, job_id, attempts, command, resolved_cwd
             )
             with _store_transaction() as store:
                 current = _find_session_job(store, session_id, job_id)
@@ -489,6 +646,8 @@ async def retry_shell_job_unlocked(
                     }
                 )
             shell = await start_persistent_shell_execute(
+                config,
+                session_store,
                 str(resolved_cwd),
                 shell_name,
                 runner_command,
@@ -554,12 +713,16 @@ async def retry_shell_job_unlocked(
                 public = _public_job(current)
         except Exception:
             with contextlib.suppress(Exception):
-                await kill_persistent_shell_execute(shell_data["shell_id"])
+                await kill_persistent_shell_execute(
+                    config, session_store, shell_data["shell_id"]
+                )
             _remove_attempt_paths(paths)
             raise
         if changed_while_retrying:
             with contextlib.suppress(Exception):
-                await kill_persistent_shell_execute(shell_data["shell_id"])
+                await kill_persistent_shell_execute(
+                    config, session_store, shell_data["shell_id"]
+                )
             _remove_attempt_paths(paths)
             raise RuntimeError(f"job changed while retrying: {job_id}")
         _remove_attempt_files(job_id, keep_attempt=attempts)

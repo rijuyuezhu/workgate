@@ -1,10 +1,7 @@
 """High-level read tool registry."""
 
-from dataclasses import replace
+from __future__ import annotations
 
-from ...config.settings import Settings
-from ...ops.files_service import FilesService
-from ...ops.read import read_execute
 from ...schemas.input_models.read import ReadPathArg
 from ...schemas.input_models.session import SessionIdArg
 from ...schemas.result_models.read import ReadOutput
@@ -13,41 +10,9 @@ from ..declarative import DeclarativeToolRegistry
 
 
 class ReadToolRegistry(DeclarativeToolRegistry):
-    """Register the read tool with selector support."""
+    """Register the high-level read tool declaration."""
 
     name = "read"
-    """Registry group name used for tool-surface organization."""
-
-    def __init__(
-        self,
-        settings: Settings | None = None,
-        *,
-        files_service: FilesService | None = None,
-    ) -> None:
-        super().__init__(settings)
-        self._files_service = files_service
-
-    async def _bound_read(
-        self,
-        session_id: SessionIdArg,
-        path: ReadPathArg,
-    ) -> ReadOutput:
-        if self._files_service is None:
-            raise RuntimeError("Files service is not bound")
-        return await self._files_service.read(session_id, path)
-
-    def _enabled_tools(self):
-        tools = super()._enabled_tools()
-        if self._files_service is None:
-            return tools
-        return tuple(
-            replace(
-                tool,
-                func=self._bound_read,
-                session_admission="handler",
-            )
-            for tool in tools
-        )
 
 
 read_tool = ReadToolRegistry.get_tool_decorator()
@@ -70,4 +35,5 @@ async def read(
     path: ReadPathArg,
 ) -> ReadOutput:
     """Read a file or directory with optional path selector suffixes."""
-    return await read_execute(path, session_id)
+    del session_id, path
+    raise RuntimeError("read requires control routing")

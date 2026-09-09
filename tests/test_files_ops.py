@@ -6,38 +6,112 @@ from pathlib import Path
 
 import pytest
 
-import workgate.ops.files as files_ops
-import workgate.tools.registry.files as files_registry
+import workgate.executor.files as files_ops
 from tests.helpers import build_paired_mcp, mcp_structured, nested_mcp_text
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.ops.files import (
-    delete_file_or_dir_execute,
-    list_files_execute,
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.files import (
+    _delete_file_or_dir_local,
+    _list_files_local,
+    _read_file_local,
+    _write_file_local,
+    files_config_from_settings,
     parse_hashline_edit_input,
-    read_file_execute,
-    write_file_execute,
 )
-from workgate.ops.shell import check_command_policy
-from workgate.ops.utils.path import resolve_path
-from workgate.tool_session.bindings import LocalSessionBinding
+from workgate.executor.files_service import FilesService
+from workgate.executor.shell import check_command_policy
+from workgate.tool_session.bindings import SessionBinding
 from workgate.tool_session.resolver import SessionResolver
 from workgate.tool_session.store import get_tool_session_store
+from workgate.utils.path_policy import resolve_path_with_policy
+
+_SESSION_COUNTER = 0
 
 
-def _create_session() -> str:
+def _next_session_id() -> str:
+    global _SESSION_COUNTER
+    _SESSION_COUNTER += 1
+    return f"sess_{_SESSION_COUNTER:022d}"
+
+
+def _create_session(workdir: str = ".") -> str:
     store = get_tool_session_store()
     store.clear()
-    return store.create_session(workdir=".").session_id
+    return store.create_session(
+        session_id=_next_session_id(), workdir=workdir
+    ).session_id
 
 
-def _local_binding(session_id: str | None) -> LocalSessionBinding | None:
+def _local_binding(session_id: str | None) -> SessionBinding | None:
     if session_id is None:
         return None
-    binding = SessionResolver(get_tool_session_store()).resolve_active_binding(
+    return SessionResolver(get_tool_session_store()).resolve_active_binding(
         session_id
     )
-    assert isinstance(binding, LocalSessionBinding)
-    return binding
+
+
+def _files_config():
+    return files_config_from_settings(get_settings())
+
+
+def _resolve_ambient_path(path: str | Path) -> Path:
+    settings = get_settings()
+    return resolve_path_with_policy(
+        path,
+        workspace_root=settings.workspace_root,
+        allow_full_control=settings.allow_full_control,
+        path_denylist=tuple(settings.path_denylist),
+    )
+
+
+def _files_service() -> FilesService:
+    return FilesService(_files_config(), get_tool_session_store())
+
+
+def list_files_execute(
+    path=".", recursive=False, max_entries=500, session_id=None
+):
+    return _list_files_local(
+        _files_config(),
+        _local_binding(session_id),
+        path,
+        recursive,
+        max_entries,
+    )
+
+
+def read_file_execute(
+    path, start_line=None, end_line=None, session_id=None, line_ranges=None
+):
+    store = get_tool_session_store()
+    return _read_file_local(
+        _files_config(),
+        store,
+        _local_binding(session_id),
+        path,
+        start_line,
+        end_line,
+        line_ranges,
+    )
+
+
+def write_file_execute(
+    path, content, overwrite=True, session_id=None, expected_sha256=None
+):
+    return _write_file_local(
+        _files_config(),
+        _local_binding(session_id),
+        path,
+        content,
+        overwrite,
+        expected_sha256,
+    )
+
+
+def delete_file_or_dir_execute(path, recursive=False, session_id=None):
+    return _delete_file_or_dir_local(
+        _files_config(), _local_binding(session_id), path, recursive
+    )
 
 
 def _edit_lines(
@@ -86,7 +160,7 @@ async def test_registered_file_handlers_round_trip_grounded_edits(
     clear_settings_cache()
     session_id = _create_session()
 
-    written = await files_registry.write_file.func(
+    written = await _files_service().write_file(
         session_id, "adapter.txt", "one\ntwo\n"
     )
     assert written.created is True
@@ -95,28 +169,22 @@ async def test_registered_file_handlers_round_trip_grounded_edits(
         "adapter.txt", start_line=1, end_line=2, session_id=session_id
     )
     assert first.snapshot_id is not None
-    await files_registry.edit_lines.func(
-        "adapter.txt",
-        2,
-        2,
-        "TWO",
-        session_id,
-        first.snapshot_id,
+    await _files_service().edit_lines(
+        session_id, "adapter.txt", 2, 2, "TWO", first.snapshot_id
     )
 
     second = read_file_execute(
         "adapter.txt", start_line=1, end_line=2, session_id=session_id
     )
     assert second.snapshot_id is not None
-    await files_registry.hashline_edit.func(
-        session_id,
-        f"[adapter.txt#{second.snapshot_id}]\n1:one\n+ONE",
+    await _files_service().hashline_edit(
+        session_id, f"[adapter.txt#{second.snapshot_id}]\n1:one\n+ONE"
     )
     assert (tmp_path / "adapter.txt").read_text(encoding="utf-8") == (
         "ONE\nTWO\n"
     )
 
-    deleted = await files_registry.delete_file_or_dir.func(
+    deleted = await _files_service().delete_file_or_dir(
         session_id, "adapter.txt"
     )
     assert deleted.deleted == "file"
@@ -357,7 +425,7 @@ def test_reject_path_escape(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "false")
     clear_settings_cache()
     with pytest.raises(ValueError):
-        resolve_path("/etc/passwd")
+        _resolve_ambient_path("/etc/passwd")
 
 
 def test_full_container_mode_disables_builtin_restrictions(
@@ -372,10 +440,12 @@ def test_full_container_mode_disables_builtin_restrictions(
 
     assert settings.path_denylist == []
     outside_workspace = Path(tmp_path.anchor) / "outside-workspace"
-    assert resolve_path(outside_workspace) == Path(
+    assert _resolve_ambient_path(outside_workspace) == Path(
         os.path.abspath(outside_workspace)
     )
-    check_command_policy("mount /dev/null /mnt || true")
+    check_command_policy(
+        resolve_executor_config(settings), "mount /dev/null /mnt || true"
+    )
 
 
 def test_read_text_handles_truncated_utf8_sequence(tmp_path, monkeypatch):
@@ -638,7 +708,9 @@ def test_hashline_edit_accepts_workspace_relative_header_from_nested_session(
     (project / "edit.py").write_text("alpha\nbeta\n", encoding="utf-8")
     store = get_tool_session_store()
     store.clear()
-    session_id = store.create_session(workdir="project").session_id
+    session_id = store.create_session(
+        session_id=_next_session_id(), workdir="project"
+    ).session_id
     read_result = read_file_execute(
         "edit.py", start_line=2, end_line=2, session_id=session_id
     )

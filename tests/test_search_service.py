@@ -5,21 +5,17 @@ import pytest
 from workgate import persistence
 from workgate.config import settings as settings_module
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.ops.search import service as search_service_module
-from workgate.ops.search.composition import (
+from workgate.executor.search import service as search_service_module
+from workgate.executor.search.composition import (
     build_local_search_runner,
     build_search_service,
 )
-from workgate.ops.search.service import RemoteSearchClient, SearchRequest
+from workgate.executor.search.service import SearchRequest
 from workgate.schemas.result_models.search import (
     GrepMatch,
-    GrepSearchOutput,
 )
 from workgate.tool_session import store as store_module
-from workgate.tool_session.bindings import (
-    LocalSessionBinding,
-    RemoteSessionBinding,
-)
+from workgate.tool_session.bindings import SessionBinding
 
 
 def _store_and_settings(tmp_path, monkeypatch):
@@ -41,6 +37,10 @@ def _boom(*_args, **_kwargs):
     )
 
 
+def _session_id(index: int) -> str:
+    return f"sess_{index:022d}"
+
+
 @pytest.mark.asyncio
 async def test_search_service_does_not_reacquire_ambient_dependencies(
     tmp_path, monkeypatch
@@ -49,8 +49,8 @@ async def test_search_service_does_not_reacquire_ambient_dependencies(
         pytest.skip("missing rg")
     store, settings = _store_and_settings(tmp_path, monkeypatch)
     (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
-    session = store.create_session(workdir=tmp_path)
-    service = build_search_service(settings, store, remote=None)
+    session = store.create_session(session_id=_session_id(1), workdir=tmp_path)
+    service = build_search_service(settings, store)
 
     monkeypatch.setattr(settings_module, "get_settings", _boom)
     monkeypatch.setattr(store_module, "get_tool_session_store", _boom)
@@ -83,8 +83,8 @@ async def test_search_service_resolves_fresh_workdir_per_operation(
     second.mkdir()
     (first / "one.txt").write_text("needle first\n", encoding="utf-8")
     (second / "two.txt").write_text("needle second\n", encoding="utf-8")
-    session = store.create_session(workdir=first)
-    service = build_search_service(settings, store, remote=None)
+    session = store.create_session(session_id=_session_id(2), workdir=first)
+    service = build_search_service(settings, store)
 
     first_result = await service.search(
         session.session_id,
@@ -102,62 +102,6 @@ async def test_search_service_resolves_fresh_workdir_per_operation(
 
     assert [match.path for match in first_result.matches] == ["first/one.txt"]
     assert [match.path for match in second_result.matches] == ["second/two.txt"]
-
-
-@pytest.mark.asyncio
-async def test_remote_search_client_keeps_mapping_at_wire_boundary():
-    calls = []
-    binding = RemoteSessionBinding(
-        session_id="SESSION01",
-        workdir="/remote/work",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-    )
-    output = GrepSearchOutput(
-        ok=True,
-        matches=[],
-        displayed_lines=[],
-        count=0,
-        displayed_count=0,
-        context_radius=0,
-        skipped=0,
-        truncated=False,
-        stderr="",
-        numbered_content="",
-    )
-
-    async def fake_call(remote_binding, tool, args):
-        calls.append((remote_binding, tool, args))
-        return output.model_dump(mode="json")
-
-    client = RemoteSearchClient(call=fake_call)
-    result = await client.search(
-        binding,
-        SearchRequest(
-            pattern="needle",
-            paths=["src", "tests/*.py"],
-            regex=False,
-            skip=2,
-            gitignore=False,
-        ),
-    )
-
-    assert result == output
-    assert calls == [
-        (
-            binding,
-            "search",
-            {
-                "pattern": "needle",
-                "paths": ["src", "tests/*.py"],
-                "regex": False,
-                "case_sensitive": True,
-                "max_results": None,
-                "skip": 2,
-                "gitignore": False,
-            },
-        )
-    ]
 
 
 def test_search_path_access_and_scope_parsing_are_explicit(
@@ -255,8 +199,8 @@ def test_search_grounding_projects_snapshots_and_display_windows(
     workdir.mkdir()
     target = workdir / "demo.txt"
     target.write_text("alpha\nneedle here\ngamma\n", encoding="utf-8")
-    session = store.create_session(workdir=workdir)
-    binding = LocalSessionBinding(
+    session = store.create_session(session_id=_session_id(3), workdir=workdir)
+    binding = SessionBinding(
         session_id=session.session_id,
         workdir=str(workdir),
     )
@@ -305,8 +249,8 @@ async def test_local_search_runner_parses_fake_rg_process_without_binary(
     store, settings = _store_and_settings(tmp_path, monkeypatch)
     target = tmp_path / "demo.txt"
     target.write_text("alpha\nneedle here\ngamma\n", encoding="utf-8")
-    session = store.create_session(workdir=tmp_path)
-    binding = LocalSessionBinding(
+    session = store.create_session(session_id=_session_id(4), workdir=tmp_path)
+    binding = SessionBinding(
         session_id=session.session_id,
         workdir=str(tmp_path),
     )
@@ -398,61 +342,3 @@ async def test_local_search_runner_reports_process_start_failure(
     assert result.count == 0
     assert result.skipped == 0
     assert "not installed" in result.stderr
-
-
-@pytest.mark.asyncio
-async def test_search_service_routes_remote_binding_or_rejects_worker_runtime(
-    tmp_path, monkeypatch
-):
-    store, settings = _store_and_settings(tmp_path, monkeypatch)
-    session = store.create_session(
-        target="remote",
-        workdir="/remote/work",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-    )
-    worker_service = build_search_service(settings, store, remote=None)
-    with pytest.raises(ValueError, match="remote Search is unavailable"):
-        await worker_service.search(session.session_id, "needle")
-
-    calls = []
-    output = GrepSearchOutput(
-        ok=True,
-        matches=[],
-        displayed_lines=[],
-        count=0,
-        displayed_count=0,
-        context_radius=0,
-        skipped=0,
-        truncated=False,
-        stderr="",
-        numbered_content="",
-    )
-
-    async def fake_call(binding, tool, args):
-        calls.append((binding, tool, args))
-        return output.model_dump(mode="json")
-
-    controller_service = build_search_service(
-        settings,
-        store,
-        remote=RemoteSearchClient(call=fake_call),
-    )
-    result = await controller_service.search(
-        session.session_id,
-        "needle",
-        paths="src",
-        regex=False,
-        max_results=3,
-        skip=1,
-        gitignore=False,
-    )
-
-    assert result == output
-    assert len(calls) == 1
-    binding, tool, args = calls[0]
-    assert isinstance(binding, RemoteSessionBinding)
-    assert binding.session_id == session.session_id
-    assert tool == "search"
-    assert args["paths"] == "src"
-    assert args["max_results"] == 3

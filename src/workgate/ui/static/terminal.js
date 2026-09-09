@@ -11,8 +11,8 @@ export function createTerminalController({
 }) {
   const controllerState = {
     terminalSocket: null,
-    terminalSocketMachine: "",
-    terminalMachine: "local",
+    terminalSocketExecutorId: "",
+    terminalExecutorId: "",
     terminalMode: "snapshot",
     terminalReady: false,
     terminalXterm: null,
@@ -24,7 +24,7 @@ export function createTerminalController({
     terminalGeneration: 0,
     terminalListGeneration: 0,
     terminalLoading: false,
-    terminalMachineStates: new Map([["local", "online"]]),
+    terminalExecutorStates: new Map(),
     terminalFollowOutput: true,
     terminalPendingOutput: null,
     terminalPendingUpdates: 0,
@@ -146,7 +146,7 @@ export function createTerminalController({
     return Boolean(
       controllerState.terminalSocket &&
       controllerState.terminalSocket.readyState === WebSocket.OPEN &&
-      controllerState.terminalSocketMachine === controllerState.terminalMachine
+      controllerState.terminalSocketExecutorId === controllerState.terminalExecutorId
     );
   }
 
@@ -261,8 +261,8 @@ export function createTerminalController({
     return protocols;
   }
 
-  function terminalMachineOnline(machine = controllerState.terminalMachine) {
-    return machine === "local" || controllerState.terminalMachineStates.get(machine) === "online";
+  function terminalExecutorOnline(executorId = controllerState.terminalExecutorId) {
+    return Boolean(executorId) && controllerState.terminalExecutorStates.get(executorId) === "online";
   }
 
   function terminalSize() {
@@ -279,14 +279,14 @@ export function createTerminalController({
   }
 
   function setTerminalControls(enabled = false) {
-    const online = terminalMachineOnline();
+    const online = terminalExecutorOnline();
     const connected =
       enabled &&
       online &&
-      controllerState.terminalSocketMachine === controllerState.terminalMachine &&
+      controllerState.terminalSocketExecutorId === controllerState.terminalExecutorId &&
       controllerState.terminalReady &&
       controllerState.terminalSocket?.readyState === WebSocket.OPEN;
-    elements.terminalMachine.disabled = controllerState.terminalLoading;
+    elements.terminalExecutor.disabled = controllerState.terminalLoading;
     elements.terminalStartForm.querySelector("button").disabled = controllerState.terminalLoading || !online;
     elements.terminalName.disabled = controllerState.terminalLoading || !online;
     elements.terminalInput.disabled = !connected;
@@ -299,7 +299,7 @@ export function createTerminalController({
     controllerState.terminalGeneration += 1;
     const socket = controllerState.terminalSocket;
     controllerState.terminalSocket = null;
-    controllerState.terminalSocketMachine = "";
+    controllerState.terminalSocketExecutorId = "";
     if (socket && socket.readyState < WebSocket.CLOSING) {
       socket.close(1000, "Client changed terminal");
     }
@@ -315,75 +315,52 @@ export function createTerminalController({
     setTerminalControls(false);
   }
 
-  function resetTerminalWorkspace(machine) {
+  function resetTerminalWorkspace(executorId = "") {
     closeTerminalSocket();
-    controllerState.terminalMachine = machine || "local";
+    controllerState.terminalExecutorId = executorId;
     controllerState.terminalListGeneration += 1;
     controllerState.terminalSessions = [];
     controllerState.selectedShellId = "";
     controllerState.terminalCommandHistory = [];
     controllerState.terminalHistoryIndex = 0;
     controllerState.terminalHistoryDraft = "";
-    elements.terminalMachine.value = controllerState.terminalMachine;
+    elements.terminalExecutor.value = controllerState.terminalExecutorId;
     elements.terminalTitle.textContent = "No terminal selected";
-    elements.terminalState.textContent = `Not loaded · ${controllerState.terminalMachine}`;
-    showTerminalMessage(`Select or create a terminal session on ${controllerState.terminalMachine}.`);
-    renderTerminalList({ shells: [] }, { emptyMessage: `Terminals for ${controllerState.terminalMachine} are not loaded.` });
+    elements.terminalState.textContent = `Not loaded · ${controllerState.terminalExecutorId}`;
+    showTerminalMessage(`Select or create a terminal session on ${controllerState.terminalExecutorId}.`);
+    renderTerminalList({ shells: [] }, { emptyMessage: `Terminals for ${controllerState.terminalExecutorId} are not loaded.` });
     setTerminalControls(false);
   }
 
-  function renderTerminalMachines(machines) {
-    const available = Array.isArray(machines) ? machines : [];
-    controllerState.terminalMachineStates = new Map([["local", "online"]]);
-    elements.terminalMachine.replaceChildren();
-    let localPresent = false;
-    let currentPresent = false;
-    let currentOnline = controllerState.terminalMachine === "local";
-    for (const machine of available) {
-      const name = text(machine.name, "");
-      if (!name) continue;
-      if (name === "local") localPresent = true;
-      const state = name === "local" ? "online" : text(machine.status, "offline");
-      const online = name === "local" || state === "online";
-      controllerState.terminalMachineStates.set(name, state);
+  function renderTerminalExecutors(targets) {
+    const available = Array.isArray(targets) ? targets : [];
+    controllerState.terminalExecutorStates = new Map();
+    elements.terminalExecutor.replaceChildren();
+    let currentAvailable = false;
+    for (const executor of available) {
+      const executorId = text(executor.executor_id, "");
+      if (!executorId) continue;
+      const state = text(executor.status, "offline");
+      controllerState.terminalExecutorStates.set(executorId, state);
       const option = document.createElement("option");
-      option.value = name;
-      option.textContent = online ? name : `${name} (${state})`;
-      option.disabled = !online;
-      option.selected = name === controllerState.terminalMachine;
-      if (option.selected) {
-        currentPresent = true;
-        currentOnline = online;
-      }
-      elements.terminalMachine.append(option);
+      option.value = executorId;
+      const label = text(executor.name, executorId);
+      option.textContent = state === "online" ? label : `${label} (${state})`;
+      option.disabled = state !== "online";
+      option.selected = state === "online" && executorId === controllerState.terminalExecutorId;
+      if (option.selected) currentAvailable = true;
+      elements.terminalExecutor.append(option);
     }
-    if (!localPresent) {
-      const local = document.createElement("option");
-      local.value = "local";
-      local.textContent = "local";
-      local.selected = controllerState.terminalMachine === "local";
-      elements.terminalMachine.prepend(local);
-      if (local.selected) {
-        currentPresent = true;
-        currentOnline = true;
-      }
+    if (!currentAvailable) {
+      const firstOnline = available.find((item) => item.status === "online");
+      const nextExecutorId = firstOnline?.executor_id || "";
+      const changed = controllerState.terminalExecutorId !== nextExecutorId;
+      resetTerminalWorkspace(nextExecutorId);
+      if (changed && nextExecutorId) refreshTerminalsInBackground({ force: true });
+      return;
     }
-    if (!currentPresent && controllerState.terminalMachine !== "local") {
-      const stale = document.createElement("option");
-      stale.value = controllerState.terminalMachine;
-      stale.textContent = `${controllerState.terminalMachine} (unavailable)`;
-      stale.disabled = true;
-      stale.selected = true;
-      elements.terminalMachine.append(stale);
-    }
-    if (!currentPresent || !currentOnline) {
-      const changed = controllerState.terminalMachine !== "local";
-      resetTerminalWorkspace("local");
-      if (changed) refreshTerminalsInBackground({ force: true });
-    } else {
-      elements.terminalMachine.value = controllerState.terminalMachine;
-      setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
-    }
+    elements.terminalExecutor.value = controllerState.terminalExecutorId;
+    setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
 
   function renderTerminalList(payload, { emptyMessage = "No persistent terminals are running." } = {}) {
@@ -393,7 +370,7 @@ export function createTerminalController({
       controllerState.selectedShellId = "";
       elements.terminalTitle.textContent = "No terminal selected";
       elements.terminalState.textContent = "No session";
-      showTerminalMessage(`Select or create a terminal session on ${controllerState.terminalMachine}.`);
+      showTerminalMessage(`Select or create a terminal session on ${controllerState.terminalExecutorId}.`);
     }
 
     elements.terminalList.replaceChildren();
@@ -413,7 +390,7 @@ export function createTerminalController({
       button.type = "button";
       button.className = "terminal-session";
       button.textContent = text(session.name, shellId);
-      const details = [controllerState.terminalMachine, shellId, session.cwd, session.command].filter(Boolean);
+      const details = [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean);
       button.title = details.join(" · ");
       button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");
       button.addEventListener("click", () => connectTerminal(shellId));
@@ -422,11 +399,11 @@ export function createTerminalController({
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
 
-  function terminalWebSocketUrl(shellId, machine) {
+  function terminalWebSocketUrl(shellId, executorId) {
     const url = new URL(`${uiPath}/ws/terminals/${encodeURIComponent(shellId)}`, location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const size = terminalSize();
-    url.searchParams.set("machine", machine);
+    url.searchParams.set("executor_id", executorId);
     url.searchParams.set("lines", "1000");
     url.searchParams.set("mode", "auto");
     url.searchParams.set("cols", String(size.cols));
@@ -450,40 +427,40 @@ export function createTerminalController({
   }
 
   function connectTerminal(shellId) {
-    const requestedMachine = controllerState.terminalMachine;
+    const requestedExecutor = controllerState.terminalExecutorId;
     if (
       !shellId ||
-      !terminalMachineOnline(requestedMachine) ||
+      !terminalExecutorOnline(requestedExecutor) ||
       (shellId === controllerState.selectedShellId &&
-        controllerState.terminalSocketMachine === requestedMachine &&
+        controllerState.terminalSocketExecutorId === requestedExecutor &&
         controllerState.terminalSocket?.readyState === WebSocket.OPEN)
     ) return;
     closeTerminalSocket();
     controllerState.selectedShellId = shellId;
     const generation = controllerState.terminalGeneration;
-    elements.terminalTitle.textContent = `${requestedMachine} / ${shellId}`;
+    elements.terminalTitle.textContent = `${requestedExecutor} / ${shellId}`;
     elements.terminalState.textContent = "Connecting";
     controllerState.terminalCommandHistory = [];
     controllerState.terminalHistoryIndex = 0;
     controllerState.terminalHistoryDraft = "";
-    showTerminalMessage(`Connecting to ${requestedMachine}…`);
+    showTerminalMessage(`Connecting to ${requestedExecutor}…`);
     renderTerminalList({ shells: controllerState.terminalSessions });
 
     const socket = new WebSocket(
-      terminalWebSocketUrl(shellId, requestedMachine),
+      terminalWebSocketUrl(shellId, requestedExecutor),
       terminalSocketProtocols(),
     );
     socket.binaryType = "arraybuffer";
     controllerState.terminalSocket = socket;
-    controllerState.terminalSocketMachine = requestedMachine;
+    controllerState.terminalSocketExecutorId = requestedExecutor;
     const current = () =>
       generation === controllerState.terminalGeneration &&
       socket === controllerState.terminalSocket &&
-      requestedMachine === controllerState.terminalMachine &&
-      requestedMachine === controllerState.terminalSocketMachine;
+      requestedExecutor === controllerState.terminalExecutorId &&
+      requestedExecutor === controllerState.terminalSocketExecutorId;
     socket.addEventListener("open", () => {
       if (!current()) return;
-      elements.terminalState.textContent = `Negotiating · ${requestedMachine}`;
+      elements.terminalState.textContent = `Negotiating · ${requestedExecutor}`;
       controllerState.terminalReady = false;
       setTerminalControls(false);
     });
@@ -502,7 +479,7 @@ export function createTerminalController({
         return;
       }
       if (
-        message.machine !== requestedMachine ||
+        message.executor_id !== requestedExecutor ||
         message.shell_id !== shellId
       ) return;
       if (message.type === "ready") {
@@ -513,7 +490,7 @@ export function createTerminalController({
           return;
         }
         controllerState.terminalReady = true;
-        elements.terminalState.textContent = `Connected · ${requestedMachine} · ${mode.toUpperCase()}`;
+        elements.terminalState.textContent = `Connected · ${requestedExecutor} · ${mode.toUpperCase()}`;
         setTerminalControls(true);
         sendTerminalResize();
         if (document.body.dataset.activeView === "terminals") {
@@ -523,7 +500,7 @@ export function createTerminalController({
       } else if (message.type === "snapshot") {
         acceptTerminalSnapshot(text(message.output, ""));
         controllerState.terminalReady = true;
-        elements.terminalState.textContent = `Connected · ${requestedMachine} · SNAPSHOT`;
+        elements.terminalState.textContent = `Connected · ${requestedExecutor} · SNAPSHOT`;
         setTerminalControls(true);
         if (document.body.dataset.activeView === "terminals") {
           elements.terminalInput.focus();
@@ -531,7 +508,7 @@ export function createTerminalController({
       } else if (message.type === "exit") {
         const detail = terminalNotice(message.message);
         controllerState.terminalReady = false;
-        elements.terminalState.textContent = `Exited · ${requestedMachine}`;
+        elements.terminalState.textContent = `Exited · ${requestedExecutor}`;
         if (controllerState.terminalMode === "pty" && controllerState.terminalXterm) {
           controllerState.terminalXterm.write(`\r\n\u001b[31m[${detail}]\u001b[0m\r\n`);
         } else {
@@ -544,53 +521,53 @@ export function createTerminalController({
     socket.addEventListener("close", (event) => {
       if (!current()) return;
       controllerState.terminalSocket = null;
-      controllerState.terminalSocketMachine = "";
+      controllerState.terminalSocketExecutorId = "";
       controllerState.terminalReady = false;
       setTerminalControls(false);
       if (event.code === 4401 || event.code === 4403) {
         showAuthentication("Authentication required", event.reason || "Terminal authorization failed.");
       } else {
-        elements.terminalState.textContent = event.reason || `Disconnected · ${requestedMachine}`;
+        elements.terminalState.textContent = event.reason || `Disconnected · ${requestedExecutor}`;
         if (event.code === 4404) refreshTerminalsInBackground({ force: true });
       }
     });
     socket.addEventListener("error", () => {
-      if (current()) elements.terminalState.textContent = `Connection error · ${requestedMachine}`;
+      if (current()) elements.terminalState.textContent = `Connection error · ${requestedExecutor}`;
     });
   }
 
-  function terminalQueryPath(machine = controllerState.terminalMachine) {
-    const params = new URLSearchParams({ machine });
+  function terminalQueryPath(executorId = controllerState.terminalExecutorId) {
+    const params = new URLSearchParams({ executor_id: executorId });
     return `/terminals?${params.toString()}`;
   }
 
   async function refreshTerminals({ force = false } = {}) {
-    if ((controllerState.terminalLoading && !force) || !terminalMachineOnline()) return null;
+    if ((controllerState.terminalLoading && !force) || !terminalExecutorOnline()) return null;
     const generation = ++controllerState.terminalListGeneration;
-    const requestedMachine = controllerState.terminalMachine;
+    const requestedExecutor = controllerState.terminalExecutorId;
     controllerState.terminalLoading = true;
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
-    elements.terminalState.textContent = `Loading ${requestedMachine}`;
+    elements.terminalState.textContent = `Loading ${requestedExecutor}`;
     try {
-      const payload = await request(terminalQueryPath(requestedMachine));
-      if (generation !== controllerState.terminalListGeneration || requestedMachine !== controllerState.terminalMachine) return null;
-      if (payload.machine !== requestedMachine) throw new Error("Terminal machine response mismatch");
+      const payload = await request(terminalQueryPath(requestedExecutor));
+      if (generation !== controllerState.terminalListGeneration || requestedExecutor !== controllerState.terminalExecutorId) return null;
+      if (payload.executor_id !== requestedExecutor) throw new Error("Terminal executor response mismatch");
       renderTerminalList(payload);
       const connected =
         controllerState.terminalReady &&
-        controllerState.terminalSocketMachine === requestedMachine &&
+        controllerState.terminalSocketExecutorId === requestedExecutor &&
         controllerState.terminalSocket?.readyState === WebSocket.OPEN;
       elements.terminalState.textContent = controllerState.selectedShellId
-        ? `${connected ? "Connected" : "Selected"} · ${requestedMachine}`
-        : `${controllerState.terminalSessions.length} session(s) · ${requestedMachine}`;
+        ? `${connected ? "Connected" : "Selected"} · ${requestedExecutor}`
+        : `${controllerState.terminalSessions.length} session(s) · ${requestedExecutor}`;
       return payload;
     } catch (error) {
       if (error.authenticationRequired) throw error;
-      if (generation !== controllerState.terminalListGeneration || requestedMachine !== controllerState.terminalMachine) return null;
+      if (generation !== controllerState.terminalListGeneration || requestedExecutor !== controllerState.terminalExecutorId) return null;
       controllerState.terminalSessions = [];
       renderTerminalList(
         { shells: [] },
-        { emptyMessage: `Terminals unavailable on ${requestedMachine}.` },
+        { emptyMessage: `Terminals unavailable on ${requestedExecutor}.` },
       );
       elements.terminalState.textContent = error instanceof Error ? error.message : String(error);
       return null;
@@ -612,7 +589,7 @@ export function createTerminalController({
     return request(`/terminals/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ machine: controllerState.terminalMachine, ...body }),
+      body: JSON.stringify({ executor_id: controllerState.terminalExecutorId, ...body }),
     });
   }
 
@@ -623,13 +600,13 @@ export function createTerminalController({
     const button = elements.terminalStartForm.querySelector("button");
     button.disabled = true;
     try {
-      const requestedMachine = controllerState.terminalMachine;
+      const requestedExecutor = controllerState.terminalExecutorId;
       const name = elements.terminalName.value.trim();
       const result = await terminalAction("start", { cwd: ".", name: name || null });
-      if (requestedMachine !== controllerState.terminalMachine || result.machine !== requestedMachine) return;
+      if (requestedExecutor !== controllerState.terminalExecutorId || result.executor_id !== requestedExecutor) return;
       elements.terminalName.value = "";
       await refreshTerminals({ force: true });
-      if (requestedMachine === controllerState.terminalMachine) connectTerminal(result.shell_id);
+      if (requestedExecutor === controllerState.terminalExecutorId) connectTerminal(result.shell_id);
     } catch (error) {
       elements.terminalState.textContent = "Unable to start terminal";
       showTerminalMessage(error instanceof Error ? error.message : String(error));
@@ -694,7 +671,7 @@ export function createTerminalController({
       controllerState.selectedShellId = "";
       elements.terminalTitle.textContent = "No terminal selected";
       elements.terminalState.textContent = "No session";
-      showTerminalMessage(`Terminal ${controllerState.terminalMachine} / ${shellId} was terminated.`);
+      showTerminalMessage(`Terminal ${controllerState.terminalExecutorId} / ${shellId} was terminated.`);
       await refreshTerminals({ force: true });
     } catch (error) {
       elements.terminalState.textContent = "Unable to kill terminal";
@@ -704,9 +681,9 @@ export function createTerminalController({
     }
   });
 
-  elements.terminalMachine.addEventListener("change", () => {
+  elements.terminalExecutor.addEventListener("change", () => {
     if (controllerState.terminalLoading) return;
-    resetTerminalWorkspace(elements.terminalMachine.value || "local");
+    resetTerminalWorkspace(elements.terminalExecutor.value);
     refreshTerminalsInBackground({ force: true });
   });
 
@@ -715,7 +692,7 @@ export function createTerminalController({
   function ping() {
     if (
       controllerState.terminalSocket?.readyState === WebSocket.OPEN &&
-      controllerState.terminalSocketMachine === controllerState.terminalMachine
+      controllerState.terminalSocketExecutorId === controllerState.terminalExecutorId
     ) {
       controllerState.terminalSocket.send(JSON.stringify({ type: "ping" }));
     }
@@ -726,7 +703,7 @@ export function createTerminalController({
     close: closeTerminalSocket,
     ping,
     refresh: refreshTerminals,
-    renderMachines: renderTerminalMachines,
+    renderExecutors: renderTerminalExecutors,
     reset: resetTerminalWorkspace,
     resize: sendTerminalResize,
     showMessage: showTerminalMessage,

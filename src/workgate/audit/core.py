@@ -753,18 +753,20 @@ def _coalesce_audit_records(
                 _finish_audit_call_entry(entry, record, index)
             continue
 
-        rows.append(
-            {
-                **record,
-                "ts": _audit_timestamp(record.get("ts")),
-                "id": str(
-                    record.get("id") or f"record:{record.get('ts', 0)}:{index}"
-                ),
-                "node": _audit_node(record),
-                "operation": _audit_operation(record),
-                _AUDIT_SOURCE_INDEXES: [index],
-            }
-        )
+        row = {
+            **record,
+            "ts": _audit_timestamp(record.get("ts")),
+            "id": str(
+                record.get("id") or f"record:{record.get('ts', 0)}:{index}"
+            ),
+            "node": _audit_node(record),
+            "operation": _audit_operation(record),
+            _AUDIT_SOURCE_INDEXES: [index],
+        }
+        session = _audit_session(record)
+        if session and not row.get("session"):
+            row["session"] = session
+        rows.append(row)
     return rows
 
 

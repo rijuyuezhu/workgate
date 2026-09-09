@@ -1,16 +1,15 @@
-import asyncio
-
 import pytest
 
 import workgate.composition.services as composition_services
-import workgate.terminal.bridge as terminal_bridge
-import workgate.terminal.conpty as terminal_conpty
 from workgate.composition.services import (
+    build_control_services,
     build_runtime_services,
+    install_control_services,
     install_runtime_services,
 )
 from workgate.config.settings import Settings
 from workgate.control.runtime import build_control_runtime
+from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
 from workgate.executor.runtime import build_executor_runtime
 from workgate.jobs.managed import (
     ManagedJobsRuntime,
@@ -22,18 +21,11 @@ from workgate.oauth.core.state import (
     configure_oauth_state,
     oauth_state,
 )
-from workgate.ops.utils.session_copy import SESSION_COPY_MANAGED_KIND
 from workgate.persistence import (
     FileStateStore,
     configure_state_store,
     get_state_store,
 )
-from workgate.remote.manager import (
-    RemoteManager,
-    configure_remote_manager,
-    remote_manager,
-)
-from workgate.terminal.runtime import build_terminal_runtime
 from workgate.tool_session import (
     configure_tool_session_store,
     get_tool_session_store,
@@ -45,93 +37,131 @@ from workgate.ui.http.live_state import (
 )
 
 
-def test_runtime_services_install_explicit_store_dependencies(tmp_path):
+def _outer_services(tmp_path):
+    settings = Settings(
+        workspace_root=tmp_path,
+        state_dir=tmp_path / "outer-state",
+    )
+    state_store = FileStateStore(lambda: settings.state_dir)
+    session_store = ToolSessionStore(
+        state_store=state_store,
+        settings_provider=lambda: settings,
+    )
+    return settings, state_store, session_store
+
+
+def test_executor_runtime_services_install_explicit_store_dependencies(
+    tmp_path,
+):
     settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / ".state",
     )
-
     services = build_runtime_services(settings)
+
     installation = install_runtime_services(services)
     try:
         assert get_state_store() is services.state_store
         assert get_tool_session_store() is services.tool_session_store
         assert services.state_store.layout.root == settings.state_dir
-        assert services.tool_session_store._settings() is settings
     finally:
         installation.close()
+        configure_tool_session_store(None)
+        configure_state_store(None)
 
 
-def test_runtime_service_construction_does_not_install_compatibility_globals(
-    tmp_path,
-):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
+def test_control_services_do_not_construct_machine_session_authority(tmp_path):
+    settings = Settings(
+        workspace_root=tmp_path / "executor-workspace-must-not-be-used",
+        state_dir=tmp_path / "control-state",
     )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
+    services = build_control_services(settings)
+
+    assert services.state_store.layout.root == settings.state_dir
+    assert not hasattr(services, "tool_session_store")
+
+
+def test_role_service_construction_does_not_install_globals(tmp_path):
+    outer_settings, outer_state_store, outer_session_store = _outer_services(
+        tmp_path
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "runtime-state",
-    )
     try:
-        services = build_runtime_services(settings)
+        control = build_control_services(
+            Settings(
+                workspace_root=tmp_path / "unused-control-workspace",
+                state_dir=tmp_path / "control-state",
+            )
+        )
+        executor = build_runtime_services(
+            Settings(
+                workspace_root=tmp_path,
+                state_dir=tmp_path / "executor-state",
+            )
+        )
 
-        assert services.state_store is not outer_state_store
-        assert services.tool_session_store is not outer_session_store
+        assert control.state_store is not outer_state_store
+        assert executor.state_store is not outer_state_store
+        assert executor.tool_session_store is not outer_session_store
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
+        assert outer_settings.state_dir == outer_state_store.layout.root
     finally:
         configure_tool_session_store(None)
         configure_state_store(None)
 
 
+def test_control_service_installation_never_rebinds_tool_sessions(tmp_path):
+    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
+    configure_state_store(outer_state_store)
+    configure_tool_session_store(outer_session_store)
+    services = build_control_services(
+        Settings(
+            workspace_root=tmp_path / "unused",
+            state_dir=tmp_path / "control-state",
+        )
+    )
+
+    installation = install_control_services(services)
+    try:
+        assert get_state_store() is services.state_store
+        assert get_tool_session_store() is outer_session_store
+    finally:
+        installation.close()
+        assert get_state_store() is outer_state_store
+        assert get_tool_session_store() is outer_session_store
+        configure_tool_session_store(None)
+        configure_state_store(None)
+
+
 @pytest.mark.asyncio
-async def test_control_runtime_lifespan_restores_outer_compatibility_bindings(
+async def test_control_runtime_lifespan_restores_state_without_session_binding(
     tmp_path,
 ):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
+    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
+            workspace_root=tmp_path / "control-must-not-use-workspace",
+            state_dir=tmp_path / "control-state",
+            auth_mode="none",
         )
     )
     try:
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-
+        assert not hasattr(runtime.services, "tool_session_store")
         async with runtime.lifespan() as active:
             assert active is runtime
             assert get_state_store() is runtime.services.state_store
-            assert (
-                get_tool_session_store() is runtime.services.tool_session_store
-            )
+            assert get_tool_session_store() is outer_session_store
 
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-        await runtime.aclose()
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
         with pytest.raises(RuntimeError, match="cannot be restarted"):
             await runtime.start()
     finally:
+        await runtime.aclose()
         configure_tool_session_store(None)
         configure_state_store(None)
 
@@ -140,22 +170,16 @@ async def test_control_runtime_lifespan_restores_outer_compatibility_bindings(
 async def test_executor_runtime_lifespan_restores_bindings_after_exception(
     tmp_path,
 ):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
+    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
     runtime = build_executor_runtime(
         Settings(
             workspace_root=tmp_path,
-            state_dir=tmp_path / "worker-state",
-        )
+            state_dir=tmp_path / "executor-state",
+            remote_enabled=False,
+        ),
+        enable_control_connection=False,
     )
     try:
         with pytest.raises(RuntimeError, match="boom"):
@@ -169,27 +193,24 @@ async def test_executor_runtime_lifespan_restores_bindings_after_exception(
 
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
-        await runtime.aclose()
     finally:
+        await runtime.aclose()
         configure_tool_session_store(None)
         configure_state_store(None)
 
 
-def test_runtime_service_installation_rolls_back_partial_startup(
+def test_executor_service_installation_rolls_back_partial_startup(
     tmp_path, monkeypatch
 ):
-    settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "runtime-state",
-    )
-    outer_state_store = FileStateStore(lambda: tmp_path / "outer-state")
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: settings,
-    )
+    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    services = build_runtime_services(settings)
+    services = build_runtime_services(
+        Settings(
+            workspace_root=tmp_path,
+            state_dir=tmp_path / "executor-state",
+        )
+    )
 
     def fail_session_install(_store):
         raise RuntimeError("session install failed")
@@ -202,121 +223,27 @@ def test_runtime_service_installation_rolls_back_partial_startup(
     try:
         with pytest.raises(RuntimeError, match="session install failed"):
             install_runtime_services(services)
-
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
     finally:
-        monkeypatch.undo()
         configure_tool_session_store(None)
         configure_state_store(None)
 
 
 @pytest.mark.asyncio
-async def test_control_runtime_startup_failure_closes_started_bindings(
+async def test_executor_terminal_start_failure_restores_store_bindings(
     tmp_path, monkeypatch
 ):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
+    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    runtime = build_control_runtime(
+    runtime = build_executor_runtime(
         Settings(
             workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-        )
-    )
-    original_start = runtime.start
-
-    async def fail_after_start() -> None:
-        await original_start()
-        raise RuntimeError("startup failed")
-
-    monkeypatch.setattr(runtime, "start", fail_after_start)
-    try:
-        with pytest.raises(RuntimeError, match="startup failed"):
-            async with runtime.lifespan():
-                pytest.fail("startup failure must prevent entering the body")
-
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-    finally:
-        configure_tool_session_store(None)
-        configure_state_store(None)
-
-
-@pytest.mark.asyncio
-async def test_control_runtime_remote_binding_failure_closes_remote_manager(
-    tmp_path, monkeypatch
-):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    runtime = build_control_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-        )
-    )
-
-    def fail_remote_binding(_manager):
-        raise RuntimeError("remote binding failed")
-
-    monkeypatch.setattr(
-        "workgate.control.runtime.configure_remote_manager",
-        fail_remote_binding,
-    )
-    try:
-        with pytest.raises(RuntimeError, match="remote binding failed"):
-            await runtime.start()
-
-        assert runtime.remote_manager._closed is True
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-    finally:
-        configure_tool_session_store(None)
-        configure_state_store(None)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("runtime_kind", ["controller", "worker"])
-async def test_terminal_start_failure_restores_store_bindings(
-    tmp_path, monkeypatch, runtime_kind
-):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / f"{runtime_kind}-state",
-        remote_enabled=False,
-    )
-    runtime = (
-        build_control_runtime(settings)
-        if runtime_kind == "controller"
-        else build_executor_runtime(settings)
+            state_dir=tmp_path / "executor-state",
+            remote_enabled=False,
+        ),
+        enable_control_connection=False,
     )
 
     async def fail_terminal_start() -> None:
@@ -326,7 +253,6 @@ async def test_terminal_start_failure_restores_store_bindings(
     try:
         with pytest.raises(RuntimeError, match="terminal start failed"):
             await runtime.start()
-
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
         assert runtime._closed is True
@@ -337,200 +263,61 @@ async def test_terminal_start_failure_restores_store_bindings(
 
 
 @pytest.mark.asyncio
-async def test_executor_runtime_cancellation_closes_bindings(tmp_path):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    runtime = build_executor_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "worker-state",
-        )
-    )
-    entered = asyncio.Event()
-
-    async def run_until_cancelled() -> None:
-        async with runtime.lifespan():
-            entered.set()
-            await asyncio.Event().wait()
-
-    try:
-        task = asyncio.create_task(run_until_cancelled())
-        await entered.wait()
-        assert get_state_store() is runtime.services.state_store
-        assert get_tool_session_store() is runtime.services.tool_session_store
-
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-    finally:
-        configure_tool_session_store(None)
-        configure_state_store(None)
-
-
-@pytest.mark.asyncio
-async def test_control_runtime_owns_and_restores_remote_manager_binding(
-    tmp_path,
-):
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_manager = RemoteManager(
-        lambda: outer_settings,
-        state_store=outer_state_store,
-    )
-    configure_remote_manager(outer_manager)
-    runtime = build_control_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-        )
-    )
-    try:
-        assert remote_manager() is outer_manager
-        async with runtime.lifespan():
-            assert remote_manager() is runtime.remote_manager
-            assert runtime.remote_manager._loop is asyncio.get_running_loop()
-
-        assert remote_manager() is outer_manager
-        assert runtime.remote_manager._closed is True
-    finally:
-        configure_remote_manager(None)
-
-
-@pytest.mark.asyncio
-async def test_control_runtime_owns_and_restores_ui_and_oauth_bindings(
+async def test_control_runtime_owns_and_restores_ui_oauth_and_managed_jobs(
     tmp_path,
 ) -> None:
-    outer = build_human_ui_runtime()
+    outer_ui = build_human_ui_runtime()
+    await outer_ui.start()
     outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
     previous_oauth = configure_oauth_state(outer_oauth)
-    await outer.start()
+    outer_jobs = ManagedJobsRuntime()
+    await outer_jobs.start()
+    previous_jobs = configure_managed_jobs_runtime(outer_jobs)
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-            remote_enabled=False,
+            workspace_root=tmp_path / "unused-control-workspace",
+            state_dir=tmp_path / "control-state",
+            auth_mode="none",
         )
     )
     try:
-        assert human_ui_runtime() is outer
+        assert human_ui_runtime() is outer_ui
         assert oauth_state() is outer_oauth
+        assert managed_jobs_runtime() is outer_jobs
         async with runtime.lifespan():
             assert human_ui_runtime() is runtime.human_ui_runtime
             assert oauth_state() is runtime.oauth_state
+            assert managed_jobs_runtime() is runtime.managed_jobs_runtime
             assert (
-                runtime.human_ui_runtime.terminal_connections._loop
-                is asyncio.get_running_loop()
-            )
-            assert (
-                runtime.human_ui_runtime.remote_files._loop
-                is asyncio.get_running_loop()
+                SESSION_COPY_MANAGED_KIND
+                in runtime.managed_jobs_runtime.handlers
             )
 
-        assert human_ui_runtime() is outer
+        assert human_ui_runtime() is outer_ui
         assert oauth_state() is outer_oauth
+        assert managed_jobs_runtime() is outer_jobs
     finally:
-        await outer.aclose()
+        await runtime.aclose()
+        await outer_ui.aclose()
+        await outer_jobs.aclose()
         configure_oauth_state(previous_oauth)
+        configure_managed_jobs_runtime(previous_jobs)
 
 
 @pytest.mark.asyncio
-async def test_control_runtime_closes_ui_oauth_remote_and_terminal_in_order(
-    tmp_path,
-    monkeypatch,
+async def test_control_human_ui_start_failure_rolls_back_control_dependencies(
+    tmp_path, monkeypatch
 ) -> None:
-    runtime = build_control_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-            remote_enabled=False,
-        )
-    )
-    await runtime.start()
-    events: list[str] = []
-    jobs_close = runtime.managed_jobs_runtime.aclose
-    ui_close = runtime.human_ui_runtime.aclose
-    oauth_close = runtime.oauth_state.aclose
-    remote_close = runtime.remote_manager.aclose
-    terminal_close = runtime.terminal_runtime.aclose
-
-    async def close_jobs() -> None:
-        events.append("jobs")
-        await jobs_close()
-
-    async def close_ui() -> None:
-        events.append("ui")
-        await ui_close()
-
-    async def close_oauth() -> None:
-        events.append("oauth")
-        await oauth_close()
-
-    async def close_remote() -> None:
-        events.append("remote")
-        await remote_close()
-
-    async def close_terminal() -> None:
-        events.append("terminal")
-        await terminal_close()
-
-    monkeypatch.setattr(runtime.managed_jobs_runtime, "aclose", close_jobs)
-    monkeypatch.setattr(runtime.human_ui_runtime, "aclose", close_ui)
-    monkeypatch.setattr(runtime.oauth_state, "aclose", close_oauth)
-    monkeypatch.setattr(runtime.remote_manager, "aclose", close_remote)
-    monkeypatch.setattr(runtime.terminal_runtime, "aclose", close_terminal)
-
-    await runtime.aclose()
-
-    assert events == ["jobs", "ui", "oauth", "remote", "terminal"]
-
-
-@pytest.mark.asyncio
-async def test_human_ui_start_failure_rolls_back_controller_dependencies(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
-    outer_manager = RemoteManager(
-        lambda: outer_settings,
-        state_store=outer_state_store,
-    )
-    outer_terminal = build_terminal_runtime()
-    outer_ui = build_human_ui_runtime()
-    outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
-    previous_oauth = configure_oauth_state(outer_oauth)
+    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
-    configure_remote_manager(outer_manager)
-    await outer_terminal.start()
-    await outer_ui.start()
+    outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
+    previous_oauth = configure_oauth_state(outer_oauth)
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-            remote_enabled=False,
+            workspace_root=tmp_path / "unused-control-workspace",
+            state_dir=tmp_path / "control-state",
+            auth_mode="none",
         )
     )
 
@@ -541,188 +328,13 @@ async def test_human_ui_start_failure_rolls_back_controller_dependencies(
     try:
         with pytest.raises(RuntimeError, match="Human UI start failed"):
             await runtime.start()
-
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
-        assert remote_manager() is outer_manager
         assert oauth_state() is outer_oauth
-        assert terminal_bridge._bridge_registry() is outer_terminal.bridges
-        assert terminal_conpty._conpty_registry() is outer_terminal.conpty
-        assert human_ui_runtime() is outer_ui
         assert runtime.oauth_state._closed is True
-        assert runtime.remote_manager._closed is True
-        assert runtime.terminal_runtime._closed is True
         assert runtime._closed is True
     finally:
         await runtime.aclose()
-        await outer_ui.aclose()
-        await outer_terminal.aclose()
         configure_oauth_state(previous_oauth)
-        configure_remote_manager(None)
         configure_tool_session_store(None)
         configure_state_store(None)
-
-
-@pytest.mark.asyncio
-async def test_oauth_start_failure_rolls_back_controller_dependencies(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    outer_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "outer-state",
-    )
-    outer_state_store = FileStateStore(lambda: outer_settings.state_dir)
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: outer_settings,
-    )
-    outer_manager = RemoteManager(
-        lambda: outer_settings,
-        state_store=outer_state_store,
-    )
-    outer_terminal = build_terminal_runtime()
-    outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
-    previous_oauth = configure_oauth_state(outer_oauth)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    configure_remote_manager(outer_manager)
-    await outer_terminal.start()
-    runtime = build_control_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-state",
-            remote_enabled=False,
-        )
-    )
-
-    def fail_oauth_start() -> int:
-        raise RuntimeError("OAuth start failed")
-
-    monkeypatch.setattr(runtime.oauth_state, "start", fail_oauth_start)
-    try:
-        with pytest.raises(RuntimeError, match="OAuth start failed"):
-            await runtime.start()
-
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-        assert remote_manager() is outer_manager
-        assert oauth_state() is outer_oauth
-        assert terminal_bridge._bridge_registry() is outer_terminal.bridges
-        assert terminal_conpty._conpty_registry() is outer_terminal.conpty
-        assert runtime.remote_manager._closed is True
-        assert runtime.terminal_runtime._closed is True
-        assert runtime._closed is True
-    finally:
-        await runtime.aclose()
-        await outer_terminal.aclose()
-        configure_oauth_state(previous_oauth)
-        configure_remote_manager(None)
-        configure_tool_session_store(None)
-        configure_state_store(None)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("runtime_kind", ["controller", "worker"])
-async def test_process_runtimes_own_and_restore_terminal_bindings(
-    tmp_path,
-    runtime_kind,
-):
-    outer = build_terminal_runtime()
-    await outer.start()
-    settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / f"{runtime_kind}-state",
-        remote_enabled=False,
-    )
-    runtime = (
-        build_control_runtime(settings)
-        if runtime_kind == "controller"
-        else build_executor_runtime(settings)
-    )
-    try:
-        assert terminal_bridge._bridge_registry() is outer.bridges
-        assert terminal_conpty._conpty_registry() is outer.conpty
-
-        async with runtime.lifespan():
-            assert (
-                terminal_bridge._bridge_registry()
-                is runtime.terminal_runtime.bridges
-            )
-            assert (
-                terminal_conpty._conpty_registry()
-                is runtime.terminal_runtime.conpty
-            )
-            assert (
-                runtime.terminal_runtime.bridges._loop
-                is asyncio.get_running_loop()
-            )
-            assert (
-                runtime.terminal_runtime.conpty._loop
-                is asyncio.get_running_loop()
-            )
-
-        assert terminal_bridge._bridge_registry() is outer.bridges
-        assert terminal_conpty._conpty_registry() is outer.conpty
-    finally:
-        await outer.aclose()
-
-
-@pytest.mark.asyncio
-async def test_control_runtime_owns_and_restores_managed_jobs_binding(
-    tmp_path,
-) -> None:
-    outer = ManagedJobsRuntime()
-    await outer.start()
-    previous = configure_managed_jobs_runtime(outer)
-    runtime = build_control_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-jobs-state",
-            remote_enabled=False,
-        )
-    )
-    try:
-        assert managed_jobs_runtime() is outer
-        assert (
-            SESSION_COPY_MANAGED_KIND in runtime.managed_jobs_runtime.handlers
-        )
-        async with runtime.lifespan():
-            assert managed_jobs_runtime() is runtime.managed_jobs_runtime
-            assert (
-                runtime.managed_jobs_runtime._loop is asyncio.get_running_loop()
-            )
-
-        assert managed_jobs_runtime() is outer
-        assert runtime.managed_jobs_runtime._closed is True
-    finally:
-        await outer.aclose()
-        configure_managed_jobs_runtime(previous)
-
-
-@pytest.mark.asyncio
-async def test_control_runtime_managed_jobs_binding_failure_closes_owner(
-    tmp_path, monkeypatch
-) -> None:
-    runtime = build_control_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "controller-jobs-failure-state",
-            remote_enabled=False,
-        )
-    )
-
-    def fail_managed_jobs_binding(_runtime):
-        raise RuntimeError("managed jobs binding failed")
-
-    monkeypatch.setattr(
-        "workgate.control.runtime.configure_managed_jobs_runtime",
-        fail_managed_jobs_binding,
-    )
-
-    with pytest.raises(RuntimeError, match="managed jobs binding failed"):
-        await runtime.start()
-
-    assert runtime.managed_jobs_runtime._closed is True
-    assert runtime.managed_jobs_runtime.tasks == {}
-    assert runtime.managed_jobs_runtime.leases == {}

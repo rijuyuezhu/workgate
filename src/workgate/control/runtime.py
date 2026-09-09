@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from ..composition.services import (
-    RuntimeServiceInstallation,
-    RuntimeServices,
-    build_runtime_services,
-    install_runtime_services,
+    ControlServiceInstallation,
+    ControlServices,
+    build_control_services,
+    install_control_services,
 )
 from ..config.settings import Settings
 from ..jobs.managed import (
@@ -20,13 +20,9 @@ from ..oauth.core.state import (
     build_oauth_state,
     configure_oauth_state,
 )
-from ..remote.manager import (
-    RemoteManager,
-    configure_remote_manager,
-)
-from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
+from .audit import ControlAuditService
 from .config import ControlConfig, resolve_control_config
 from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
@@ -36,6 +32,7 @@ from .search_composition import build_control_tool_catalog
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
+from .todos import ControlTodoService
 
 
 @dataclass
@@ -46,7 +43,7 @@ class ControlRuntime:
     """Resolved control-owned authority for new composition code."""
     legacy_settings: Settings
     """Temporary monolithic settings bridge for unmigrated components."""
-    services: RuntimeServices
+    services: ControlServices
     """Explicit shared state services owned by this runtime."""
     control_state: ControlState
     """Restart-critical durable control facts backed by the shared state store."""
@@ -62,31 +59,25 @@ class ControlRuntime:
     """Control-owned public file-link snapshots sourced through executor RPC."""
     job_service: ControlJobService
     """Hybrid public job routing across executor resources and control-managed jobs."""
+    todo_service: ControlTodoService
+    """Control-owned revisioned todo state for shared sessions."""
+    audit_service: ControlAuditService
+    """Control authority for canonical public audit history."""
     managed_jobs_runtime: ManagedJobsRuntime
     """Control-owned managed background-job tasks, handlers, and leases."""
-    remote_manager: RemoteManager
-    """Control-owned live remote-worker control-plane state."""
-    terminal_runtime: TerminalRuntime
-    """Control-owned terminal bridge and ConPTY live state."""
     human_ui_runtime: HumanUiRuntime
-    """Control-owned Human UI terminal and remote-file live state."""
+    """Control-owned Human UI connection admission state."""
     oauth_state: OAuthState
     """Control-owned dynamic-client and authorization-code live state."""
     tool_catalog: ToolCatalog
     """Control tool catalog with the migrated Search service already bound."""
-    _installation: RuntimeServiceInstallation | None = field(
+    _installation: ControlServiceInstallation | None = field(
         default=None, init=False, repr=False
     )
     _previous_managed_jobs_runtime: ManagedJobsRuntime | None = field(
         default=None, init=False, repr=False
     )
     _managed_jobs_binding_installed: bool = field(
-        default=False, init=False, repr=False
-    )
-    _previous_remote_manager: RemoteManager | None = field(
-        default=None, init=False, repr=False
-    )
-    _remote_binding_installed: bool = field(
         default=False, init=False, repr=False
     )
     _previous_oauth_state: OAuthState | None = field(
@@ -98,23 +89,19 @@ class ControlRuntime:
     _closed: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
-        """Install compatibility bindings inside the owning async lifespan."""
+        """Install control-owned compatibility bindings inside the async lifespan."""
         if self._closed:
             raise RuntimeError("ControlRuntime cannot be restarted after close")
         if self._installation is not None:
             return
-        installation = install_runtime_services(self.services)
+        installation = install_control_services(self.services)
         managed_jobs_started = False
         managed_jobs_bound = False
-        terminal_started = False
-        remote_started = False
-        remote_bound = False
         oauth_started = False
         oauth_bound = False
         human_ui_started = False
         executor_transport_started = False
         previous_managed_jobs_runtime: ManagedJobsRuntime | None = None
-        previous_remote_manager: RemoteManager | None = None
         previous_oauth_state: OAuthState | None = None
         try:
             self.control_state.start()
@@ -126,14 +113,6 @@ class ControlRuntime:
                 self.managed_jobs_runtime
             )
             managed_jobs_bound = True
-            await self.terminal_runtime.start()
-            terminal_started = True
-            await self.remote_manager.start()
-            remote_started = True
-            previous_remote_manager = configure_remote_manager(
-                self.remote_manager
-            )
-            remote_bound = True
             self.oauth_state.start()
             oauth_started = True
             previous_oauth_state = configure_oauth_state(self.oauth_state)
@@ -154,60 +133,45 @@ class ControlRuntime:
                             await self.oauth_state.aclose()
                     finally:
                         try:
-                            if remote_bound:
-                                configure_remote_manager(
-                                    previous_remote_manager
+                            if managed_jobs_bound:
+                                configure_managed_jobs_runtime(
+                                    previous_managed_jobs_runtime
                                 )
                         finally:
                             try:
-                                if remote_started:
-                                    await self.remote_manager.aclose()
+                                if managed_jobs_started:
+                                    await self.managed_jobs_runtime.aclose()
                             finally:
                                 try:
-                                    if terminal_started:
-                                        await self.terminal_runtime.aclose()
+                                    await self.executor_pairing.aclose()
                                 finally:
                                     try:
-                                        if managed_jobs_bound:
-                                            configure_managed_jobs_runtime(
-                                                previous_managed_jobs_runtime
-                                            )
+                                        await self.session_coordinator.aclose()
                                     finally:
                                         try:
-                                            if managed_jobs_started:
-                                                await self.managed_jobs_runtime.aclose()
+                                            if executor_transport_started:
+                                                await self.executor_transport.aclose()
                                         finally:
                                             try:
-                                                await self.session_coordinator.aclose()
+                                                self.control_state.close()
                                             finally:
-                                                try:
-                                                    if executor_transport_started:
-                                                        await self.executor_transport.aclose()
-                                                finally:
-                                                    try:
-                                                        self.control_state.close()
-                                                    finally:
-                                                        installation.close()
-                                                        self._closed = True
+                                                installation.close()
+                                                self._closed = True
             raise
         self._installation = installation
         self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
         self._managed_jobs_binding_installed = True
-        self._previous_remote_manager = previous_remote_manager
-        self._remote_binding_installed = True
         self._previous_oauth_state = previous_oauth_state
         self._oauth_binding_installed = True
 
     async def aclose(self) -> None:
-        """Restore prior compatibility bindings; repeated close is harmless."""
+        """Restore prior control bindings; repeated close is harmless."""
         installation = self._installation
         self._installation = None
         self._closed = True
         managed_jobs_error: BaseException | None = None
         human_ui_error: BaseException | None = None
         oauth_error: BaseException | None = None
-        remote_error: BaseException | None = None
-        terminal_error: BaseException | None = None
         try:
             try:
                 await self.managed_jobs_runtime.aclose()
@@ -221,14 +185,6 @@ class ControlRuntime:
                 await self.oauth_state.aclose()
             except BaseException as exc:
                 oauth_error = exc
-            try:
-                await self.remote_manager.aclose()
-            except BaseException as exc:
-                remote_error = exc
-            try:
-                await self.terminal_runtime.aclose()
-            except BaseException as exc:
-                terminal_error = exc
         finally:
             if self._managed_jobs_binding_installed:
                 configure_managed_jobs_runtime(
@@ -240,10 +196,6 @@ class ControlRuntime:
                 configure_oauth_state(self._previous_oauth_state)
                 self._oauth_binding_installed = False
                 self._previous_oauth_state = None
-            if self._remote_binding_installed:
-                configure_remote_manager(self._previous_remote_manager)
-                self._remote_binding_installed = False
-                self._previous_remote_manager = None
             try:
                 await self.executor_pairing.aclose()
             finally:
@@ -264,10 +216,6 @@ class ControlRuntime:
             raise human_ui_error
         if oauth_error is not None:
             raise oauth_error
-        if remote_error is not None:
-            raise remote_error
-        if terminal_error is not None:
-            raise terminal_error
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[ControlRuntime]:
@@ -281,7 +229,7 @@ class ControlRuntime:
 
 def build_control_runtime(settings: Settings) -> ControlRuntime:
     """Construct one control graph without installing process globals yet."""
-    services = build_runtime_services(settings)
+    services = build_control_services(settings)
     config = resolve_control_config(settings)
     control_state = ControlState(services.state_store)
     executor_transport = ExecutorTransport(
@@ -316,6 +264,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         session_coordinator, executor_transport
     )
     job_service = ControlJobService(session_coordinator)
+    todo_service = ControlTodoService(
+        control_state, services.state_store, settings
+    )
+    audit_service = ControlAuditService(session_coordinator)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,
         before_terminate=job_service.stop_referencing_jobs,
@@ -325,12 +277,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         session_copy_service.managed_job_registration()
     )
     managed_jobs_runtime.register_handler(managed_kind, managed_handler)
-    remote_manager = RemoteManager(
-        lambda: settings,
-        state_store=services.state_store,
-    )
-    terminal_runtime = build_terminal_runtime()
-    human_ui_runtime = build_human_ui_runtime(remote_manager.call)
+    human_ui_runtime = build_human_ui_runtime()
     oauth_state = build_oauth_state(
         settings.state_dir, state_store=services.state_store
     )
@@ -345,9 +292,9 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         session_copy_service=session_copy_service,
         download_service=download_service,
         job_service=job_service,
+        todo_service=todo_service,
+        audit_service=audit_service,
         managed_jobs_runtime=managed_jobs_runtime,
-        remote_manager=remote_manager,
-        terminal_runtime=terminal_runtime,
         human_ui_runtime=human_ui_runtime,
         oauth_state=oauth_state,
         tool_catalog=build_control_tool_catalog(
@@ -356,5 +303,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
             session_copy_service,
             job_service,
             download_service,
+            todo_service,
+            audit_service,
         ),
     )

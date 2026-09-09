@@ -328,10 +328,13 @@ class AgentMcpClientManager:
         call_timeout_s: float = 60,
         auth_store: AgentAuthStore | None = None,
         oauth_provider_factory: OAuthProviderFactory | None = None,
+        *,
+        allow_stdio: bool = True,
     ) -> None:
         self.call_timeout_s = call_timeout_s
         self.auth_store = auth_store
         self.oauth_provider_factory = oauth_provider_factory
+        self.allow_stdio = allow_stdio
         self._stdio_workers: dict[
             str, tuple[_StdioWorkerConfig, _PersistentStdioWorker]
         ] = {}
@@ -529,6 +532,8 @@ class AgentMcpClientManager:
         """Page through an upstream server's tool list within the configured call timeout."""
 
         if server.type == "stdio":
+            if not self.allow_stdio:
+                raise ValueError("stdio MCP servers are executor-owned")
             worker = self._stdio_worker(name, server)
             try:
                 return await asyncio.wait_for(
@@ -556,6 +561,8 @@ class AgentMcpClientManager:
         """Invoke an upstream MCP tool and normalize its protocol result for workgate responses."""
 
         if server.type == "stdio":
+            if not self.allow_stdio:
+                raise ValueError("stdio MCP servers are executor-owned")
             worker = self._stdio_worker(name, server)
             try:
                 return await asyncio.wait_for(

@@ -14,7 +14,6 @@ from .registry.image import ImageToolRegistry
 from .registry.jobs import JobToolRegistry
 from .registry.patch import PatchToolRegistry
 from .registry.read import ReadToolRegistry
-from .registry.remote import RemoteToolRegistry
 from .registry.search import SearchToolRegistry
 from .registry.secret_scan import SecretScanToolRegistry
 from .registry.session import SessionToolRegistry
@@ -36,7 +35,6 @@ BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
     ("jobs", JobToolRegistry),
     ("patch", PatchToolRegistry),
     ("read", ReadToolRegistry),
-    ("remote", RemoteToolRegistry),
     ("search", SearchToolRegistry),
     ("secret_scan", SecretScanToolRegistry),
     ("session", SessionToolRegistry),

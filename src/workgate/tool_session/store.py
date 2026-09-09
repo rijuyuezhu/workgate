@@ -7,30 +7,19 @@ from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from ..config.settings import Settings, get_settings
-from ..ops.utils.path import resolve_path
 from ..persistence import StateStore, get_state_store
-from .lifecycle import try_session_lifecycle_lease
-from .records import (
-    SESSION_ID_ALPHABET as _SESSION_ID_ALPHABET,
-)
-from .records import (
-    SESSION_ID_LENGTH as _SESSION_ID_LENGTH,
-)
+from ..utils.path_policy import resolve_path_with_policy
 from .records import (
     AgentSession,
-    SessionTarget,
     SnapshotRecord,
     encoded_snapshot_payload_bytes,
     new_snapshot_id,
     session_from_payload,
     snapshot_from_payload,
     valid_session_id,
-)
-from .records import (
-    generate_session_id as _generate_session_id,
 )
 from .repository import SessionRepository
 from .resources import (
@@ -39,7 +28,6 @@ from .resources import (
     normalize_shell_id,
     release_shell,
     replace_shells,
-    require_local_session,
     reserve_shell,
     retain_live_shells,
 )
@@ -54,9 +42,6 @@ from .retention import (
 )
 from .retention import (
     JobProtectionReader,
-    expired_prune_eligible,
-    overflow_prune_eligible,
-    session_expired_by_policy,
     session_has_active_jobs,
 )
 from .snapshots import (
@@ -64,11 +49,8 @@ from .snapshots import (
 )
 from .snapshots import SnapshotRepository
 
-SESSION_ID_ALPHABET = _SESSION_ID_ALPHABET
-SESSION_ID_LENGTH = _SESSION_ID_LENGTH
 SESSION_METADATA_MAX_BYTES = 256_000
 SESSION_SNAPSHOTS_MAX_BYTES = _SESSION_SNAPSHOTS_MAX_BYTES
-SESSION_ACTIVE_WINDOW_S = 5 * 60 * 60
 JOB_STORE_READ_MAX_BYTES = _JOB_STORE_READ_MAX_BYTES
 ACTIVE_JOB_STATUSES = _ACTIVE_JOB_STATUSES
 SESSION_TERMINATION_PROMPT = (
@@ -79,12 +61,47 @@ SESSION_TERMINATION_PROMPT = (
 )
 
 
+class SessionPathResolver(Protocol):
+    """Resolve one path against an explicitly owned workspace policy."""
+
+    def __call__(
+        self,
+        path: str | Path,
+        *,
+        must_exist: bool = False,
+        allow_missing_parent: bool = True,
+        follow_final_symlink: bool = True,
+    ) -> Path: ...
+
+
+def _settings_path_resolver(
+    settings_provider: Callable[[], Settings],
+) -> SessionPathResolver:
+    """Build the legacy resolver from this store's own settings view."""
+
+    def resolve(
+        path: str | Path,
+        *,
+        must_exist: bool = False,
+        allow_missing_parent: bool = True,
+        follow_final_symlink: bool = True,
+    ) -> Path:
+        settings = settings_provider()
+        return resolve_path_with_policy(
+            path,
+            workspace_root=settings.workspace_root,
+            allow_full_control=settings.allow_full_control,
+            path_denylist=tuple(settings.path_denylist),
+            must_exist=must_exist,
+            allow_missing_parent=allow_missing_parent,
+            follow_final_symlink=follow_final_symlink,
+        )
+
+    return resolve
+
+
 class UnknownAgentSessionError(ValueError):
     """Raised when a tool call references a missing agent session."""
-
-
-class ExpiredAgentSessionError(UnknownAgentSessionError):
-    """Raised when a durable agent session has passed its retention boundary."""
 
 
 class SessionTerminationRequestedError(ValueError):
@@ -102,10 +119,14 @@ class ToolSessionStore:
         self,
         state_store: StateStore | None = None,
         settings_provider: Callable[[], Settings] = get_settings,
+        path_resolver: SessionPathResolver | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._state_store = state_store or get_state_store()
         self._settings_provider = settings_provider
+        self._path_resolver = path_resolver or _settings_path_resolver(
+            settings_provider
+        )
         self._session_repository = SessionRepository(
             self._state_store,
             metadata_max_bytes=SESSION_METADATA_MAX_BYTES,
@@ -117,10 +138,6 @@ class ToolSessionStore:
         self._snapshot_repository = SnapshotRepository(
             self._state_store, self._settings_provider
         )
-
-    def _settings(self) -> Settings:
-        """Return the settings dependency supplied at composition time."""
-        return self._settings_provider()
 
     _session_from_payload = staticmethod(session_from_payload)
     _snapshot_from_payload = staticmethod(snapshot_from_payload)
@@ -148,7 +165,6 @@ class ToolSessionStore:
         return self._job_protection_reader.active_session_ids()
 
     _session_has_active_jobs = staticmethod(session_has_active_jobs)
-    _session_expired_by_policy = staticmethod(session_expired_by_policy)
 
     def _session_has_active_jobs_locked(self, session_id: str) -> bool:
         """Conservatively protect one session participating in durable jobs."""
@@ -156,173 +172,18 @@ class ToolSessionStore:
             session_id, self._active_job_session_ids_locked()
         )
 
-    def _session_expired(self, session: AgentSession, now: float) -> bool:
-        """Return whether explicit expiry or idle retention invalidates a session."""
-        retention_s = int(self._settings().agent_session_retention_s)
-        return (
-            session_expired_by_policy(session, now, retention_s)
-            and not session.persistent_shell_ids
-            and not self._session_has_active_jobs_locked(session.session_id)
-        )
-
     def _read_all_sessions_locked(self) -> dict[str, AgentSession]:
         """Load valid durable session metadata without applying retention."""
         return self._session_repository.read_all()
 
-    def _expired_prune_eligible_locked(
-        self,
-        session: AgentSession,
-        now: float,
-        retention_s: int,
-        active_job_session_ids: set[str] | None,
-    ) -> bool:
-        """Return whether a freshly loaded session remains expiry-eligible."""
-        if session.session_id.startswith("sess_"):
-            return False
-        return expired_prune_eligible(
-            session, now, retention_s, active_job_session_ids
-        )
-
-    def _overflow_prune_eligible_locked(
-        self,
-        session: AgentSession,
-        now: float,
-        active_job_session_ids: set[str] | None,
-    ) -> bool:
-        """Return whether a freshly loaded session remains overflow-eligible."""
-        if session.session_id.startswith("sess_"):
-            return False
-        return overflow_prune_eligible(
-            session,
-            now,
-            active_job_session_ids,
-            active_window_s=SESSION_ACTIVE_WINDOW_S,
-        )
-
-    def _prune_sessions_locked(
-        self, now: float, *, reserve_slots: int = 0
-    ) -> list[AgentSession]:
-        """Remove expired sessions and inactive overflow beyond the configured cap."""
-        sessions = self._read_all_sessions_locked()
-        active_job_session_ids = self._active_job_session_ids_locked()
-        retention_s = int(self._settings().agent_session_retention_s)
-        expired = [
-            session
-            for session in sessions.values()
-            if self._expired_prune_eligible_locked(
-                session, now, retention_s, active_job_session_ids
-            )
-        ]
-        for session in expired:
-            with try_session_lifecycle_lease(
-                session.session_id
-            ) as lifecycle_available:
-                if not lifecycle_available:
-                    continue
-                with (
-                    self._state_store.transaction(
-                        self._transaction_path(session.session_id)
-                    ),
-                    self._state_store.transaction(
-                        self._state_store.layout.jobs_lock_path
-                    ),
-                ):
-                    current = self._load_session_locked(session.session_id)
-                    if current is None:
-                        sessions.pop(session.session_id, None)
-                        continue
-                    current_jobs = self._active_job_session_ids_locked()
-                    if not self._expired_prune_eligible_locked(
-                        current, now, retention_s, current_jobs
-                    ):
-                        sessions[session.session_id] = current
-                        continue
-                    self._remove_session_state_locked(session.session_id)
-                    sessions.pop(session.session_id, None)
-
-        sessions = self._read_all_sessions_locked()
-        maximum = int(self._settings().max_agent_sessions)
-        target = max(0, maximum - max(0, reserve_slots))
-        overflow = max(0, len(sessions) - target)
-        if overflow:
-            inactive = sorted(
-                (
-                    session
-                    for session in sessions.values()
-                    if session.target == "local"
-                    and not session.session_id.startswith("sess_")
-                    and session.updated_at < now - SESSION_ACTIVE_WINDOW_S
-                    and not session.persistent_shell_ids
-                    and not self._session_has_active_jobs(
-                        session.session_id, active_job_session_ids
-                    )
-                ),
-                key=lambda session: (session.updated_at, session.created_at),
-            )
-            for session in inactive:
-                with try_session_lifecycle_lease(
-                    session.session_id
-                ) as lifecycle_available:
-                    if not lifecycle_available:
-                        continue
-                    with (
-                        self._state_store.transaction(
-                            self._transaction_path(session.session_id)
-                        ),
-                        self._state_store.transaction(
-                            self._state_store.layout.jobs_lock_path
-                        ),
-                    ):
-                        current_sessions = self._read_all_sessions_locked()
-                        if len(current_sessions) <= target:
-                            sessions = current_sessions
-                            break
-                        current = current_sessions.get(session.session_id)
-                        if current is None:
-                            sessions = current_sessions
-                            continue
-                        current_jobs = self._active_job_session_ids_locked()
-                        if not self._overflow_prune_eligible_locked(
-                            current, now, current_jobs
-                        ):
-                            sessions = current_sessions
-                            continue
-                        self._remove_session_state_locked(session.session_id)
-                        current_sessions.pop(session.session_id, None)
-                        sessions = current_sessions
-
-        self._session_repository.replace_cache(sessions)
-        return sorted(
-            sessions.values(),
-            key=lambda session: (session.updated_at, session.created_at),
-            reverse=True,
-        )
-
     def _load_session_locked(self, session_id: str) -> AgentSession | None:
         return self._session_repository.load(session_id)
 
-    def _require_session_locked(
-        self, session_id: str, *, allow_expired: bool = False
-    ) -> AgentSession:
+    def _require_session_locked(self, session_id: str) -> AgentSession:
         session = self._load_session_locked(session_id)
         if session is None:
             raise UnknownAgentSessionError(
                 f"unknown session_id {session_id!r}; call session_start first"
-            )
-        if not allow_expired and self._session_expired(session, time.time()):
-            if session.target == "local":
-                with try_session_lifecycle_lease(
-                    session_id
-                ) as lifecycle_available:
-                    if lifecycle_available:
-                        self._remove_session_state_locked(session_id)
-            raise ExpiredAgentSessionError(
-                f"expired session_id {session_id!r}; "
-                + (
-                    "call session_end to release its remote worker binding"
-                    if session.target == "remote"
-                    else "call session_start again"
-                )
             )
         return session
 
@@ -332,94 +193,37 @@ class ToolSessionStore:
     def create_session(
         self,
         *,
-        session_id: str | None = None,
-        target: SessionTarget = "local",
-        workdir: str | Path = ".",
-        machine: str | None = None,
-        worker_session_id: str | None = None,
+        session_id: str,
+        workdir: str | Path,
         label: str | None = None,
-        expires_at: float | None = None,
     ) -> AgentSession:
-        """Create and durably store one explicit agent workspace session."""
-        if (
-            session_id is not None
-            and valid_session_id(session_id) != session_id
-        ):
+        """Create one control-allocated shared session on this executor."""
+        if valid_session_id(session_id) != session_id:
             raise ValueError("session_id is invalid")
-        if target == "local":
-            resolved_workdir = resolve_path(workdir, must_exist=True)
-            if not resolved_workdir.is_dir():
-                raise NotADirectoryError(str(resolved_workdir))
-            display_workdir = str(resolved_workdir)
-            normalized_machine = None
-            normalized_worker_session_id = None
-        elif target == "remote":
-            if not machine:
-                raise ValueError("machine is required for remote sessions")
-            if not worker_session_id:
-                raise ValueError(
-                    "worker_session_id is required for remote sessions"
-                )
-            display_workdir = str(workdir)
-            if not display_workdir:
-                raise ValueError("workdir is required for remote sessions")
-            normalized_machine = machine
-            normalized_worker_session_id = worker_session_id
-        else:
-            raise ValueError(f"unsupported session target: {target!r}")
+        resolved_workdir = self._path_resolver(workdir, must_exist=True)
+        if not resolved_workdir.is_dir():
+            raise NotADirectoryError(str(resolved_workdir))
 
         with self._lock:
             self._reset_for_current_root_locked()
             registry = self._state_store.layout.sessions_dir / ".registry"
             with self._state_store.transaction(registry):
                 now = time.time()
-                # Control-managed final sessions must never disappear from the
-                # executor merely because its local retention clock advanced.
-                # The control lifecycle owns desired-absence cleanup for these
-                # explicitly allocated shared IDs.
-                sessions = (
-                    list(self._read_all_sessions_locked().values())
-                    if session_id is not None
-                    else self._prune_sessions_locked(now, reserve_slots=1)
-                )
-                maximum = int(self._settings().max_agent_sessions)
-                if len(sessions) >= maximum:
-                    raise RuntimeError(
-                        "agent session limit reached: "
-                        f"{maximum}; end an active session or wait for retention cleanup"
+                if self._metadata_path(session_id).exists():
+                    raise ValueError(
+                        f"session_id {session_id!r} already exists"
                     )
-                if session_id is None:
-                    for _ in range(16):
-                        allocated_session_id = _generate_session_id()
-                        if not self._metadata_path(
-                            allocated_session_id
-                        ).exists():
-                            break
-                    else:
-                        raise RuntimeError(
-                            "failed to allocate a unique session_id"
-                        )
-                else:
-                    allocated_session_id = session_id
-                    if self._metadata_path(allocated_session_id).exists():
-                        raise ValueError(
-                            f"session_id {allocated_session_id!r} already exists"
-                        )
                 session = AgentSession(
-                    session_id=allocated_session_id,
-                    target=target,
-                    workdir=display_workdir,
-                    machine=normalized_machine,
-                    worker_session_id=normalized_worker_session_id,
+                    session_id=session_id,
+                    workdir=str(resolved_workdir),
                     created_at=now,
                     updated_at=now,
-                    expires_at=expires_at,
                     label=label,
                     termination_requested_at=None,
                     persistent_shell_ids=(),
                 )
                 with self._state_store.transaction(
-                    self._transaction_path(allocated_session_id)
+                    self._transaction_path(session_id)
                 ):
                     self._write_session_locked(session)
                     return session
@@ -434,20 +238,17 @@ class ToolSessionStore:
                 return self._require_session_locked(session_id)
 
     def prepare_session_termination(self, session_id: str) -> AgentSession:
-        """Make a known session cleanup-only even after its expiry boundary."""
+        """Make a known session cleanup-only after control requests termination."""
         with self._lock:
             self._reset_for_current_root_locked()
             with self._state_store.transaction(
                 self._transaction_path(session_id)
             ):
-                session = self._require_session_locked(
-                    session_id, allow_expired=True
-                )
+                session = self._require_session_locked(session_id)
                 now = time.time()
                 updated = replace(
                     session,
                     updated_at=now,
-                    expires_at=None,
                     termination_requested_at=(
                         session.termination_requested_at or now
                     ),
@@ -507,7 +308,6 @@ class ToolSessionStore:
                 self._transaction_path(session_id)
             ):
                 session = self._require_session_locked(session_id)
-                require_local_session(session)
                 if exclusive:
                     ensure_shell_unowned(
                         session_id,
@@ -534,9 +334,7 @@ class ToolSessionStore:
             with self._state_store.transaction(
                 self._transaction_path(session_id)
             ):
-                current = self._require_session_locked(
-                    session_id, allow_expired=True
-                )
+                current = self._require_session_locked(session_id)
                 updated = release_shell(current, normalized_shell_id)
                 if updated is current:
                     return current
@@ -584,9 +382,7 @@ class ToolSessionStore:
             with self._state_store.transaction(
                 self._transaction_path(session_id)
             ):
-                current = self._require_session_locked(
-                    session_id, allow_expired=True
-                )
+                current = self._require_session_locked(session_id)
                 updated = replace_shells(current, owned_shell_ids)
                 if updated is current:
                     return current
@@ -690,9 +486,7 @@ class ToolSessionStore:
                     self._state_store.layout.jobs_lock_path
                 ),
             ):
-                session = self._require_session_locked(
-                    session_id, allow_expired=True
-                )
+                session = self._require_session_locked(session_id)
                 active_job_session_ids = self._active_job_session_ids_locked()
                 return (
                     session.updated_at,
@@ -713,11 +507,7 @@ class ToolSessionStore:
                 with self._state_store.transaction(
                     self._transaction_path(session_id)
                 ):
-                    sessions.append(
-                        self._require_session_locked(
-                            session_id, allow_expired=True
-                        )
-                    )
+                    sessions.append(self._require_session_locked(session_id))
         return tuple(sessions)
 
     def assert_tool_call_allowed(
@@ -735,8 +525,8 @@ class ToolSessionStore:
     def change_session_workdir(
         self, session_id: str, workdir: str | Path
     ) -> AgentSession:
-        """Update a local session workdir and clear its durable snapshots."""
-        resolved_workdir = resolve_path(workdir, must_exist=True)
+        """Update one executor session workdir and clear durable snapshots."""
+        resolved_workdir = self._path_resolver(workdir, must_exist=True)
         if not resolved_workdir.is_dir():
             raise NotADirectoryError(str(resolved_workdir))
         with self._lock:
@@ -745,10 +535,6 @@ class ToolSessionStore:
                 self._transaction_path(session_id)
             ):
                 session = self._require_session_locked(session_id)
-                if session.target != "local":
-                    raise ValueError(
-                        "remote session cwd changes are not available"
-                    )
                 updated = replace(
                     session,
                     workdir=str(resolved_workdir),
@@ -758,29 +544,6 @@ class ToolSessionStore:
                 # can point anywhere else. A crash between these two mutations
                 # therefore leaves either old cwd + no snapshots, or new cwd +
                 # no old snapshots.
-                self._snapshot_repository.remove_session(session_id)
-                self._write_session_locked(updated)
-                return updated
-
-    def update_remote_session_workdir(
-        self, session_id: str, workdir: str
-    ) -> AgentSession:
-        """Cache a worker-validated remote workdir and clear durable snapshots."""
-        if not workdir:
-            raise ValueError("remote workdir must not be empty")
-        with self._lock:
-            self._reset_for_current_root_locked()
-            with self._state_store.transaction(
-                self._transaction_path(session_id)
-            ):
-                session = self._require_session_locked(session_id)
-                if session.target != "remote":
-                    raise ValueError("session is not remote")
-                updated = replace(
-                    session,
-                    workdir=workdir,
-                    updated_at=time.time(),
-                )
                 self._snapshot_repository.remove_session(session_id)
                 self._write_session_locked(updated)
                 return updated
@@ -796,9 +559,7 @@ class ToolSessionStore:
                     self._transaction_path(session_id)
                 ),
             ):
-                session = self._require_session_locked(
-                    session_id, allow_expired=True
-                )
+                session = self._require_session_locked(session_id)
                 self._remove_session_state_locked(session_id)
                 return session
 
@@ -808,7 +569,15 @@ class ToolSessionStore:
             self._reset_for_current_root_locked()
             registry = self._state_store.layout.sessions_dir / ".registry"
             with self._state_store.transaction(registry):
-                return self._prune_sessions_locked(time.time())
+                sessions = self._read_all_sessions_locked()
+                return sorted(
+                    sessions.values(),
+                    key=lambda session: (
+                        session.updated_at,
+                        session.created_at,
+                    ),
+                    reverse=True,
+                )
 
     def record_file_snapshot(
         self,
@@ -858,22 +627,39 @@ class ToolSessionStore:
             self._session_repository.clear_cache()
             self._snapshot_repository.clear_cache()
 
+    def resolve_session_path(
+        self,
+        session: AgentSession,
+        path: str | Path,
+        *,
+        must_exist: bool = False,
+        allow_missing_parent: bool = True,
+        follow_final_symlink: bool = True,
+    ) -> Path:
+        """Resolve one session path using this store's owned workspace policy."""
+        return _resolve_session_path(
+            session,
+            path,
+            resolver=self._path_resolver,
+            must_exist=must_exist,
+            allow_missing_parent=allow_missing_parent,
+            follow_final_symlink=follow_final_symlink,
+        )
 
-def resolve_session_path(
+
+def _resolve_session_path(
     session: AgentSession,
     path: str | Path,
     *,
+    resolver: SessionPathResolver,
     must_exist: bool = False,
     allow_missing_parent: bool = True,
     follow_final_symlink: bool = True,
 ) -> Path:
-    """Resolve a path relative to a local session workdir and enforce containment."""
-    if session.target != "local":
-        raise ValueError("remote sessions are not dispatchable locally yet")
     workdir = Path(session.workdir).resolve()
     raw = Path(path)
     candidate = raw if raw.is_absolute() else workdir / raw
-    resolved = resolve_path(
+    resolved = resolver(
         candidate,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
@@ -885,6 +671,25 @@ def resolve_session_path(
     except ValueError as exc:
         raise ValueError(f"Path escapes session workdir: {path}") from exc
     return resolved
+
+
+def resolve_session_path(
+    session: AgentSession,
+    path: str | Path,
+    *,
+    must_exist: bool = False,
+    allow_missing_parent: bool = True,
+    follow_final_symlink: bool = True,
+) -> Path:
+    """Resolve a session path through the ambient compatibility policy."""
+    return _resolve_session_path(
+        session,
+        path,
+        resolver=_settings_path_resolver(get_settings),
+        must_exist=must_exist,
+        allow_missing_parent=allow_missing_parent,
+        follow_final_symlink=follow_final_symlink,
+    )
 
 
 def file_sha256(path: Path) -> str:

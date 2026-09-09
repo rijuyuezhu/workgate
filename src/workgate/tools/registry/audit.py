@@ -1,9 +1,8 @@
 """Session-bound audit MCP tool registry."""
 
-from ...oauth.core.scopes import SCOPE_AUDIT_FULL, SCOPE_AUDIT_READ
+from ...oauth.core.scopes import SCOPE_AUDIT_READ
 from ...schemas.input_models.session import SessionIdArg
-from ..declarative import DeclarativeToolRegistry, _enforce_oauth_scopes
-from ..ops.audit import audit_tail_execute
+from ..declarative import DeclarativeToolRegistry
 from ..schemas.input_models.audit import (
     AuditEntryIdArg,
     AuditEventArg,
@@ -47,10 +46,8 @@ async def audit_tail(
     entry_id: AuditEntryIdArg = None,
     include_full_payloads: AuditIncludeFullPayloadsArg = False,
 ) -> AuditTailOutput:
-    """Read bounded, coalesced audit history for the executor-backed target selected by an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."""
-    if include_full_payloads:
-        _enforce_oauth_scopes((SCOPE_AUDIT_FULL,))
-    return await audit_tail_execute(
+    """Read bounded canonical control audit history through an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."""
+    del (
         session_id,
         limit,
         event,
@@ -63,3 +60,4 @@ async def audit_tail(
         entry_id,
         include_full_payloads,
     )
+    raise RuntimeError("audit_tail requires control routing")

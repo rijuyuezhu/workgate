@@ -1,13 +1,15 @@
 import base64
 import errno
 import os
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+import workgate.executor.ui_files as executor_ui_files_module
 import workgate.ui.http.files as ui_files_module
-from workgate.config.settings import clear_settings_cache
-from workgate.control.http.app import build_http_app
+from tests.helpers import build_paired_http_app
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.oauth.core.scopes import (
     SCOPE_SHELL_READ,
     SCOPE_SHELL_WRITE,
@@ -39,7 +41,7 @@ def _configure(
     **values,
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(workspace / ".state"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(workspace.parent / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)
     monkeypatch.setenv(
@@ -53,10 +55,31 @@ def _configure(
     clear_settings_cache()
 
 
-def _client(monkeypatch, workspace, **values) -> TestClient:
+class _ExecutorTestClient(TestClient):
+    def __init__(self, *args: Any, executor_id: str, **kwargs: Any) -> None:
+        self.executor_id = executor_id
+        super().__init__(*args, **kwargs)
+
+    def request(self, method: str, url: Any, **kwargs: Any):
+        if method.upper() in {"GET", "HEAD"}:
+            params = dict(kwargs.get("params") or {})
+            params.setdefault("executor_id", self.executor_id)
+            kwargs["params"] = params
+        else:
+            body = kwargs.get("json")
+            if isinstance(body, dict):
+                body = dict(body)
+                body.setdefault("executor_id", self.executor_id)
+                kwargs["json"] = body
+        return super().request(method, url, **kwargs)
+
+
+def _client(monkeypatch, workspace, **values) -> _ExecutorTestClient:
     _configure(monkeypatch, workspace, **values)
-    return TestClient(
-        build_http_app(),
+    app, harness = build_paired_http_app(get_settings())
+    return _ExecutorTestClient(
+        app,
+        executor_id=harness.executor_id,
         base_url=BASE_URL,
         client=("203.0.113.11", 50001),
     )
@@ -86,8 +109,7 @@ def test_file_listing_is_sorted_bounded_and_workspace_relative(
 
     assert response.status_code == 200
     payload = response.json()["data"]
-    assert payload["machine"] == "local"
-    assert payload["remote"] is False
+    assert payload["executor_id"] == client.executor_id
     assert payload["path"] == "."
     assert payload["parent"] == "."
     assert payload["is_truncated"] is False
@@ -107,7 +129,6 @@ def test_file_listing_is_sorted_bounded_and_workspace_relative(
         "a.txt",
         "z.txt",
     ]
-    assert not (workspace / ".state").exists()
     hidden = next(
         entry for entry in payload["entries"] if entry["name"] == ".hidden"
     )
@@ -275,7 +296,10 @@ def test_editor_reads_complete_text_and_rejects_binary_or_truncated_files(
 
     clear_settings_cache()
     monkeypatch.setenv("WORKGATE_MAX_FILE_READ_BYTES", "4096")
-    complete_client = TestClient(build_http_app(), base_url=BASE_URL)
+    complete_app, harness = build_paired_http_app(get_settings())
+    complete_client = _ExecutorTestClient(
+        complete_app, executor_id=harness.executor_id, base_url=BASE_URL
+    )
     payload = complete_client.get(
         "/api/ui/files/content", params={"path": "complete.txt"}
     ).json()["data"]
@@ -373,8 +397,7 @@ def test_copy_file_preserves_content_mode_and_source(monkeypatch, tmp_path):
         "source": "source.txt",
         "destination": "copied.txt",
         "type": "file",
-        "machine": "local",
-        "remote": False,
+        "executor_id": client.executor_id,
     }
     assert source.read_text(encoding="utf-8") == "copy me"
     copied = workspace / "copied.txt"
@@ -453,7 +476,7 @@ def test_move_cross_device_fallback_copies_then_deletes(monkeypatch, tmp_path):
     def cross_device(_source, _destination):  # noqa: ANN001
         raise OSError(errno.EXDEV, "cross-device link")
 
-    monkeypatch.setattr(ui_files_module.os, "rename", cross_device)
+    monkeypatch.setattr(executor_ui_files_module.os, "rename", cross_device)
     response = client.post(
         "/api/ui/files/move",
         json={"path": "source.bin", "destination": "destination.bin"},
@@ -618,10 +641,13 @@ def test_file_api_rejects_invalid_paths(monkeypatch, tmp_path, path, message):
     assert message in response.json()["message"]
 
 
-def test_file_machine_arg_normalizes_blank_and_rejects_oversized() -> None:
-    assert ui_files_module._machine_arg("   ") == "local"
-    with pytest.raises(ValueError, match="machine exceeds 255 encoded bytes"):
-        ui_files_module._machine_arg("x" * 256)
+def test_file_executor_id_arg_requires_value_and_rejects_oversized() -> None:
+    with pytest.raises(ValueError, match="executor_id is required"):
+        ui_files_module._executor_id_arg("   ")
+    with pytest.raises(
+        ValueError, match="executor_id exceeds 255 encoded bytes"
+    ):
+        ui_files_module._executor_id_arg("x" * 256)
 
 
 def test_opentui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):

@@ -6,30 +6,21 @@ from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
 import workgate.control.http.tool_routes as http_tool_routes_module
-from tests.helpers import mcp_text
+from tests.helpers import build_paired_http_app, mcp_text
 from workgate import __version__
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
-from workgate.remote.tool_specs import (
-    REMOTE_WORKER_TOOL_NAMES,
-    REMOTE_WORKER_TOOL_SPECS,
-)
-from workgate.remote_worker.worker import WORKER_TOOL_NAMES
 from workgate.tools.catalog import ToolCatalog, build_tool_catalog
 from workgate.tools.contracts import (
     HttpMethod,
     HttpToolRoute,
     ToolRegistry,
 )
-from workgate.tools.declarative import (
-    DeclarativeToolRegistry,
-    _normalize_description,
-)
+from workgate.tools.declarative import _normalize_description
 from workgate.tools.local_handlers import (
     UnknownLocalToolError,
     call_local_tool,
-    local_tool_handlers,
 )
 
 LOCAL_MCP_TOOL_NAMES = {
@@ -85,15 +76,8 @@ def test_normalize_description_cleans_docstring_text():
     )
 
 
-REMOTE_MCP_TOOL_NAMES = {
-    "remote_admin",
-}
-
-
 @pytest.mark.asyncio
-async def test_mcp_local_and_remote_tool_surface_is_stable(
-    tmp_path, monkeypatch
-):
+async def test_mcp_tool_surface_is_stable(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -101,7 +85,8 @@ async def test_mcp_local_and_remote_tool_surface_is_stable(
 
     names = {tool.name for tool in await build_mcp().list_tools()}
 
-    assert names == LOCAL_MCP_TOOL_NAMES | REMOTE_MCP_TOOL_NAMES
+    assert names == LOCAL_MCP_TOOL_NAMES
+    assert "remote_admin" not in names
 
 
 @pytest.mark.asyncio
@@ -118,7 +103,6 @@ async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
         "list_file_links",
         "revoke_file_link",
     }
-    assert names.isdisjoint(REMOTE_MCP_TOOL_NAMES)
 
 
 @pytest.mark.asyncio
@@ -133,7 +117,6 @@ async def test_model_facing_tools_require_session_id_by_default(
     sessionless_allowlist = {
         "session_start",
         "version",
-        "remote_admin",
     }
 
     assert sessionless_allowlist <= set(tools)
@@ -197,71 +180,19 @@ async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
         assert concept in descriptions["hashline_edit"]
 
 
-def test_remote_registry_declares_only_remote_admin(monkeypatch):
+def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
     monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "true")
     clear_settings_cache()
 
-    registry = cast(
-        DeclarativeToolRegistry,
-        next(
-            registry
-            for registry in build_tool_catalog().registries
-            if registry.name == "remote"
-        ),
-    )
-    names = {tool.name for tool in registry.tools}
-    route_names = {route.tool_name for route in registry.http_routes()}
-    handler_names = set(registry.http_handlers())
-    legacy_names = {
-        "remote_invite",
-        "remote_list_machines",
-        "remote_revoke_machine",
-        "remote_rename_machine",
-        "remote_copy_file",
-        "remote_copy_dir",
-        "remote_pull_file",
-        "remote_push_file",
-        "remote_pull_dir",
-        "remote_push_dir",
-    }
+    catalog = build_tool_catalog()
+    registry_names = {registry.name for registry in catalog.registries}
+    route_names = {route.tool_name for route in catalog.http_routes()}
+    handler_names = set(catalog.local_handlers())
 
-    assert names == {"remote_admin"}
-    assert "remote_admin" in route_names
-    assert "remote_admin" in handler_names
-    assert "remote" not in route_names
-    assert "remote" not in handler_names
-    assert names.isdisjoint(legacy_names)
-    assert route_names.isdisjoint(legacy_names)
-    assert handler_names.isdisjoint(legacy_names)
-
-
-def test_remote_worker_specs_drive_http_and_worker_allowlist(monkeypatch):
-    monkeypatch.setenv("WORKGATE_MODE", "mcp")
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "true")
-    clear_settings_cache()
-
-    exposed_specs = [
-        spec for spec in REMOTE_WORKER_TOOL_SPECS if spec.expose_http
-    ]
-    spec_names = {spec.public_name for spec in exposed_specs}
-    worker_tools = {spec.worker_tool for spec in REMOTE_WORKER_TOOL_SPECS}
-    route_by_name = {
-        route.tool_name: route
-        for registry in build_tool_catalog().registries
-        for route in registry.http_routes()
-    }
-    handler_names = set(local_tool_handlers())
-
-    assert len(spec_names) == len(exposed_specs)
-    assert worker_tools == REMOTE_WORKER_TOOL_NAMES
-    assert WORKER_TOOL_NAMES == REMOTE_WORKER_TOOL_NAMES
-    assert spec_names <= set(route_by_name)
-    assert spec_names <= handler_names
-    for spec in exposed_specs:
-        route = route_by_name[spec.public_name]
-        assert route.method == "POST"
-        assert route.path == spec.http_path
+    assert "remote" not in registry_names
+    assert "remote_admin" not in route_names
+    assert "remote_admin" not in handler_names
 
 
 def test_http_openapi_version_matches_package_version(tmp_path, monkeypatch):
@@ -313,14 +244,10 @@ def _mcp_payload_data(response):
     )
 
 
-def _build_explicit_local_catalog_http_app():
-    """Build only the legacy route-adapter seam, never the final control runtime."""
-    return build_http_app(tool_catalog=build_tool_catalog())
-
-
-def _build_explicit_local_catalog_mcp():
-    """Build only the legacy MCP-adapter seam, never the final control runtime."""
-    return build_mcp(tool_catalog=build_tool_catalog())
+def _build_paired_surface_http_app():
+    """Build the public HTTP surface over one final paired executor."""
+    app, _harness = build_paired_http_app(get_settings())
+    return app
 
 
 @pytest.mark.asyncio
@@ -331,11 +258,12 @@ async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(_build_explicit_local_catalog_http_app())
+    app = _build_paired_surface_http_app()
+    client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     args = {"session_id": session["session_id"], "path": "."}
     http_payload = client.post("/tools/list_files", json=args).json()
-    mcp_response = await _build_explicit_local_catalog_mcp().call_tool(
+    mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "list_files", args
     )
     assert http_payload == _mcp_payload_data(mcp_response)
@@ -349,11 +277,12 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(_build_explicit_local_catalog_http_app())
+    app = _build_paired_surface_http_app()
+    client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     args = {"session_id": session["session_id"]}
     http_payload = client.get("/tools/todo", params=args).json()
-    mcp_response = await _build_explicit_local_catalog_mcp().call_tool(
+    mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "read_todos", args
     )
 
@@ -368,11 +297,12 @@ async def test_http_secret_scan_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(_build_explicit_local_catalog_http_app())
+    app = _build_paired_surface_http_app()
+    client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     args = {"session_id": session["session_id"], "cwd": ".", "max_results": 10}
     http_payload = client.post("/tools/secret_scan", json=args).json()
-    mcp_response = await _build_explicit_local_catalog_mcp().call_tool(
+    mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "secret_scan", args
     )
 
@@ -385,7 +315,7 @@ def test_http_tool_name_is_not_request_overridable(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(_build_explicit_local_catalog_http_app())
+    client = TestClient(_build_paired_surface_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.get(
         "/tools/todo",
@@ -446,12 +376,12 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    from workgate.ops import downloads as download_ops
+    import workgate.control.downloads as download_ops
 
     clock = {"now": 1_000.0}
-    monkeypatch.setattr(download_ops, "now_s", lambda: clock["now"])
+    monkeypatch.setattr(download_ops, "_now_s", lambda: clock["now"])
 
-    client = TestClient(_build_explicit_local_catalog_http_app())
+    client = TestClient(_build_paired_surface_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     create_response = client.post(
         "/tools/file_link/create",
@@ -488,25 +418,43 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
 def test_todos_are_session_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
-    from workgate.ops.todo import read_todos_execute, write_todos_execute
-    from workgate.tool_session.store import get_tool_session_store
 
-    store = get_tool_session_store()
-    store.clear()
-    first = store.create_session(workdir=".").session_id
-    second = store.create_session(workdir=".").session_id
+    client = TestClient(_build_paired_surface_http_app())
+    first = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "session_id"
+    ]
+    second = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "session_id"
+    ]
     first_items = [{"id": "first", "content": "one"}]
     second_items = [{"id": "second", "content": "two"}]
 
-    write_todos_execute(first_items, first)
-    write_todos_execute(second_items, second)
+    assert (
+        client.post(
+            "/tools/todo", json={"session_id": first, "todos": first_items}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/tools/todo", json={"session_id": second, "todos": second_items}
+        ).status_code
+        == 200
+    )
 
-    assert read_todos_execute(first).todos[0].id == "first"
-    assert read_todos_execute(first).todos[0].content == "one"
-    assert read_todos_execute(second).todos[0].id == "second"
-    assert read_todos_execute(second).todos[0].content == "two"
+    first_payload = client.get(
+        "/tools/todo", params={"session_id": first}
+    ).json()
+    second_payload = client.get(
+        "/tools/todo", params={"session_id": second}
+    ).json()
+    assert first_payload["todos"][0]["id"] == "first"
+    assert first_payload["todos"][0]["content"] == "one"
+    assert second_payload["todos"][0]["id"] == "second"
+    assert second_payload["todos"][0]["content"] == "two"
 
 
 def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
@@ -515,7 +463,7 @@ def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    client = TestClient(_build_explicit_local_catalog_http_app())
+    client = TestClient(_build_paired_surface_http_app())
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.post(
         "/tools/read",
@@ -670,21 +618,15 @@ async def test_mcp_tools_have_matching_http_routes_and_handlers(
     }
     route_tool_names = {route.tool_name for route in catalog.http_routes()}
     handler_tool_names = set(catalog.local_handlers())
-
-    internal_worker_handlers = REMOTE_WORKER_TOOL_NAMES - {
-        spec.worker_tool
-        for spec in REMOTE_WORKER_TOOL_SPECS
-        if spec.expose_http
-    }
-    if agent_bridge_enabled == "false":
-        internal_worker_handlers -= {
-            "list_agent_skills",
-            "activate_agent_skill",
-            "read_agent_skill_file",
-        }
+    transfer_registry = next(
+        registry
+        for registry in catalog.registries
+        if registry.name == "transfer"
+    )
+    internal_transfer_handlers = set(transfer_registry.http_handlers())
 
     assert route_tool_names == mcp_tool_names - {"view_image"}
-    assert handler_tool_names == mcp_tool_names | internal_worker_handlers
+    assert handler_tool_names == mcp_tool_names | internal_transfer_handlers
 
 
 @pytest.mark.asyncio
@@ -695,18 +637,21 @@ async def test_run_python_code_creates_temp_file(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    session = await call_local_tool("session_start", {"workdir": "."})
-    payload = await call_local_tool(
-        "run_python_code",
-        {
-            "session_id": session.session_id,
+    client = TestClient(_build_paired_surface_http_app())
+    session_id = client.post(
+        "/tools/session_start", json={"workdir": "."}
+    ).json()["session_id"]
+    payload = client.post(
+        "/tools/run_python_code",
+        json={
+            "session_id": session_id,
             "code": "print('py314')",
             "cwd": ".",
         },
-    )
+    ).json()
 
-    assert payload.mode == "command"
-    assert payload.cwd == str(tmp_path)
-    assert payload.result["ok"] is True
-    assert payload.result["stdout"].splitlines() == ["py314"]
-    assert payload.script_path.endswith(".py")
+    assert payload["mode"] == "command"
+    assert payload["cwd"] == str(tmp_path)
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["stdout"].splitlines() == ["py314"]
+    assert payload["script_path"].endswith(".py")

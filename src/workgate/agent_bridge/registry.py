@@ -99,6 +99,8 @@ def build_agent_registry(
     max_skill_scan_entries: int = DEFAULT_MAX_SCAN_ENTRIES,
     max_skill_path_bytes: int = DEFAULT_MAX_PATH_BYTES,
     max_skill_entry_bytes: int = DEFAULT_MAX_ENTRY_BYTES,
+    include_project_skills: bool = True,
+    mcp_server_types: frozenset[str] | None = None,
 ) -> AgentCapabilityRegistry:
     """Build one manifest-backed registry with ordered project, managed, and global Skills."""
     config_root = Path(config_dir).expanduser().resolve()
@@ -112,6 +114,7 @@ def build_agent_registry(
         project_root=active_project_root,
         managed_config_dir=config_root,
         managed_directory=manifest.data.skills.directory,
+        include_project=include_project_skills,
     )
     probe_timeout = _probe_timeout_seconds(probe_timeout_s)
     if client_manager is None:
@@ -121,9 +124,16 @@ def build_agent_registry(
 
     retain_stdio_servers = getattr(client_manager, "retain_stdio_servers", None)
     if callable(retain_stdio_servers):
-        retain_stdio_servers(
-            manifest.data.mcp_servers if manifest.status == "loaded" else {}
+        retained_servers = (
+            {
+                name: server
+                for name, server in manifest.data.mcp_servers.items()
+                if mcp_server_types is None or server.type in mcp_server_types
+            }
+            if manifest.status == "loaded"
+            else {}
         )
+        retain_stdio_servers(retained_servers)
 
     skill_scan = SkillScanResult()
     if manifest.status != "invalid_config" and manifest.data.skills.enabled:
@@ -139,6 +149,11 @@ def build_agent_registry(
     mcp_servers: dict[str, AgentMcpServerRecord] = {}
     if manifest.status == "loaded":
         for name, server in manifest.data.mcp_servers.items():
+            if (
+                mcp_server_types is not None
+                and server.type not in mcp_server_types
+            ):
+                continue
             if not server.enabled:
                 mcp_servers[name] = AgentMcpServerRecord(
                     name=name,
@@ -233,4 +248,6 @@ def build_agent_registry(
         dynamic_skill_tool_map=skill_tool_map,
         dynamic_mcp_tool_map=mcp_tool_map,
         client_manager=client_manager,
+        include_project_skills=include_project_skills,
+        mcp_server_types=mcp_server_types,
     )

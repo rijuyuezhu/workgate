@@ -37,19 +37,22 @@ type AgentMcpClientManagerFactory = Callable[[float], Any]
 
 _shared_mcp_manager_lock = threading.RLock()
 _shared_mcp_manager: AgentMcpClientManager | None = None
-_shared_mcp_manager_key: tuple[str, str, float] | None = None
+_shared_mcp_manager_key: tuple[str, str, float, bool] | None = None
 
 
 def _shared_agent_mcp_client_manager(
     settings: Settings,
+    *,
+    allow_stdio: bool = True,
 ) -> AgentMcpClientManager:
-    """Reuse one manager per active service configuration so stdio upstreams can persist."""
+    """Reuse one manager per active transport policy and service configuration."""
     global _shared_mcp_manager, _shared_mcp_manager_key
 
     key = (
         str(Path(settings.agent_config_dir).expanduser().resolve()),
         str(Path(settings.agent_auth_dir).expanduser().resolve()),
         float(settings.agent_mcp_call_timeout_s),
+        allow_stdio,
     )
     with _shared_mcp_manager_lock:
         if _shared_mcp_manager is not None and _shared_mcp_manager_key == key:
@@ -61,6 +64,7 @@ def _shared_agent_mcp_client_manager(
         manager = AgentMcpClientManager(
             settings.agent_mcp_call_timeout_s,
             AgentAuthStore(settings.agent_auth_dir),
+            allow_stdio=allow_stdio,
         )
         _shared_mcp_manager = manager
         _shared_mcp_manager_key = key
@@ -88,19 +92,20 @@ def build_agent_registry_from_settings(
     *,
     session_id: str | None = None,
     project_root: Path | None = None,
+    allow_stdio: bool = True,
+    include_project_skills: bool = True,
+    mcp_server_types: frozenset[str] | None = None,
 ) -> AgentCapabilityRegistry:
-    """Build the current registry for the default workspace or one explicit local session."""
+    """Build the current registry for the default workspace or one shared session."""
     active_settings = settings or get_settings()
     active_project_root = project_root or active_settings.workspace_root
     if session_id is not None:
         session = get_tool_session_store().touch_session(session_id)
-        if session.target != "local":
-            raise ValueError(
-                "remote agent Skill registries must be dispatched to the worker"
-            )
         active_project_root = Path(session.workdir)
     if client_manager_factory is AgentMcpClientManager:
-        client_manager = _shared_agent_mcp_client_manager(active_settings)
+        client_manager = _shared_agent_mcp_client_manager(
+            active_settings, allow_stdio=allow_stdio
+        )
     else:
         client_manager = client_manager_factory(
             active_settings.agent_mcp_call_timeout_s
@@ -117,6 +122,8 @@ def build_agent_registry_from_settings(
         max_skill_scan_entries=active_settings.max_skill_scan_entries,
         max_skill_path_bytes=active_settings.max_skill_path_bytes,
         max_skill_entry_bytes=active_settings.max_file_read_bytes,
+        include_project_skills=include_project_skills,
+        mcp_server_types=mcp_server_types,
     )
 
 
