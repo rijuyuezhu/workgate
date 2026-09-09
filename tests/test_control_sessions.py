@@ -22,6 +22,7 @@ from workgate.protocol.credentials import (
     executor_credential_verifier,
     new_executor_credential,
 )
+from workgate.protocol.errors import ProtocolErrorCode
 from workgate.protocol.executor import (
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
@@ -318,9 +319,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
 
 
 @pytest.mark.asyncio
-async def test_hello_seeds_activity_without_overwriting_newer_observation(
-    tmp_path: Path,
-) -> None:
+async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
     state = _state(tmp_path)
     executor_id = new_executor_id()
     session_id = new_session_id()
@@ -358,10 +357,115 @@ async def test_hello_seeds_activity_without_overwriting_newer_observation(
         availability,
         last_active_at,
     ) = await coordinator.session_activity_projection(session_id)
-
     assert availability == "available"
     assert last_active_at == 20_000.0
+
+    transport.hellos[executor_id] = transport.hellos[executor_id].model_copy(
+        update={
+            "sessions": (
+                SessionInventorySummary(
+                    session_id=session_id,
+                    resolved_workdir="/workspace/project",
+                    last_active_at=30_000.0,
+                ),
+            )
+        }
+    )
+    await coordinator.reconcile_hello(executor_id)
+    (
+        availability,
+        last_active_at,
+    ) = await coordinator.session_activity_projection(session_id)
+    assert availability == "available"
+    assert last_active_at == 30_000.0
     assert transport.calls == []
+
+
+@pytest.mark.asyncio
+async def test_newer_hello_repairs_activity_after_offered_command_abandon(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    credential = new_executor_credential()
+    state.put_executor(
+        ExecutorTrustRecord(
+            executor_id=executor_id,
+            name="executor",
+            credential_verifier=executor_credential_verifier(credential),
+            created_at=1,
+        )
+    )
+    state.put_session(_active_record(executor_id, session_id))
+    transport = ExecutorTransport(state, max_pending_commands=4)
+    transport.start()
+    coordinator = ControlSessionCoordinator(state, transport)
+    initial_hello = ExecutorHelloRequest(
+        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
+        workspace_root="/workspace",
+        sessions=(
+            SessionInventorySummary(
+                session_id=session_id,
+                resolved_workdir="/workspace/project",
+                last_active_at=1_000.0,
+            ),
+        ),
+        shells=(),
+        jobs=(),
+    )
+    try:
+        await transport.hello(credential, initial_hello)
+        coordinator.observe_session_activity(session_id, observed_at=1_000.0)
+
+        caller = asyncio.create_task(
+            transport.call(
+                executor_id,
+                "files.read",
+                {"path": "ignored"},
+                session_id=session_id,
+            )
+        )
+        await asyncio.sleep(0)
+        command = await transport.poll(credential)
+        assert command is not None
+        assert command.session_id == session_id
+
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        with pytest.raises(ExecutorTransportError) as caught:
+            await transport.submit_result(
+                credential,
+                ExecutorResult(id=command.id, ok=True, result={}),
+            )
+        assert caught.value.error.code is ProtocolErrorCode.UNKNOWN_COMMAND
+
+        await transport.hello(
+            credential,
+            initial_hello.model_copy(
+                update={
+                    "sessions": (
+                        SessionInventorySummary(
+                            session_id=session_id,
+                            resolved_workdir="/workspace/project",
+                            last_active_at=20_000.0,
+                        ),
+                    )
+                }
+            ),
+        )
+        await coordinator.reconcile_hello(executor_id)
+        (
+            availability,
+            last_active_at,
+        ) = await coordinator.session_activity_projection(session_id)
+        assert availability == "available"
+        assert last_active_at == 20_000.0
+    finally:
+        await coordinator.aclose()
+        await transport.aclose()
 
 
 @pytest.mark.asyncio

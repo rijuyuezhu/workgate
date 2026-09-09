@@ -481,7 +481,7 @@ class ControlSessionCoordinator:
                     self._schedule_termination(record)
                 continue
             if item is not None:
-                self._seed_session_activity_from_hello(
+                self._merge_session_activity_from_hello(
                     session_id, item.last_active_at
                 )
                 if record.status == "creating" or (
@@ -592,13 +592,13 @@ class ControlSessionCoordinator:
         if previous is None or value > previous:
             self._activity_by_session[session_id] = value
 
-    def _seed_session_activity_from_hello(
+    def _merge_session_activity_from_hello(
         self, session_id: str, observed_at: float | None
     ) -> None:
-        """Seed activity from an unordered reconnect snapshot without rollback."""
-        if session_id in self._activity_by_session:
+        """Advance activity from an unordered reconnect snapshot without rollback."""
+        if observed_at is None:
             return
-        self._replace_session_activity(session_id, observed_at)
+        self.observe_session_activity(session_id, observed_at=observed_at)
 
     def _replace_session_activity(
         self, session_id: str, observed_at: float | None
