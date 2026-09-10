@@ -10,15 +10,30 @@
       "num_statements": 0,
       "percent_covered": 100.0
     },
+    "src/workgate/agent_bridge/auth.py": {
+      "num_branches": 32,
+      "num_statements": 101,
+      "percent_covered": 96.992481
+    },
+    "src/workgate/agent_bridge/auth_store.py": {
+      "num_branches": 60,
+      "num_statements": 261,
+      "percent_covered": 98.130841
+    },
+    "src/workgate/agent_bridge/cli.py": {
+      "num_branches": 76,
+      "num_statements": 250,
+      "percent_covered": 92.638037
+    },
     "src/workgate/agent_bridge/mcp.py": {
-      "num_branches": 24,
-      "num_statements": 84,
-      "percent_covered": 69.444444
+      "num_branches": 98,
+      "num_statements": 331,
+      "percent_covered": 76.223776
     },
     "src/workgate/agent_bridge/models.py": {
-      "num_branches": 6,
-      "num_statements": 152,
-      "percent_covered": 96.202532
+      "num_branches": 18,
+      "num_statements": 165,
+      "percent_covered": 96.721311
     },
     "src/workgate/agent_bridge/redaction.py": {
       "num_branches": 28,
@@ -26,74 +41,174 @@
       "percent_covered": 99.0
     },
     "src/workgate/agent_bridge/registry.py": {
-      "num_branches": 32,
-      "num_statements": 95,
-      "percent_covered": 88.976378
+      "num_branches": 36,
+      "num_statements": 103,
+      "percent_covered": 89.928058
     },
     "src/workgate/agent_bridge/service.py": {
-      "num_branches": 38,
-      "num_statements": 106,
-      "percent_covered": 74.305556
+      "num_branches": 46,
+      "num_statements": 141,
+      "percent_covered": 81.283422
     },
     "src/workgate/agent_bridge/skills.py": {
       "num_branches": 152,
-      "num_statements": 360,
-      "percent_covered": 78.125
+      "num_statements": 356,
+      "percent_covered": 78.543307
     },
     "src/workgate/agent_bridge/sources.py": {
-      "num_branches": 26,
-      "num_statements": 75,
-      "percent_covered": 92.079208
+      "num_branches": 28,
+      "num_statements": 62,
+      "percent_covered": 98.888889
     },
     "src/workgate/agent_bridge/state.py": {
-      "num_branches": 24,
-      "num_statements": 93,
-      "percent_covered": 83.760684
+      "num_branches": 30,
+      "num_statements": 106,
+      "percent_covered": 86.029412
+    },
+    "src/workgate/agent_bridge/status.py": {
+      "num_branches": 0,
+      "num_statements": 6,
+      "percent_covered": 100.0
     },
     "src/workgate/agent_bridge/tools.py": {
-      "num_branches": 10,
-      "num_statements": 80,
-      "percent_covered": 97.777778
+      "num_branches": 12,
+      "num_statements": 87,
+      "percent_covered": 97.979798
+    },
+    "src/workgate/app_paths.py": {
+      "num_branches": 26,
+      "num_statements": 108,
+      "percent_covered": 88.80597
+    },
+    "src/workgate/audit/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 2,
+      "percent_covered": 100.0
     },
     "src/workgate/audit/core.py": {
-      "num_branches": 188,
-      "num_statements": 434,
-      "percent_covered": 82.154341
+      "num_branches": 258,
+      "num_statements": 606,
+      "percent_covered": 85.416667
+    },
+    "src/workgate/audit/payloads.py": {
+      "num_branches": 102,
+      "num_statements": 216,
+      "percent_covered": 98.113208
+    },
+    "src/workgate/composition/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/composition/services.py": {
+      "num_branches": 4,
+      "num_statements": 47,
+      "percent_covered": 92.156863
     },
     "src/workgate/config/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
       "percent_covered": 100.0
     },
+    "src/workgate/config/cli.py": {
+      "num_branches": 2,
+      "num_statements": 12,
+      "percent_covered": 100.0
+    },
     "src/workgate/config/settings.py": {
-      "num_branches": 44,
-      "num_statements": 290,
-      "percent_covered": 98.203593
+      "num_branches": 64,
+      "num_statements": 369,
+      "percent_covered": 98.845266
     },
     "src/workgate/config/surface.py": {
       "num_branches": 54,
-      "num_statements": 142,
-      "percent_covered": 92.857143
+      "num_statements": 148,
+      "percent_covered": 94.554455
+    },
+    "src/workgate/control/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/agent_bridge.py": {
+      "num_branches": 16,
+      "num_statements": 60,
+      "percent_covered": 84.210526
+    },
+    "src/workgate/control/audit.py": {
+      "num_branches": 6,
+      "num_statements": 24,
+      "percent_covered": 93.333333
+    },
+    "src/workgate/control/cli.py": {
+      "num_branches": 6,
+      "num_statements": 23,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/config.py": {
+      "num_branches": 0,
+      "num_statements": 8,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/download_snapshot.py": {
+      "num_branches": 4,
+      "num_statements": 37,
+      "percent_covered": 90.243902
+    },
+    "src/workgate/control/download_store.py": {
+      "num_branches": 50,
+      "num_statements": 167,
+      "percent_covered": 86.175115
+    },
+    "src/workgate/control/downloads.py": {
+      "num_branches": 56,
+      "num_statements": 218,
+      "percent_covered": 82.481752
+    },
+    "src/workgate/control/executor_transport.py": {
+      "num_branches": 76,
+      "num_statements": 281,
+      "percent_covered": 92.436975
+    },
+    "src/workgate/control/http/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
     },
     "src/workgate/control/http/app.py": {
-      "num_branches": 2,
-      "num_statements": 41,
+      "num_branches": 8,
+      "num_statements": 63,
       "percent_covered": 100.0
     },
     "src/workgate/control/http/errors.py": {
       "num_branches": 0,
-      "num_statements": 20,
-      "percent_covered": 95.0
+      "num_statements": 25,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/http/executor_admin.py": {
+      "num_branches": 8,
+      "num_statements": 86,
+      "percent_covered": 81.914894
+    },
+    "src/workgate/control/http/executor_routes.py": {
+      "num_branches": 32,
+      "num_statements": 105,
+      "percent_covered": 78.832117
     },
     "src/workgate/control/http/invocations.py": {
       "num_branches": 0,
-      "num_statements": 19,
+      "num_statements": 20,
       "percent_covered": 100.0
     },
     "src/workgate/control/http/tool_routes.py": {
       "num_branches": 12,
-      "num_statements": 55,
+      "num_statements": 58,
       "percent_covered": 100.0
+    },
+    "src/workgate/control/jobs.py": {
+      "num_branches": 26,
+      "num_statements": 72,
+      "percent_covered": 91.836735
     },
     "src/workgate/control/mcp/__init__.py": {
       "num_branches": 0,
@@ -101,9 +216,9 @@
       "percent_covered": 100.0
     },
     "src/workgate/control/mcp/app.py": {
-      "num_branches": 16,
-      "num_statements": 72,
-      "percent_covered": 92.045455
+      "num_branches": 26,
+      "num_statements": 111,
+      "percent_covered": 96.350365
     },
     "src/workgate/control/mcp/instructions.py": {
       "num_branches": 0,
@@ -111,9 +226,9 @@
       "percent_covered": 100.0
     },
     "src/workgate/control/mcp/session_limits.py": {
-      "num_branches": 14,
-      "num_statements": 42,
-      "percent_covered": 94.642857
+      "num_branches": 34,
+      "num_statements": 87,
+      "percent_covered": 96.694215
     },
     "src/workgate/control/mcp/transport_security.py": {
       "num_branches": 12,
@@ -122,8 +237,288 @@
     },
     "src/workgate/control/mcp/watchdogs.py": {
       "num_branches": 16,
+      "num_statements": 61,
+      "percent_covered": 92.207792
+    },
+    "src/workgate/control/pairing.py": {
+      "num_branches": 62,
+      "num_statements": 208,
+      "percent_covered": 91.481481
+    },
+    "src/workgate/control/runtime.py": {
+      "num_branches": 28,
+      "num_statements": 178,
+      "percent_covered": 91.747573
+    },
+    "src/workgate/control/runtime_types.py": {
+      "num_branches": 0,
+      "num_statements": 4,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/search_composition.py": {
+      "num_branches": 0,
+      "num_statements": 14,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/session_copy.py": {
+      "num_branches": 42,
+      "num_statements": 180,
+      "percent_covered": 86.486486
+    },
+    "src/workgate/control/sessions.py": {
+      "num_branches": 160,
+      "num_statements": 415,
+      "percent_covered": 83.130435
+    },
+    "src/workgate/control/state.py": {
+      "num_branches": 34,
+      "num_statements": 171,
+      "percent_covered": 88.292683
+    },
+    "src/workgate/control/todos.py": {
+      "num_branches": 12,
+      "num_statements": 54,
+      "percent_covered": 90.909091
+    },
+    "src/workgate/control/tool_routing.py": {
+      "num_branches": 44,
+      "num_statements": 104,
+      "percent_covered": 93.918919
+    },
+    "src/workgate/control/tool_timeouts.py": {
+      "num_branches": 2,
+      "num_statements": 8,
+      "percent_covered": 100.0
+    },
+    "src/workgate/control/ui_executor.py": {
+      "num_branches": 4,
+      "num_statements": 15,
+      "percent_covered": 89.473684
+    },
+    "src/workgate/errors.py": {
+      "num_branches": 30,
+      "num_statements": 73,
+      "percent_covered": 96.116505
+    },
+    "src/workgate/executor/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/agent.py": {
+      "num_branches": 10,
+      "num_statements": 62,
+      "percent_covered": 90.277778
+    },
+    "src/workgate/executor/bash.py": {
+      "num_branches": 6,
+      "num_statements": 50,
+      "percent_covered": 96.428571
+    },
+    "src/workgate/executor/bounded_runner.py": {
+      "num_branches": 276,
+      "num_statements": 847,
+      "percent_covered": 83.882458
+    },
+    "src/workgate/executor/cli.py": {
+      "num_branches": 10,
+      "num_statements": 79,
+      "percent_covered": 92.134831
+    },
+    "src/workgate/executor/config.py": {
+      "num_branches": 0,
+      "num_statements": 7,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/connection.py": {
+      "num_branches": 68,
+      "num_statements": 202,
+      "percent_covered": 85.185185
+    },
+    "src/workgate/executor/control_client.py": {
+      "num_branches": 10,
+      "num_statements": 70,
+      "percent_covered": 91.25
+    },
+    "src/workgate/executor/dispatch.py": {
+      "num_branches": 6,
+      "num_statements": 63,
+      "percent_covered": 82.608696
+    },
+    "src/workgate/executor/environment.py": {
+      "num_branches": 20,
+      "num_statements": 111,
+      "percent_covered": 96.946565
+    },
+    "src/workgate/executor/errors.py": {
+      "num_branches": 0,
+      "num_statements": 4,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/files.py": {
+      "num_branches": 174,
+      "num_statements": 450,
+      "percent_covered": 86.378205
+    },
+    "src/workgate/executor/files_service.py": {
+      "num_branches": 6,
+      "num_statements": 48,
+      "percent_covered": 96.296296
+    },
+    "src/workgate/executor/hello.py": {
+      "num_branches": 0,
+      "num_statements": 7,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/image.py": {
+      "num_branches": 8,
+      "num_statements": 38,
+      "percent_covered": 91.304348
+    },
+    "src/workgate/executor/jobs.py": {
+      "num_branches": 14,
+      "num_statements": 64,
+      "percent_covered": 93.589744
+    },
+    "src/workgate/executor/pairing.py": {
+      "num_branches": 6,
+      "num_statements": 62,
+      "percent_covered": 88.235294
+    },
+    "src/workgate/executor/patch/__init__.py": {
+      "num_branches": 8,
       "num_statements": 59,
-      "percent_covered": 92.0
+      "percent_covered": 85.074627
+    },
+    "src/workgate/executor/patch/envelope.py": {
+      "num_branches": 110,
+      "num_statements": 202,
+      "percent_covered": 97.435897
+    },
+    "src/workgate/executor/path.py": {
+      "num_branches": 10,
+      "num_statements": 38,
+      "percent_covered": 83.333333
+    },
+    "src/workgate/executor/profile.py": {
+      "num_branches": 16,
+      "num_statements": 69,
+      "percent_covered": 97.647059
+    },
+    "src/workgate/executor/runtime.py": {
+      "num_branches": 48,
+      "num_statements": 159,
+      "percent_covered": 88.888889
+    },
+    "src/workgate/executor/search/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/search/composition.py": {
+      "num_branches": 0,
+      "num_statements": 11,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/search/core.py": {
+      "num_branches": 80,
+      "num_statements": 179,
+      "percent_covered": 88.416988
+    },
+    "src/workgate/executor/search/service.py": {
+      "num_branches": 78,
+      "num_statements": 269,
+      "percent_covered": 89.913545
+    },
+    "src/workgate/executor/search_composition.py": {
+      "num_branches": 4,
+      "num_statements": 93,
+      "percent_covered": 97.938144
+    },
+    "src/workgate/executor/secret_scan.py": {
+      "num_branches": 46,
+      "num_statements": 112,
+      "percent_covered": 83.544304
+    },
+    "src/workgate/executor/session_orientation.py": {
+      "num_branches": 14,
+      "num_statements": 56,
+      "percent_covered": 92.857143
+    },
+    "src/workgate/executor/sessions.py": {
+      "num_branches": 10,
+      "num_statements": 83,
+      "percent_covered": 86.021505
+    },
+    "src/workgate/executor/shell.py": {
+      "num_branches": 196,
+      "num_statements": 599,
+      "percent_covered": 83.773585
+    },
+    "src/workgate/executor/shell_service.py": {
+      "num_branches": 20,
+      "num_statements": 93,
+      "percent_covered": 92.920354
+    },
+    "src/workgate/executor/temp_file.py": {
+      "num_branches": 0,
+      "num_statements": 11,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/terminal/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/terminal/bridge.py": {
+      "num_branches": 114,
+      "num_statements": 398,
+      "percent_covered": 78.90625
+    },
+    "src/workgate/executor/terminal/conpty.py": {
+      "num_branches": 184,
+      "num_statements": 625,
+      "percent_covered": 78.368356
+    },
+    "src/workgate/executor/terminal/contracts.py": {
+      "num_branches": 0,
+      "num_statements": 2,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/terminal/runtime.py": {
+      "num_branches": 16,
+      "num_statements": 81,
+      "percent_covered": 96.907216
+    },
+    "src/workgate/executor/terminal/tmux.py": {
+      "num_branches": 8,
+      "num_statements": 31,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/transfer.py": {
+      "num_branches": 212,
+      "num_statements": 632,
+      "percent_covered": 83.293839
+    },
+    "src/workgate/executor/transfer_composition.py": {
+      "num_branches": 22,
+      "num_statements": 70,
+      "percent_covered": 90.217391
+    },
+    "src/workgate/executor/ui_files.py": {
+      "num_branches": 90,
+      "num_statements": 282,
+      "percent_covered": 84.677419
+    },
+    "src/workgate/executor/ui_terminals.py": {
+      "num_branches": 20,
+      "num_statements": 30,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/workspace_connector.py": {
+      "num_branches": 4,
+      "num_statements": 21,
+      "percent_covered": 100.0
     },
     "src/workgate/http/__init__.py": {
       "num_branches": 0,
@@ -150,10 +545,70 @@
       "num_statements": 93,
       "percent_covered": 87.603306
     },
+    "src/workgate/jobs/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/jobs/cli.py": {
+      "num_branches": 0,
+      "num_statements": 10,
+      "percent_covered": 100.0
+    },
+    "src/workgate/jobs/lifecycle.py": {
+      "num_branches": 6,
+      "num_statements": 46,
+      "percent_covered": 100.0
+    },
+    "src/workgate/jobs/managed.py": {
+      "num_branches": 138,
+      "num_statements": 464,
+      "percent_covered": 83.222591
+    },
+    "src/workgate/jobs/persistence.py": {
+      "num_branches": 26,
+      "num_statements": 103,
+      "percent_covered": 93.79845
+    },
+    "src/workgate/jobs/reconciliation.py": {
+      "num_branches": 58,
+      "num_statements": 106,
+      "percent_covered": 95.731707
+    },
+    "src/workgate/jobs/recovery.py": {
+      "num_branches": 70,
+      "num_statements": 195,
+      "percent_covered": 87.169811
+    },
+    "src/workgate/jobs/runner.py": {
+      "num_branches": 16,
+      "num_statements": 87,
+      "percent_covered": 82.524272
+    },
+    "src/workgate/jobs/runner_bootstrap.py": {
+      "num_branches": 0,
+      "num_statements": 7,
+      "percent_covered": 100.0
+    },
+    "src/workgate/jobs/shell.py": {
+      "num_branches": 104,
+      "num_statements": 346,
+      "percent_covered": 81.555556
+    },
+    "src/workgate/jobs/state.py": {
+      "num_branches": 12,
+      "num_statements": 112,
+      "percent_covered": 97.580645
+    },
+    "src/workgate/jobs/status.py": {
+      "num_branches": 42,
+      "num_statements": 102,
+      "percent_covered": 93.055556
+    },
     "src/workgate/main.py": {
-      "num_branches": 8,
-      "num_statements": 63,
-      "percent_covered": 90.140845
+      "num_branches": 0,
+      "num_statements": 21,
+      "percent_covered": 100.0
     },
     "src/workgate/oauth/__init__.py": {
       "num_branches": 0,
@@ -166,9 +621,9 @@
       "percent_covered": 100.0
     },
     "src/workgate/oauth/core/client_store.py": {
-      "num_branches": 22,
-      "num_statements": 66,
-      "percent_covered": 78.409091
+      "num_branches": 24,
+      "num_statements": 71,
+      "percent_covered": 84.210526
     },
     "src/workgate/oauth/core/context.py": {
       "num_branches": 6,
@@ -177,7 +632,7 @@
     },
     "src/workgate/oauth/core/models.py": {
       "num_branches": 0,
-      "num_statements": 28,
+      "num_statements": 26,
       "percent_covered": 100.0
     },
     "src/workgate/oauth/core/requests.py": {
@@ -187,18 +642,23 @@
     },
     "src/workgate/oauth/core/scopes.py": {
       "num_branches": 4,
-      "num_statements": 24,
+      "num_statements": 26,
       "percent_covered": 100.0
     },
     "src/workgate/oauth/core/security.py": {
       "num_branches": 8,
-      "num_statements": 37,
+      "num_statements": 38,
       "percent_covered": 100.0
     },
     "src/workgate/oauth/core/service.py": {
       "num_branches": 94,
-      "num_statements": 291,
-      "percent_covered": 90.649351
+      "num_statements": 308,
+      "percent_covered": 91.044776
+    },
+    "src/workgate/oauth/core/state.py": {
+      "num_branches": 10,
+      "num_statements": 58,
+      "percent_covered": 94.117647
     },
     "src/workgate/oauth/core/urls.py": {
       "num_branches": 2,
@@ -211,9 +671,9 @@
       "percent_covered": 100.0
     },
     "src/workgate/oauth/http/auth.py": {
-      "num_branches": 8,
-      "num_statements": 38,
-      "percent_covered": 78.26087
+      "num_branches": 6,
+      "num_statements": 39,
+      "percent_covered": 82.222222
     },
     "src/workgate/oauth/http/authorization.py": {
       "num_branches": 10,
@@ -226,8 +686,8 @@
       "percent_covered": 100.0
     },
     "src/workgate/oauth/http/middleware.py": {
-      "num_branches": 6,
-      "num_statements": 38,
+      "num_branches": 12,
+      "num_statements": 54,
       "percent_covered": 100.0
     },
     "src/workgate/oauth/http/registration.py": {
@@ -247,7 +707,7 @@
     },
     "src/workgate/oauth/http/routes.py": {
       "num_branches": 0,
-      "num_statements": 9,
+      "num_statements": 7,
       "percent_covered": 100.0
     },
     "src/workgate/oauth/http/tokens.py": {
@@ -273,207 +733,67 @@
     "src/workgate/oauth/protocol/token_codec.py": {
       "num_branches": 2,
       "num_statements": 17,
-      "percent_covered": 94.736842
-    },
-    "src/workgate/ops/__init__.py": {
-      "num_branches": 0,
-      "num_statements": 0,
       "percent_covered": 100.0
     },
-    "src/workgate/ops/agent.py": {
-      "num_branches": 32,
-      "num_statements": 101,
-      "percent_covered": 82.706767
+    "src/workgate/persistence/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 2,
+      "percent_covered": 100.0
     },
-    "src/workgate/ops/downloads.py": {
-      "num_branches": 44,
-      "num_statements": 157,
-      "percent_covered": 88.059701
+    "src/workgate/persistence/store.py": {
+      "num_branches": 34,
+      "num_statements": 243,
+      "percent_covered": 93.140794
     },
-    "src/workgate/ops/files.py": {
-      "num_branches": 220,
-      "num_statements": 549,
-      "percent_covered": 82.054616
+    "src/workgate/protocol/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 2,
+      "percent_covered": 100.0
     },
-    "src/workgate/ops/image.py": {
-      "num_branches": 36,
-      "num_statements": 98,
-      "percent_covered": 91.044776
+    "src/workgate/protocol/credentials.py": {
+      "num_branches": 2,
+      "num_statements": 22,
+      "percent_covered": 91.666667
     },
-    "src/workgate/jobs/runtime.py": {
-      "num_branches": 220,
-      "num_statements": 846,
-      "percent_covered": 83.58349
+    "src/workgate/protocol/errors.py": {
+      "num_branches": 0,
+      "num_statements": 24,
+      "percent_covered": 100.0
     },
-    "src/workgate/ops/patch/__init__.py": {
-      "num_branches": 12,
-      "num_statements": 67,
-      "percent_covered": 84.810127
-    },
-    "src/workgate/ops/patch/envelope.py": {
-      "num_branches": 110,
-      "num_statements": 206,
-      "percent_covered": 97.468354
-    },
-    "src/workgate/ops/read.py": {
+    "src/workgate/protocol/executor.py": {
       "num_branches": 8,
-      "num_statements": 29,
-      "percent_covered": 94.594595
+      "num_statements": 88,
+      "percent_covered": 97.916667
     },
-    "src/workgate/ops/remote.py": {
-      "num_branches": 14,
-      "num_statements": 34,
-      "percent_covered": 56.25
-    },
-    "src/workgate/ops/search.py": {
-      "num_branches": 158,
-      "num_statements": 369,
-      "percent_covered": 44.781784
-    },
-    "src/workgate/ops/secret_scan.py": {
-      "num_branches": 50,
-      "num_statements": 117,
-      "percent_covered": 82.634731
-    },
-    "src/workgate/ops/session.py": {
-      "num_branches": 24,
-      "num_statements": 84,
-      "percent_covered": 78.703704
-    },
-    "src/workgate/ops/shell.py": {
-      "num_branches": 128,
-      "num_statements": 396,
-      "percent_covered": 88.167939
-    },
-    "src/workgate/ops/todo.py": {
-      "num_branches": 22,
-      "num_statements": 74,
-      "percent_covered": 84.375
-    },
-    "src/workgate/ops/transfer.py": {
-      "num_branches": 188,
-      "num_statements": 542,
-      "percent_covered": 76.712329
-    },
-    "src/workgate/ops/utils/__init__.py": {
+    "src/workgate/protocol/ids.py": {
       "num_branches": 0,
-      "num_statements": 0,
+      "num_statements": 25,
       "percent_covered": 100.0
     },
-    "src/workgate/ops/utils/download_snapshot.py": {
-      "num_branches": 32,
-      "num_statements": 135,
-      "percent_covered": 81.437126
+    "src/workgate/protocol/pairing.py": {
+      "num_branches": 0,
+      "num_statements": 38,
+      "percent_covered": 100.0
     },
-    "src/workgate/ops/utils/download_store.py": {
-      "num_branches": 50,
-      "num_statements": 172,
-      "percent_covered": 86.486486
-    },
-    "src/workgate/ops/utils/path.py": {
-      "num_branches": 32,
-      "num_statements": 93,
-      "percent_covered": 85.6
-    },
-    "src/workgate/ops/utils/remote_session.py": {
-      "num_branches": 22,
-      "num_statements": 48,
-      "percent_covered": 82.857143
-    },
-    "src/workgate/ops/utils/session_copy.py": {
-      "num_branches": 76,
-      "num_statements": 225,
-      "percent_covered": 84.717608
-    },
-    "src/workgate/ops/utils/temp_file.py": {
+    "src/workgate/protocol/terminal.py": {
       "num_branches": 0,
       "num_statements": 11,
       "percent_covered": 100.0
     },
-    "src/workgate/tools/ops/version.py": {
-      "num_branches": 0,
-      "num_statements": 4,
+    "src/workgate/protocol/transfer.py": {
+      "num_branches": 2,
+      "num_statements": 7,
       "percent_covered": 100.0
     },
-    "src/workgate/tools/ops/workspace_connector.py": {
-      "num_branches": 8,
-      "num_statements": 45,
-      "percent_covered": 64.150943
-    },
-    "src/workgate/remote/__init__.py": {
+    "src/workgate/release/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
       "percent_covered": 100.0
     },
-    "src/workgate/remote/bundle.py": {
-      "num_branches": 10,
-      "num_statements": 56,
-      "percent_covered": 93.939394
-    },
-    "src/workgate/remote/constants.py": {
-      "num_branches": 0,
-      "num_statements": 8,
-      "percent_covered": 100.0
-    },
-    "src/workgate/remote/http.py": {
-      "num_branches": 6,
-      "num_statements": 65,
-      "percent_covered": 76.056338
-    },
-    "src/workgate/remote/manager.py": {
-      "num_branches": 130,
-      "num_statements": 463,
-      "percent_covered": 79.595278
-    },
-    "src/workgate/remote/responses.py": {
-      "num_branches": 0,
-      "num_statements": 6,
-      "percent_covered": 100.0
-    },
-    "src/workgate/remote/service.py": {
-      "num_branches": 0,
-      "num_statements": 13,
-      "percent_covered": 92.307692
-    },
-    "src/workgate/remote/tool_specs.py": {
-      "num_branches": 0,
-      "num_statements": 15,
-      "percent_covered": 100.0
-    },
-    "src/workgate/remote_worker/__init__.py": {
-      "num_branches": 0,
-      "num_statements": 0,
-      "percent_covered": 100.0
-    },
-    "src/workgate/remote_worker/__main__.py": {
-      "num_branches": 0,
-      "num_statements": 1,
-      "percent_covered": 100.0
-    },
-    "src/workgate/remote_worker/compat.py": {
-      "num_branches": 98,
-      "num_statements": 260,
-      "percent_covered": 72.905028
-    },
-    "src/workgate/remote_worker/dispatch.py": {
-      "num_branches": 4,
-      "num_statements": 154,
-      "percent_covered": 70.253165
-    },
-    "src/workgate/remote_worker/lifecycle.py": {
-      "num_branches": 46,
-      "num_statements": 151,
-      "percent_covered": 80.203046
-    },
-    "src/workgate/remote_worker/runtime.py": {
-      "num_branches": 94,
-      "num_statements": 289,
-      "percent_covered": 80.939948
-    },
-    "src/workgate/remote_worker/worker.py": {
-      "num_branches": 86,
-      "num_statements": 354,
-      "percent_covered": 76.363636
+    "src/workgate/release/platform_wheel.py": {
+      "num_branches": 162,
+      "num_statements": 496,
+      "percent_covered": 90.577508
     },
     "src/workgate/schemas/__init__.py": {
       "num_branches": 0,
@@ -487,7 +807,7 @@
     },
     "src/workgate/schemas/input_models/agent.py": {
       "num_branches": 0,
-      "num_statements": 9,
+      "num_statements": 10,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/input_models/downloads.py": {
@@ -497,17 +817,12 @@
     },
     "src/workgate/schemas/input_models/files.py": {
       "num_branches": 0,
-      "num_statements": 22,
+      "num_statements": 14,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/input_models/image.py": {
       "num_branches": 0,
       "num_statements": 3,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/schemas/input_models/jobs.py": {
-      "num_branches": 0,
-      "num_statements": 12,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/input_models/patch.py": {
@@ -518,11 +833,6 @@
     "src/workgate/schemas/input_models/read.py": {
       "num_branches": 0,
       "num_statements": 3,
-      "percent_covered": 100.0
-    },
-    "src/workgate/schemas/input_models/remote.py": {
-      "num_branches": 0,
-      "num_statements": 39,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/input_models/search.py": {
@@ -555,11 +865,6 @@
       "num_statements": 16,
       "percent_covered": 100.0
     },
-    "src/workgate/tools/schemas/input_models/workspace_connector.py": {
-      "num_branches": 0,
-      "num_statements": 4,
-      "percent_covered": 100.0
-    },
     "src/workgate/schemas/result_models/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
@@ -572,17 +877,17 @@
     },
     "src/workgate/schemas/result_models/downloads.py": {
       "num_branches": 0,
-      "num_statements": 23,
+      "num_statements": 20,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/result_models/files.py": {
       "num_branches": 0,
-      "num_statements": 82,
+      "num_statements": 75,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/result_models/image.py": {
       "num_branches": 0,
-      "num_statements": 9,
+      "num_statements": 6,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/result_models/jobs.py": {
@@ -600,11 +905,6 @@
       "num_statements": 10,
       "percent_covered": 100.0
     },
-    "src/workgate/schemas/result_models/remote.py": {
-      "num_branches": 0,
-      "num_statements": 53,
-      "percent_covered": 100.0
-    },
     "src/workgate/schemas/result_models/search.py": {
       "num_branches": 0,
       "num_statements": 47,
@@ -617,7 +917,7 @@
     },
     "src/workgate/schemas/result_models/session.py": {
       "num_branches": 0,
-      "num_statements": 45,
+      "num_statements": 103,
       "percent_covered": 100.0
     },
     "src/workgate/schemas/result_models/shell.py": {
@@ -632,7 +932,242 @@
     },
     "src/workgate/schemas/result_models/transfer.py": {
       "num_branches": 0,
-      "num_statements": 63,
+      "num_statements": 65,
+      "percent_covered": 100.0
+    },
+    "src/workgate/telemetry/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/telemetry/system.py": {
+      "num_branches": 30,
+      "num_statements": 104,
+      "percent_covered": 97.014925
+    },
+    "src/workgate/tool_session/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 4,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tool_session/bindings.py": {
+      "num_branches": 4,
+      "num_statements": 12,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tool_session/lifecycle.py": {
+      "num_branches": 30,
+      "num_statements": 144,
+      "percent_covered": 89.08046
+    },
+    "src/workgate/tool_session/records.py": {
+      "num_branches": 28,
+      "num_statements": 89,
+      "percent_covered": 79.487179
+    },
+    "src/workgate/tool_session/repository.py": {
+      "num_branches": 10,
+      "num_statements": 52,
+      "percent_covered": 88.709677
+    },
+    "src/workgate/tool_session/resolver.py": {
+      "num_branches": 0,
+      "num_statements": 9,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tool_session/resources.py": {
+      "num_branches": 14,
+      "num_statements": 40,
+      "percent_covered": 88.888889
+    },
+    "src/workgate/tool_session/retention.py": {
+      "num_branches": 34,
+      "num_statements": 71,
+      "percent_covered": 57.142857
+    },
+    "src/workgate/tool_session/selectors.py": {
+      "num_branches": 40,
+      "num_statements": 84,
+      "percent_covered": 85.483871
+    },
+    "src/workgate/tool_session/snapshots.py": {
+      "num_branches": 16,
+      "num_statements": 65,
+      "percent_covered": 88.888889
+    },
+    "src/workgate/tool_session/store.py": {
+      "num_branches": 68,
+      "num_statements": 347,
+      "percent_covered": 93.73494
+    },
+    "src/workgate/tools/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/catalog.py": {
+      "num_branches": 10,
+      "num_statements": 49,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/contracts.py": {
+      "num_branches": 0,
+      "num_statements": 28,
+      "percent_covered": 92.857143
+    },
+    "src/workgate/tools/declarative.py": {
+      "num_branches": 42,
+      "num_statements": 198,
+      "percent_covered": 97.916667
+    },
+    "src/workgate/tools/local_handlers.py": {
+      "num_branches": 0,
+      "num_statements": 14,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/machine.py": {
+      "num_branches": 0,
+      "num_statements": 2,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/metadata.py": {
+      "num_branches": 4,
+      "num_statements": 23,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/ops/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/ops/version.py": {
+      "num_branches": 0,
+      "num_statements": 4,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/ops/workspace_connector.py": {
+      "num_branches": 4,
+      "num_statements": 15,
+      "percent_covered": 68.421053
+    },
+    "src/workgate/tools/registry/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/registry/agent.py": {
+      "num_branches": 8,
+      "num_statements": 56,
+      "percent_covered": 71.875
+    },
+    "src/workgate/tools/registry/audit.py": {
+      "num_branches": 0,
+      "num_statements": 13,
+      "percent_covered": 84.615385
+    },
+    "src/workgate/tools/registry/downloads.py": {
+      "num_branches": 0,
+      "num_statements": 27,
+      "percent_covered": 77.777778
+    },
+    "src/workgate/tools/registry/files.py": {
+      "num_branches": 0,
+      "num_statements": 41,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/registry/image.py": {
+      "num_branches": 0,
+      "num_statements": 12,
+      "percent_covered": 83.333333
+    },
+    "src/workgate/tools/registry/jobs.py": {
+      "num_branches": 0,
+      "num_statements": 14,
+      "percent_covered": 85.714286
+    },
+    "src/workgate/tools/registry/patch.py": {
+      "num_branches": 0,
+      "num_statements": 16,
+      "percent_covered": 87.5
+    },
+    "src/workgate/tools/registry/read.py": {
+      "num_branches": 0,
+      "num_statements": 16,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/registry/search.py": {
+      "num_branches": 0,
+      "num_statements": 31,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/registry/secret_scan.py": {
+      "num_branches": 0,
+      "num_statements": 16,
+      "percent_covered": 87.5
+    },
+    "src/workgate/tools/registry/session.py": {
+      "num_branches": 0,
+      "num_statements": 31,
+      "percent_covered": 83.870968
+    },
+    "src/workgate/tools/registry/shell.py": {
+      "num_branches": 0,
+      "num_statements": 43,
+      "percent_covered": 67.44186
+    },
+    "src/workgate/tools/registry/todo.py": {
+      "num_branches": 0,
+      "num_statements": 16,
+      "percent_covered": 75.0
+    },
+    "src/workgate/tools/registry/transfer.py": {
+      "num_branches": 0,
+      "num_statements": 50,
+      "percent_covered": 76.0
+    },
+    "src/workgate/tools/registry/version.py": {
+      "num_branches": 0,
+      "num_statements": 10,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/registry/workspace_connector.py": {
+      "num_branches": 0,
+      "num_statements": 17,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/input_models/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/input_models/audit.py": {
+      "num_branches": 0,
+      "num_statements": 11,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/input_models/jobs.py": {
+      "num_branches": 0,
+      "num_statements": 12,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/input_models/workspace_connector.py": {
+      "num_branches": 0,
+      "num_statements": 4,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/result_models/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 0,
+      "percent_covered": 100.0
+    },
+    "src/workgate/tools/schemas/result_models/audit.py": {
+      "num_branches": 0,
+      "num_statements": 13,
       "percent_covered": 100.0
     },
     "src/workgate/tools/schemas/result_models/version.py": {
@@ -645,220 +1180,160 @@
       "num_statements": 14,
       "percent_covered": 100.0
     },
-    "src/workgate/terminal/bridge.py": {
-      "num_branches": 86,
-      "num_statements": 311,
-      "percent_covered": 76.574307
-    },
-    "src/workgate/terminal/conpty.py": {
-      "num_branches": 122,
-      "num_statements": 414,
-      "percent_covered": 73.320896
-    },
-    "src/workgate/terminal/tmux.py": {
-      "num_branches": 22,
-      "num_statements": 68,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tool_session/__init__.py": {
-      "num_branches": 0,
-      "num_statements": 2,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tool_session/selectors.py": {
-      "num_branches": 40,
-      "num_statements": 84,
-      "percent_covered": 85.483871
-    },
-    "src/workgate/tool_session/store.py": {
-      "num_branches": 28,
-      "num_statements": 140,
-      "percent_covered": 85.714286
-    },
-    "src/workgate/tools/__init__.py": {
+    "src/workgate/ui/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
       "percent_covered": 100.0
     },
-    "src/workgate/tools/contracts.py": {
+    "src/workgate/ui/cli.py": {
       "num_branches": 0,
-      "num_statements": 28,
-      "percent_covered": 92.857143
+      "num_statements": 15,
+      "percent_covered": 100.0
     },
-    "src/workgate/tools/declarative.py": {
-      "num_branches": 32,
-      "num_statements": 170,
-      "percent_covered": 96.039604
+    "src/workgate/ui/contracts.py": {
+      "num_branches": 0,
+      "num_statements": 8,
+      "percent_covered": 100.0
     },
-    "src/workgate/tools/local_handlers.py": {
-      "num_branches": 6,
-      "num_statements": 21,
-      "percent_covered": 92.592593
+    "src/workgate/ui/dashboard.py": {
+      "num_branches": 14,
+      "num_statements": 60,
+      "percent_covered": 91.891892
     },
-    "src/workgate/tools/registry/__init__.py": {
+    "src/workgate/ui/http/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/agent.py": {
-      "num_branches": 2,
-      "num_statements": 51,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/downloads.py": {
-      "num_branches": 0,
-      "num_statements": 26,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/files.py": {
-      "num_branches": 0,
-      "num_statements": 37,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/image.py": {
-      "num_branches": 0,
-      "num_statements": 13,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/jobs.py": {
-      "num_branches": 0,
-      "num_statements": 14,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/patch.py": {
-      "num_branches": 0,
-      "num_statements": 16,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/read.py": {
-      "num_branches": 0,
-      "num_statements": 16,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/remote.py": {
-      "num_branches": 6,
-      "num_statements": 65,
-      "percent_covered": 81.690141
-    },
-    "src/workgate/tools/registry/search.py": {
-      "num_branches": 0,
-      "num_statements": 28,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/secret_scan.py": {
-      "num_branches": 0,
-      "num_statements": 16,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/session.py": {
-      "num_branches": 0,
-      "num_statements": 26,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/shell.py": {
-      "num_branches": 0,
-      "num_statements": 37,
-      "percent_covered": 97.297297
-    },
-    "src/workgate/tools/registry/todo.py": {
-      "num_branches": 0,
-      "num_statements": 16,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/transfer.py": {
-      "num_branches": 0,
-      "num_statements": 59,
-      "percent_covered": 98.305085
-    },
-    "src/workgate/tools/registry/version.py": {
-      "num_branches": 0,
-      "num_statements": 10,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tools/registry/workspace_connector.py": {
-      "num_branches": 0,
-      "num_statements": 14,
       "percent_covered": 100.0
     },
     "src/workgate/ui/http/audit.py": {
-      "num_branches": 86,
-      "num_statements": 249,
-      "percent_covered": 81.791045
+      "num_branches": 92,
+      "num_statements": 250,
+      "percent_covered": 78.362573
+    },
+    "src/workgate/ui/http/common.py": {
+      "num_branches": 10,
+      "num_statements": 28,
+      "percent_covered": 100.0
     },
     "src/workgate/ui/http/dashboard.py": {
-      "num_branches": 72,
-      "num_statements": 174,
-      "percent_covered": 77.642276
+      "num_branches": 54,
+      "num_statements": 132,
+      "percent_covered": 76.88172
     },
     "src/workgate/ui/http/files.py": {
-      "num_branches": 112,
-      "num_statements": 363,
-      "percent_covered": 85.263158
+      "num_branches": 36,
+      "num_statements": 120,
+      "percent_covered": 90.384615
     },
     "src/workgate/ui/http/image_preview.py": {
-      "num_branches": 16,
-      "num_statements": 47,
-      "percent_covered": 77.777778
+      "num_branches": 10,
+      "num_statements": 32,
+      "percent_covered": 76.190476
+    },
+    "src/workgate/ui/http/live_state.py": {
+      "num_branches": 24,
+      "num_statements": 109,
+      "percent_covered": 85.714286
     },
     "src/workgate/ui/http/opentui.py": {
       "num_branches": 58,
-      "num_statements": 255,
-      "percent_covered": 45.047923
-    },
-    "src/workgate/ui/http/remote_files.py": {
-      "num_branches": 76,
-      "num_statements": 257,
-      "percent_covered": 85.585586
-    },
-    "src/workgate/ui/http/remotes.py": {
-      "num_branches": 60,
-      "num_statements": 195,
-      "percent_covered": 86.666667
+      "num_statements": 256,
+      "percent_covered": 45.22293
     },
     "src/workgate/ui/http/routes.py": {
-      "num_branches": 12,
-      "num_statements": 75,
-      "percent_covered": 90.804598
+      "num_branches": 16,
+      "num_statements": 99,
+      "percent_covered": 89.565217
+    },
+    "src/workgate/ui/http/session.py": {
+      "num_branches": 36,
+      "num_statements": 141,
+      "percent_covered": 85.310734
+    },
+    "src/workgate/ui/http/session_snapshot.py": {
+      "num_branches": 4,
+      "num_statements": 50,
+      "percent_covered": 22.222222
+    },
+    "src/workgate/ui/http/sessions.py": {
+      "num_branches": 26,
+      "num_statements": 110,
+      "percent_covered": 16.176471
+    },
+    "src/workgate/ui/http/terminal_protocol.py": {
+      "num_branches": 70,
+      "num_statements": 269,
+      "percent_covered": 82.300885
+    },
+    "src/workgate/ui/http/terminal_websocket.py": {
+      "num_branches": 68,
+      "num_statements": 247,
+      "percent_covered": 72.380952
     },
     "src/workgate/ui/http/terminals.py": {
-      "num_branches": 212,
-      "num_statements": 689,
-      "percent_covered": 77.358491
+      "num_branches": 40,
+      "num_statements": 189,
+      "percent_covered": 89.519651
     },
     "src/workgate/ui/http/todos.py": {
-      "num_branches": 36,
-      "num_statements": 136,
-      "percent_covered": 91.860465
-    },
-    "src/workgate/ui/image_preview.py": {
-      "num_branches": 6,
-      "num_statements": 43,
-      "percent_covered": 89.795918
+      "num_branches": 26,
+      "num_statements": 106,
+      "percent_covered": 90.151515
     },
     "src/workgate/ui/runtime.py": {
-      "num_branches": 38,
-      "num_statements": 121,
-      "percent_covered": 82.389937
+      "num_branches": 60,
+      "num_statements": 174,
+      "percent_covered": 83.760684
     },
     "src/workgate/ui/security.py": {
       "num_branches": 14,
-      "num_statements": 75,
-      "percent_covered": 64.044944
+      "num_statements": 74,
+      "percent_covered": 65.909091
+    },
+    "src/workgate/ui/session.py": {
+      "num_branches": 44,
+      "num_statements": 153,
+      "percent_covered": 91.878173
     },
     "src/workgate/utils/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
       "percent_covered": 100.0
     },
-    "src/workgate/utils/path_locks.py": {
-      "num_branches": 12,
-      "num_statements": 59,
+    "src/workgate/utils/image_preview.py": {
+      "num_branches": 6,
+      "num_statements": 43,
+      "percent_covered": 89.795918
+    },
+    "src/workgate/utils/image_types.py": {
+      "num_branches": 8,
+      "num_statements": 10,
       "percent_covered": 100.0
     },
+    "src/workgate/utils/path_locks.py": {
+      "num_branches": 12,
+      "num_statements": 57,
+      "percent_covered": 100.0
+    },
+    "src/workgate/utils/path_policy.py": {
+      "num_branches": 14,
+      "num_statements": 36,
+      "percent_covered": 92.0
+    },
     "src/workgate/utils/private_files.py": {
-      "num_branches": 6,
-      "num_statements": 67,
-      "percent_covered": 91.780822
+      "num_branches": 18,
+      "num_statements": 126,
+      "percent_covered": 97.916667
+    },
+    "src/workgate/utils/processes.py": {
+      "num_branches": 8,
+      "num_statements": 27,
+      "percent_covered": 100.0
+    },
+    "src/workgate/utils/runtime_identity.py": {
+      "num_branches": 18,
+      "num_statements": 71,
+      "percent_covered": 84.269663
     },
     "src/workgate/utils/serialization.py": {
       "num_branches": 18,
@@ -867,15 +1342,12 @@
     },
     "src/workgate/version.py": {
       "num_branches": 2,
-      "num_statements": 17,
-      "percent_covered": 78.947368
+      "num_statements": 25,
+      "percent_covered": 85.185185
     }
   },
   "policy": {
     "adapter_files": [
-      "src/workgate/remote/http.py",
-      "src/workgate/remote/responses.py",
-      "src/workgate/remote/service.py",
       "src/workgate/tools/local_handlers.py"
     ],
     "adapter_prefixes": [
@@ -891,14 +1363,10 @@
       "src/workgate/agent_bridge/auth_store.py",
       "src/workgate/agent_bridge/redaction.py",
       "src/workgate/config/settings.py",
-      "src/workgate/jobs/runtime.py",
-      "src/workgate/ops/files.py",
-      "src/workgate/ops/patch/envelope.py",
-      "src/workgate/ops/secret_scan.py",
-      "src/workgate/ops/shell.py",
-      "src/workgate/ops/transfer.py",
-      "src/workgate/remote/manager.py",
-      "src/workgate/remote/transfer_gateway.py",
+      "src/workgate/control/executor_transport.py",
+      "src/workgate/control/pairing.py",
+      "src/workgate/control/state.py",
+      "src/workgate/protocol/credentials.py",
       "src/workgate/tool_session/store.py",
       "src/workgate/ui/security.py",
       "src/workgate/utils/path_locks.py",
@@ -906,16 +1374,15 @@
     ],
     "critical_prefixes": [
       "src/workgate/audit/",
-      "src/workgate/oauth/",
-      "src/workgate/remote_worker/",
-      "src/workgate/terminal/"
+      "src/workgate/executor/",
+      "src/workgate/oauth/"
     ],
     "default_existing_drift_percent": 1.0,
     "new_adapter_min_percent": 60.0,
     "new_core_min_percent": 80.0,
     "total_drift_percent": 0.05
   },
-  "report_count": 2,
+  "report_count": 1,
   "schema_version": 2,
-  "total_percent_covered": 82.604226
+  "total_percent_covered": 87.140664
 }

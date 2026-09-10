@@ -160,8 +160,7 @@ void (async () => {
     fileShowHidden: document.getElementById("file-show-hidden"),
     fileState: document.getElementById("file-state"),
     fileUp: document.getElementById("file-up"),
-    lastUpdated: document.getElementById("last-updated"),
-                oauthLogin: document.getElementById("oauth-login"),
+    oauthLogin: document.getElementById("oauth-login"),
     executorDetailCreated: document.getElementById("executor-detail-created"),
     executorDetailId: document.getElementById("executor-detail-id"),
     executorDetailLastSeen: document.getElementById("executor-detail-last-seen"),
@@ -719,7 +718,6 @@ void (async () => {
     elements.executorTargetTotal.textContent = text(executorCounts.total, executorTargets.length);
     elements.executorTargetOnline.textContent = text(executorCounts.online, "0");
     elements.authMode.textContent = text(data.ui && data.ui.auth_mode, config.authMode);
-    elements.lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
     dashboard.renderExecutors(executorTargets);
     terminal.renderExecutors(executorTargets);
@@ -778,7 +776,6 @@ void (async () => {
         showAuthentication("Authentication required");
       } else {
         setConnection("Unavailable", "error");
-        elements.lastUpdated.textContent = error instanceof Error ? error.message : String(error);
       }
     } finally {
       elements.refresh.disabled = false;
@@ -791,9 +788,7 @@ void (async () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await load();
-      if (elements.authPanel.hidden) {
-        elements.lastUpdated.textContent = `OAuth callback ignored: ${message}`;
-      } else {
+      if (!elements.authPanel.hidden) {
         showAuthentication("Unable to sign in", message);
       }
       return;

@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 import workgate.executor.transfer as transfer_ops
+import workgate.executor.transfer_composition as transfer_composition
 from workgate.config.settings import Settings
 from workgate.executor.runtime import build_executor_runtime
+from workgate.tool_session.store import ToolSessionStore
 
 
 @pytest.mark.asyncio
@@ -17,7 +20,7 @@ async def test_composed_transfer_uses_explicit_executor_authority(
     workspace = tmp_path / "workspace"
     source_dir = workspace / "tree"
     source_dir.mkdir(parents=True)
-    (source_dir / "file.txt").write_text("payload\n", encoding="utf-8")
+    (source_dir / "file.txt").write_bytes(b"payload\n")
     settings = Settings(
         workspace_root=workspace,
         state_dir=tmp_path / "state",
@@ -74,3 +77,117 @@ async def test_composed_transfer_uses_explicit_executor_authority(
         encoding="utf-8"
     ) == ("payload\n")
     assert not archive.exists()
+
+
+@pytest.mark.asyncio
+async def test_transfer_composition_preserves_unbound_command_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = build_executor_runtime(
+        Settings(
+            workspace_root=workspace,
+            state_dir=tmp_path / "state",
+            remote_enabled=False,
+            agent_bridge_enabled=False,
+        ),
+        enable_control_connection=False,
+    )
+
+    class Store:
+        def __init__(self) -> None:
+            self.admitted: list[str] = []
+
+        def admit_active_session(self, session_id: str) -> None:
+            self.admitted.append(session_id)
+
+    store = Store()
+    handlers = transfer_composition.build_transfer_handlers(
+        runtime.config, cast(ToolSessionStore, store)
+    )
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def fake_to_thread(func: Any, *args: Any, **kwargs: Any) -> str:
+        calls.append((func.__name__, args, kwargs))
+        return func.__name__
+
+    monkeypatch.setattr(
+        transfer_composition.asyncio, "to_thread", fake_to_thread
+    )
+    common = {"session_id": "sess-command", "workdir": str(workspace)}
+
+    assert (
+        await handlers["transfer_read_chunk"](
+            {**common, "path": "source.bin", "offset": 4, "chunk_size": 16}
+        )
+        == "transfer_read_chunk"
+    )
+    assert (
+        await handlers["transfer_begin_write"](
+            {**common, "path": "dst.bin", "expected_bytes": 8}
+        )
+        == "transfer_begin_write"
+    )
+    assert (
+        await handlers["transfer_write_chunk"](
+            {
+                **common,
+                "path": "dst.bin",
+                "transfer_id": "transfer-1",
+                "offset": 0,
+                "data_b64": "eA==",
+            }
+        )
+        == "transfer_write_chunk"
+    )
+    assert (
+        await handlers["transfer_finish_write"](
+            {**common, "path": "dst.bin", "transfer_id": "transfer-1"}
+        )
+        == "transfer_finish_write"
+    )
+    assert (
+        await handlers["transfer_abort_write"](
+            {**common, "path": "dst.bin", "transfer_id": "transfer-1"}
+        )
+        == "transfer_abort_write"
+    )
+    assert (
+        await handlers["transfer_copy_file"](
+            {
+                "session_id": "sess-command",
+                "source_path": "source.bin",
+                "destination_path": "dst.bin",
+                "source_workdir": str(workspace),
+                "destination_workdir": str(workspace),
+            }
+        )
+        == "transfer_copy_file"
+    )
+    assert (
+        await handlers["transfer_delete_temp_path"](
+            {
+                "session_id": "sess-command",
+                "path": str(tmp_path / "scratch.bin"),
+            }
+        )
+        == "transfer_delete_temp_path"
+    )
+
+    assert store.admitted == ["sess-command"] * 7
+    assert [name for name, _args, _kwargs in calls] == [
+        "transfer_read_chunk",
+        "transfer_begin_write",
+        "transfer_write_chunk",
+        "transfer_finish_write",
+        "transfer_abort_write",
+        "transfer_copy_file",
+        "transfer_delete_temp_path",
+    ]
+    assert (
+        transfer_composition._transfer_session_id(
+            {"session_id": "sess-command", "_workgate_unbound_temp": True}
+        )
+        is None
+    )

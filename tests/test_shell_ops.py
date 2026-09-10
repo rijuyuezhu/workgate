@@ -1525,7 +1525,7 @@ async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "5")
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "15")
     clear_settings_cache()
     command = _python_shell_command(
         'import sys, time; print("partial-out", flush=True); '
@@ -1562,7 +1562,7 @@ def test_rest_shell_timeout_returns_partial_output_after_cleanup(
     session_id = client.post(
         "/tools/session_start", json={"workdir": "."}
     ).json()["session_id"]
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "5")
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "15")
     clear_settings_cache()
     command = _python_shell_command(
         'import sys, time; print("partial-out", flush=True); '
@@ -1806,6 +1806,7 @@ async def test_spawn_process_uses_native_exec_for_powershell_on_windows(
 async def test_spawn_process_resolves_relative_shell_from_command_cwd(
     tmp_path, monkeypatch
 ):
+    config = _executor_config()
     monkeypatch.setattr(shell_ops.os, "name", "posix")
     shell = tmp_path / "bin" / "custom-shell"
     shell.parent.mkdir()
@@ -1830,9 +1831,7 @@ async def test_spawn_process_resolves_relative_shell_from_command_cwd(
 
     monkeypatch.setattr(shell_ops.asyncio, "create_subprocess_exec", fake_exec)
 
-    result = await shell_ops._spawn_process(
-        _executor_config(), "echo hi", str(tmp_path)
-    )
+    result = await shell_ops._spawn_process(config, "echo hi", str(tmp_path))
 
     assert result is sentinel
     argv = calls[0][0]

@@ -8,6 +8,7 @@ from workgate.executor.dispatch import (
     EXECUTOR_OPERATION_NAMES,
     ExecutorDispatcher,
     build_executor_dispatcher,
+    execute_executor_tool,
 )
 from workgate.tools.machine import (
     EXECUTOR_AGENT_MCP_OPERATION_NAMES,
@@ -77,6 +78,50 @@ async def test_executor_dispatcher_rejects_unsupported_operation() -> None:
 
     with pytest.raises(ValueError, match="unsupported executor operation"):
         await dispatcher.execute("not-an-operation", {})
+
+
+@pytest.mark.asyncio
+async def test_default_composed_executor_handler_fails_closed() -> None:
+    dispatcher = build_executor_dispatcher()
+
+    with pytest.raises(
+        RuntimeError, match="search requires composed executor services"
+    ):
+        await dispatcher.execute("search", {"query": "needle"})
+
+
+@pytest.mark.asyncio
+async def test_default_dashboard_handler_executes_without_composed_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workgate.ui.dashboard as dashboard
+
+    monkeypatch.setattr(dashboard, "dashboard_snapshot", lambda: {"ok": True})
+
+    assert await execute_executor_tool("dashboard_snapshot", {}) == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_default_terminal_bridge_handler_applies_protocol_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workgate.executor.terminal.bridge as bridge
+
+    observed: list[tuple[str, int, int]] = []
+
+    async def open_bridge(shell_id: str, cols: int, rows: int) -> str:
+        observed.append((shell_id, cols, rows))
+        return "bridge"
+
+    monkeypatch.setattr(bridge, "open_terminal_bridge_execute", open_bridge)
+
+    assert (
+        await execute_executor_tool(
+            "open_terminal_bridge", {"shell_id": "shell-1"}
+        )
+        == "bridge"
+    )
+    assert observed == [("shell-1", 120, 36)]
 
 
 def test_executor_dispatcher_requires_exact_handler_set() -> None:

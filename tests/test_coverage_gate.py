@@ -76,9 +76,6 @@ def _run(
 def _policy() -> dict[str, Any]:
     return {
         "adapter_files": [
-            "src/workgate/remote/http.py",
-            "src/workgate/remote/responses.py",
-            "src/workgate/remote/service.py",
             "src/workgate/tools/local_handlers.py",
         ],
         "adapter_prefixes": [
@@ -95,14 +92,10 @@ def _policy() -> dict[str, Any]:
                 "src/workgate/agent_bridge/auth_store.py",
                 "src/workgate/agent_bridge/redaction.py",
                 "src/workgate/config/settings.py",
-                "src/workgate/ops/files.py",
-                "src/workgate/jobs/runtime.py",
-                "src/workgate/ops/patch/envelope.py",
-                "src/workgate/ops/secret_scan.py",
-                "src/workgate/ops/shell.py",
-                "src/workgate/ops/transfer.py",
-                "src/workgate/remote/manager.py",
-                "src/workgate/remote/transfer_gateway.py",
+                "src/workgate/control/executor_transport.py",
+                "src/workgate/control/pairing.py",
+                "src/workgate/control/state.py",
+                "src/workgate/protocol/credentials.py",
                 "src/workgate/tool_session/store.py",
                 "src/workgate/ui/security.py",
                 "src/workgate/utils/path_locks.py",
@@ -111,9 +104,8 @@ def _policy() -> dict[str, Any]:
         ),
         "critical_prefixes": [
             "src/workgate/audit/",
+            "src/workgate/executor/",
             "src/workgate/oauth/",
-            "src/workgate/remote_worker/",
-            "src/workgate/terminal/",
         ],
         "default_existing_drift_percent": 1.0,
         "new_adapter_min_percent": 60.0,

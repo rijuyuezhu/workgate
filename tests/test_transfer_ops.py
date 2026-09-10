@@ -641,3 +641,164 @@ def test_unpack_commit_failure_restores_previous_destination(
     assert archive.exists()
     assert not list(root.glob(".dst.unpack-*"))
     assert not list(root.glob(".dst.backup-*"))
+
+
+def test_explicit_workdir_transfer_resolution_is_bounded(tmp_path, monkeypatch):
+    root = _workspace(tmp_path, monkeypatch)
+    workdir = root / "session"
+    workdir.mkdir()
+    (workdir / "file.txt").write_text("payload", encoding="utf-8")
+    (root / "outside.txt").write_text("outside", encoding="utf-8")
+
+    stat = transfer_ops.transfer_stat(
+        "file.txt", workdir=str(workdir), context=_context()
+    )
+    assert Path(stat.path) == Path("session") / "file.txt"
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        transfer_ops.transfer_stat(
+            "file.txt",
+            session_id="sess-unused",
+            workdir=str(workdir),
+            context=_context(),
+        )
+    with pytest.raises(ValueError, match="escapes session workdir"):
+        transfer_ops.transfer_stat(
+            "../outside.txt", workdir=str(workdir), context=_context()
+        )
+
+
+def test_transfer_read_chunk_rejects_invalid_source_ranges(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "dir").mkdir()
+    (root / "file.bin").write_bytes(b"abc")
+
+    with pytest.raises(IsADirectoryError):
+        transfer_read_chunk("dir")
+    with pytest.raises(ValueError, match="offset must be >= 0"):
+        transfer_read_chunk("file.bin", offset=-1)
+    with pytest.raises(ValueError, match="exceeds source size"):
+        transfer_read_chunk("file.bin", offset=4)
+
+
+def test_transfer_copy_file_handles_same_path_and_destination_conflicts(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    source = root / "source.bin"
+    source.write_bytes(b"payload")
+
+    same = transfer_ops.transfer_copy_file(
+        "source.bin", "source.bin", context=_context()
+    )
+    assert same.completed is True
+    assert same.bytes == len(b"payload")
+    assert same.chunks == 1
+
+    with pytest.raises(FileExistsError):
+        transfer_ops.transfer_copy_file(
+            "source.bin", "source.bin", overwrite=False, context=_context()
+        )
+
+    copied = transfer_ops.transfer_copy_file(
+        "source.bin", "nested/dest.bin", chunk_size=3, context=_context()
+    )
+    assert copied.completed is True
+    assert copied.chunks == 3
+    assert (root / "nested" / "dest.bin").read_bytes() == b"payload"
+
+    with pytest.raises(FileExistsError):
+        transfer_ops.transfer_copy_file(
+            "source.bin", "nested/dest.bin", overwrite=False, context=_context()
+        )
+    (root / "directory-dest").mkdir()
+    with pytest.raises(IsADirectoryError):
+        transfer_ops.transfer_copy_file(
+            "source.bin", "directory-dest", context=_context()
+        )
+
+
+def test_transfer_begin_resume_validates_transaction_contract(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    transfer_id = "resume-1"
+    transfer_ops.transfer_begin_write(
+        "dest.bin",
+        expected_bytes=4,
+        transfer_id=transfer_id,
+        context=_context(),
+    )
+    transfer_ops.transfer_write_bytes(
+        "dest.bin", transfer_id, 0, b"ab", context=_context()
+    )
+
+    resumed = transfer_ops.transfer_begin_write(
+        "dest.bin",
+        expected_bytes=4,
+        transfer_id=transfer_id,
+        context=_context(),
+    )
+    assert resumed.resumed is True
+    assert resumed.offset == 2
+
+    with pytest.raises(ValueError, match="overwrite mode mismatch"):
+        transfer_ops.transfer_begin_write(
+            "dest.bin",
+            overwrite=False,
+            expected_bytes=4,
+            transfer_id=transfer_id,
+            context=_context(),
+        )
+    with pytest.raises(ValueError, match="expected size mismatch"):
+        transfer_ops.transfer_begin_write(
+            "dest.bin",
+            expected_bytes=5,
+            transfer_id=transfer_id,
+            context=_context(),
+        )
+    with pytest.raises(ValueError, match="expected_bytes must be >= 0"):
+        transfer_ops.transfer_begin_write(
+            "negative.bin", expected_bytes=-1, context=_context()
+        )
+
+    transfer_abort_write("dest.bin", transfer_id)
+    (root / "existing.bin").write_bytes(b"old")
+    with pytest.raises(FileExistsError):
+        transfer_ops.transfer_begin_write(
+            "existing.bin", overwrite=False, context=_context()
+        )
+    (root / "directory-dest").mkdir()
+    with pytest.raises(IsADirectoryError):
+        transfer_ops.transfer_begin_write("directory-dest", context=_context())
+
+
+def test_transfer_payload_and_temp_path_validation(tmp_path, monkeypatch):
+    root = _workspace(tmp_path, monkeypatch)
+    begin = transfer_begin_write("dest.bin", expected_bytes=1)
+
+    with pytest.raises(ValueError, match="not valid base64"):
+        transfer_ops.transfer_write_chunk(
+            "dest.bin", begin.transfer_id, 0, "%%%", context=_context()
+        )
+    with pytest.raises(ValueError, match="offset must be >= 0"):
+        transfer_ops.transfer_write_bytes(
+            "dest.bin", begin.transfer_id, -1, b"x", context=_context()
+        )
+    transfer_abort_write("dest.bin", begin.transfer_id)
+
+    scratch = transfer_alloc_temp_path("unsafe/suffix")
+    assert scratch.path.endswith(".bin")
+    scratch_path = Path(scratch.path)
+    scratch_path.mkdir()
+    with pytest.raises(IsADirectoryError):
+        transfer_ops.transfer_delete_temp_path(scratch.path, context=_context())
+    scratch_path.rmdir()
+
+    (root / "file.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="compression"):
+        transfer_pack_dir(".", compression="zip")
+    with pytest.raises(NotADirectoryError):
+        transfer_pack_dir("file.txt", compression="none")

@@ -8,7 +8,7 @@ from tests.browser.harness import BrowserHarness
 
 def _wait_terminal_output(
     harness: BrowserHarness,
-    machine: str,
+    executor_id: str,
     shell_id: str,
     marker: str,
     *,
@@ -19,7 +19,7 @@ def _wait_terminal_output(
     while time.monotonic() < deadline:
         result = harness.api(
             "GET",
-            f"/api/ui/terminals/read?machine={machine}&shell_id={shell_id}&lines=1000",
+            f"/api/ui/terminals/read?executor_id={executor_id}&shell_id={shell_id}&lines=1000",
         )
         if result["status"] == 200:
             output = str(result["payload"]["data"].get("output") or "")
@@ -68,22 +68,22 @@ def _start_terminal(harness: BrowserHarness, name: str) -> str:
         "button", name="New terminal"
     ).click()
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
-    machine = page.locator("#terminal-machine").input_value()
+    executor_id = page.locator("#terminal-executor").input_value()
     inventory = harness.api(
         "GET",
-        f"/api/ui/terminals?machine={machine}",
+        f"/api/ui/terminals?executor_id={executor_id}",
     )
     assert inventory["status"] == 200
     shells = inventory["payload"]["data"]["shells"]
     match = next(item for item in shells if item.get("shell_id") == name)
     shell_id = str(match["shell_id"])
-    harness.track_terminal(machine, shell_id)
+    harness.track_terminal(executor_id, shell_id)
     return shell_id
 
 
 def _send_terminal(
     harness: BrowserHarness,
-    machine: str,
+    executor_id: str,
     shell_id: str,
     command: str,
     marker: str,
@@ -100,46 +100,47 @@ def _send_terminal(
     ).click()
     _wait_terminal_output(
         harness,
-        machine,
+        executor_id,
         shell_id,
         marker,
         websocket_event_start=websocket_event_start,
     )
 
 
-def run_terminals_remote(harness: BrowserHarness) -> None:
+def run_terminals(harness: BrowserHarness) -> None:
     page = harness.page
     suffix = secrets.token_hex(4)
     harness.navigate("terminals")
 
-    local_shell = _start_terminal(harness, f"browser-local-{suffix}")
+    executor_id = harness.executor_id
+    executor_shell = _start_terminal(harness, f"browser-executor-{suffix}")
     _send_terminal(
         harness,
-        "local",
-        local_shell,
-        "printf 'local-terminal-%s\\n' e2e",
-        "local-terminal-e2e",
+        executor_id,
+        executor_shell,
+        "printf 'executor-terminal-%s\\n' e2e",
+        "executor-terminal-e2e",
     )
     initial_resize_start = len(harness.websocket_events)
     page.evaluate("window.dispatchEvent(new Event('resize'))")
-    _wait_terminal_resize(harness, local_shell, initial_resize_start)
+    _wait_terminal_resize(harness, executor_shell, initial_resize_start)
 
     hidden_resize_start = len(harness.websocket_events)
     harness.navigate("files")
     page.wait_for_timeout(250)
     assert not _terminal_resize_events(
-        harness, local_shell, hidden_resize_start
+        harness, executor_shell, hidden_resize_start
     )
 
     visible_resize_start = len(harness.websocket_events)
     harness.navigate("terminals")
-    _wait_terminal_resize(harness, local_shell, visible_resize_start)
+    _wait_terminal_resize(harness, executor_shell, visible_resize_start)
     resized = harness.api(
         "POST",
         "/api/ui/terminals/resize",
         body={
-            "machine": "local",
-            "shell_id": local_shell,
+            "executor_id": executor_id,
+            "shell_id": executor_shell,
             "cols": 111,
             "rows": 37,
         },
@@ -149,8 +150,8 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
 
     _send_terminal(
         harness,
-        "local",
-        local_shell,
+        executor_id,
+        executor_shell,
         "printf '%s\\n' {1..180}; printf 'scroll-%s\\n' complete",
         "scroll-complete",
     )
@@ -179,7 +180,7 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
     session_button = page.locator(
-        f'#terminal-list .terminal-session[title*="{local_shell}"]'
+        f'#terminal-list .terminal-session[title*="{executor_shell}"]'
     )
     expect(session_button).to_be_visible()
     session_button.click()
@@ -187,20 +188,16 @@ def run_terminals_remote(harness: BrowserHarness) -> None:
     expect(page.locator("#terminal-xterm .xterm")).to_be_visible()
     _wait_terminal_output(
         harness,
-        "local",
-        local_shell,
+        executor_id,
+        executor_shell,
         "scroll-complete",
         websocket_event_start=reload_websocket_start,
     )
-    # Legacy remote-worker enrollment UI was retired in PR5. Browser coverage
-    # now stays on the local Human UI path until final executor-backed remote
-    # file/session/terminal routing lands in the later migration PRs. The
-    # legacy remote protocol remains covered by its non-browser E2E suite.
     harness.navigate("terminals")
     page.locator(
-        f'#terminal-list .terminal-session[title*="{local_shell}"]'
+        f'#terminal-list .terminal-session[title*="{executor_shell}"]'
     ).click()
     page.locator("#terminal-kill").click()
     expect(page.locator("#terminal-state")).to_contain_text(
-        "0 session(s) · local"
+        f"0 session(s) · {executor_id}"
     )

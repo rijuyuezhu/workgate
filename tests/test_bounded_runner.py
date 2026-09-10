@@ -1250,7 +1250,7 @@ def test_macos_launchd_reaps_setsid_escape(tmp_path):
         [
             sys.executable,
             "-m",
-            "workgate.ops.utils.bounded_runner",
+            "workgate.executor.bounded_runner",
             "--shell",
             "/bin/sh",
             "--command",

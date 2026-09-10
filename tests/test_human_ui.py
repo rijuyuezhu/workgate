@@ -186,6 +186,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     script = client.get("/ui/assets/web.js")
     assert script.status_code == 200
     assert script.headers["x-content-type-options"] == "nosniff"
+    bound_ids = set(
+        re.findall(r'document\.getElementById\("([^"]+)"\)', script.text)
+    )
+    html_ids = set(re.findall(r'\bid="([^"]+)"', index.text))
+    assert bound_ids <= html_ids, sorted(bound_ids - html_ids)
     assert "await Promise.all([" in script.text
     assert 'import(assetUrl("dashboard.js"))' in script.text
     assert 'import(assetUrl("executors.js"))' in script.text

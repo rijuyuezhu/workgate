@@ -83,9 +83,7 @@ def run_opentui_responsive(harness: BrowserHarness) -> None:
     _assert_no_horizontal_overflow(harness)
     views = {
         "overview": "#dashboard-panel",
-        "machines": "#machines-panel",
         "executors": "#executors-panel",
-        "remotes": "#remotes-panel",
         "sessions": "#session-panel",
         "terminals": "#terminal-panel",
         "files": "#file-panel",

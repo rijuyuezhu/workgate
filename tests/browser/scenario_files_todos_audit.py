@@ -17,7 +17,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(_file_entry(harness, "notes.txt")).to_be_visible()
     _file_entry(harness, "notes.txt").click()
     expect(page.locator("#file-preview-body")).to_contain_text(
-        "local browser fixture"
+        "executor browser fixture"
     )
     page.locator("#file-edit").click()
     expect(page.locator("#file-editor-form")).to_be_visible()
@@ -25,8 +25,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.locator("#file-editor-form").get_by_role(
         "button", name="Save file"
     ).click()
-    expect(page.locator("#file-state")).to_contain_text("Saved local:notes.txt")
-    assert harness.control_workspace.joinpath("notes.txt").read_text() == (
+    expect(page.locator("#file-state")).to_contain_text(
+        f"Saved {harness.executor_id}:notes.txt"
+    )
+    assert harness.executor_workspace.joinpath("notes.txt").read_text() == (
         "edited by Chromium\n"
     )
 
@@ -34,20 +36,20 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     def delay_stale_preview(route: Route) -> None:
         nonlocal delayed
-        if "stale-local.txt" in route.request.url and not delayed:
+        if "stale-executor.txt" in route.request.url and not delayed:
             delayed = True
             time.sleep(0.4)
         route.continue_()
 
     page.route("**/api/ui/files/preview**", delay_stale_preview)
-    _file_entry(harness, "stale-local.txt").click()
+    _file_entry(harness, "stale-executor.txt").click()
     _file_entry(harness, "notes.txt").click()
     expect(page.locator("#file-preview-body")).to_contain_text(
         "edited by Chromium"
     )
     page.wait_for_timeout(600)
     expect(page.locator("#file-preview-body")).not_to_contain_text(
-        "stale local preview"
+        "stale executor preview"
     )
     page.unroute("**/api/ui/files/preview**", delay_stale_preview)
 
@@ -59,12 +61,12 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.once("dialog", lambda dialog: dialog.accept("moved.txt"))
     page.locator("#file-move").click()
     expect(_file_entry(harness, "moved.txt")).to_be_visible()
-    assert not harness.control_workspace.joinpath("copied.txt").exists()
+    assert not harness.executor_workspace.joinpath("copied.txt").exists()
 
     page.once("dialog", lambda dialog: dialog.accept("renamed.txt"))
     page.locator("#file-rename").click()
     expect(_file_entry(harness, "renamed.txt")).to_be_visible()
-    assert harness.control_workspace.joinpath("renamed.txt").read_text() == (
+    assert harness.executor_workspace.joinpath("renamed.txt").read_text() == (
         "copy source\n"
     )
 
@@ -129,9 +131,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             f'#session-list .session-entry[data-session-id="{session_id}"] .session-entry-meta'
         )
     ).to_contain_text("missing on executor")
-    expect(page.locator("#todo-refresh")).to_be_disabled()
-    expect(page.locator("#todo-add")).to_be_disabled()
-    expect(page.locator("#session-audit-refresh")).to_be_disabled()
+    expect(page.locator("#todo-refresh")).to_be_enabled()
+    expect(page.locator("#todo-add")).to_be_enabled()
+    expect(page.locator("#session-audit-refresh")).to_be_enabled()
     expect(page.locator("#session-terminate")).to_be_enabled()
 
     availability_override = "executor_offline"
@@ -139,6 +141,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-status")).to_have_text(
         "Unavailable · executor offline"
     )
+    expect(page.locator("#todo-refresh")).to_be_enabled()
+    expect(page.locator("#todo-add")).to_be_enabled()
+    expect(page.locator("#session-audit-refresh")).to_be_enabled()
     expect(page.locator("#session-terminate")).to_be_disabled()
 
     page.unroute("**/api/ui/sessions**", project_session_availability)
@@ -176,11 +181,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     page.locator("#todo-save").click()
     expect(page.locator("#todo-state")).to_contain_text(f"Saved {session_id}")
-    local_todos = harness.api(
-        "GET", f"/api/ui/todos?machine=local&session_id={session_id}"
-    )
-    assert local_todos["status"] == 200
-    assert local_todos["payload"]["data"]["todos"][0]["content"] == (
+    todos = harness.api("GET", f"/api/ui/todos?session_id={session_id}")
+    assert todos["status"] == 200
+    assert todos["payload"]["data"]["todos"][0]["content"] == (
         "verify browser todos"
     )
 
