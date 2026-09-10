@@ -38,11 +38,13 @@ def test_session_orientation_discovers_workspace_instructions(
     (config.workspace_root / "AGENTS.md").write_text("root\n", encoding="utf-8")
     (nested / "CLAUDE.md").write_text("nested\n", encoding="utf-8")
 
-    assert _instruction_files(config, nested) == [
-        "project/src/CLAUDE.md",
-        "AGENTS.md",
+    assert [Path(path) for path in _instruction_files(config, nested)] == [
+        Path("project") / "src" / "CLAUDE.md",
+        Path("AGENTS.md"),
     ]
-    assert _relative_display(nested, config.workspace_root) == "project/src"
+    assert Path(_relative_display(nested, config.workspace_root)) == (
+        Path("project") / "src"
+    )
     outside = tmp_path / "outside"
     assert _relative_display(outside, config.workspace_root) == str(
         outside.resolve()

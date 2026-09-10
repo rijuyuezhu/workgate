@@ -423,12 +423,12 @@
     "src/workgate/executor/search/core.py": {
       "num_branches": 80,
       "num_statements": 179,
-      "percent_covered": 88.416988
+      "percent_covered": 87.258687
     },
     "src/workgate/executor/search/service.py": {
       "num_branches": 78,
       "num_statements": 269,
-      "percent_covered": 89.913545
+      "percent_covered": 86.167147
     },
     "src/workgate/executor/search_composition.py": {
       "num_branches": 4,
@@ -478,7 +478,7 @@
     "src/workgate/executor/terminal/conpty.py": {
       "num_branches": 184,
       "num_statements": 625,
-      "percent_covered": 78.368356
+      "percent_covered": 78.244747
     },
     "src/workgate/executor/terminal/contracts.py": {
       "num_branches": 0,
@@ -1382,7 +1382,7 @@
     "new_core_min_percent": 80.0,
     "total_drift_percent": 0.05
   },
-  "report_count": 1,
+  "report_count": 2,
   "schema_version": 2,
-  "total_percent_covered": 87.140664
+  "total_percent_covered": 87.087098
 }
