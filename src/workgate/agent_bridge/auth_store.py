@@ -121,6 +121,37 @@ class AgentAuthStore:
         revisions[server] = revision
         return revision
 
+    @classmethod
+    def _redaction_values_since_unlocked(
+        cls, data: dict[str, Any], server: str, cursor: int
+    ) -> tuple[str, ...]:
+        revision = cls._credential_revision_unlocked(data, server)
+        if cursor > revision:
+            raise ValueError(
+                "redaction cursor is newer than credential history"
+            )
+        history = data.get("credential_redaction_history", {}).get(server, [])
+        observed = {
+            int(item["revision"]): tuple(item["values"])
+            for item in history
+            if cursor < int(item["revision"]) <= revision
+        }
+        observed_revisions = sorted(observed)
+        if len(observed_revisions) != revision - cursor or any(
+            entry_revision != cursor + offset
+            for offset, entry_revision in enumerate(observed_revisions, start=1)
+        ):
+            raise AgentAuthRedactionHistoryLostError(
+                f"credential redaction history unavailable for server {server}"
+            )
+        return tuple(
+            dict.fromkeys(
+                value
+                for entry_revision in observed_revisions
+                for value in observed[entry_revision]
+            )
+        )
+
     def _mutate_with_redaction(self, server: str, mutate) -> bool:
         with self._thread_lock, private_file_lock(self.lock_path):
             data = self._read_unlocked()
@@ -489,39 +520,41 @@ class AgentAuthStore:
             raise ValueError("redaction cursor must be a non-negative integer")
         with self._thread_lock, private_file_lock(self.lock_path):
             data = self._read_unlocked()
-            revision = self._credential_revision_unlocked(data, server)
-            if cursor > revision:
-                raise ValueError(
-                    "redaction cursor is newer than credential history"
-                )
-            history = data.get("credential_redaction_history", {}).get(
-                server, []
-            )
-            observed = {
-                int(item["revision"]): tuple(item["values"])
-                for item in history
-                if cursor < int(item["revision"]) <= revision
-            }
-            observed_revisions = sorted(observed)
-            if len(observed_revisions) != revision - cursor or any(
-                entry_revision != cursor + offset
-                for offset, entry_revision in enumerate(
-                    observed_revisions, start=1
-                )
-            ):
-                raise AgentAuthRedactionHistoryLostError(
-                    f"credential redaction history unavailable for server {server}"
-                )
-            values = tuple(
-                dict.fromkeys(
-                    value
-                    for entry_revision in observed_revisions
-                    for value in observed[entry_revision]
-                )
-            )
+            values = self._redaction_values_since_unlocked(data, server, cursor)
         return {
             f"credential_observed_{index}": value
             for index, value in enumerate(values)
+        }
+
+    def global_redaction_values(self) -> dict[str, str]:
+        """Return all private values in this store's redaction security domain."""
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            values: list[str] = []
+            for server in sorted(data.get("credential_revisions", {})):
+                values.extend(
+                    self._redaction_values_since_unlocked(data, server, 0)
+                )
+            for server in sorted(data["servers"]):
+                entry = data["servers"][server]
+                values.extend(
+                    str(value) for value in entry.get("secrets", {}).values()
+                )
+                oauth = entry.get("oauth") or {}
+                tokens = oauth.get("tokens") or {}
+                values.extend(
+                    str(value)
+                    for value in (
+                        tokens.get("access_token"),
+                        tokens.get("refresh_token"),
+                        (oauth.get("client_info") or {}).get("client_secret"),
+                    )
+                    if value
+                )
+            retained = tuple(dict.fromkeys(value for value in values if value))
+        return {
+            f"credential_observed_{index}": value
+            for index, value in enumerate(retained)
         }
 
     def set_tokens(self, server: str, tokens: OAuthToken) -> None:

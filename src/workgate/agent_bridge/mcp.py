@@ -26,13 +26,6 @@ from .auth_store import AgentAuthStore
 from .models import AgentMcpServerConfig
 
 
-@dataclass(frozen=True)
-class _RedactionBaseline:
-    """Long-lived private-value history anchor for one configured MCP server."""
-
-    revision: int
-
-
 def _extend_redaction_map(
     mapping: Mapping[str, str], values: Mapping[str, str]
 ) -> dict[str, str]:
@@ -363,8 +356,6 @@ class AgentMcpClientManager:
         self._stdio_workers_lock = threading.RLock()
         self._stdio_lifecycle_locks: dict[str, threading.RLock] = {}
         self._stdio_lifecycle_locks_lock = threading.Lock()
-        self._redaction_baselines: dict[str, _RedactionBaseline] = {}
-        self._redaction_lock = threading.RLock()
 
     def resolved_maps(
         self, name: str, server: AgentMcpServerConfig
@@ -387,24 +378,17 @@ class AgentMcpClientManager:
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Return a durable-history baseline for one configured MCP server."""
+        """Validate the store-wide private-value redaction domain before use."""
         if self.auth_store is None:
             return None
-        with self._redaction_lock:
-            literal_values = tuple(
-                literal_config_mapping(server.env).values()
-            ) + tuple(literal_config_mapping(server.headers).values())
-            self.auth_store.observe_redaction_values(name, literal_values)
-            baseline = self._redaction_baselines.get(name)
-            if baseline is not None:
-                return baseline.revision
-
-            # Current authorization/config state is not a safe history boundary.
-            # Upstreams can echo credentials or literal transport values retired by
-            # logout or config reload, so every server validates history from zero.
-            self.auth_store.credential_redaction_values_since(name, 0)
-            self._redaction_baselines[name] = _RedactionBaseline(revision=0)
-            return 0
+        literal_values = tuple(
+            literal_config_mapping(server.env).values()
+        ) + tuple(literal_config_mapping(server.headers).values())
+        self.auth_store.observe_redaction_values(name, literal_values)
+        # Local server labels are mutable and therefore not confidentiality
+        # boundaries. Validate the complete store-wide history before upstream use.
+        self.auth_store.global_redaction_values()
+        return 0
 
     def redaction_maps_since(
         self,
@@ -416,15 +400,7 @@ class AgentMcpClientManager:
         env, headers = self.redaction_maps(name, server)
         if cursor is None or self.auth_store is None:
             return env, headers
-
-        with self._redaction_lock:
-            baseline = self._redaction_baselines.get(name)
-        effective_cursor = (
-            min(cursor, baseline.revision) if baseline is not None else cursor
-        )
-        observed = self.auth_store.credential_redaction_values_since(
-            name, effective_cursor
-        )
+        observed = self.auth_store.global_redaction_values()
         return _extend_redaction_map(env, observed), headers
 
     def auth_status(

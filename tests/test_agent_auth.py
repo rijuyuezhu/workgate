@@ -440,6 +440,41 @@ def test_mcp_manager_reconstructs_manifest_literal_history_after_restart(
         restarted_manager.close()
 
 
+def test_mcp_manager_redacts_manifest_literals_across_server_rename_and_restart(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+
+    def server(value: str) -> AgentMcpServerConfig:
+        return AgentMcpServerConfig.model_validate(
+            {
+                "type": "http",
+                "url": "https://same.example/mcp",
+                "headers": {"Authorization": value},
+            }
+        )
+
+    old_value = "oldBeforeRenameA1"
+    new_value = "newAfterRenameB2"
+    first_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        assert first_manager.redaction_cursor("docs", server(old_value)) == 0
+    finally:
+        first_manager.close()
+
+    restarted_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        current = server(new_value)
+        baseline = restarted_manager.redaction_cursor("docs2", current)
+        assert baseline == 0
+        env, headers = restarted_manager.redaction_maps_since(
+            "docs2", current, baseline
+        )
+        assert {old_value, new_value} <= set((*env.values(), *headers.values()))
+    finally:
+        restarted_manager.close()
+
+
 def test_durable_redaction_values_do_not_replace_current_env_redaction(
     tmp_path,
 ):
@@ -472,6 +507,91 @@ def test_durable_redaction_values_do_not_replace_current_env_redaction(
         baseline = manager.redaction_cursor("docs", server)
         env, _headers = manager.redaction_maps_since("docs", server, baseline)
         assert {"activeLegacySecretA1", "retiredLiteralB2"} <= set(env.values())
+    finally:
+        manager.close()
+
+
+def test_store_wide_redaction_includes_active_legacy_secret_after_server_rename(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {
+                    "docs": {
+                        "secrets": {"token": "activeBeforeRenameA1"},
+                        "oauth": {
+                            "tokens": {
+                                "access_token": "activeOauthBeforeRenameB2",
+                                "refresh_token": "refreshBeforeRenameC3",
+                                "token_type": "Bearer",
+                            },
+                            "client_info": {
+                                "client_id": "legacy-client",
+                                "client_secret": "clientBeforeRenameD4",
+                            },
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://same.example/mcp",
+            "headers": {"Authorization": "newAfterRenameB2"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        baseline = manager.redaction_cursor("docs2", current)
+        env, headers = manager.redaction_maps_since("docs2", current, baseline)
+        assert {
+            "activeBeforeRenameA1",
+            "activeOauthBeforeRenameB2",
+            "refreshBeforeRenameC3",
+            "clientBeforeRenameD4",
+            "newAfterRenameB2",
+        } <= set((*env.values(), *headers.values()))
+    finally:
+        manager.close()
+
+
+def test_store_wide_redaction_fails_closed_on_history_gap_under_old_server_name(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 2},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 2, "values": ["retiredOldB2"]}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    current = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://same.example/mcp",
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_cursor("docs2", current)
     finally:
         manager.close()
 
