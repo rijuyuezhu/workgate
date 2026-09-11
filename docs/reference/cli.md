@@ -50,13 +50,13 @@ Boolean CLI values are explicit:
 
 ```bash
 workgate server --allow-full-control false
-workgate server --remote-http-transfer-enabled true
+workgate server --agent-bridge-enabled true
 ```
 
 Every `WORKGATE_*` application setting has a matching CLI flag using lowercase dashed form. For example:
 
 ```text
-WORKGATE_REMOTE_HTTP_TRANSFER_ENABLED -> --remote-http-transfer-enabled true
+WORKGATE_AGENT_BRIDGE_ENABLED -> --agent-bridge-enabled true
 ```
 
 ## Executor commands

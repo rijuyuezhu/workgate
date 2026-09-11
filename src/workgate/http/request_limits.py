@@ -1,7 +1,6 @@
 """Shared ASGI request-body limits for REST, MCP, OAuth, and remote routes."""
 
 import contextlib
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -137,25 +136,11 @@ class RequestBodyLimitMiddleware:
 
         return replay
 
-    @staticmethod
-    def _is_streaming_transfer_put(scope: Scope) -> bool:
-        """Recognize only the private transfer PUT route handled by its own limits."""
-        path = str(scope.get("path") or "")
-        return (
-            str(scope.get("method") or "").upper() == "PUT"
-            and re.fullmatch(r"/remote/transfer/[A-Za-z0-9_-]{24,80}", path)
-            is not None
-        )
-
     async def __call__(
         self, scope: Scope, receive: Receive, send: Send
     ) -> None:
         """Buffer and replay one bounded HTTP body before downstream handling."""
-        if (
-            scope["type"] != "http"
-            or self.max_bytes <= 0
-            or self._is_streaming_transfer_put(scope)
-        ):
+        if scope["type"] != "http" or self.max_bytes <= 0:
             await self.app(scope, receive, send)
             return
 

@@ -3,18 +3,15 @@
 import hashlib
 import threading
 import time
-from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
-from ...config.settings import Settings, get_settings
 from ...errors import (
     SessionTerminationRequestedError,
 )
-from ...persistence import StateStore, get_state_store
-from ...tools.session_args import tool_input_session_ids
+from ...persistence import StateStore
 from ...utils.path_policy import resolve_path_with_policy
 from .records import (
     AgentSession,
@@ -72,32 +69,6 @@ class SessionPathResolver(Protocol):
     ) -> Path: ...
 
 
-def _settings_path_resolver(
-    settings_provider: Callable[[], Settings],
-) -> SessionPathResolver:
-    """Build the legacy resolver from this store's own settings view."""
-
-    def resolve(
-        path: str | Path,
-        *,
-        must_exist: bool = False,
-        allow_missing_parent: bool = True,
-        follow_final_symlink: bool = True,
-    ) -> Path:
-        settings = settings_provider()
-        return resolve_path_with_policy(
-            path,
-            workspace_root=settings.workspace_root,
-            allow_full_control=settings.allow_full_control,
-            path_denylist=tuple(settings.path_denylist),
-            must_exist=must_exist,
-            allow_missing_parent=allow_missing_parent,
-            follow_final_symlink=follow_final_symlink,
-        )
-
-    return resolve
-
-
 class UnknownAgentSessionError(ValueError):
     """Raised when a tool call references a missing agent session."""
 
@@ -107,16 +78,42 @@ class ToolSessionStore:
 
     def __init__(
         self,
-        state_store: StateStore | None = None,
-        settings_provider: Callable[[], Settings] = get_settings,
+        state_store: StateStore,
+        *,
         path_resolver: SessionPathResolver | None = None,
+        workspace_root: Path | None = None,
+        allow_full_control: bool = False,
+        path_denylist: tuple[str, ...] = (),
+        max_session_snapshots: int,
+        max_session_snapshot_bytes: int,
     ) -> None:
         self._lock = threading.RLock()
-        self._state_store = state_store or get_state_store()
-        self._settings_provider = settings_provider
-        self._path_resolver = path_resolver or _settings_path_resolver(
-            settings_provider
-        )
+        self._state_store = state_store
+        if path_resolver is None:
+            if workspace_root is None:
+                raise ValueError(
+                    "workspace_root is required when path_resolver is omitted"
+                )
+
+            def configured_path_resolver(
+                path: str | Path,
+                *,
+                must_exist: bool = False,
+                allow_missing_parent: bool = True,
+                follow_final_symlink: bool = True,
+            ) -> Path:
+                return resolve_path_with_policy(
+                    path,
+                    workspace_root=workspace_root,
+                    allow_full_control=allow_full_control,
+                    path_denylist=path_denylist,
+                    must_exist=must_exist,
+                    allow_missing_parent=allow_missing_parent,
+                    follow_final_symlink=follow_final_symlink,
+                )
+
+            path_resolver = configured_path_resolver
+        self._path_resolver = path_resolver
         self._session_repository = SessionRepository(
             self._state_store,
             metadata_max_bytes=SESSION_METADATA_MAX_BYTES,
@@ -126,7 +123,9 @@ class ToolSessionStore:
             status_max_bytes=SESSION_METADATA_MAX_BYTES,
         )
         self._snapshot_repository = SnapshotRepository(
-            self._state_store, self._settings_provider
+            self._state_store,
+            max_snapshots=max_session_snapshots,
+            max_bytes=max_session_snapshot_bytes,
         )
 
     _session_from_payload = staticmethod(session_from_payload)
@@ -663,25 +662,6 @@ def _resolve_session_path(
     return resolved
 
 
-def resolve_session_path(
-    session: AgentSession,
-    path: str | Path,
-    *,
-    must_exist: bool = False,
-    allow_missing_parent: bool = True,
-    follow_final_symlink: bool = True,
-) -> Path:
-    """Resolve a session path through the ambient compatibility policy."""
-    return _resolve_session_path(
-        session,
-        path,
-        resolver=_settings_path_resolver(get_settings),
-        must_exist=must_exist,
-        allow_missing_parent=allow_missing_parent,
-        follow_final_symlink=follow_final_symlink,
-    )
-
-
 def file_sha256(path: Path) -> str:
     """Return the SHA-256 digest of a file without loading it all at once."""
     digest = hashlib.sha256()
@@ -689,20 +669,6 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def enforce_tool_session_control(
-    value: Any, *, termination_cleanup: bool = False
-) -> None:
-    """Apply persisted immediate-stop policy to one model tool invocation."""
-    session_ids = tool_input_session_ids(value)
-    if not session_ids:
-        return
-    store = get_tool_session_store()
-    if termination_cleanup:
-        store.require_cleanup_sessions(session_ids)
-        return
-    store.admit_tool_sessions(session_ids)
 
 
 _STORE: ToolSessionStore | None = None
@@ -719,8 +685,7 @@ def configure_tool_session_store(
 
 
 def get_tool_session_store() -> ToolSessionStore:
-    """Return the configured session store, with a compatibility lazy fallback."""
-    global _STORE
+    """Return the explicitly configured executor session store."""
     if _STORE is None:
-        _STORE = ToolSessionStore()
+        raise RuntimeError("executor tool-session store is not configured")
     return _STORE

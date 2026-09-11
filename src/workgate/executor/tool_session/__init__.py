@@ -14,10 +14,8 @@ from .store import (
     AgentSession,
     UnknownAgentSessionError,
     configure_tool_session_store,
-    enforce_tool_session_control,
     file_sha256,
     get_tool_session_store,
-    resolve_session_path,
 )
 
 __all__ = [
@@ -29,9 +27,7 @@ __all__ = [
     "SessionTerminationRequestedError",
     "UnknownAgentSessionError",
     "configure_tool_session_store",
-    "enforce_tool_session_control",
     "file_sha256",
     "get_tool_session_store",
-    "resolve_session_path",
     "tool_input_session_ids",
 ]

@@ -7,6 +7,7 @@ from starlette.testclient import TestClient
 
 import workgate.control.http.app as http_app
 import workgate.control.mcp.app as mcp_app
+from tests.helpers import build_tool_session_store
 from workgate.config.settings import Settings, configure_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp, build_mcp_http_app
@@ -15,7 +16,6 @@ from workgate.executor.tool_session import (
     configure_tool_session_store,
     get_tool_session_store,
 )
-from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.persistence import (
     FileStateStore,
     configure_state_store,
@@ -27,9 +27,8 @@ def _install_outer_stores(settings: Settings):
     outer_state_store = FileStateStore(
         lambda: settings.state_dir.parent / "outer-state"
     )
-    outer_session_store = ToolSessionStore(
-        state_store=outer_state_store,
-        settings_provider=lambda: settings,
+    outer_session_store = build_tool_session_store(
+        settings, state_store=outer_state_store
     )
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)

@@ -264,6 +264,22 @@ class AgentAuthStore:
                 f"Agent Bridge OAuth tokens for {server} are invalid"
             ) from exc
 
+    def oauth_redaction_values(self, server: str) -> dict[str, str]:
+        """Return private OAuth credential values owned by this store for redaction only."""
+        values: dict[str, str] = {}
+        tokens = self.get_tokens(server)
+        if tokens is not None:
+            for field in ("access_token", "refresh_token"):
+                value = getattr(tokens, field, None)
+                if value:
+                    values[f"oauth_{field}"] = str(value)
+        client_info = self.get_client_info(server)
+        if client_info is not None:
+            client_secret = getattr(client_info, "client_secret", None)
+            if client_secret:
+                values["oauth_client_secret"] = str(client_secret)
+        return values
+
     def set_tokens(self, server: str, tokens: OAuthToken) -> None:
         """Persist OAuth tokens and their absolute expiry timestamp."""
         server = _validate_name(server, "server name")

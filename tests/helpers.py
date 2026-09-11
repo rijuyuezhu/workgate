@@ -12,11 +12,13 @@ from pydantic import JsonValue, TypeAdapter
 from workgate.config.settings import Settings
 from workgate.control.runtime import ControlRuntime, build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import operation_error_from_exception
 from workgate.executor.hello import build_executor_hello
 from workgate.executor.runtime import ExecutorRuntime, build_executor_runtime
 from workgate.executor.services import install_runtime_services
-from workgate.persistence import use_state_store
+from workgate.executor.tool_session.store import ToolSessionStore
+from workgate.persistence import FileStateStore, StateStore, use_state_store
 from workgate.protocol.credentials import (
     executor_credential_verifier,
     new_executor_credential,
@@ -26,6 +28,21 @@ from workgate.protocol.ids import new_command_id, new_executor_id
 from workgate.utils.serialization import to_jsonable
 
 _JSON_VALUE = TypeAdapter(JsonValue)
+
+
+def build_tool_session_store(
+    settings: Settings, *, state_store: StateStore | None = None
+) -> ToolSessionStore:
+    """Build one explicitly configured executor session store for tests."""
+    config = resolve_executor_config(settings)
+    return ToolSessionStore(
+        state_store=state_store or FileStateStore(lambda: config.state_dir),
+        workspace_root=config.workspace_root,
+        allow_full_control=config.allow_full_control,
+        path_denylist=config.path_denylist,
+        max_session_snapshots=config.max_session_snapshots,
+        max_session_snapshot_bytes=config.max_session_snapshot_bytes,
+    )
 
 
 @dataclass
@@ -100,7 +117,8 @@ def build_paired_control_harness(
         }
     )
     executor = build_executor_runtime(
-        executor_settings, enable_control_connection=False
+        resolve_executor_config(executor_settings),
+        enable_control_connection=False,
     )
     executor_id = str(new_executor_id())
     credential = new_executor_credential()

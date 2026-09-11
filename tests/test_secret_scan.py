@@ -1,7 +1,8 @@
 import pytest
 
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executor.files import files_config_from_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.files import files_config_from_executor_config
 from workgate.executor.files_service import FilesService
 from workgate.executor.secret_scan import (
     SecretScanService,
@@ -15,14 +16,18 @@ def _services(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     settings = Settings()
-    runtime = build_runtime_services(settings)
+    config = resolve_executor_config(settings)
+    runtime = build_runtime_services(config)
     store = runtime.tool_session_store
     session = store.create_session(
         session_id="sess_0000000000000000000001", workdir=tmp_path
     )
-    files = FilesService(files_config_from_settings(settings), store)
+    files = FilesService(
+        files_config_from_executor_config(config),
+        store,
+    )
     scan = SecretScanService(
-        files.config, store, settings.rg_bin, settings.max_grep_results
+        files.config, store, config.rg_bin, config.max_grep_results
     )
     return session.session_id, files, scan
 

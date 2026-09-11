@@ -11,7 +11,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.settings import Settings
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditLinesOutput,
@@ -25,6 +24,7 @@ from ..schemas.result_models.files import (
     WriteFileOutput,
 )
 from ..utils.path_locks import path_lock, path_locks
+from .config import ExecutorConfig
 from .path import (
     relative_display_from_root,
     resolve_path_with_policy,
@@ -54,15 +54,15 @@ class FilesConfig:
     """Maximum UTF-8 bytes accepted by file write and edit operations."""
 
 
-def files_config_from_settings(settings: Settings) -> FilesConfig:
-    """Project application settings to the values Files actually consumes."""
+def files_config_from_executor_config(config: ExecutorConfig) -> FilesConfig:
+    """Project resolved executor policy to the values Files consumes."""
     return FilesConfig(
-        workspace_root=settings.workspace_root,
-        allow_full_control=settings.allow_full_control,
-        path_denylist=tuple(settings.path_denylist),
-        max_directory_entries=settings.max_directory_entries,
-        max_file_read_bytes=settings.max_file_read_bytes,
-        max_file_write_bytes=settings.max_file_write_bytes,
+        workspace_root=config.workspace_root,
+        allow_full_control=config.allow_full_control,
+        path_denylist=config.path_denylist,
+        max_directory_entries=config.max_directory_entries,
+        max_file_read_bytes=config.max_file_read_bytes,
+        max_file_write_bytes=config.max_file_write_bytes,
     )
 
 

@@ -4,7 +4,8 @@ import shutil
 import pytest
 
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.files import files_config_from_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.files import files_config_from_executor_config
 from workgate.executor.files_service import FilesService
 from workgate.executor.search.composition import build_search_service
 from workgate.executor.tool_session.store import get_tool_session_store
@@ -27,7 +28,9 @@ def _create_session(workdir: str = ".") -> str:
 
 
 def _search_service():
-    return build_search_service(get_settings(), get_tool_session_store())
+    return build_search_service(
+        resolve_executor_config(get_settings()), get_tool_session_store()
+    )
 
 
 async def tree_view_execute(session_id, cwd=".", depth=3, max_entries=500):
@@ -105,7 +108,9 @@ async def grep_search_execute(
 
 def _files_service() -> FilesService:
     return FilesService(
-        files_config_from_settings(get_settings()),
+        files_config_from_executor_config(
+            resolve_executor_config(get_settings())
+        ),
         get_tool_session_store(),
     )
 

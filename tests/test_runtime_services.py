@@ -1,6 +1,7 @@
 import pytest
 
 import workgate.executor.services as executor_services
+from tests.helpers import build_tool_session_store
 from workgate.composition.services import (
     build_control_services,
     install_control_services,
@@ -8,6 +9,7 @@ from workgate.composition.services import (
 from workgate.config.settings import Settings
 from workgate.control.runtime import build_control_runtime
 from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.services import (
     build_runtime_services,
@@ -17,7 +19,6 @@ from workgate.executor.tool_session import (
     configure_tool_session_store,
     get_tool_session_store,
 )
-from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.jobs.managed import (
     ManagedJobsRuntime,
     configure_managed_jobs_runtime,
@@ -45,10 +46,7 @@ def _outer_services(tmp_path):
         state_dir=tmp_path / "outer-state",
     )
     state_store = FileStateStore(lambda: settings.state_dir)
-    session_store = ToolSessionStore(
-        state_store=state_store,
-        settings_provider=lambda: settings,
-    )
+    session_store = build_tool_session_store(settings, state_store=state_store)
     return settings, state_store, session_store
 
 
@@ -59,7 +57,7 @@ def test_executor_runtime_services_install_explicit_store_dependencies(
         workspace_root=tmp_path,
         state_dir=tmp_path / ".state",
     )
-    services = build_runtime_services(settings)
+    services = build_runtime_services(resolve_executor_config(settings))
 
     installation = install_runtime_services(services)
     try:
@@ -96,11 +94,12 @@ def test_role_service_construction_does_not_install_globals(tmp_path):
                 state_dir=tmp_path / "control-state",
             )
         )
+        executor_settings = Settings(
+            workspace_root=tmp_path,
+            state_dir=tmp_path / "executor-state",
+        )
         executor = build_runtime_services(
-            Settings(
-                workspace_root=tmp_path,
-                state_dir=tmp_path / "executor-state",
-            )
+            resolve_executor_config(executor_settings)
         )
 
         assert control.state_store is not outer_state_store
@@ -177,9 +176,11 @@ async def test_executor_runtime_lifespan_restores_bindings_after_exception(
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
     runtime = build_executor_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "executor-state",
+        resolve_executor_config(
+            Settings(
+                workspace_root=tmp_path,
+                state_dir=tmp_path / "executor-state",
+            )
         ),
         enable_control_connection=False,
     )
@@ -207,11 +208,12 @@ def test_executor_service_installation_rolls_back_partial_startup(
     _, outer_state_store, outer_session_store = _outer_services(tmp_path)
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
+    executor_settings = Settings(
+        workspace_root=tmp_path,
+        state_dir=tmp_path / "executor-state",
+    )
     services = build_runtime_services(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "executor-state",
-        )
+        resolve_executor_config(executor_settings)
     )
 
     def fail_session_install(_store):
@@ -240,9 +242,11 @@ async def test_executor_terminal_start_failure_restores_store_bindings(
     configure_state_store(outer_state_store)
     configure_tool_session_store(outer_session_store)
     runtime = build_executor_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "executor-state",
+        resolve_executor_config(
+            Settings(
+                workspace_root=tmp_path,
+                state_dir=tmp_path / "executor-state",
+            )
         ),
         enable_control_connection=False,
     )

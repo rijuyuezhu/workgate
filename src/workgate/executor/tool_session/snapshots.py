@@ -1,9 +1,7 @@
 """Durable grounding-snapshot repository below the session lifecycle authority."""
 
-from collections.abc import Callable
 from dataclasses import asdict
 
-from ...config.settings import Settings
 from ...persistence import StateStore
 from .records import (
     SnapshotRecord,
@@ -24,10 +22,13 @@ class SnapshotRepository:
     def __init__(
         self,
         state_store: StateStore,
-        settings_provider: Callable[[], Settings],
+        *,
+        max_snapshots: int,
+        max_bytes: int,
     ) -> None:
         self._state_store = state_store
-        self._settings_provider = settings_provider
+        self._max_snapshots = int(max_snapshots)
+        self._max_bytes = int(max_bytes)
         self._snapshots: dict[tuple[str, str], SnapshotRecord] = {}
 
     def clear_cache(self) -> None:
@@ -80,10 +81,7 @@ class SnapshotRepository:
             created_at=created_at,
             sequence=next_sequence,
         )
-        maximum_bytes = int(
-            self._settings_provider().max_session_snapshot_bytes
-        )
-        if encoded_snapshot_payload_bytes([record]) > maximum_bytes:
+        if encoded_snapshot_payload_bytes([record]) > self._max_bytes:
             raise ValueError(
                 "snapshot metadata exceeds max_session_snapshot_bytes"
             )
@@ -131,7 +129,6 @@ class SnapshotRepository:
 
     def _prune(self, session_id: str) -> None:
         """Keep newest snapshots within configured count and byte limits."""
-        settings = self._settings_provider()
         snapshots = sorted(
             (
                 snapshot
@@ -140,8 +137,8 @@ class SnapshotRepository:
             ),
             key=lambda snapshot: (snapshot.created_at, snapshot.sequence),
             reverse=True,
-        )[: int(settings.max_session_snapshots)]
-        maximum_bytes = int(settings.max_session_snapshot_bytes)
+        )[: self._max_snapshots]
+        maximum_bytes = self._max_bytes
         low = 0
         high = len(snapshots)
         while low < high:

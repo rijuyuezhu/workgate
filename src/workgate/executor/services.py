@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from ..config.settings import Settings
 from ..persistence import FileStateStore, StateStore, configure_state_store
+from .config import ExecutorConfig
 from .tool_session import configure_tool_session_store
 from .tool_session.store import SessionPathResolver, ToolSessionStore
 
@@ -33,16 +33,20 @@ class RuntimeServiceInstallation:
 
 
 def build_runtime_services(
-    settings: Settings,
+    config: ExecutorConfig,
     *,
     path_resolver: SessionPathResolver | None = None,
 ) -> RuntimeServices:
     """Construct executor state and machine-session services without installing them."""
-    state_store = FileStateStore(lambda: settings.state_dir)
+    state_store = FileStateStore(lambda: config.state_dir)
     tool_session_store = ToolSessionStore(
         state_store=state_store,
-        settings_provider=lambda: settings,
         path_resolver=path_resolver,
+        workspace_root=config.workspace_root,
+        allow_full_control=config.allow_full_control,
+        path_denylist=config.path_denylist,
+        max_session_snapshots=config.max_session_snapshots,
+        max_session_snapshot_bytes=config.max_session_snapshot_bytes,
     )
     return RuntimeServices(
         state_store=state_store,

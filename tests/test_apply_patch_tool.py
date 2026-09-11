@@ -5,7 +5,7 @@ import pytest
 
 import workgate.executor.patch.envelope as patch_ops
 from workgate.config.settings import Settings
-from workgate.executor.config import ExecutorConfig
+from workgate.executor.config import ExecutorConfig, resolve_executor_config
 from workgate.executor.patch import (
     APPLY_PATCH_PHASE_TIMEOUT_S,
     _git_apply_args,
@@ -50,7 +50,9 @@ def _executor_session(
         state_dir=state_dir,
         agent_bridge_enabled=False,
     )
-    runtime = build_executor_runtime(settings, enable_control_connection=False)
+    runtime = build_executor_runtime(
+        resolve_executor_config(settings), enable_control_connection=False
+    )
     session_id = "sess_0000000000000000000001"
     runtime.services.tool_session_store.create_session(
         session_id=session_id,

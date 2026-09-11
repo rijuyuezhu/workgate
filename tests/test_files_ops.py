@@ -15,7 +15,7 @@ from workgate.executor.files import (
     _list_files_local,
     _read_file_local,
     _write_file_local,
-    files_config_from_settings,
+    files_config_from_executor_config,
     parse_hashline_edit_input,
 )
 from workgate.executor.files_service import FilesService
@@ -51,7 +51,9 @@ def _local_binding(session_id: str | None) -> SessionBinding | None:
 
 
 def _files_config():
-    return files_config_from_settings(get_settings())
+    return files_config_from_executor_config(
+        resolve_executor_config(get_settings())
+    )
 
 
 def _resolve_ambient_path(path: str | Path) -> Path:
@@ -124,7 +126,9 @@ def _edit_lines(
 ):
     store = get_tool_session_store()
     return files_ops._edit_lines_local(
-        files_ops.files_config_from_settings(get_settings()),
+        files_ops.files_config_from_executor_config(
+            resolve_executor_config(get_settings())
+        ),
         store,
         _local_binding(session_id),
         path,
@@ -138,7 +142,9 @@ def _edit_lines(
 def _hashline_edit(input_text: str, session_id: str | None = None):
     store = get_tool_session_store()
     return files_ops._hashline_edit_local(
-        files_ops.files_config_from_settings(get_settings()),
+        files_ops.files_config_from_executor_config(
+            resolve_executor_config(get_settings())
+        ),
         store,
         _local_binding(session_id),
         input_text,

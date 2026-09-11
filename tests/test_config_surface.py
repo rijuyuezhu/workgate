@@ -122,20 +122,8 @@ def test_setting_spec_properties_cover_future_nullable_shapes(monkeypatch):
     assert not specs["annotated_list"].is_nullable
 
 
-def test_remote_http_transfer_limits_and_config_file_errors(tmp_path):
+def test_config_file_errors(tmp_path):
     assert settings_module._split_csv(None) == []
-
-    with pytest.raises(ValueError, match="must be greater than zero"):
-        Settings(remote_http_transfer_threshold_bytes=0)
-    with pytest.raises(ValueError, match="must not exceed 4194304"):
-        Settings(remote_http_transfer_chunk_bytes=4 * 1024 * 1024 + 1)
-    with pytest.raises(
-        ValueError, match="must not exceed remote_http_transfer_max"
-    ):
-        Settings(
-            remote_http_transfer_threshold_bytes=2,
-            remote_http_transfer_max_spool_bytes=1,
-        )
 
     missing = tmp_path / "missing.yaml"
     with pytest.raises(FileNotFoundError):

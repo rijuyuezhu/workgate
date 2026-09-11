@@ -6,6 +6,7 @@ import pytest
 import workgate.executor.transfer as transfer_ops
 import workgate.executor.transfer_composition as transfer_composition
 from workgate.config.settings import Settings
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.tool_session.store import ToolSessionStore
 
@@ -26,7 +27,9 @@ async def test_composed_transfer_uses_explicit_executor_authority(
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
-    runtime = build_executor_runtime(settings, enable_control_connection=False)
+    runtime = build_executor_runtime(
+        resolve_executor_config(settings), enable_control_connection=False
+    )
     session_id = "sess_0000000000000000000001"
     runtime.services.tool_session_store.create_session(
         session_id=session_id,
@@ -85,10 +88,12 @@ async def test_transfer_composition_preserves_unbound_command_admission(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     runtime = build_executor_runtime(
-        Settings(
-            workspace_root=workspace,
-            state_dir=tmp_path / "state",
-            agent_bridge_enabled=False,
+        resolve_executor_config(
+            Settings(
+                workspace_root=workspace,
+                state_dir=tmp_path / "state",
+                agent_bridge_enabled=False,
+            )
         ),
         enable_control_connection=False,
     )

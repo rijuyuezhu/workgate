@@ -34,10 +34,10 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     )
     assert executor.command_denylist == ("shutdown",)
     assert executor.path_denylist == (".env",)
+    assert executor.state_dir == settings.state_dir.resolve(strict=False)
     assert not hasattr(executor, "host")
     assert not hasattr(executor, "port")
     assert not hasattr(executor, "auth_mode")
-    assert not hasattr(executor, "state_dir")
     assert not hasattr(executor, "executor_max_pending_commands")
 
 
@@ -66,7 +66,9 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
     )
 
     control = build_control_runtime(control_settings)
-    executor = build_executor_runtime(executor_settings)
+    executor = build_executor_runtime(
+        resolve_executor_config(executor_settings)
+    )
 
     assert control.config.mode == "http"
     assert not hasattr(control, "legacy_settings")
@@ -77,4 +79,4 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
         executor.config.workspace_root
         == executor_settings.workspace_root.resolve(strict=False)
     )
-    assert executor.legacy_settings is executor_settings
+    assert not hasattr(executor, "legacy_settings")

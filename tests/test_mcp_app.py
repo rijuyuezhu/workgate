@@ -149,7 +149,6 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
     runtime_settings = Settings(
         mode="mcp",
         auth_mode="oauth",
-        remote_http_transfer_enabled=False,
         base_url="https://runtime.example",
         mcp_max_sessions=17,
         max_http_request_bytes=4321,

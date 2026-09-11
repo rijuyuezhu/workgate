@@ -15,6 +15,7 @@ from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import ExecutorConnection
 from workgate.executor.control_client import ExecutorControlClient
 from workgate.executor.hello import build_executor_hello
@@ -70,10 +71,12 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
         )
     )
     executor = build_executor_runtime(
-        Settings(
-            workspace_root=executor_workspace,
-            state_dir=tmp_path / "executor-state",
-            agent_bridge_enabled=False,
+        resolve_executor_config(
+            Settings(
+                workspace_root=executor_workspace,
+                state_dir=tmp_path / "executor-state",
+                agent_bridge_enabled=False,
+            )
         ),
         enable_control_connection=False,
     )

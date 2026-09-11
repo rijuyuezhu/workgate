@@ -625,7 +625,8 @@ from types import SimpleNamespace
 import workgate.executor.shell as shell_ops
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.config import resolve_executor_config
-from workgate.executor.tool_session.store import get_tool_session_store
+from workgate.executor.services import build_runtime_services
+from workgate.persistence import configure_state_store
 
 workspace = Path(__import__("sys").argv[1])
 active_path = Path(__import__("sys").argv[2])
@@ -634,7 +635,9 @@ result_path = Path(__import__("sys").argv[4])
 shell_name = __import__("sys").argv[5]
 clear_settings_cache()
 config = resolve_executor_config(get_settings())
-store = get_tool_session_store()
+services = build_runtime_services(config)
+configure_state_store(services.state_store)
+store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: False
 shell_ops._tmux_session_name = lambda _name: shell_name
@@ -764,9 +767,9 @@ import workgate.executor.terminal.conpty as conpty
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.tool_timeouts import tool_timeout_s
 from workgate.executor.config import resolve_executor_config
+from workgate.executor.services import build_runtime_services
 from workgate.executor.terminal.runtime import build_terminal_runtime
-from workgate.persistence import get_state_store
-from workgate.executor.tool_session.store import get_tool_session_store
+from workgate.persistence import configure_state_store
 
 workspace = Path(__import__("sys").argv[1])
 barrier_path = Path(__import__("sys").argv[2])
@@ -775,7 +778,9 @@ shell_name = __import__("sys").argv[4]
 owner_bound = __import__("sys").argv[5] == "1"
 clear_settings_cache()
 config = resolve_executor_config(get_settings())
-store = get_tool_session_store()
+services = build_runtime_services(config)
+configure_state_store(services.state_store)
+store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: True
 shell_ops._tmux_session_name = lambda name: str(name)
@@ -812,7 +817,7 @@ while not barrier_path.exists():
     time.sleep(0.01)
 
 async def main():
-    runtime = build_terminal_runtime(get_state_store(), workspace_root=Path.cwd())
+    runtime = build_terminal_runtime(services.state_store, workspace_root=Path.cwd())
     await runtime.start()
     try:
         output = await shell_ops.start_persistent_shell_execute(

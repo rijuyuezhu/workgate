@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from tests.helpers import build_tool_session_store
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.errors import ExecutorOperationFailure
@@ -16,7 +17,6 @@ from workgate.executor.tool_session.store import (
     ToolSessionStore,
     UnknownAgentSessionError,
 )
-from workgate.persistence import FileStateStore
 
 
 def _real_service(tmp_path: Path) -> ExecutorSessionService:
@@ -27,10 +27,7 @@ def _real_service(tmp_path: Path) -> ExecutorSessionService:
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
-    store = ToolSessionStore(
-        FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    store = build_tool_session_store(settings)
     config = resolve_executor_config(settings)
     return ExecutorSessionService(config, store, ShellService(config, store))
 
@@ -61,7 +58,9 @@ def test_executor_runtime_freezes_session_workspace_authority(
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
-    runtime = build_executor_runtime(settings, enable_control_connection=False)
+    runtime = build_executor_runtime(
+        resolve_executor_config(settings), enable_control_connection=False
+    )
     store = runtime.services.tool_session_store
 
     first_id = "sess_0000000000000000000001"

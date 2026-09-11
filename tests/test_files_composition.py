@@ -1,6 +1,7 @@
 import pytest
 
 from workgate.config.settings import Settings, clear_settings_cache
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.search_composition import (
     build_executor_dispatcher_with_search,
 )
@@ -25,10 +26,11 @@ async def test_composed_files_cover_read_write_edit_hashline_and_delete(
     tmp_path, monkeypatch
 ):
     settings = _settings(tmp_path, monkeypatch)
-    services = build_runtime_services(settings)
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
     store = services.tool_session_store
     session = store.create_session(session_id=_session_id(1), workdir=tmp_path)
-    dispatcher = build_executor_dispatcher_with_search(settings, store)
+    dispatcher = build_executor_dispatcher_with_search(config, store)
 
     written = await dispatcher.execute(
         "write_file",
@@ -83,14 +85,15 @@ async def test_composed_files_resolve_fresh_session_workdir_each_call(
     tmp_path, monkeypatch
 ):
     settings = _settings(tmp_path, monkeypatch)
-    services = build_runtime_services(settings)
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
     store = services.tool_session_store
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
     session = store.create_session(session_id=_session_id(2), workdir=first)
-    dispatcher = build_executor_dispatcher_with_search(settings, store)
+    dispatcher = build_executor_dispatcher_with_search(config, store)
 
     await dispatcher.execute(
         "write_file",

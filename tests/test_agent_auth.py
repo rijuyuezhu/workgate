@@ -130,6 +130,11 @@ def test_agent_oauth_storage_persists_expiry_client_and_refresh_token(tmp_path):
     assert tokens is not None
     assert tokens.access_token == "access-two"
     assert tokens.refresh_token == "refresh-one"
+    assert store.oauth_redaction_values("docs") == {
+        "oauth_access_token": "access-two",
+        "oauth_refresh_token": "refresh-one",
+        "oauth_client_secret": "client-secret",
+    }
     client_info = store.get_client_info("docs")
     expiry = store.oauth_expiry("docs")
     assert client_info is not None
@@ -141,6 +146,25 @@ def test_agent_oauth_storage_persists_expiry_client_and_refresh_token(tmp_path):
     assert metadata["has_access_token"] is True
     assert metadata["has_refresh_token"] is True
     assert metadata["client_registered"] is True
+
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        redaction_values, headers = manager.redaction_maps("docs", server)
+    finally:
+        manager.close()
+    assert headers == {}
+    assert set(redaction_values.values()) >= {
+        "access-two",
+        "refresh-one",
+        "client-secret",
+    }
 
 
 @pytest.mark.asyncio

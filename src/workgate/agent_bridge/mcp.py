@@ -354,8 +354,11 @@ class AgentMcpClientManager:
     def redaction_maps(
         self, name: str, server: AgentMcpServerConfig
     ) -> tuple[dict[str, str], dict[str, str]]:
-        """Resolve configured values solely for error/payload redaction."""
-        return self.resolved_maps(name, server)
+        """Resolve transport and owner-held credential values solely for redaction."""
+        env, headers = self.resolved_maps(name, server)
+        if self.auth_store is not None and server.auth.mode == "oauth":
+            env = {**env, **self.auth_store.oauth_redaction_values(name)}
+        return env, headers
 
     def auth_status(
         self, name: str, server: AgentMcpServerConfig

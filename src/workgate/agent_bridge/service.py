@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config.control import ControlSettingsView
-from ..config.settings import Settings, get_settings
+from ..config.settings import get_settings
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
     AgentConfigStatusOutput,
@@ -84,61 +84,6 @@ def _close_shared_agent_mcp_client_manager() -> None:
 
 
 atexit.register(_close_shared_agent_mcp_client_manager)
-
-
-def build_agent_registry_from_settings(
-    settings: Settings | None = None,
-    client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
-    *,
-    project_root: Path | None = None,
-    allow_stdio: bool = True,
-    include_project_skills: bool = True,
-    mcp_server_types: frozenset[str] | None = None,
-    scan_skills: bool = True,
-) -> AgentCapabilityRegistry:
-    """Build the current registry for the default workspace or one shared session."""
-    active_settings = settings or get_settings()
-    active_project_root = (
-        project_root
-        if project_root is not None
-        else active_settings.workspace_root
-        if scan_skills and include_project_skills
-        else active_settings.agent_config_dir
-    )
-    if client_manager_factory is AgentMcpClientManager:
-        client_manager = _shared_agent_mcp_client_manager(
-            active_settings, allow_stdio=allow_stdio
-        )
-    else:
-        client_manager = client_manager_factory(
-            active_settings.agent_mcp_call_timeout_s
-        )
-    return build_agent_registry(
-        active_settings.agent_config_dir,
-        client_manager,
-        active_settings.agent_mcp_probe_timeout_s,
-        None if active_settings.agent_dynamic_mcp_tools else False,
-        (None if active_settings.agent_dynamic_skill_tools else False)
-        if scan_skills
-        else False,
-        project_root=Path(active_project_root),
-        max_skills=active_settings.max_skills if scan_skills else 0,
-        max_skill_related_files=(
-            active_settings.max_skill_related_files if scan_skills else 0
-        ),
-        max_skill_scan_entries=(
-            active_settings.max_skill_scan_entries if scan_skills else 0
-        ),
-        max_skill_path_bytes=(
-            active_settings.max_skill_path_bytes if scan_skills else 0
-        ),
-        max_skill_entry_bytes=(
-            active_settings.max_file_read_bytes if scan_skills else 0
-        ),
-        include_project_skills=include_project_skills,
-        mcp_server_types=mcp_server_types,
-        scan_skills=scan_skills,
-    )
 
 
 def build_network_agent_registry_from_settings(
@@ -237,12 +182,8 @@ def redact_mcp_payload_strings(value: Any, *maps: dict[str, str]) -> Any:
     return redact_configured_value_tree(value, *maps)
 
 
-def redact_mcp_error_payload(data: Any, *maps: dict[str, str]) -> Any:
-    """Redact only MCP tool-result payloads that are explicitly marked as errors."""
-    if not isinstance(data, dict) or not (
-        data.get("is_error") or data.get("isError")
-    ):
-        return data
+def redact_mcp_result_payload(data: Any, *maps: dict[str, str]) -> Any:
+    """Redact configured secrets and sensitive fields from any MCP tool result."""
     return redact_mcp_payload_strings(redact_mapping(data), *maps)
 
 
@@ -402,7 +343,7 @@ async def call_agent_mcp_tool_payload(
             f"MCP server {server} is unavailable: "
             f"{_agent_mcp_unavailable_error(registry, record)}"
         )
-    env, headers = manager_redaction_maps(
+    before_env, before_headers = manager_redaction_maps(
         registry.client_manager, server, record.config
     )
     try:
@@ -410,8 +351,18 @@ async def call_agent_mcp_tool_payload(
             server, record.config, tool, args or {}
         )
     except Exception as exc:
-        raise redacted_mcp_call_error(exc, env, headers) from None
-    output = redact_mcp_error_payload(data, env, headers)
+        after_env, after_headers = manager_redaction_maps(
+            registry.client_manager, server, record.config
+        )
+        raise redacted_mcp_call_error(
+            exc, before_env, before_headers, after_env, after_headers
+        ) from None
+    after_env, after_headers = manager_redaction_maps(
+        registry.client_manager, server, record.config
+    )
+    output = redact_mcp_result_payload(
+        data, before_env, before_headers, after_env, after_headers
+    )
     if not isinstance(output, dict):
         output = {"result": output}
     return CallAgentMcpToolOutput(**output)

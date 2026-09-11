@@ -7,7 +7,11 @@ import pytest
 from mcp.types import CallToolResult, ImageContent, TextContent
 
 import workgate.executor.image as image_ops
-from tests.helpers import build_paired_control_harness, mcp_structured
+from tests.helpers import (
+    build_paired_control_harness,
+    build_tool_session_store,
+    mcp_structured,
+)
 from workgate.config.settings import (
     Settings,
     clear_settings_cache,
@@ -16,7 +20,6 @@ from workgate.config.settings import (
 from workgate.control.mcp.app import build_mcp
 from workgate.executor.config import ExecutorConfig, resolve_executor_config
 from workgate.executor.tool_session.store import ToolSessionStore
-from workgate.persistence import FileStateStore
 from workgate.utils.image_types import detect_image_type
 
 PNG_BYTES = base64.b64decode(
@@ -37,10 +40,7 @@ def _executor(
     )
     config = resolve_executor_config(settings)
     config.workspace_root.mkdir(parents=True, exist_ok=True)
-    store = ToolSessionStore(
-        FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    store = build_tool_session_store(settings)
     session_id = "sess_0000000000000000000001"
     store.create_session(session_id=session_id, workdir=config.workspace_root)
     return config, store, session_id

@@ -53,17 +53,12 @@ def test_local_system_snapshot_uses_interval_cpu_and_network_samples(
         lambda path: SimpleNamespace(total=10_000, used=4_000, free=6_000),
     )
     monkeypatch.setattr(
-        telemetry_module,
-        "get_settings",
-        lambda: SimpleNamespace(workspace_root=tmp_path),
-    )
-    monkeypatch.setattr(
         telemetry_module.Path,
         "read_text",
         lambda self, encoding="utf-8": "123.5 0\n",
     )
 
-    snapshot = telemetry_module.local_system_snapshot()
+    snapshot = telemetry_module.local_system_snapshot(tmp_path)
 
     assert snapshot["cpu_percent"] == 70.0
     assert snapshot["cpu_count"] == 8
@@ -96,11 +91,6 @@ def test_local_system_snapshot_preserves_missing_metrics(
         lambda path: (_ for _ in ()).throw(OSError("missing")),
     )
     monkeypatch.setattr(
-        telemetry_module,
-        "get_settings",
-        lambda: SimpleNamespace(workspace_root=tmp_path),
-    )
-    monkeypatch.setattr(
         telemetry_module.Path,
         "read_text",
         lambda self, encoding="utf-8": (_ for _ in ()).throw(
@@ -108,7 +98,7 @@ def test_local_system_snapshot_preserves_missing_metrics(
         ),
     )
 
-    snapshot = telemetry_module.local_system_snapshot()
+    snapshot = telemetry_module.local_system_snapshot(tmp_path)
 
     assert snapshot["cpu_percent"] is None
     assert snapshot["memory_percent"] is None
@@ -211,18 +201,13 @@ def test_local_system_snapshot_records_first_samples_and_uses_load_fallback(
         lambda path: SimpleNamespace(total=100, used=25, free=75),
     )
     monkeypatch.setattr(
-        telemetry_module,
-        "get_settings",
-        lambda: SimpleNamespace(workspace_root=tmp_path),
-    )
-    monkeypatch.setattr(
         telemetry_module.Path,
         "read_text",
         lambda self, encoding="utf-8": "not-a-number\n",
     )
     monkeypatch.setattr(telemetry_module, "_PROCESS_STARTED_AT", 900.0)
 
-    snapshot = telemetry_module.local_system_snapshot()
+    snapshot = telemetry_module.local_system_snapshot(tmp_path)
 
     assert snapshot["cpu_percent"] == 50.0
     assert snapshot["network_rx_bps"] is None
@@ -260,17 +245,12 @@ def test_local_system_snapshot_ignores_nonpositive_sample_intervals(
         lambda path: SimpleNamespace(total=0, used=0, free=0),
     )
     monkeypatch.setattr(
-        telemetry_module,
-        "get_settings",
-        lambda: SimpleNamespace(workspace_root=tmp_path),
-    )
-    monkeypatch.setattr(
         telemetry_module.Path,
         "read_text",
         lambda self, encoding="utf-8": "1 0\n",
     )
 
-    snapshot = telemetry_module.local_system_snapshot()
+    snapshot = telemetry_module.local_system_snapshot(tmp_path)
 
     assert snapshot["cpu_count"] == 1
     assert snapshot["cpu_percent"] == 100.0

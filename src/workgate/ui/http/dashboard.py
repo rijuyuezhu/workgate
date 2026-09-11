@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse, Response
 from ...control.ui_executor import call_ui_executor
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ
+from ..dashboard import dashboard_snapshot
 from .common import (
     bounded_text as _bounded_text,
 )
@@ -286,7 +287,11 @@ async def _snapshot(request: Request, executor_id: str) -> dict[str, Any]:
         executor_id,
         "ui.dashboard.snapshot",
     )
-    return _normalize_snapshot(resolved_executor_id, value)
+    if not isinstance(value, dict):
+        raise RuntimeError(
+            f"Executor {resolved_executor_id} returned malformed dashboard data"
+        )
+    return _normalize_snapshot(resolved_executor_id, dashboard_snapshot(value))
 
 
 async def api_dashboard(request: Request) -> Response:

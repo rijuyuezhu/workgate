@@ -3,6 +3,7 @@ import shutil
 import pytest
 
 from workgate.config.settings import Settings, clear_settings_cache
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.search_composition import (
     build_executor_dispatcher_with_search,
 )
@@ -31,10 +32,11 @@ async def test_executor_dispatcher_uses_composed_search_discovery_and_connector(
     if not shutil.which("rg"):
         pytest.skip("missing rg")
     settings = _settings(tmp_path, monkeypatch)
-    services = build_runtime_services(settings)
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
     store = services.tool_session_store
     session = store.create_session(session_id=_session_id(1), workdir=tmp_path)
-    dispatcher = build_executor_dispatcher_with_search(settings, store)
+    dispatcher = build_executor_dispatcher_with_search(config, store)
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "demo.txt").write_text(
         "alpha\nneedle here\ngamma\n", encoding="utf-8"
@@ -88,7 +90,8 @@ async def test_composed_search_resolves_each_operation_from_session_workdir(
     if not shutil.which("rg"):
         pytest.skip("missing rg")
     settings = _settings(tmp_path, monkeypatch)
-    services = build_runtime_services(settings)
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
     store = services.tool_session_store
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -97,7 +100,7 @@ async def test_composed_search_resolves_each_operation_from_session_workdir(
     (first / "one.txt").write_text("needle first\n", encoding="utf-8")
     (second / "two.txt").write_text("needle second\n", encoding="utf-8")
     session = store.create_session(session_id=_session_id(2), workdir=first)
-    dispatcher = build_executor_dispatcher_with_search(settings, store)
+    dispatcher = build_executor_dispatcher_with_search(config, store)
 
     first_result = await dispatcher.execute(
         "workspace_search",

@@ -232,12 +232,20 @@ async def test_job_admission_revalidates_after_cross_process_teardown(
     script = f"""
 import asyncio
 from pathlib import Path
+from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.services import build_runtime_services
 from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
-from workgate.executor.tool_session.store import get_tool_session_store
+from workgate.persistence import configure_state_store
+
+clear_settings_cache()
+services = build_runtime_services(resolve_executor_config(get_settings()))
+configure_state_store(services.state_store)
+store = services.tool_session_store
 
 async def main():
     async with session_lifecycle_lock({session.session_id!r}):
-        get_tool_session_store().end_session({session.session_id!r})
+        store.end_session({session.session_id!r})
         Path({str(marker)!r}).write_text("deleted", encoding="utf-8")
         while not Path({str(release)!r}).exists():
             await asyncio.sleep(0.01)

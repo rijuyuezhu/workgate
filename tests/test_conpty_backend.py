@@ -8,6 +8,7 @@ import pytest
 import workgate.executor.shell as shell_ops
 import workgate.executor.terminal.conpty as conpty
 from workgate.config.settings import Settings, clear_settings_cache
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.terminal.runtime import build_terminal_runtime
 from workgate.persistence import get_state_store
@@ -611,9 +612,11 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
     monkeypatch.setattr(conpty, "read_shell", fake_read)
     monkeypatch.setattr(conpty, "kill_shell", fake_kill)
     runtime = build_executor_runtime(
-        Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / ".state",
+        resolve_executor_config(
+            Settings(
+                workspace_root=tmp_path,
+                state_dir=tmp_path / ".state",
+            )
         ),
         enable_control_connection=False,
     )

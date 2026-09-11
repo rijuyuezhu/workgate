@@ -69,7 +69,7 @@ from ..shell import (
     start_persistent_shell_execute,
 )
 from ..tool_session.lifecycle import session_lifecycle_lock
-from ..tool_session.store import ToolSessionStore, resolve_session_path
+from ..tool_session.store import ToolSessionStore
 from . import lifecycle as job_lifecycle
 
 _shell_safe_name = job_lifecycle._shell_safe_name
@@ -242,7 +242,9 @@ async def start_shell_job_unlocked(
 ) -> JobStartOutput:
     """Start one durable shell-backed job while its session lock is held."""
     session = session_store.touch_session(session_id)
-    resolved_cwd = resolve_session_path(session, cwd, must_exist=True)
+    resolved_cwd = session_store.resolve_session_path(
+        session, cwd, must_exist=True
+    )
     job_id = _new_job_id()
     display_name = name or job_id
     shell_name = _shell_safe_name(f"{display_name}-{job_id}")
@@ -604,7 +606,7 @@ async def retry_shell_job_unlocked(
                 raise RuntimeError(f"job is still active: {job_id}")
             attempts = int(job.get("attempts") or 1) + 1
             command = str(job.get("command") or "")
-            resolved_cwd = resolve_session_path(
+            resolved_cwd = session_store.resolve_session_path(
                 session, str(job.get("cwd") or "."), must_exist=True
             )
             display_name = str(job.get("name") or job_id)

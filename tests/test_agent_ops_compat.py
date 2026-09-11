@@ -8,6 +8,7 @@ from workgate.executor.agent import (
     list_agent_skills_execute,
     read_agent_skill_file_execute,
 )
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 
 
@@ -32,7 +33,9 @@ def _runtime_with_project_skill(
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
-    runtime = build_executor_runtime(settings, enable_control_connection=False)
+    runtime = build_executor_runtime(
+        resolve_executor_config(settings), enable_control_connection=False
+    )
     session_id = "sess_0000000000000000000001"
     runtime.services.tool_session_store.create_session(
         session_id=session_id,

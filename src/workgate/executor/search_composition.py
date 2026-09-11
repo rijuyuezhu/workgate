@@ -3,10 +3,11 @@
 import asyncio
 from typing import Any, cast
 
-from ..config.settings import Settings
 from .agent import ExecutorAgentBridgeService
+from .config import ExecutorConfig
+from .dashboard import dashboard_snapshot
 from .dispatch import ExecutorDispatcher, build_executor_dispatcher
-from .files import files_config_from_settings
+from .files import files_config_from_executor_config
 from .files_service import FilesService
 from .search.composition import build_search_service
 from .search.core import SearchPaths
@@ -18,26 +19,26 @@ from .workspace_connector import WorkspaceConnectorService
 
 
 def build_executor_dispatcher_with_search(
-    settings: Settings,
+    config: ExecutorConfig,
     store: ToolSessionStore,
     *,
     shell_service: ShellService | None = None,
     agent_bridge_service: ExecutorAgentBridgeService | None = None,
 ) -> ExecutorDispatcher:
     """Bind executor-local Search and Files into the final dispatcher."""
-    search_service = build_search_service(settings, store)
-    files_service = FilesService(files_config_from_settings(settings), store)
+    search_service = build_search_service(config, store)
+    files_service = FilesService(
+        files_config_from_executor_config(config), store
+    )
     connector_service = WorkspaceConnectorService(search_service, files_service)
     secret_scan_service = SecretScanService(
         files_service.config,
         store,
-        settings.rg_bin,
-        settings.max_grep_results,
+        config.rg_bin,
+        config.max_grep_results,
     )
     if shell_service is None:
-        from .config import resolve_executor_config
-
-        shell_service = ShellService(resolve_executor_config(settings), store)
+        shell_service = ShellService(config, store)
     executor_config = shell_service.config
     if agent_bridge_service is None:
         agent_bridge_service = ExecutorAgentBridgeService(executor_config)
@@ -146,6 +147,10 @@ def build_executor_dispatcher_with_search(
             int(args.get("max_results") or 200),
         )
 
+    async def dashboard_handler(args: dict[str, Any]) -> Any:
+        del args
+        return await asyncio.to_thread(dashboard_snapshot, config)
+
     async def list_agent_skills_handler(args: dict[str, Any]) -> Any:
         from .agent import list_agent_skills_execute
 
@@ -248,6 +253,7 @@ def build_executor_dispatcher_with_search(
             "workspace_search": workspace_search_handler,
             "fetch": workspace_fetch_handler,
             "secret_scan": secret_scan_handler,
+            "dashboard_snapshot": dashboard_handler,
             "view_image": view_image_handler,
             "list_agent_skills": list_agent_skills_handler,
             "activate_agent_skill": activate_agent_skill_handler,

@@ -348,14 +348,14 @@ for line in sys.stdin:
                 os.kill(pid, signal.SIGKILL)
 
 
-def test_registry_from_settings_reuses_service_mcp_manager(tmp_path):
+def test_network_registry_reuses_service_mcp_manager(tmp_path):
     settings = Settings(
         workspace_root=tmp_path / "workspace",
         state_dir=tmp_path / "state",
     )
 
-    first = agent_service.build_agent_registry_from_settings(settings)
-    second = agent_service.build_agent_registry_from_settings(settings)
+    first = agent_service.build_network_agent_registry_from_settings(settings)
+    second = agent_service.build_network_agent_registry_from_settings(settings)
 
     assert first.client_manager is second.client_manager
     agent_service._close_shared_agent_mcp_client_manager()

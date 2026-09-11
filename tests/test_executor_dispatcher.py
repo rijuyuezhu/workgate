@@ -91,14 +91,14 @@ async def test_default_composed_executor_handler_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_default_dashboard_handler_executes_without_composed_services(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import workgate.ui.dashboard as dashboard
-
-    monkeypatch.setattr(dashboard, "dashboard_snapshot", lambda: {"ok": True})
-
-    assert await execute_executor_tool("dashboard_snapshot", {}) == {"ok": True}
+async def test_default_dashboard_handler_requires_composed_executor_config() -> (
+    None
+):
+    with pytest.raises(
+        RuntimeError,
+        match="dashboard_snapshot requires composed executor services",
+    ):
+        await execute_executor_tool("dashboard_snapshot", {})
 
 
 @pytest.mark.asyncio

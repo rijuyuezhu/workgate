@@ -23,6 +23,7 @@ from workgate.agent_bridge.state import (
 )
 from workgate.agent_bridge.tools import AgentBridgeToolReloader
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.tool_session.store import get_tool_session_store
 
@@ -56,7 +57,12 @@ def _configure(
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
     clear_settings_cache()
-    get_tool_session_store().clear()
+    try:
+        store = get_tool_session_store()
+    except RuntimeError:
+        pass
+    else:
+        store.clear()
 
 
 def test_sources_reexport_the_model_skill_source_contract() -> None:
@@ -326,7 +332,7 @@ async def test_executor_session_scopes_skill_registry(
         xdg_config_home=tmp_path / "xdg",
     )
     runtime = build_executor_runtime(
-        get_settings(), enable_control_connection=False
+        resolve_executor_config(get_settings()), enable_control_connection=False
     )
     session_id = "sess_0000000000000000000001"
     runtime.services.tool_session_store.create_session(

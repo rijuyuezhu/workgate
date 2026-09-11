@@ -195,18 +195,6 @@ executor_pairing_max_pending: 32
 executor_pairing_ttl_s: 600
 
 # Cross-executor transfer.
-# Use the private resumable HTTP gateway for capable large session copies.
-remote_http_transfer_enabled: true
-# Minimum payload size selected for private HTTP streaming.
-remote_http_transfer_threshold_bytes: 1048576
-# Maximum request or response chunk size for private HTTP transfer routes.
-remote_http_transfer_chunk_bytes: 1048576
-# Lifetime of a private transfer grant before it must be renewed.
-remote_http_transfer_ticket_ttl_s: 300
-# Maximum non-terminal private transfer objects retained concurrently.
-remote_http_transfer_max_active: 16
-# Maximum aggregate bytes reserved by private controller transfer spools.
-remote_http_transfer_max_spool_bytes: 10737418240
 
 # Agent capability bridge.
 # Enable agent capability bridge tools.
@@ -217,8 +205,6 @@ agent_mcp_probe_timeout_s: 5
 agent_mcp_call_timeout_s: 60
 # Register dynamic MCP bridge tools.
 agent_dynamic_mcp_tools: true
-# Register dynamic skill bridge tools.
-agent_dynamic_skill_tools: true
 
 # Tool executables.
 # Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows.

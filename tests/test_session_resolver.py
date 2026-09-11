@@ -1,6 +1,7 @@
 import pytest
 
-from workgate.config.settings import clear_settings_cache
+from tests.helpers import build_tool_session_store
+from workgate.config.settings import Settings, clear_settings_cache
 from workgate.executor.tool_session import store as store_module
 from workgate.executor.tool_session.bindings import SessionBinding
 from workgate.executor.tool_session.resolver import SessionResolver
@@ -13,7 +14,7 @@ def _store(tmp_path, monkeypatch) -> store_module.ToolSessionStore:
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
-    store = store_module.ToolSessionStore()
+    store = build_tool_session_store(Settings())
     store.clear()
     return store
 
@@ -75,31 +76,6 @@ def test_admit_active_session_does_not_reenter_touch_after_validation(
         store.require_session(session.session_id).termination_requested_at
         is None
     )
-
-
-def test_generic_enforcement_delegates_to_store_admission(monkeypatch) -> None:
-    calls: list[tuple[str, tuple[str, ...]]] = []
-
-    class FakeStore:
-        def admit_tool_sessions(self, session_ids: tuple[str, ...]) -> None:
-            calls.append(("active", session_ids))
-
-        def require_cleanup_sessions(
-            self, session_ids: tuple[str, ...]
-        ) -> None:
-            calls.append(("cleanup", session_ids))
-
-    monkeypatch.setattr(store_module, "get_tool_session_store", FakeStore)
-
-    store_module.enforce_tool_session_control({"session_id": _session_id(1)})
-    store_module.enforce_tool_session_control(
-        {"session_id": _session_id(2)}, termination_cleanup=True
-    )
-
-    assert calls == [
-        ("active", (_session_id(1),)),
-        ("cleanup", (_session_id(2),)),
-    ]
 
 
 def test_resolver_reads_fresh_workdir_for_each_operation(

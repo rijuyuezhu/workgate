@@ -1,15 +1,20 @@
 """Resolved executor-plane configuration view."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..config.settings import Settings
+if TYPE_CHECKING:
+    from ..config.settings import Settings
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutorConfig:
     """Executor-owned machine policy needed by new executor composition code."""
 
+    state_dir: Path
     workspace_root: Path
     allow_full_control: bool
     command_denylist: tuple[str, ...]
@@ -55,6 +60,7 @@ class ExecutorConfig:
 def resolve_executor_config(settings: Settings) -> ExecutorConfig:
     """Snapshot executor-owned authority from the legacy monolithic settings."""
     return ExecutorConfig(
+        state_dir=settings.state_dir.resolve(strict=False),
         workspace_root=settings.workspace_root.resolve(strict=False),
         allow_full_control=settings.allow_full_control,
         command_denylist=tuple(settings.command_denylist),

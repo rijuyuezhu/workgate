@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from tests.helpers import build_tool_session_store
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.session_orientation import (
@@ -13,8 +14,6 @@ from workgate.executor.session_orientation import (
     change_session_cwd,
     session_output,
 )
-from workgate.executor.tool_session.store import ToolSessionStore
-from workgate.persistence import FileStateStore
 
 
 def _config(tmp_path: Path):
@@ -84,10 +83,7 @@ def test_session_output_and_change_cwd_use_executor_authority(
     settings, config = _config(tmp_path)
     next_dir = config.workspace_root / "next"
     next_dir.mkdir()
-    store = ToolSessionStore(
-        FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    store = build_tool_session_store(settings)
     session = store.create_session(
         session_id="sess_0000000000000000000001",
         workdir=config.workspace_root,

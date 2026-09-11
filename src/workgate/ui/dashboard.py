@@ -1,13 +1,10 @@
-"""Safe Human UI Dashboard projections over telemetry and audit metadata."""
+"""Control-owned Human UI Dashboard projections over canonical Audit metadata."""
 
 import math
 import time
 from typing import Any
 
 from ..audit import query_audit
-from ..config.settings import get_settings
-from ..telemetry.system import local_system_snapshot
-from ..version import version_info
 
 _DASHBOARD_AUDIT_LIMIT = 160
 _DASHBOARD_WINDOW_S = 86_400
@@ -56,32 +53,13 @@ def dashboard_activity(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def dashboard_alerts(
-    system: dict[str, Any],
     entries: list[dict[str, Any]],
     source_alerts: list[dict[str, Any]] | None = None,
     *,
     failed_count: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Build severity-ordered alerts without exposing Audit payloads."""
+    """Add control-owned Audit alerts without exposing Audit payloads."""
     alerts: list[dict[str, Any]] = list(source_alerts or [])
-    for field, label, warning, critical in (
-        ("disk_percent", "Workspace disk", 85.0, 95.0),
-        ("memory_percent", "Memory", 90.0, 98.0),
-    ):
-        percent = _finite_number(system.get(field))
-        if percent is None or percent < warning:
-            continue
-        alerts.append(
-            {
-                "severity": "critical" if percent >= critical else "warning",
-                "title": f"{label} is {percent:.0f}% full",
-                "detail": (
-                    str(get_settings().workspace_root)
-                    if field == "disk_percent"
-                    else "Host memory pressure is elevated"
-                ),
-            }
-        )
 
     effective_failed_count = (
         sum(_audit_failed(entry) for entry in entries)
@@ -105,10 +83,14 @@ def dashboard_alerts(
     return alerts[:_DASHBOARD_MAX_ALERTS]
 
 
-def dashboard_snapshot() -> dict[str, Any]:
-    """Return one process-scoped system and Audit telemetry snapshot."""
-    system = local_system_snapshot()
-    source_alerts: list[dict[str, Any]] = []
+def dashboard_snapshot(machine_snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Overlay control-owned Audit metadata onto executor machine telemetry."""
+    raw_machine_alerts = machine_snapshot.get("alerts")
+    source_alerts = (
+        [dict(item) for item in raw_machine_alerts if isinstance(item, dict)]
+        if isinstance(raw_machine_alerts, list)
+        else []
+    )
     try:
         audit_payload = query_audit(
             limit=_DASHBOARD_AUDIT_LIMIT,
@@ -151,7 +133,6 @@ def dashboard_snapshot() -> dict[str, Any]:
     ):
         failed_count = sum(_audit_failed(entry) for entry in entries)
     alerts = dashboard_alerts(
-        system,
         entries,
         source_alerts,
         failed_count=failed_count,
@@ -165,17 +146,15 @@ def dashboard_snapshot() -> dict[str, Any]:
         else "healthy"
     )
 
+    raw_sources = machine_snapshot.get("sources")
+    sources = dict(raw_sources) if isinstance(raw_sources, dict) else {}
+    sources["audit"] = audit_source
     return {
-        "generated_at": time.time(),
+        **machine_snapshot,
         "health": health,
-        "version": version_info(),
-        "system": system,
         "alerts": alerts,
         "activity": dashboard_activity(entries),
         "audit_total_24h": total_matched,
         "audit_failed_24h": failed_count,
-        "sources": {
-            "system": "ok",
-            "audit": audit_source,
-        },
+        "sources": sources,
     }

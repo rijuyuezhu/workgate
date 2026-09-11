@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import Settings
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.tool_session.store import (
     SessionTerminationRequestedError,
     ToolSessionStore,
@@ -25,13 +26,21 @@ def _store(
         agent_bridge_enabled=False,
         **settings_overrides,
     )
-    state_store = FileStateStore(lambda: settings.state_dir)
-    store = ToolSessionStore(
-        state_store=state_store,
-        settings_provider=lambda: settings,
-    )
+    store = _new_store(settings)
     store.clear()
     return store, settings
+
+
+def _new_store(settings: Settings) -> ToolSessionStore:
+    config = resolve_executor_config(settings)
+    return ToolSessionStore(
+        state_store=FileStateStore(lambda: config.state_dir),
+        workspace_root=config.workspace_root,
+        allow_full_control=config.allow_full_control,
+        path_denylist=config.path_denylist,
+        max_session_snapshots=config.max_session_snapshots,
+        max_session_snapshot_bytes=config.max_session_snapshot_bytes,
+    )
 
 
 def _create(
@@ -102,10 +111,7 @@ def test_sessions_and_snapshots_survive_cold_store_instance(
     session = _create(store, tmp_path, index=1, label="durable")
     snapshot = _snapshot(store, session.session_id, "durable")
 
-    cold = ToolSessionStore(
-        state_store=FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    cold = _new_store(settings)
 
     restored = cold.require_session(session.session_id)
     assert restored.workdir == str(tmp_path.resolve())
@@ -167,10 +173,7 @@ def test_change_workdir_failure_before_snapshot_invalidation_keeps_old_state(
     with pytest.raises(OSError, match="snapshot invalidation failed"):
         store.change_session_workdir(session.session_id, second)
 
-    cold = ToolSessionStore(
-        state_store=FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    cold = _new_store(settings)
     assert cold.require_session(session.session_id).workdir == str(
         first.resolve()
     )
@@ -201,10 +204,7 @@ def test_change_workdir_failure_after_snapshot_invalidation_keeps_old_cwd(
     with pytest.raises(OSError, match="metadata write failed"):
         store.change_session_workdir(session.session_id, second)
 
-    cold = ToolSessionStore(
-        state_store=FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    cold = _new_store(settings)
     assert cold.require_session(session.session_id).workdir == str(
         first.resolve()
     )
@@ -228,10 +228,7 @@ def test_termination_is_durable_idempotent_and_blocks_new_tool_work(
     cleanup = store.require_cleanup_sessions((session.session_id,))
     assert cleanup[0].session_id == session.session_id
 
-    cold = ToolSessionStore(
-        state_store=FileStateStore(lambda: settings.state_dir),
-        settings_provider=lambda: settings,
-    )
+    cold = _new_store(settings)
     with pytest.raises(SessionTerminationRequestedError):
         cold.admit_active_session(session.session_id)
 

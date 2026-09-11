@@ -77,8 +77,6 @@ def test_server_subcommand_parses_runtime_settings():
             "pin",
             "--allow-full-control",
             "true",
-            "--remote-http-transfer-enabled",
-            "false",
         ]
     )
 
@@ -92,7 +90,6 @@ def test_server_subcommand_parses_runtime_settings():
     assert args.base_url == "https://example.com"
     assert args.oauth_admin_pin == "pin"
     assert args.allow_full_control is True
-    assert args.remote_http_transfer_enabled is False
 
 
 def test_root_parser_requires_an_explicit_command():
@@ -211,18 +208,12 @@ def test_bool_cli_values_parse_explicitly():
         ).allow_full_control
         is False
     )
-    assert (
-        parser.parse_args(
-            ["server", "--remote-http-transfer-enabled", "false"]
-        ).remote_http_transfer_enabled
-        is False
-    )
-    assert (
-        parser.parse_args(
-            ["server", "--remote-http-transfer-enabled", "true"]
-        ).remote_http_transfer_enabled
-        is True
-    )
+
+
+def test_removed_remote_transfer_flag_is_not_accepted():
+    parser = cli._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["server", "--remote-http-transfer-enabled", "false"])
 
 
 def test_executor_connect_subcommand_parses_final_pairing_contract():
@@ -387,14 +378,9 @@ def test_internal_job_runner_is_dispatched_by_argparse(monkeypatch):
 
 
 def test_server_overrides_include_only_explicit_values():
-    args = cli._build_parser().parse_args(
-        ["server", "--mode", "stdio", "--remote-http-transfer-enabled", "false"]
-    )
+    args = cli._build_parser().parse_args(["server", "--mode", "stdio"])
 
-    assert cli_overrides_from_args(args) == {
-        "mode": "stdio",
-        "remote_http_transfer_enabled": False,
-    }
+    assert cli_overrides_from_args(args) == {"mode": "stdio"}
 
 
 def _write_agent_manifest(state_dir, server):

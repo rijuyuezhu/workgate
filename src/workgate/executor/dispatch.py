@@ -1,6 +1,5 @@
 """Executor-local operation dispatch for final protocol commands."""
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from types import MappingProxyType
 from typing import Any
@@ -15,12 +14,6 @@ EXECUTOR_OPERATION_NAMES = (
 )
 
 type ExecutorHandler = Callable[[dict[str, Any]], Awaitable[Any]]
-
-
-async def _dashboard_snapshot(args: dict[str, Any]) -> Any:  # noqa: ARG001
-    from workgate.ui.dashboard import dashboard_snapshot
-
-    return await asyncio.to_thread(dashboard_snapshot)
 
 
 def _requires_composed_services(op: str) -> ExecutorHandler:
@@ -81,7 +74,6 @@ async def _close_terminal_bridge(args: dict[str, Any]) -> Any:
 _DIRECT_EXECUTOR_HANDLERS: Mapping[str, ExecutorHandler] = MappingProxyType(
     {
         "close_terminal_bridge": _close_terminal_bridge,
-        "dashboard_snapshot": _dashboard_snapshot,
         "open_terminal_bridge": _open_terminal_bridge,
         "read_terminal_bridge": _read_terminal_bridge,
         "resize_terminal_bridge": _resize_terminal_bridge,

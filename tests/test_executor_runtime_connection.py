@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import Settings
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.profile import (
     ExecutorAlreadyRunningError,
     ExecutorProfile,
@@ -69,8 +70,11 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
     tmp_path: Path,
 ) -> None:
     runtime = build_executor_runtime(
-        Settings(
-            workspace_root=tmp_path / "workspace", state_dir=tmp_path / "state"
+        resolve_executor_config(
+            Settings(
+                workspace_root=tmp_path / "workspace",
+                state_dir=tmp_path / "state",
+            )
         )
     )
 
@@ -92,7 +96,9 @@ async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
     state_dir = tmp_path / "state"
     workspace = tmp_path / "workspace"
     runtime = build_executor_runtime(
-        Settings(workspace_root=workspace, state_dir=state_dir)
+        resolve_executor_config(
+            Settings(workspace_root=workspace, state_dir=state_dir)
+        )
     )
     profile = ExecutorProfile(
         control_url="https://control.example",
@@ -147,7 +153,7 @@ async def test_executor_runtime_restart_reuses_same_profile_credential(
         executor_id=new_executor_id(),
         credential=new_executor_credential(),
     )
-    seed = build_executor_runtime(settings)
+    seed = build_executor_runtime(resolve_executor_config(settings))
     assert seed.profile_store is not None
     seed.profile_store.save(profile)
     monkeypatch.setattr(
@@ -156,7 +162,7 @@ async def test_executor_runtime_restart_reuses_same_profile_credential(
 
     for _ in range(2):
         _FakeControlClient.hello_seen = asyncio.Event()
-        runtime = build_executor_runtime(settings)
+        runtime = build_executor_runtime(resolve_executor_config(settings))
         await runtime.start()
         try:
             await asyncio.wait_for(

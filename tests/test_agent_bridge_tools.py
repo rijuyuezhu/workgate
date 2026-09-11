@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from types import SimpleNamespace
@@ -5,11 +6,13 @@ from typing import Any, cast
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.shared.auth import OAuthToken
 
 from tests.helpers import build_paired_mcp, mcp_structured, mcp_text
 from workgate.agent_bridge.auth_store import AgentAuthStore
-from workgate.agent_bridge.mcp import AgentMcpTool
+from workgate.agent_bridge.mcp import AgentMcpClientManager, AgentMcpTool
 from workgate.app_paths import app_paths
+from workgate.audit import get_audit_entry, query_audit
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control import agent_bridge as control_agent_bridge_module
 from workgate.control.agent_bridge import ControlAgentBridgeService
@@ -339,7 +342,8 @@ async def test_session_bound_stdio_mcp_runs_on_executor_with_executor_secret(
     marker = tmp_path / "stdio-started"
     server_script = tmp_path / "stdio_server.py"
     server_script.write_text(
-        """import os
+        """import hashlib
+import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -348,8 +352,12 @@ Path(os.environ["START_MARKER"]).write_text("started", encoding="utf-8")
 mcp = FastMCP("executor-secret-test")
 
 @mcp.tool()
-def reveal_secret() -> dict[str, str]:
-    return {"secret": os.environ["TOKEN"]}
+def secret_fingerprint() -> dict[str, str]:
+    return {"value": hashlib.sha256(os.environ["TOKEN"].encode()).hexdigest()}
+
+@mcp.tool()
+def echo_secret() -> dict[str, str]:
+    return {"value": os.environ["TOKEN"]}
 
 if __name__ == "__main__":
     mcp.run()
@@ -409,26 +417,172 @@ if __name__ == "__main__":
                 "list_agent_mcp_tools", {"session_id": session_id}
             )
         )["tools"]
-        assert [(row["server"], row["tool"]) for row in tools] == [
-            ("stdio", "reveal_secret")
+        assert sorted((row["server"], row["tool"]) for row in tools) == [
+            ("stdio", "echo_secret"),
+            ("stdio", "secret_fingerprint"),
         ]
 
-        result = _payload(
+        fingerprint = _payload(
             await mcp.call_tool(
                 "call_agent_mcp_tool",
                 {
                     "session_id": session_id,
                     "server": "stdio",
-                    "tool": "reveal_secret",
+                    "tool": "secret_fingerprint",
                     "args": {},
                 },
             )
         )
-        assert result["structured_content"] == {"secret": "executor-secret"}
-        assert "control-secret" not in json.dumps(result)
+        assert fingerprint["structured_content"] == {
+            "value": hashlib.sha256(b"executor-secret").hexdigest()
+        }
+        assert fingerprint["structured_content"] != {
+            "value": hashlib.sha256(b"control-secret").hexdigest()
+        }
+
+        echoed = _payload(
+            await mcp.call_tool(
+                "call_agent_mcp_tool",
+                {
+                    "session_id": session_id,
+                    "server": "stdio",
+                    "tool": "echo_secret",
+                    "args": {},
+                },
+            )
+        )
+        assert echoed["structured_content"] == {"value": "<redacted>"}
+        public_json = json.dumps(echoed)
+        assert "executor-secret" not in public_json
+        assert "control-secret" not in public_json
+        audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
+        assert audit_entries
+        for entry in audit_entries:
+            full_entry = get_audit_entry(
+                entry["id"], include_full_payloads=True
+            )
+            retained = json.dumps(full_entry, sort_keys=True)
+            assert "executor-secret" not in retained
+            assert "control-secret" not in retained
     finally:
         await harness.executor.aclose()
         await harness.control.aclose()
+
+
+@pytest.mark.asyncio
+async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_audit(
+    tmp_path, monkeypatch
+):
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://oauth.example/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+
+    settings = get_settings()
+    auth_store = AgentAuthStore(settings.agent_auth_dir)
+    auth_store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {
+                "access_token": "oauth-access-before",
+                "refresh_token": "oauth-refresh-private",
+                "token_type": "Bearer",
+            }
+        ),
+    )
+
+    async def fake_list_tools(self, name, server):
+        assert name == "oauth"
+        assert server.auth.mode == "oauth"
+        return [
+            AgentMcpTool(
+                name="echo_auth", description="Echo auth", input_schema={}
+            )
+        ]
+
+    async def fake_call_tool(self, name, server, tool, args):
+        assert name == "oauth"
+        assert tool == "echo_auth"
+        assert args == {}
+        assert self.auth_store is not None
+        before = self.auth_store.get_tokens(name)
+        assert before is not None
+        assert before.access_token == "oauth-access-before"
+        self.auth_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {
+                    "access_token": "oauth-access-after",
+                    "token_type": "Bearer",
+                }
+            ),
+        )
+        return {
+            "structured_content": {
+                "access_before": "oauth-access-before",
+                "access_after": "oauth-access-after",
+                "refresh": "oauth-refresh-private",
+            }
+        }
+
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "AgentMcpClientManager",
+        AgentMcpClientManager,
+    )
+    monkeypatch.setattr(AgentMcpClientManager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(AgentMcpClientManager, "call_tool", fake_call_tool)
+
+    result = _payload(
+        await build_mcp().call_tool(
+            "call_agent_mcp_tool",
+            {"server": "oauth", "tool": "echo_auth", "args": {}},
+        )
+    )
+    assert result["structured_content"] == {
+        "access_before": "<redacted>",
+        "access_after": "<redacted>",
+        "refresh": "<redacted>",
+    }
+    public_json = json.dumps(result, sort_keys=True)
+    for secret in (
+        "oauth-access-before",
+        "oauth-access-after",
+        "oauth-refresh-private",
+    ):
+        assert secret not in public_json
+
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
+    assert audit_entries
+    for entry in audit_entries:
+        retained = json.dumps(
+            get_audit_entry(entry["id"], include_full_payloads=True),
+            sort_keys=True,
+        )
+        for secret in (
+            "oauth-access-before",
+            "oauth-access-after",
+            "oauth-refresh-private",
+        ):
+            assert secret not in retained
 
 
 @pytest.mark.asyncio

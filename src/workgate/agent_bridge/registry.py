@@ -181,11 +181,17 @@ def build_agent_registry(
                     timeout_s=probe_timeout,
                 )
             except Exception as exc:
+                redaction_maps = manager_redaction_maps(
+                    client_manager, name, server
+                )
+                error = redact_configured_value_tree(
+                    f"{type(exc).__name__}: {exc}", *redaction_maps
+                )
                 mcp_servers[name] = AgentMcpServerRecord(
                     name=name,
                     config=server,
                     available=False,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=str(error),
                 )
                 continue
 

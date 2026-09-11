@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import workgate.executor.search_composition as executor_composition
 import workgate.ui.dashboard as dashboard_module
 import workgate.ui.http.dashboard as ui_dashboard_module
 from tests.helpers import build_paired_control_harness, build_paired_http_app
@@ -67,7 +68,7 @@ def _headers(scope: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {_token(scope)}"}
 
 
-def _snapshot(*, health: str = "healthy") -> dict[str, Any]:
+def _snapshot(_config=None, *, health: str = "healthy") -> dict[str, Any]:
     return {
         "generated_at": 100.0,
         "health": health,
@@ -93,26 +94,50 @@ def _snapshot(*, health: str = "healthy") -> dict[str, Any]:
             "uptime_s": 3_600.0,
         },
         "alerts": [],
-        "activity": [
+        "sources": {"system": "ok"},
+    }
+
+
+def _audit_payload() -> dict[str, Any]:
+    return {
+        "entries": [
             {
-                "timestamp": 98.0,
-                "kind": "success",
-                "title": "read",
-                "detail": "files",
+                "ts": 98.0,
+                "tool": "read",
+                "operation": "files",
+                "status": "success",
+                "ok": True,
+                "paired": True,
                 "duration_ms": 4.0,
             }
         ],
-        "audit_total_24h": 3,
-        "audit_failed_24h": 0,
-        "sources": {"system": "ok", "audit": "ok"},
+        "count": 1,
+        "total_matched": 3,
+        "failed_matched": 0,
     }
+
+
+def _full_snapshot() -> dict[str, Any]:
+    value = _snapshot()
+    value.update(
+        {
+            "activity": _audit_payload()["entries"],
+            "audit_total_24h": 3,
+            "audit_failed_24h": 0,
+            "sources": {"system": "ok", "audit": "ok"},
+        }
+    )
+    return value
 
 
 def test_dashboard_routes_to_explicit_executor_and_normalizes_snapshot(
     monkeypatch, tmp_path
 ):
     client, harness = _client(monkeypatch, tmp_path)
-    monkeypatch.setattr(dashboard_module, "dashboard_snapshot", _snapshot)
+    monkeypatch.setattr(executor_composition, "dashboard_snapshot", _snapshot)
+    monkeypatch.setattr(
+        dashboard_module, "query_audit", lambda **kwargs: _audit_payload()
+    )
 
     response = client.get(
         "/api/ui/dashboard", params={"executor_id": harness.executor_id}
@@ -137,7 +162,10 @@ def test_dashboard_routes_to_explicit_executor_and_normalizes_snapshot(
 
 def test_dashboard_enforces_shell_read_scope(monkeypatch, tmp_path):
     client, harness = _client(monkeypatch, tmp_path, auth_mode="oauth")
-    monkeypatch.setattr(dashboard_module, "dashboard_snapshot", _snapshot)
+    monkeypatch.setattr(executor_composition, "dashboard_snapshot", _snapshot)
+    monkeypatch.setattr(
+        dashboard_module, "query_audit", lambda **kwargs: _audit_payload()
+    )
 
     denied = client.get(
         "/api/ui/dashboard",
@@ -163,7 +191,7 @@ def test_dashboard_handles_executor_unavailable_and_malformed_snapshot(
     malformed = _snapshot()
     malformed["system"] = "bad"
     monkeypatch.setattr(
-        dashboard_module, "dashboard_snapshot", lambda: malformed
+        executor_composition, "dashboard_snapshot", lambda config: malformed
     )
     bad = client.get(
         "/api/ui/dashboard", params={"executor_id": harness.executor_id}
@@ -188,23 +216,23 @@ def test_dashboard_snapshot_rejects_out_of_range_and_oversized_executor_values()
         ("network_rx_bps", -1.0, "network_rx_bps"),
     ]
     for field, value, message in cases:
-        snapshot = copy.deepcopy(_snapshot())
+        snapshot = copy.deepcopy(_full_snapshot())
         snapshot["system"][field] = value
         with pytest.raises(RuntimeError, match=message):
             ui_dashboard_module._normalize_snapshot("exec_123", snapshot)
 
-    invalid_counts = copy.deepcopy(_snapshot())
+    invalid_counts = copy.deepcopy(_full_snapshot())
     invalid_counts["audit_total_24h"] = 1
     invalid_counts["audit_failed_24h"] = 2
     with pytest.raises(RuntimeError, match="Audit counts"):
         ui_dashboard_module._normalize_snapshot("exec_123", invalid_counts)
 
-    invalid_source = copy.deepcopy(_snapshot())
+    invalid_source = copy.deepcopy(_full_snapshot())
     invalid_source["sources"]["audit"] = "unknown"
     with pytest.raises(RuntimeError, match="source states"):
         ui_dashboard_module._normalize_snapshot("exec_123", invalid_source)
 
-    oversized = copy.deepcopy(_snapshot())
+    oversized = copy.deepcopy(_full_snapshot())
     oversized["alerts"] = [
         {"severity": "warning", "title": "x" * 1_025, "detail": "bounded"}
     ]
@@ -218,7 +246,7 @@ async def test_executor_dashboard_dispatch_is_native_and_sessionless(
 ):
     _configure(monkeypatch, tmp_path / "workspace")
     harness = build_paired_control_harness(get_settings())
-    monkeypatch.setattr(dashboard_module, "dashboard_snapshot", _snapshot)
+    monkeypatch.setattr(executor_composition, "dashboard_snapshot", _snapshot)
 
     result = await harness.executor.dispatcher.execute("dashboard_snapshot", {})
 

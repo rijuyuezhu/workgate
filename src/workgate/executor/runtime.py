@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config.settings import Settings
 from ..protocol.executor import (
     SESSION_CHANGE_CWD_OP,
     SESSION_CREATE_OP,
@@ -17,9 +16,9 @@ from ..protocol.executor import (
 )
 from ..utils.path_policy import resolve_path_with_policy
 from .agent import ExecutorAgentBridgeService
-from .config import ExecutorConfig, resolve_executor_config
+from .config import ExecutorConfig
 from .dispatch import ExecutorDispatcher
-from .files import files_config_from_settings
+from .files import files_config_from_executor_config
 from .search_composition import build_executor_dispatcher_with_search
 from .services import (
     RuntimeServiceInstallation,
@@ -45,8 +44,6 @@ class ExecutorRuntime:
 
     config: ExecutorConfig
     """Resolved executor-owned machine authority for new composition code."""
-    legacy_settings: Settings
-    """Temporary monolithic settings bridge for unmigrated components."""
     services: RuntimeServices
     """Explicit shared state services owned by this executor."""
     agent_bridge: ExecutorAgentBridgeService
@@ -222,10 +219,9 @@ class ExecutorRuntime:
 
 
 def build_executor_runtime(
-    settings: Settings, *, enable_control_connection: bool = True
+    config: ExecutorConfig, *, enable_control_connection: bool = True
 ) -> ExecutorRuntime:
     """Construct one executor graph without installing process globals yet."""
-    config = resolve_executor_config(settings)
 
     def executor_path_resolver(
         path: str | Path,
@@ -245,7 +241,7 @@ def build_executor_runtime(
         )
 
     services = build_runtime_services(
-        settings, path_resolver=executor_path_resolver
+        config, path_resolver=executor_path_resolver
     )
     profile_store = None
     if enable_control_connection:
@@ -258,7 +254,6 @@ def build_executor_runtime(
     agent_bridge = ExecutorAgentBridgeService(config)
     return ExecutorRuntime(
         config=config,
-        legacy_settings=settings,
         services=services,
         agent_bridge=agent_bridge,
         terminal_runtime=build_terminal_runtime(
@@ -268,7 +263,7 @@ def build_executor_runtime(
             max_connections=config.ui_terminal_max_connections,
         ),
         dispatcher=build_executor_dispatcher_with_search(
-            settings,
+            config,
             services.tool_session_store,
             shell_service=shell_service,
             agent_bridge_service=agent_bridge,
@@ -277,7 +272,8 @@ def build_executor_runtime(
             config, services.tool_session_store, shell_service
         ),
         ui_files=UiFilesService(
-            files_config_from_settings(settings), services.tool_session_store
+            files_config_from_executor_config(config),
+            services.tool_session_store,
         ),
         ui_terminals=UiTerminalsService(shell_service),
         profile_store=profile_store,
