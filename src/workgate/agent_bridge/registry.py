@@ -87,6 +87,15 @@ def _probe_timeout_seconds(probe_timeout_s: float) -> float:
     return max(0.001, probe_timeout_s)
 
 
+def _redaction_values(*maps: dict[str, str]) -> tuple[str, ...]:
+    """Freeze unique private credential values used during one MCP probe."""
+    return tuple(
+        dict.fromkeys(
+            value for mapping in maps for value in mapping.values() if value
+        )
+    )
+
+
 def _sanitize_probe_tool(
     tool: Any, *redaction_maps: dict[str, str]
 ) -> AgentMcpTool:
@@ -248,6 +257,9 @@ def build_agent_registry(
                 available=True,
                 tools=sanitized_tools,
                 raw_tool_names=raw_tool_names,
+                probe_redaction_values=_redaction_values(
+                    before_env, before_headers, after_env, after_headers
+                ),
             )
 
     effective_dynamic_skills = (

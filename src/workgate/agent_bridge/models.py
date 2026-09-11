@@ -222,8 +222,10 @@ class AgentMcpServerRecord:
     """Whether the server was reachable during probing."""
     tools: list[Any] = field(default_factory=list)
     """Probe-time sanitized capability metadata safe for public projection."""
-    raw_tool_names: tuple[str, ...] = ()
+    raw_tool_names: tuple[str, ...] = field(default=(), repr=False)
     """Raw upstream tool identities retained only for dispatch."""
+    probe_redaction_values: tuple[str, ...] = field(default=(), repr=False)
+    """Private credential values needed while raw probe identities remain callable."""
     error: str | None = None
     """Redacted probe error when the server is unavailable."""
 

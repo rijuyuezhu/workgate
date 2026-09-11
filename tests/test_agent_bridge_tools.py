@@ -1114,9 +1114,13 @@ def test_agent_mcp_probe_rotation_redacts_public_capability_metadata(
     record = registry.mcp_servers["oauth"]
     rows = list_agent_mcp_tools_payload(registry).tools
     public_payload = json.dumps(rows)
+    status_payload = json.dumps(registry_config_status(registry))
 
     assert manager.token == new_token
     assert record.raw_tool_names == (raw_tool_name,)
+    assert record.probe_redaction_values == (old_token, new_token)
+    assert old_token not in repr(record)
+    assert new_token not in repr(record)
     assert record.tools[0].name == "echo-<redacted>"
     assert record.tools[0].description == "saw <redacted>"
     assert record.tools[0].input_schema == {"note": "<redacted>"}
@@ -1125,6 +1129,8 @@ def test_agent_mcp_probe_rotation_redacts_public_capability_metadata(
     assert rows[0]["input_schema"] == {"note": "<redacted>"}
     assert old_token not in public_payload
     assert new_token not in public_payload
+    assert old_token not in status_payload
+    assert new_token not in status_payload
 
     dynamic_name, dynamic_record = next(
         iter(registry.dynamic_mcp_tool_map.items())
@@ -1211,6 +1217,95 @@ def test_agent_mcp_probe_rotation_redacts_probe_error(tmp_path) -> None:
     assert old_token not in status_payload
     assert new_token not in status_payload
     assert "<redacted>" in status_payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
+    tmp_path, monkeypatch, fail
+):
+    old_token = "m9X4q7V2z8N5p3K1"
+    new_token = "n2C8r6T4y1B7d5F3"
+    raw_tool_name = f"echo-{old_token}"
+    dynamic_name = "agent_mcp__oauth__echo__redacted"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class RetiredCredentialManager:
+        def __init__(self) -> None:
+            self.token = old_token
+
+        def redaction_maps(self, _name, _server):
+            return ({"oauth_access_token": self.token}, {})
+
+        async def list_tools(self, _name, _server):
+            assert self.token == old_token
+            self.token = new_token
+            return [
+                AgentMcpTool(
+                    name=raw_tool_name,
+                    description=f"saw {old_token}",
+                    input_schema={},
+                )
+            ]
+
+        async def call_tool(self, _name, _server, tool, _args):
+            assert tool == raw_tool_name
+            if fail:
+                raise RuntimeError(f"upstream failed for tool {tool}")
+            return {
+                "structured_content": {"called": tool, "opaque": old_token},
+                "content": [],
+                "is_error": False,
+            }
+
+    manager = RetiredCredentialManager()
+    monkeypatch.setattr(
+        tools_module, "AgentMcpClientManager", lambda _timeout: manager
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+
+    mcp = build_mcp()
+    assert dynamic_name in {tool.name for tool in await mcp.list_tools()}
+
+    if fail:
+        with pytest.raises(ToolError) as exc_info:
+            await mcp.call_tool(dynamic_name, {"args": {}})
+        public_payload = str(exc_info.value)
+    else:
+        response = await mcp.call_tool(dynamic_name, {"args": {}})
+        public_payload = mcp_text(response)
+
+    assert old_token not in public_payload
+    assert new_token not in public_payload
+    assert "<redacted>" in public_payload
+
+    audit_entries = query_audit(search=dynamic_name)["entries"]
+    assert audit_entries
+    for entry in audit_entries:
+        retained = json.dumps(
+            get_audit_entry(entry["id"], include_full_payloads=True),
+            sort_keys=True,
+        )
+        assert old_token not in retained
+        assert new_token not in retained
 
 
 class FakeDynamicMcpManager:

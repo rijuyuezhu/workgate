@@ -13,6 +13,7 @@ from workgate.jobs import managed as jobs_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as jobs_recovery
 from workgate.jobs import state as job_state
+from workgate.persistence import FileStateStore
 from workgate.protocol.ids import new_session_id
 from workgate.utils import private_files
 
@@ -78,6 +79,62 @@ def _seed_managed_job(
 def _stored_job(session_id: str, job_id: str) -> dict[str, object]:
     store = job_persistence.load_store()
     return dict(job_state.find_session_job(store, session_id, job_id))
+
+
+def test_file_state_store_serializes_shared_transaction_lock_users(
+    tmp_path: Path,
+) -> None:
+    store = FileStateStore(lambda: tmp_path / "state")
+    identity = Path("shared.json")
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    failures: list[BaseException] = []
+
+    def run_first() -> None:
+        try:
+            with store.transaction(identity):
+                first_entered.set()
+                if not release_first.wait(timeout=2):
+                    raise TimeoutError("first transaction was not released")
+        except BaseException as exc:
+            failures.append(exc)
+
+    def run_second() -> None:
+        try:
+            if not first_entered.wait(timeout=2):
+                raise TimeoutError("first transaction never acquired")
+            with store.transaction(identity):
+                second_entered.set()
+        except BaseException as exc:
+            failures.append(exc)
+
+    first = threading.Thread(target=run_first)
+    second = threading.Thread(target=run_second)
+    first.start()
+    assert first_entered.wait(timeout=2)
+    second.start()
+
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with store._transaction_guard:
+            users = [entry[1] for entry in store._transaction_locks.values()]
+        if users == [2]:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("second transaction did not share the thread lock")
+
+    assert not second_entered.is_set()
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_entered.is_set()
+    assert failures == []
+    assert store._transaction_locks == {}
 
 
 def test_private_file_lock_retries_and_times_out(

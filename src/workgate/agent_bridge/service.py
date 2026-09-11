@@ -187,6 +187,14 @@ def redact_mcp_result_payload(data: Any, *maps: dict[str, str]) -> Any:
     return redact_mcp_payload_strings(redact_mapping(data), *maps)
 
 
+def _probe_redaction_map(record: AgentMcpServerRecord) -> dict[str, str]:
+    """Expose private probe credentials only to downstream sanitizers."""
+    return {
+        f"probe_{index}": value
+        for index, value in enumerate(record.probe_redaction_values)
+    }
+
+
 def agent_config_status_payload(
     registry: AgentCapabilityRegistry,
 ) -> AgentConfigStatusOutput:
@@ -343,6 +351,7 @@ async def call_agent_mcp_tool_payload(
             f"MCP server {server} is unavailable: "
             f"{_agent_mcp_unavailable_error(registry, record)}"
         )
+    probe_secrets = _probe_redaction_map(record)
     before_env, before_headers = manager_redaction_maps(
         registry.client_manager, server, record.config
     )
@@ -355,13 +364,23 @@ async def call_agent_mcp_tool_payload(
             registry.client_manager, server, record.config
         )
         raise redacted_mcp_call_error(
-            exc, before_env, before_headers, after_env, after_headers
+            exc,
+            probe_secrets,
+            before_env,
+            before_headers,
+            after_env,
+            after_headers,
         ) from None
     after_env, after_headers = manager_redaction_maps(
         registry.client_manager, server, record.config
     )
     output = redact_mcp_result_payload(
-        data, before_env, before_headers, after_env, after_headers
+        data,
+        probe_secrets,
+        before_env,
+        before_headers,
+        after_env,
+        after_headers,
     )
     if not isinstance(output, dict):
         output = {"result": output}
