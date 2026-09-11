@@ -2142,6 +2142,163 @@ async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
 
 
 @pytest.mark.asyncio
+async def test_dynamic_mcp_literal_header_reload_redacts_retired_probe_value(
+    tmp_path, monkeypatch
+):
+    old_header = "oldLiteralHeaderA1"
+    new_header = "newLiteralHeaderB2"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+
+    def write_config(value: str) -> None:
+        (config_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "mcpServers": {
+                        "docs": {
+                            "type": "http",
+                            "url": "https://docs.example/mcp",
+                            "headers": {"Authorization": value},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write_config(old_header)
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+    probe_count = 0
+
+    async def fake_list_tools(self, _name, _server):
+        nonlocal probe_count
+        probe_count += 1
+        if probe_count == 1:
+            return [
+                AgentMcpTool(name="echo", description="Echo", input_schema={})
+            ]
+        return [
+            AgentMcpTool(
+                name="echo",
+                description=f"remembered {old_header}",
+                input_schema={"old": old_header},
+            )
+        ]
+
+    monkeypatch.setattr(AgentMcpClientManager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "AgentMcpClientManager",
+        AgentMcpClientManager,
+    )
+
+    mcp = build_mcp()
+    write_config(new_header)
+    public_payload = json.dumps(
+        [tool.model_dump(mode="json") for tool in await mcp.list_tools()],
+        sort_keys=True,
+    )
+
+    assert probe_count >= 2
+    assert "<redacted>" in public_payload
+    assert old_header not in public_payload
+    assert new_header not in public_payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream_fails", [False, True])
+async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
+    tmp_path, monkeypatch, upstream_fails
+):
+    old_header = "oldLiteralCallA1"
+    new_header = "newLiteralCallB2"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+
+    def write_config(value: str) -> None:
+        (config_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "mcpServers": {
+                        "docs": {
+                            "type": "http",
+                            "url": "https://docs.example/mcp",
+                            "headers": {"Authorization": value},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write_config(old_header)
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+    upstream_calls = 0
+
+    async def fake_list_tools(self, _name, _server):
+        return [AgentMcpTool(name="echo", description="Echo", input_schema={})]
+
+    async def fake_call_tool(self, _name, _server, _tool, _args):
+        nonlocal upstream_calls
+        upstream_calls += 1
+        if upstream_fails:
+            raise RuntimeError(f"upstream remembered {old_header}")
+        return {
+            "structured_content": {"server_remembered": old_header},
+            "content": [],
+            "is_error": False,
+        }
+
+    monkeypatch.setattr(AgentMcpClientManager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(AgentMcpClientManager, "call_tool", fake_call_tool)
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "AgentMcpClientManager",
+        AgentMcpClientManager,
+    )
+
+    mcp = build_mcp()
+    dynamic_names = {
+        tool.name
+        for tool in await mcp.list_tools()
+        if tool.name.startswith("agent_mcp__docs__")
+    }
+    assert len(dynamic_names) == 1
+    dynamic_name = dynamic_names.pop()
+
+    write_config(new_header)
+    assert dynamic_name in {tool.name for tool in await mcp.list_tools()}
+    if upstream_fails:
+        with pytest.raises(ToolError) as exc_info:
+            await mcp.call_tool(dynamic_name, {"args": {}})
+        public_payload = str(exc_info.value)
+    else:
+        response = await mcp.call_tool(dynamic_name, {"args": {}})
+        public_payload = mcp_text(response)
+
+    assert upstream_calls == 1
+    assert "<redacted>" in public_payload
+    assert old_header not in public_payload
+    assert new_header not in public_payload
+
+    audit_entries = query_audit(search=dynamic_name)["entries"]
+    assert audit_entries
+    for entry in audit_entries:
+        retained = json.dumps(
+            get_audit_entry(entry["id"], include_full_payloads=True),
+            sort_keys=True,
+        )
+        assert old_header not in retained
+        assert new_header not in retained
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fail", [False, True])
 async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
     tmp_path, monkeypatch, fail

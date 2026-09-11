@@ -450,6 +450,36 @@ class AgentAuthStore:
             data = self._read_unlocked()
             return self._credential_revision_unlocked(data, server)
 
+    def observe_redaction_values(
+        self, server: str, values: tuple[str, ...]
+    ) -> bool:
+        """Durably retain newly observed transport literals for future redaction."""
+        server = _validate_name(server, "server name")
+        values = tuple(dict.fromkeys(value for value in values if value))
+        if not values:
+            return False
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            retained = {
+                str(value)
+                for item in data.get("credential_redaction_history", {}).get(
+                    server, []
+                )
+                for value in item.get("values", [])
+            }
+            new_values = tuple(
+                value for value in values if value not in retained
+            )
+            if not new_values:
+                return False
+            revision = self._bump_credential_revision_unlocked(data, server)
+            self._record_redaction_values_unlocked(
+                data, server, revision, new_values
+            )
+            self._prune(data)
+            self._write_unlocked(data)
+            return True
+
     def credential_redaction_values_since(
         self, server: str, cursor: int
     ) -> dict[str, str]:

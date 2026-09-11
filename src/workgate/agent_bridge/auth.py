@@ -17,7 +17,7 @@ type OAuthProviderFactory = Callable[[str, AgentMcpServerConfig], httpx.Auth]
 def literal_config_mapping(
     values: Mapping[str, AgentConfigValue],
 ) -> dict[str, str]:
-    """Return only non-secret literal values from a manifest mapping."""
+    """Return literal manifest values, excluding structured secret references."""
     return {
         key: value for key, value in values.items() if isinstance(value, str)
     }

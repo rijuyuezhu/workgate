@@ -18,6 +18,7 @@ from ..utils.serialization import to_jsonable
 from .auth import (
     OAuthProviderFactory,
     build_stored_oauth_provider,
+    literal_config_mapping,
     oauth_status,
     resolve_config_mapping,
 )
@@ -26,10 +27,24 @@ from .models import AgentMcpServerConfig
 
 
 @dataclass(frozen=True)
-class _CredentialRedactionBaseline:
-    """Long-lived credential history anchor for one configured MCP server."""
+class _RedactionBaseline:
+    """Long-lived private-value history anchor for one configured MCP server."""
 
     revision: int
+
+
+def _extend_redaction_map(
+    mapping: Mapping[str, str], values: Mapping[str, str]
+) -> dict[str, str]:
+    """Append redaction-only values without clobbering real transport keys."""
+    extended = dict(mapping)
+    index = 0
+    for value in values.values():
+        while (key := f"credential_observed_{index}") in extended:
+            index += 1
+        extended[key] = value
+        index += 1
+    return extended
 
 
 @dataclass(frozen=True)
@@ -348,10 +363,8 @@ class AgentMcpClientManager:
         self._stdio_workers_lock = threading.RLock()
         self._stdio_lifecycle_locks: dict[str, threading.RLock] = {}
         self._stdio_lifecycle_locks_lock = threading.Lock()
-        self._credential_redaction_baselines: dict[
-            str, _CredentialRedactionBaseline
-        ] = {}
-        self._credential_redaction_lock = threading.RLock()
+        self._redaction_baselines: dict[str, _RedactionBaseline] = {}
+        self._redaction_lock = threading.RLock()
 
     def resolved_maps(
         self, name: str, server: AgentMcpServerConfig
@@ -374,24 +387,23 @@ class AgentMcpClientManager:
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Return a durable-history baseline for one credential-bearing MCP server."""
+        """Return a durable-history baseline for one configured MCP server."""
         if self.auth_store is None:
             return None
-        with self._credential_redaction_lock:
-            baseline = self._credential_redaction_baselines.get(name)
+        with self._redaction_lock:
+            literal_values = tuple(
+                literal_config_mapping(server.env).values()
+            ) + tuple(literal_config_mapping(server.headers).values())
+            self.auth_store.observe_redaction_values(name, literal_values)
+            baseline = self._redaction_baselines.get(name)
             if baseline is not None:
                 return baseline.revision
-            if server.auth.mode not in {"oauth", "secret"}:
-                return None
 
-            # Authorization status is not a safe history boundary. A server may be
-            # unauthorized only because logout retired credentials that an upstream
-            # can still echo. Fresh managers therefore validate retained history all
-            # the way from revision zero before any public probe or call can proceed.
+            # Current authorization/config state is not a safe history boundary.
+            # Upstreams can echo credentials or literal transport values retired by
+            # logout or config reload, so every server validates history from zero.
             self.auth_store.credential_redaction_values_since(name, 0)
-            self._credential_redaction_baselines[name] = (
-                _CredentialRedactionBaseline(revision=0)
-            )
+            self._redaction_baselines[name] = _RedactionBaseline(revision=0)
             return 0
 
     def redaction_maps_since(
@@ -405,15 +417,15 @@ class AgentMcpClientManager:
         if cursor is None or self.auth_store is None:
             return env, headers
 
-        with self._credential_redaction_lock:
-            baseline = self._credential_redaction_baselines.get(name)
+        with self._redaction_lock:
+            baseline = self._redaction_baselines.get(name)
         effective_cursor = (
             min(cursor, baseline.revision) if baseline is not None else cursor
         )
         observed = self.auth_store.credential_redaction_values_since(
             name, effective_cursor
         )
-        return {**env, **observed}, headers
+        return _extend_redaction_map(env, observed), headers
 
     def auth_status(
         self, name: str, server: AgentMcpServerConfig

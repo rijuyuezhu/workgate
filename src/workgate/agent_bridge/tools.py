@@ -150,6 +150,12 @@ class AgentBridgeToolReloader:
             )
             self._dynamic_tool_names.add(dynamic_name)
 
+        reinstall_watchdogs = getattr(
+            self.mcp, "_workgate_install_tool_watchdogs", None
+        )
+        if callable(reinstall_watchdogs):
+            reinstall_watchdogs(self.mcp)
+
     def _remove_dynamic_tools(self) -> None:
         """Remove previously generated dynamic tools before rebuilding the registry."""
         for tool_name in self._dynamic_tool_names:

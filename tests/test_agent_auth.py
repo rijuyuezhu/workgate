@@ -368,6 +368,114 @@ def test_credential_redaction_history_survives_cross_instance_writes(tmp_path):
     ) == {"oldSecretA1", "midSecretB2", "newSecretC3"}
 
 
+def test_manifest_literal_redaction_history_is_durable_and_deduplicated(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    first_store = AgentAuthStore(root)
+    second_store = AgentAuthStore(root)
+
+    assert (
+        first_store.observe_redaction_values("docs", ("oldLiteralA1",)) is True
+    )
+    assert first_store.redaction_cursor("docs") == 1
+    assert (
+        first_store.observe_redaction_values("docs", ("oldLiteralA1",)) is False
+    )
+    assert first_store.redaction_cursor("docs") == 1
+
+    assert (
+        second_store.observe_redaction_values(
+            "docs", ("oldLiteralA1", "newLiteralB2")
+        )
+        is True
+    )
+    assert second_store.redaction_cursor("docs") == 2
+    assert set(
+        AgentAuthStore(root)
+        .credential_redaction_values_since("docs", 0)
+        .values()
+    ) == {"oldLiteralA1", "newLiteralB2"}
+
+
+@pytest.mark.parametrize(
+    ("transport", "field", "old_value", "new_value"),
+    [
+        ("http", "headers", "oldHeaderA1", "newHeaderB2"),
+        ("stdio", "env", "oldEnvA1", "newEnvB2"),
+    ],
+)
+def test_mcp_manager_reconstructs_manifest_literal_history_after_restart(
+    tmp_path, transport, field, old_value, new_value
+):
+    root = tmp_path / "agent_auth"
+
+    def server(value: str) -> AgentMcpServerConfig:
+        payload = {
+            "type": transport,
+            field: {"Authorization" if field == "headers" else "TOKEN": value},
+        }
+        if transport == "http":
+            payload["url"] = "https://example.test/mcp"
+        else:
+            payload["command"] = "example-mcp"
+        return AgentMcpServerConfig.model_validate(payload)
+
+    first_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        assert first_manager.redaction_cursor("docs", server(old_value)) == 0
+    finally:
+        first_manager.close()
+
+    restarted_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        current = server(new_value)
+        baseline = restarted_manager.redaction_cursor("docs", current)
+        assert baseline == 0
+        env, headers = restarted_manager.redaction_maps_since(
+            "docs", current, baseline
+        )
+        assert {old_value, new_value} <= set((*env.values(), *headers.values()))
+    finally:
+        restarted_manager.close()
+
+
+def test_durable_redaction_values_do_not_replace_current_env_redaction(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {
+                    "docs": {
+                        "secrets": {"token": "activeLegacySecretA1"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert store.observe_redaction_values("docs", ("retiredLiteralB2",)) is True
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "stdio",
+            "command": "example-mcp",
+            "env": {"credential_observed_0": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        baseline = manager.redaction_cursor("docs", server)
+        env, _headers = manager.redaction_maps_since("docs", server, baseline)
+        assert {"activeLegacySecretA1", "retiredLiteralB2"} <= set(env.values())
+    finally:
+        manager.close()
+
+
 def test_credential_redaction_history_survives_child_process_writer(tmp_path):
     root = tmp_path / "agent_auth"
     old_token = "oldChildA1"

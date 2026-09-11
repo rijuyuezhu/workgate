@@ -138,6 +138,7 @@ def _mcp_tool_audit_watchdog_wrapper(
 
 def install_mcp_tool_watchdogs(mcp: FastMCP) -> None:
     """Wrap FastMCP execution paths so public tools are audited and return structured timeout errors."""
+    cast(Any, mcp)._workgate_install_tool_watchdogs = install_mcp_tool_watchdogs
     for tool in mcp._tool_manager._tools.values():
         if getattr(tool.fn, "__workgate_audit_watchdog__", False):
             continue
