@@ -1398,6 +1398,95 @@ def test_agent_mcp_probe_redacts_cross_instance_credential_history(
         assert secret not in public_payload
 
 
+@pytest.mark.parametrize("probe_fails", [False, True])
+def test_agent_mcp_probe_redacts_logged_out_retired_oauth_credentials(
+    tmp_path, monkeypatch, probe_fails
+) -> None:
+    old_token = "oldLoggedOutA1"
+    new_token = "newConcurrentB2"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_root = tmp_path / "auth"
+    service_store = AgentAuthStore(auth_root)
+    cli_store = AgentAuthStore(auth_root)
+    service_store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+    assert service_store.clear_oauth("oauth") is True
+    assert service_store.get_tokens("oauth") is None
+    assert service_store.redaction_cursor("oauth") == 2
+
+    manager = AgentMcpClientManager(1, service_store)
+
+    async def authorize_while_probe_runs(name, _server):
+        cli_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": new_token, "token_type": "Bearer"}
+            ),
+        )
+        if probe_fails:
+            raise RuntimeError(f"upstream remembered {old_token}")
+        return [
+            AgentMcpTool(
+                name="echo",
+                description=f"remembered {old_token}",
+                input_schema={"old": old_token},
+            )
+        ]
+
+    monkeypatch.setattr(manager, "list_tools", authorize_while_probe_runs)
+    try:
+        registry = build_agent_registry(
+            config_dir,
+            manager,
+            dynamic_mcp_tools=False,
+            dynamic_skill_tools=False,
+            scan_skills=False,
+        )
+    finally:
+        manager.close()
+
+    record = registry.mcp_servers["oauth"]
+    public_status = json.dumps(registry_config_status(registry), sort_keys=True)
+    if probe_fails:
+        assert record.available is False
+        assert record.error == "RuntimeError: upstream remembered <redacted>"
+        assert "<redacted>" in public_status
+    else:
+        assert record.available is True
+        assert record.error is None
+        assert record.tools[0].description == "remembered <redacted>"
+        assert record.tools[0].input_schema == {"old": "<redacted>"}
+        assert {old_token, new_token} <= set(record.probe_redaction_values)
+        public_tools = json.dumps(
+            list_agent_mcp_tools_payload(registry).tools, sort_keys=True
+        )
+        assert "<redacted>" in public_tools
+        assert old_token not in public_tools
+        assert new_token not in public_tools
+    assert old_token not in public_status
+    assert new_token not in public_status
+
+
 def test_agent_mcp_probe_fails_closed_when_redaction_cursor_is_unavailable(
     tmp_path,
 ) -> None:

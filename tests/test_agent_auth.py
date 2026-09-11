@@ -24,6 +24,7 @@ from workgate.agent_bridge.auth_store import (
     AgentAuthRedactionHistoryLostError,
     AgentAuthStore,
     AgentAuthStoreCorruptError,
+    AgentAuthStoreError,
     AgentOAuthTokenStorage,
     AgentSecretNotFoundError,
 )
@@ -286,6 +287,16 @@ def test_credential_redaction_history_size_eviction_keeps_mutation_available(
         store.credential_redaction_values_since("docs", 0)
 
 
+def test_credential_redaction_history_eviction_preserves_store_size_limit(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(auth_store_module, "_MAX_STORE_BYTES", 350)
+    store = AgentAuthStore(tmp_path / "agent_auth")
+
+    with pytest.raises(AgentAuthStoreError, match="would exceed"):
+        store.set_secret("docs", "token", "A" * 300)
+
+
 def test_credential_redaction_history_gap_allows_new_writes_but_fails_closed(
     tmp_path,
 ):
@@ -464,7 +475,7 @@ def test_mcp_manager_retains_credential_redaction_history_across_operations(
         manager.close()
 
 
-def test_mcp_manager_does_not_anchor_redaction_before_initial_authorization(
+def test_mcp_manager_anchors_redaction_from_zero_before_initial_authorization(
     tmp_path,
 ):
     root = tmp_path / "agent_auth"
@@ -991,6 +1002,37 @@ def test_agent_auth_store_rejects_invalid_inputs_and_oversized_state(tmp_path):
                 "credential_redaction_history": {"docs": {}},
             },
             "must be a list",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_redaction_history": {"bad server": []},
+            },
+            "server name",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 257},
+                "credential_redaction_history": {
+                    "docs": [
+                        {"revision": revision, "values": []}
+                        for revision in range(1, 258)
+                    ]
+                },
+            },
+            "retention limit",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {"docs": [None]},
+            },
+            "is invalid",
         ),
         (
             {

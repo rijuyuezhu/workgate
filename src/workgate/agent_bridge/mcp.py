@@ -374,7 +374,7 @@ class AgentMcpClientManager:
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Return a durable-history baseline for one authenticated MCP server."""
+        """Return a durable-history baseline for one credential-bearing MCP server."""
         if self.auth_store is None:
             return None
         with self._credential_redaction_lock:
@@ -384,13 +384,10 @@ class AgentMcpClientManager:
             if server.auth.mode not in {"oauth", "secret"}:
                 return None
 
-            revision = self.auth_store.redaction_cursor(name)
-            if not self.auth_status(name, server).get("authorized", False):
-                # No authenticated upstream operation can use these credentials yet.
-                return revision
-
-            # A fresh manager must reconstruct the complete retained history instead
-            # of silently rebasing at the current revision after a process restart.
+            # Authorization status is not a safe history boundary. A server may be
+            # unauthorized only because logout retired credentials that an upstream
+            # can still echo. Fresh managers therefore validate retained history all
+            # the way from revision zero before any public probe or call can proceed.
             self.auth_store.credential_redaction_values_since(name, 0)
             self._credential_redaction_baselines[name] = (
                 _CredentialRedactionBaseline(revision=0)
