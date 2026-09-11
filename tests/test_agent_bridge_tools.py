@@ -1638,6 +1638,108 @@ async def test_control_oauth_intermediate_credential_is_redacted_from_error_and_
 
 
 @pytest.mark.asyncio
+async def test_agent_mcp_call_retains_retired_credentials_across_later_calls(
+    tmp_path, monkeypatch
+):
+    old_token = "oldRetiredA1"
+    mid_token = "midRetiredB2"
+    new_token = "newRetiredC3"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AgentAuthStore(tmp_path / "auth")
+    store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+    manager = AgentMcpClientManager(1, store)
+    calls = 0
+
+    async def fake_list_tools(_name, _server):
+        return [AgentMcpTool(name="echo", description="Echo", input_schema={})]
+
+    async def fake_call_tool(name, _server, _tool, _args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            store.set_tokens(
+                name,
+                OAuthToken.model_validate(
+                    {"access_token": mid_token, "token_type": "Bearer"}
+                ),
+            )
+            return {
+                "structured_content": {"ok": "first"},
+                "content": [],
+                "is_error": False,
+            }
+        if calls == 2:
+            store.set_tokens(
+                name,
+                OAuthToken.model_validate(
+                    {"access_token": new_token, "token_type": "Bearer"}
+                ),
+            )
+            return {
+                "structured_content": {"ok": "second"},
+                "content": [],
+                "is_error": False,
+            }
+        return {
+            "structured_content": {"server_remembered": mid_token},
+            "content": [],
+            "is_error": False,
+        }
+
+    monkeypatch.setattr(manager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(manager, "call_tool", fake_call_tool)
+    try:
+        registry = build_agent_registry(
+            config_dir,
+            manager,
+            dynamic_mcp_tools=False,
+            dynamic_skill_tools=False,
+            scan_skills=False,
+        )
+        first = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
+        second = await call_agent_mcp_tool_payload(
+            registry, "oauth", "echo", {}
+        )
+        third = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
+    finally:
+        manager.close()
+
+    assert first.model_dump(mode="json")["structured_content"] == {
+        "ok": "first"
+    }
+    assert second.model_dump(mode="json")["structured_content"] == {
+        "ok": "second"
+    }
+    third_payload = json.dumps(third.model_dump(mode="json"), sort_keys=True)
+    assert mid_token not in third_payload
+    assert "<redacted>" in third_payload
+    current = store.get_tokens("oauth")
+    assert current is not None
+    assert current.access_token == new_token
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("upstream_fails", [False, True])
 async def test_control_oauth_cross_instance_rotation_fails_closed_and_audit_is_safe(
     tmp_path, monkeypatch, upstream_fails
@@ -1720,6 +1822,98 @@ async def test_control_oauth_cross_instance_rotation_fails_closed_and_audit_is_s
 
     audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
     assert audit_entries
+    for entry in audit_entries:
+        retained = json.dumps(
+            get_audit_entry(entry["id"], include_full_payloads=True),
+            sort_keys=True,
+        )
+        for secret in (old_token, mid_token, new_token):
+            assert secret not in retained
+
+
+@pytest.mark.asyncio
+async def test_dynamic_mcp_external_rotation_reload_remains_fail_closed(
+    tmp_path, monkeypatch
+):
+    old_token = "oldReloadA1"
+    mid_token = "midReloadB2"
+    new_token = "newReloadC3"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://oauth.example/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+    auth_root = get_settings().agent_auth_dir
+    AgentAuthStore(auth_root).set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+    upstream_calls = 0
+
+    async def fake_list_tools(self, _name, _server):
+        return [AgentMcpTool(name="echo", description="Echo", input_schema={})]
+
+    async def fake_call_tool(self, _name, _server, _tool, _args):
+        nonlocal upstream_calls
+        upstream_calls += 1
+        return {
+            "structured_content": {"server_remembered": mid_token},
+            "content": [],
+            "is_error": False,
+        }
+
+    monkeypatch.setattr(AgentMcpClientManager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(AgentMcpClientManager, "call_tool", fake_call_tool)
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "AgentMcpClientManager",
+        AgentMcpClientManager,
+    )
+
+    mcp = build_mcp()
+    dynamic_names = {
+        tool.name
+        for tool in await mcp.list_tools()
+        if tool.name.startswith("agent_mcp__oauth__")
+    }
+    assert len(dynamic_names) == 1
+    dynamic_name = dynamic_names.pop()
+
+    external_store = AgentAuthStore(auth_root)
+    for token in (mid_token, new_token):
+        external_store.set_tokens(
+            "oauth",
+            OAuthToken.model_validate(
+                {"access_token": token, "token_type": "Bearer"}
+            ),
+        )
+
+    with pytest.raises(ToolError) as exc_info:
+        await mcp.call_tool(dynamic_name, {"args": {}})
+    public_error = str(exc_info.value)
+    assert upstream_calls == 0
+    for secret in (old_token, mid_token, new_token):
+        assert secret not in public_error
+
+    assert dynamic_name not in {tool.name for tool in await mcp.list_tools()}
+    audit_entries = query_audit(search=dynamic_name)["entries"]
     for entry in audit_entries:
         retained = json.dumps(
             get_audit_entry(entry["id"], include_full_payloads=True),

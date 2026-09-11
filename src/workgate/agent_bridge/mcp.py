@@ -25,6 +25,14 @@ from .auth_store import AgentAuthStore
 from .models import AgentMcpServerConfig
 
 
+@dataclass(frozen=True, repr=False)
+class _CredentialRedactionBaseline:
+    """Long-lived credential history anchor for one configured MCP server."""
+
+    revision: int
+    values: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class AgentMcpTool:
     """Normalized description of an upstream MCP tool exposed through the bridge."""
@@ -341,6 +349,10 @@ class AgentMcpClientManager:
         self._stdio_workers_lock = threading.RLock()
         self._stdio_lifecycle_locks: dict[str, threading.RLock] = {}
         self._stdio_lifecycle_locks_lock = threading.Lock()
+        self._credential_redaction_baselines: dict[
+            str, _CredentialRedactionBaseline
+        ] = {}
+        self._credential_redaction_lock = threading.RLock()
 
     def resolved_maps(
         self, name: str, server: AgentMcpServerConfig
@@ -360,16 +372,45 @@ class AgentMcpClientManager:
             env = {**env, **self.auth_store.oauth_redaction_values(name)}
         return env, headers
 
+    @staticmethod
+    def _extend_redaction_map(
+        mapping: dict[str, str], values: tuple[str, ...], *, prefix: str
+    ) -> dict[str, str]:
+        """Add private values under collision-free synthetic keys for sanitizers."""
+        result = dict(mapping)
+        for index, value in enumerate(values):
+            key = f"__workgate_{prefix}_{index}"
+            while key in result:
+                key += "_"
+            result[key] = value
+        return result
+
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Start observing private credential mutations for one MCP operation."""
-        if self.auth_store is None or server.auth.mode not in {
-            "oauth",
-            "secret",
-        }:
+        """Return the manager-lifetime credential history baseline for one server."""
+        if self.auth_store is None:
             return None
-        return self.auth_store.redaction_cursor(name)
+        with self._credential_redaction_lock:
+            baseline = self._credential_redaction_baselines.get(name)
+            if baseline is not None:
+                return baseline.revision
+            if server.auth.mode not in {"oauth", "secret"}:
+                return None
+
+            revision = self.auth_store.redaction_cursor(name)
+            if not self.auth_status(name, server).get("authorized", False):
+                # No authenticated upstream operation can use these credentials yet.
+                # Keep this cursor operation-local so initial authorization can occur
+                # in another process without poisoning a never-used baseline.
+                return revision
+
+            env, headers = self.redaction_maps(name, server)
+            values = tuple(dict.fromkeys((*env.values(), *headers.values())))
+            self._credential_redaction_baselines[name] = (
+                _CredentialRedactionBaseline(revision=revision, values=values)
+            )
+            return revision
 
     def redaction_maps_since(
         self,
@@ -377,19 +418,24 @@ class AgentMcpClientManager:
         server: AgentMcpServerConfig,
         cursor: int | None,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        """Resolve current values plus every private credential mutated since a cursor."""
+        """Resolve current and retained credentials since the manager baseline."""
         env, headers = self.redaction_maps(name, server)
-        if (
-            cursor is not None
-            and self.auth_store is not None
-            and server.auth.mode in {"oauth", "secret"}
-        ):
-            env = {
-                **env,
-                **self.auth_store.credential_redaction_values_since(
-                    name, cursor
-                ),
-            }
+        if cursor is None or self.auth_store is None:
+            return env, headers
+
+        with self._credential_redaction_lock:
+            baseline = self._credential_redaction_baselines.get(name)
+        effective_cursor = (
+            min(cursor, baseline.revision) if baseline is not None else cursor
+        )
+        observed = self.auth_store.credential_redaction_values_since(
+            name, effective_cursor
+        )
+        env = {**env, **observed}
+        if baseline is not None:
+            env = self._extend_redaction_map(
+                env, baseline.values, prefix="credential_baseline"
+            )
         return env, headers
 
     def auth_status(

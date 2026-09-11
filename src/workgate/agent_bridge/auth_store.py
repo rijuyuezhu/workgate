@@ -271,8 +271,12 @@ class AgentAuthStore:
 
         def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
-            entry.setdefault("secrets", {})[name] = value
-            return True, (value,)
+            secrets = entry.setdefault("secrets", {})
+            previous = secrets.get(name)
+            secrets[name] = value
+            return True, tuple(
+                str(candidate) for candidate in (previous, value) if candidate
+            )
 
         self._mutate_with_redaction(server, mutate)
 
@@ -423,9 +427,14 @@ class AgentAuthStore:
                 else None
             )
             return True, tuple(
-                str(payload[field])
-                for field in ("access_token", "refresh_token")
-                if payload.get(field)
+                str(candidate)
+                for candidate in (
+                    previous.get("access_token"),
+                    previous.get("refresh_token"),
+                    payload.get("access_token"),
+                    payload.get("refresh_token"),
+                )
+                if candidate
             )
 
         self._mutate_with_redaction(server, mutate)
@@ -453,11 +462,19 @@ class AgentAuthStore:
         def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
+            previous = oauth.get("client_info") or {}
             oauth["client_info"] = client_info.model_dump(
                 mode="json", exclude_none=True
             )
             client_secret = getattr(client_info, "client_secret", None)
-            return True, ((str(client_secret),) if client_secret else ())
+            return True, tuple(
+                str(candidate)
+                for candidate in (
+                    previous.get("client_secret"),
+                    client_secret,
+                )
+                if candidate
+            )
 
         self._mutate_with_redaction(server, mutate)
 

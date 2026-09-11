@@ -223,10 +223,20 @@ def test_credential_redaction_journal_captures_intermediate_mutations_and_is_bou
     assert set(
         store.credential_redaction_values_since("docs", cursor).values()
     ) == {
+        "old-token",
         "mid-token",
         "client-secret",
         "new-token",
     }
+
+    store.set_secret("secret", "token", "old-secret")
+    secret_cursor = store.redaction_cursor("secret")
+    store.set_secret("secret", "token", "new-secret")
+    assert set(
+        store.credential_redaction_values_since(
+            "secret", secret_cursor
+        ).values()
+    ) == {"old-secret", "new-secret"}
     with pytest.raises(ValueError, match="non-negative"):
         store.credential_redaction_values_since("docs", -1)
     with pytest.raises(ValueError, match="newer than credential history"):
@@ -298,6 +308,99 @@ def test_credential_redaction_revision_detects_cross_instance_writes(tmp_path):
         AgentAuthRedactionHistoryLostError, match="history unavailable"
     ):
         service_store.credential_redaction_values_since("secret", secret_cursor)
+
+
+def test_mcp_manager_retains_credential_redaction_history_across_operations(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    external_store = AgentAuthStore(root)
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+
+    def token(value: str) -> OAuthToken:
+        return OAuthToken.model_validate(
+            {"access_token": value, "token_type": "Bearer"}
+        )
+
+    old_token = "oldRetiredA1"
+    mid_token = "midRetiredB2"
+    new_token = "newRetiredC3"
+    store.set_tokens("docs", token(old_token))
+    manager = AgentMcpClientManager(1, store)
+    try:
+        baseline = manager.redaction_cursor("docs", server)
+        assert baseline == store.redaction_cursor("docs")
+
+        store.set_tokens("docs", token(mid_token))
+        first_values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert {old_token, mid_token} <= first_values
+
+        assert manager.redaction_cursor("docs", server) == baseline
+        store.set_tokens("docs", token(new_token))
+        second_values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert {old_token, mid_token, new_token} <= second_values
+
+        third_cursor = manager.redaction_cursor("docs", server)
+        assert third_cursor == baseline
+        third_values = set(
+            manager.redaction_maps_since("docs", server, third_cursor)[
+                0
+            ].values()
+        )
+        assert {old_token, mid_token, new_token} <= third_values
+
+        external_store.set_tokens("docs", token("externalRetiredD4"))
+        assert manager.redaction_cursor("docs", server) == baseline
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_maps_since("docs", server, baseline)
+    finally:
+        manager.close()
+
+
+def test_mcp_manager_does_not_anchor_redaction_before_initial_authorization(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    service_store = AgentAuthStore(root)
+    cli_store = AgentAuthStore(root)
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    manager = AgentMcpClientManager(1, service_store)
+    try:
+        assert manager.redaction_cursor("docs", server) == 0
+        cli_store.set_tokens(
+            "docs",
+            OAuthToken.model_validate(
+                {"access_token": "firstAuthorizedA1", "token_type": "Bearer"}
+            ),
+        )
+
+        baseline = manager.redaction_cursor("docs", server)
+        assert baseline == 1
+        values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert "firstAuthorizedA1" in values
+    finally:
+        manager.close()
 
 
 @pytest.mark.asyncio
