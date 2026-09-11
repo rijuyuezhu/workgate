@@ -25,8 +25,6 @@ def test_linux_paths_follow_absolute_xdg_roots(tmp_path: Path) -> None:
     assert paths.state_dir == tmp_path / "state" / "workgate"
     assert paths.data_dir == tmp_path / "data" / "workgate"
     assert paths.cache_dir == tmp_path / "cache" / "workgate"
-    assert paths.worker_state_dir == paths.state_dir / "worker"
-    assert paths.worker_data_dir == paths.data_dir / "worker"
 
 
 def test_linux_relative_xdg_roots_fall_back(tmp_path: Path) -> None:

@@ -483,7 +483,7 @@
               }
             ]
           },
-          "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. Current write cap: 5000000 bytes."
+          "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. The bound executor applies its configured write limit."
         ],
         [
           {
@@ -507,7 +507,7 @@
               }
             ]
           },
-          "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. Current write cap: 5000000 bytes."
+          "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit."
         ],
         [
           {
@@ -545,7 +545,7 @@
               }
             ]
           },
-          "List files and directories under a session workdir path for quick inspection. Relative paths resolve inside the explicit agent/workspace session. The result reports whether entries were truncated by the requested limit or server cap. Current max directory entries: 5000."
+          "List files and directories under a session workdir path for quick inspection. Relative paths resolve inside the explicit agent/workspace session. The result reports whether entries were truncated by the requested limit or server cap. The bound executor applies its configured directory-entry limit."
         ],
         [
           {
@@ -583,7 +583,7 @@
               }
             ]
           },
-          "Write a complete UTF-8 file inside an explicit agent/workspace session. Use only for new files or intentional whole-file replacement; do not use it for partial edits. For ordinary edits to existing files, use hashline_edit from copied read/search rows instead of rewriting the file. Use edit_lines only when you already have exact structured path/start/end/replacement data. Use bash only when a command-driven transformation is clearer. Current write cap: 5000000 bytes."
+          "Write a complete UTF-8 file inside an explicit agent/workspace session. Use only for new files or intentional whole-file replacement; do not use it for partial edits. For ordinary edits to existing files, use hashline_edit from copied read/search rows instead of rewriting the file. Use edit_lines only when you already have exact structured path/start/end/replacement data. Use bash only when a command-driven transformation is clearer. The bound executor applies its configured write limit."
         ]
       ]
     },
@@ -733,7 +733,7 @@
               }
             ]
           },
-          "Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. Current patch input cap: 5000000 bytes."
+          "Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. The bound executor applies its configured patch/write limit."
         ]
       ]
     },
@@ -769,7 +769,7 @@
               }
             ]
           },
-          "Read one file or list one directory inside an explicit agent/workspace session with optional selector suffixes in the path. Use this for normal code context when you know one path, especially before hashline_edit. Use search for content discovery across files, tree_view/list_files/glob_search for path discovery, and connector fetch only when consuming an id from workspace_search. Put ranges in the path selector and preserve the hashline output for edits: `[path#snapshot_id]` plus `line:text` rows can be copied directly into hashline_edit. Use edit_lines only when you already have exact structured path/start/end/replacement data. Supported selectors: path:50, path:50-80, path:50+20, path:5-16,960-973, path:raw, path:50-80:raw, and path:5-16,960-973:raw. Comma-separated ranges apply only within the same file, not across multiple files; ranges must be ordered and non-overlapping; call read separately for each file. Current per-file read cap: 512000 bytes."
+          "Read one file or list one directory inside an explicit agent/workspace session with optional selector suffixes in the path. Use this for normal code context when you know one path, especially before hashline_edit. Use search for content discovery across files, tree_view/list_files/glob_search for path discovery, and connector fetch only when consuming an id from workspace_search. Put ranges in the path selector and preserve the hashline output for edits: `[path#snapshot_id]` plus `line:text` rows can be copied directly into hashline_edit. Use edit_lines only when you already have exact structured path/start/end/replacement data. Supported selectors: path:50, path:50-80, path:50+20, path:5-16,960-973, path:raw, path:50-80:raw, and path:5-16,960-973:raw. Comma-separated ranges apply only within the same file, not across multiple files; ranges must be ordered and non-overlapping; call read separately for each file. The executor enforces its configured per-file read limit."
         ]
       ]
     },
@@ -819,7 +819,7 @@
               }
             ]
           },
-          "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max glob results: 5000."
+          "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured glob-result limit."
         ],
         [
           {
@@ -885,7 +885,7 @@
               }
             ]
           },
-          "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. Current max_grep_results=200."
+          "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. The bound executor applies its configured search-result limit."
         ],
         [
           {
@@ -923,7 +923,7 @@
               }
             ]
           },
-          "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max tree entries: 5000."
+          "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured tree-entry limit."
         ]
       ]
     },
@@ -973,7 +973,7 @@
               }
             ]
           },
-          "Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. Current max findings: 200."
+          "Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit."
         ]
       ]
     },
@@ -1222,7 +1222,7 @@
               }
             ]
           },
-          "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Current bounded command timeout default/cap: 10/120 seconds."
+          "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
         ],
         [
           {
@@ -1412,7 +1412,7 @@
               }
             ]
           },
-          "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Current bounded command timeout default/cap: 10/120 seconds."
+          "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
         ],
         [
           {
@@ -1801,7 +1801,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. Current patch input cap: 5000000 bytes.",
+      "description": "Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. The bound executor applies its configured patch/write limit.",
       "inputSchema": {
         "properties": {
           "cwd": {
@@ -2152,7 +2152,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Current bounded command timeout default/cap: 10/120 seconds.",
+      "description": "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -2685,7 +2685,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. Current write cap: 5000000 bytes.",
+      "description": "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. The bound executor applies its configured write limit.",
       "inputSchema": {
         "properties": {
           "end_line": {
@@ -3106,7 +3106,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max glob results: 5000.",
+      "description": "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured glob-result limit.",
       "inputSchema": {
         "properties": {
           "cwd": {
@@ -3179,7 +3179,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. Current write cap: 5000000 bytes.",
+      "description": "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit.",
       "inputSchema": {
         "properties": {
           "input": {
@@ -4015,7 +4015,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Diagnostic message when output or a remote worker snapshot is unavailable.",
+                "description": "Diagnostic message when output or an executor snapshot is unavailable.",
                 "title": "Message"
               },
               "output": {
@@ -4610,7 +4610,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "List files and directories under a session workdir path for quick inspection. Relative paths resolve inside the explicit agent/workspace session. The result reports whether entries were truncated by the requested limit or server cap. Current max directory entries: 5000.",
+      "description": "List files and directories under a session workdir path for quick inspection. Relative paths resolve inside the explicit agent/workspace session. The result reports whether entries were truncated by the requested limit or server cap. The bound executor applies its configured directory-entry limit.",
       "inputSchema": {
         "properties": {
           "max_entries": {
@@ -4882,7 +4882,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read one file or list one directory inside an explicit agent/workspace session with optional selector suffixes in the path. Use this for normal code context when you know one path, especially before hashline_edit. Use search for content discovery across files, tree_view/list_files/glob_search for path discovery, and connector fetch only when consuming an id from workspace_search. Put ranges in the path selector and preserve the hashline output for edits: `[path#snapshot_id]` plus `line:text` rows can be copied directly into hashline_edit. Use edit_lines only when you already have exact structured path/start/end/replacement data. Supported selectors: path:50, path:50-80, path:50+20, path:5-16,960-973, path:raw, path:50-80:raw, and path:5-16,960-973:raw. Comma-separated ranges apply only within the same file, not across multiple files; ranges must be ordered and non-overlapping; call read separately for each file. Current per-file read cap: 512000 bytes.",
+      "description": "Read one file or list one directory inside an explicit agent/workspace session with optional selector suffixes in the path. Use this for normal code context when you know one path, especially before hashline_edit. Use search for content discovery across files, tree_view/list_files/glob_search for path discovery, and connector fetch only when consuming an id from workspace_search. Put ranges in the path selector and preserve the hashline output for edits: `[path#snapshot_id]` plus `line:text` rows can be copied directly into hashline_edit. Use edit_lines only when you already have exact structured path/start/end/replacement data. Supported selectors: path:50, path:50-80, path:50+20, path:5-16,960-973, path:raw, path:50-80:raw, and path:5-16,960-973:raw. Comma-separated ranges apply only within the same file, not across multiple files; ranges must be ordered and non-overlapping; call read separately for each file. The executor enforces its configured per-file read limit.",
       "inputSchema": {
         "properties": {
           "path": {
@@ -5712,7 +5712,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Current bounded command timeout default/cap: 10/120 seconds.",
+      "description": "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -5887,7 +5887,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. Current max_grep_results=200.",
+      "description": "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. The bound executor applies its configured search-result limit.",
       "inputSchema": {
         "properties": {
           "case_sensitive": {
@@ -6302,7 +6302,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. Current max findings: 200.",
+      "description": "Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit.",
       "inputSchema": {
         "properties": {
           "cwd": {
@@ -8225,7 +8225,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. Current max tree entries: 5000.",
+      "description": "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured tree-entry limit.",
       "inputSchema": {
         "properties": {
           "cwd": {
@@ -8610,7 +8610,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Write a complete UTF-8 file inside an explicit agent/workspace session. Use only for new files or intentional whole-file replacement; do not use it for partial edits. For ordinary edits to existing files, use hashline_edit from copied read/search rows instead of rewriting the file. Use edit_lines only when you already have exact structured path/start/end/replacement data. Use bash only when a command-driven transformation is clearer. Current write cap: 5000000 bytes.",
+      "description": "Write a complete UTF-8 file inside an explicit agent/workspace session. Use only for new files or intentional whole-file replacement; do not use it for partial edits. For ordinary edits to existing files, use hashline_edit from copied read/search rows instead of rewriting the file. Use edit_lines only when you already have exact structured path/start/end/replacement data. Use bash only when a command-driven transformation is clearer. The bound executor applies its configured write limit.",
       "inputSchema": {
         "properties": {
           "content": {

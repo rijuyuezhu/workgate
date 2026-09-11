@@ -17,7 +17,8 @@ from starlette.responses import (
 )
 from starlette.routing import BaseRoute, Route, WebSocketRoute
 
-from ...config.settings import Settings, get_settings
+from ...config.control import ControlSettingsView
+from ...config.settings import get_settings
 from ...oauth.core.scopes import default_scope
 from ...oauth.core.urls import issuer_url, resource_url
 from ...version import version_info
@@ -94,7 +95,7 @@ def _ui_asset_revision() -> str:
     return digest.hexdigest()[:16]
 
 
-def _ui_index_html(settings: Settings, origin: str) -> str:
+def _ui_index_html(settings: ControlSettingsView, origin: str) -> str:
     """Load the browser shell and inject non-sensitive runtime configuration."""
     path = _assets_dir() / "index.html"
     if not path.is_file():
@@ -298,7 +299,7 @@ async def api_bootstrap(request: Request) -> Response:
 
 
 def human_ui_routes(
-    settings: Settings,
+    settings: ControlSettingsView,
 ) -> tuple[list[BaseRoute], list[BaseRoute]]:
     """Return all Human UI routes and the subset that must remain public."""
     if not settings.ui_enabled:

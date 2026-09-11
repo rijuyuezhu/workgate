@@ -2,8 +2,14 @@ from dataclasses import replace
 
 import pytest
 
-from workgate.tool_session.bindings import SessionBinding, binding_from_record
-from workgate.tool_session.records import AgentSession, session_to_payload
+from workgate.executor.tool_session.bindings import (
+    SessionBinding,
+    binding_from_record,
+)
+from workgate.executor.tool_session.records import (
+    AgentSession,
+    session_to_payload,
+)
 
 
 def _record() -> AgentSession:

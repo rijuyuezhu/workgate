@@ -18,8 +18,6 @@ from ..schemas.result_models.jobs import (
     JobStopOutput,
     JobTailOutput,
 )
-from ..tool_session.lifecycle import session_lifecycle_lock
-from ..tool_session.store import get_tool_session_store
 from ..utils.private_files import write_private_text
 from ..utils.runtime_identity import (
     MANAGED_JOB_LEASE_VERSION,
@@ -30,6 +28,7 @@ from ..utils.runtime_identity import (
 from . import persistence as job_persistence
 from . import recovery as job_recovery
 from . import status as job_status
+from .logs import compact_log as _compact_log
 from .persistence import (
     TERMINAL_STATUSES,
 )
@@ -39,7 +38,6 @@ from .persistence import (
 from .persistence import (
     remove_attempt_paths as _remove_attempt_paths,
 )
-from .runner import compact_log as _compact_log
 from .state import (
     ACTIVE_STATUSES,
     CONFIRMED_TERMINAL_STATUSES,
@@ -536,16 +534,15 @@ async def start_managed_job(
     command: str | None = None,
     cwd: str = ".",
 ) -> JobStartOutput:
-    """Start one controller-managed task under session lifecycle admission."""
-    async with session_lifecycle_lock(session_id):
-        return await _start_managed_job_unlocked(
-            session_id,
-            kind,
-            payload,
-            name=name,
-            command=command,
-            cwd=cwd,
-        )
+    """Start one control-managed task after caller-owned session admission."""
+    return await _start_managed_job_unlocked(
+        session_id,
+        kind,
+        payload,
+        name=name,
+        command=command,
+        cwd=cwd,
+    )
 
 
 async def _start_managed_job_unlocked(
@@ -556,13 +553,10 @@ async def _start_managed_job_unlocked(
     name: str | None = None,
     command: str | None = None,
     cwd: str = ".",
-    touch_session: bool = True,
 ) -> JobStartOutput:
     """Start one controller-managed task owned by an explicit agent session."""
     runtime = managed_jobs_runtime()
     runtime.require_admission()
-    if touch_session:
-        get_tool_session_store().touch_session(session_id)
     normalized_kind = kind.strip()
     if normalized_kind not in runtime.handlers:
         raise ValueError(f"unknown managed job kind: {normalized_kind}")
@@ -651,7 +645,6 @@ async def start_managed_job_without_session_admission(
         name=name,
         command=command,
         cwd=cwd,
-        touch_session=False,
     )
 
 
@@ -908,12 +901,8 @@ async def retry_managed_job_without_session_admission(
 async def managed_job_list_execute(
     session_id: str,
     include_finished: bool,
-    *,
-    touch_session: bool = True,
 ) -> JobListOutput:
     """List only controller-managed jobs owned by one explicit session."""
-    if touch_session:
-        get_tool_session_store().touch_session(session_id)
     now = _utc()
     with _store_transaction() as store:
         for row in store.get("jobs", []):

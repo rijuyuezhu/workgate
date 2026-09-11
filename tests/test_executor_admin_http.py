@@ -23,7 +23,6 @@ def _configure(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://control.test")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "false")
     clear_settings_cache()
 
 

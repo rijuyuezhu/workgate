@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from starlette.routing import BaseRoute
 
 from ... import __version__
-from ...config.settings import Settings, get_settings
+from ...config.control import ControlSettingsView
+from ...config.settings import get_settings
 from ...http.public_routes import public_http_routes
 from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
@@ -48,14 +49,14 @@ def _fastapi_documentation_routes(app: FastAPI) -> list[BaseRoute]:
 
 def _install_public_routes(
     app: FastAPI,
-    settings: Settings,
+    settings: ControlSettingsView,
     *,
     runtime: ControlRuntime | None = None,
 ) -> list[BaseRoute]:
     """Install public non-tool routes for the REST app. It returns public routes for oauth usage."""
     documentation_routes = _fastapi_documentation_routes(app)
     installed_routes = [
-        *public_http_routes(settings, readyz_include_workspace_root=False),
+        *public_http_routes(),
         *(
             executor_routes(
                 runtime.executor_transport, runtime.executor_pairing
@@ -88,9 +89,7 @@ def build_http_app(
     """Construct the authenticated REST API from one explicit tool catalog."""
     if runtime is None and tool_catalog is None:
         runtime = build_control_runtime(get_settings())
-    settings = (
-        runtime.legacy_settings if runtime is not None else get_settings()
-    )
+    settings = runtime.config if runtime is not None else get_settings()
     if tool_catalog is not None:
         catalog = tool_catalog
     elif runtime is not None:
@@ -138,11 +137,12 @@ def run_http(
     runtime: ControlRuntime | None = None,
 ) -> None:
     """Run the REST HTTP server with one control runtime owner."""
-    settings = (
-        runtime.legacy_settings if runtime is not None else get_settings()
-    )
-    validate_public_oauth_configuration(settings)
-    active_runtime = runtime or build_control_runtime(settings)
+    if runtime is None:
+        source_settings = get_settings()
+        active_runtime = build_control_runtime(source_settings)
+    else:
+        active_runtime = runtime
+    validate_public_oauth_configuration(active_runtime.config)
     app = build_http_app(
         tool_catalog=tool_catalog,
         runtime=active_runtime,

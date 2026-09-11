@@ -307,3 +307,5 @@ class AgentCapabilityRegistry:
     """Whether this snapshot includes the project/session-local Skill source."""
     mcp_server_types: frozenset[str] | None = None
     """Optional transport allowlist used to keep integration execution in its owner plane."""
+    scan_skills: bool = True
+    """Whether this registry snapshot owns filesystem-backed Skill discovery."""

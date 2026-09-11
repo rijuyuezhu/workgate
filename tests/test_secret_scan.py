@@ -1,6 +1,5 @@
 import pytest
 
-from workgate.composition.services import build_runtime_services
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.executor.files import files_config_from_settings
 from workgate.executor.files_service import FilesService
@@ -8,6 +7,7 @@ from workgate.executor.secret_scan import (
     SecretScanService,
     _is_placeholder_secret_match,
 )
+from workgate.executor.services import build_runtime_services
 
 
 def _services(tmp_path, monkeypatch):

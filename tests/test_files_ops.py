@@ -20,9 +20,9 @@ from workgate.executor.files import (
 )
 from workgate.executor.files_service import FilesService
 from workgate.executor.shell import check_command_policy
-from workgate.tool_session.bindings import SessionBinding
-from workgate.tool_session.resolver import SessionResolver
-from workgate.tool_session.store import get_tool_session_store
+from workgate.executor.tool_session.bindings import SessionBinding
+from workgate.executor.tool_session.resolver import SessionResolver
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.utils.path_policy import resolve_path_with_policy
 
 _SESSION_COUNTER = 0
@@ -462,7 +462,7 @@ def test_read_text_handles_truncated_utf8_sequence(tmp_path, monkeypatch):
 
 
 def test_parse_read_target_supports_line_and_raw_selectors():
-    from workgate.tool_session.selectors import parse_read_target
+    from workgate.executor.tool_session.selectors import parse_read_target
 
     assert parse_read_target("src/foo.py:50-80").path == "src/foo.py"
     ranged = parse_read_target("src/foo.py:50+20:raw")
@@ -494,7 +494,7 @@ def test_parse_read_target_supports_line_and_raw_selectors():
     ],
 )
 def test_parse_read_target_rejects_invalid_multi_range_selectors(target):
-    from workgate.tool_session.selectors import parse_read_target
+    from workgate.executor.tool_session.selectors import parse_read_target
 
     with pytest.raises(ValueError):
         parse_read_target(target)

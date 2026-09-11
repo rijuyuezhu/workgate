@@ -30,7 +30,6 @@ def _runtime_with_project_skill(
     settings = Settings(
         workspace_root=workspace,
         state_dir=tmp_path / "state",
-        remote_enabled=False,
         agent_bridge_enabled=False,
     )
     runtime = build_executor_runtime(settings, enable_control_connection=False)

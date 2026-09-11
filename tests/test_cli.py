@@ -8,13 +8,13 @@ from mcp.shared.auth import OAuthToken
 import workgate.agent_bridge.cli as agent_cli
 import workgate.control.cli as server_cli
 import workgate.executor.cli as executor_cli
-import workgate.jobs.cli as jobs_cli
+import workgate.executor.jobs.cli as jobs_cli
 import workgate.main as cli
 import workgate.ui.cli as tui_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.app_paths import app_paths
-from workgate.config.settings import load_settings
+from workgate.config.settings import Settings, load_settings
 from workgate.config.surface import (
     SETTING_SPECS,
     cli_overrides_from_args,
@@ -77,7 +77,7 @@ def test_server_subcommand_parses_runtime_settings():
             "pin",
             "--allow-full-control",
             "true",
-            "--remote-enabled",
+            "--remote-http-transfer-enabled",
             "false",
         ]
     )
@@ -92,7 +92,7 @@ def test_server_subcommand_parses_runtime_settings():
     assert args.base_url == "https://example.com"
     assert args.oauth_admin_pin == "pin"
     assert args.allow_full_control is True
-    assert args.remote_enabled is False
+    assert args.remote_http_transfer_enabled is False
 
 
 def test_root_parser_requires_an_explicit_command():
@@ -152,6 +152,23 @@ def test_every_setting_has_cli_option():
             assert spec.unset_cli_flag not in help_text
 
 
+def test_removed_remote_worker_settings_stay_out_of_public_config_surface():
+    removed = {
+        "remote_enabled",
+        "remote_invite_ttl_s",
+        "remote_poll_timeout_s",
+        "remote_job_timeout_s",
+        "remote_max_pending_jobs",
+    }
+    spec_names = {spec.name for spec in SETTING_SPECS}
+    help_text = _command_parser("server").format_help()
+
+    assert removed.isdisjoint(Settings.model_fields)
+    assert removed.isdisjoint(spec_names)
+    for name in removed:
+        assert f"--{name.replace('_', '-')}" not in help_text
+
+
 def test_nullable_cli_values_can_be_explicitly_unset():
     args = cli._build_parser().parse_args(
         ["server", "--unset-base-url", "--unset-oauth-admin-pin"]
@@ -196,12 +213,14 @@ def test_bool_cli_values_parse_explicitly():
     )
     assert (
         parser.parse_args(
-            ["server", "--remote-enabled", "false"]
-        ).remote_enabled
+            ["server", "--remote-http-transfer-enabled", "false"]
+        ).remote_http_transfer_enabled
         is False
     )
     assert (
-        parser.parse_args(["server", "--remote-enabled", "true"]).remote_enabled
+        parser.parse_args(
+            ["server", "--remote-http-transfer-enabled", "true"]
+        ).remote_http_transfer_enabled
         is True
     )
 
@@ -260,13 +279,13 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
     calls = []
 
     def run_from_args(args):
-        calls.append((args.mode, args.remote_enabled))
+        calls.append(args.mode)
 
     monkeypatch.setattr(server_cli, "run_server_from_args", run_from_args)
 
-    cli.main(["server", "--mode", "stdio", "--remote-enabled", "true"])
+    cli.main(["server", "--mode", "stdio"])
 
-    assert calls == [("stdio", True)]
+    assert calls == ["stdio"]
 
 
 def test_server_handler_dispatches_control_modes(monkeypatch):
@@ -369,12 +388,12 @@ def test_internal_job_runner_is_dispatched_by_argparse(monkeypatch):
 
 def test_server_overrides_include_only_explicit_values():
     args = cli._build_parser().parse_args(
-        ["server", "--mode", "stdio", "--remote-enabled", "false"]
+        ["server", "--mode", "stdio", "--remote-http-transfer-enabled", "false"]
     )
 
     assert cli_overrides_from_args(args) == {
         "mode": "stdio",
-        "remote_enabled": False,
+        "remote_http_transfer_enabled": False,
     }
 
 

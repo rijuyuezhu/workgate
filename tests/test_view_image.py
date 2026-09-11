@@ -15,8 +15,8 @@ from workgate.config.settings import (
 )
 from workgate.control.mcp.app import build_mcp
 from workgate.executor.config import ExecutorConfig, resolve_executor_config
+from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.persistence import FileStateStore
-from workgate.tool_session.store import ToolSessionStore
 from workgate.utils.image_types import detect_image_type
 
 PNG_BYTES = base64.b64decode(

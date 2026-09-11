@@ -1,11 +1,9 @@
-import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from tests.e2e_helpers import RestToolClient, run_http_process
-from workgate.app_paths import app_paths
 
 pytestmark = pytest.mark.integration
 
@@ -14,21 +12,9 @@ CODE_HUMANIZER_COMMIT = "a315560f58054d091f0df36dc4ed3bf8364f25e2"
 
 
 def _install_code_humanizer(workspace: Path) -> None:
-    _ = workspace
-    config_dir = app_paths().agent_config_dir
-    skills_dir = config_dir / "skills"
+    skills_dir = workspace / ".agents" / "skills"
     skill_dir = skills_dir / "code-humanizer"
     skills_dir.mkdir(parents=True)
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "skills": {"enabled": True, "directory": "skills"},
-                "dynamicTools": {"mcp": False, "skills": False},
-            }
-        ),
-        encoding="utf-8",
-    )
 
     subprocess.run(
         ["git", "init", "-q", str(skill_dir)], check=True, timeout=10
@@ -95,8 +81,7 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
         client = RestToolClient(base_url)
 
         status = await client.call_tool("agent_config_status")
-        assert status["manifest_status"] == "loaded"
-        assert status["skills"]["count"] == 1
+        assert status["skills"]["count"] == 0
         assert status["skills"]["warnings"] == []
         session = await client.call_tool("session_start", {"workdir": "."})
         session_id = session["session_id"]
@@ -108,7 +93,8 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
         assert len(listed["skills"]) == 1
         skill = listed["skills"][0]
         assert skill["name"] == "code-humanizer"
-        assert skill["entry_path"] == "skills/code-humanizer/SKILL.md"
+        assert skill["source"] == "project"
+        assert skill["entry_path"] == ".agents/skills/code-humanizer/SKILL.md"
         assert "humanize code" in skill["description"]
         assert "README.md" in skill["related_files"]
         assert not any(
@@ -121,6 +107,7 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
             {"session_id": session_id, "name": "code-humanizer"},
         )
         assert activated["name"] == "code-humanizer"
+        assert activated["source"] == "project"
         assert activated["bytes"] > 10_000
         assert activated["content"].startswith("---\nname: code-humanizer\n")
         assert "## Iron rules" in activated["content"]

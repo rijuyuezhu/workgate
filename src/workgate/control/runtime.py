@@ -41,8 +41,6 @@ class ControlRuntime:
 
     config: ControlConfig
     """Resolved control-owned authority for new composition code."""
-    legacy_settings: Settings
-    """Temporary monolithic settings bridge for unmigrated components."""
     services: ControlServices
     """Explicit shared state services owned by this runtime."""
     control_state: ControlState
@@ -265,7 +263,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     )
     job_service = ControlJobService(session_coordinator)
     todo_service = ControlTodoService(
-        control_state, services.state_store, settings
+        control_state, services.state_store, config
     )
     audit_service = ControlAuditService(session_coordinator)
     session_coordinator.set_control_resource_hooks(
@@ -279,11 +277,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     managed_jobs_runtime.register_handler(managed_kind, managed_handler)
     human_ui_runtime = build_human_ui_runtime()
     oauth_state = build_oauth_state(
-        settings.state_dir, state_store=services.state_store
+        config.state_dir, state_store=services.state_store
     )
     return ControlRuntime(
         config=config,
-        legacy_settings=settings,
         services=services,
         control_state=control_state,
         executor_transport=executor_transport,
@@ -298,7 +295,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         human_ui_runtime=human_ui_runtime,
         oauth_state=oauth_state,
         tool_catalog=build_control_tool_catalog(
-            settings,
+            config,
             session_coordinator,
             session_copy_service,
             job_service,

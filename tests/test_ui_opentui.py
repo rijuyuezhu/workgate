@@ -34,7 +34,6 @@ def _configure(
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth)
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_UI_TUI_COMMAND", "fake-tui")
     clear_settings_cache()

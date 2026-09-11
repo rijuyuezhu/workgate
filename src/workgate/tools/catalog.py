@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from ..config.settings import Settings
+from ..config.control import ControlSettingsView
 from .contracts import HttpToolRoute, McpToolContext, ToolHandler, ToolRegistry
 from .registry.agent import AgentBridgeToolRegistry
 from .registry.audit import AuditToolRegistry
@@ -23,7 +23,7 @@ from .registry.transfer import TransferToolRegistry
 from .registry.version import VersionToolRegistry
 from .registry.workspace_connector import WorkspaceConnectorToolRegistry
 
-type ToolRegistryFactory = Callable[[Settings | None], ToolRegistry]
+type ToolRegistryFactory = Callable[[ControlSettingsView | None], ToolRegistry]
 
 
 BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
@@ -81,7 +81,7 @@ class ToolCatalog:
 
 
 def build_tool_catalog(
-    settings: Settings | None = None,
+    settings: ControlSettingsView | None = None,
     *,
     factory_overrides: Mapping[str, ToolRegistryFactory] | None = None,
 ) -> ToolCatalog:

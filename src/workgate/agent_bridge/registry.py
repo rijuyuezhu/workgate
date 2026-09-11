@@ -101,6 +101,7 @@ def build_agent_registry(
     max_skill_entry_bytes: int = DEFAULT_MAX_ENTRY_BYTES,
     include_project_skills: bool = True,
     mcp_server_types: frozenset[str] | None = None,
+    scan_skills: bool = True,
 ) -> AgentCapabilityRegistry:
     """Build one manifest-backed registry with ordered project, managed, and global Skills."""
     config_root = Path(config_dir).expanduser().resolve()
@@ -110,11 +111,15 @@ def build_agent_registry(
         else Path(project_root).expanduser().resolve()
     )
     manifest = load_agent_manifest(config_root)
-    sources = skill_sources(
-        project_root=active_project_root,
-        managed_config_dir=config_root,
-        managed_directory=manifest.data.skills.directory,
-        include_project=include_project_skills,
+    sources = (
+        skill_sources(
+            project_root=active_project_root,
+            managed_config_dir=config_root,
+            managed_directory=manifest.data.skills.directory,
+            include_project=include_project_skills,
+        )
+        if scan_skills
+        else ()
     )
     probe_timeout = _probe_timeout_seconds(probe_timeout_s)
     if client_manager is None:
@@ -136,7 +141,11 @@ def build_agent_registry(
         retain_stdio_servers(retained_servers)
 
     skill_scan = SkillScanResult()
-    if manifest.status != "invalid_config" and manifest.data.skills.enabled:
+    if (
+        scan_skills
+        and manifest.status != "invalid_config"
+        and manifest.data.skills.enabled
+    ):
         skill_scan = scan_skill_sources(
             sources,
             max_skills=max_skills,
@@ -250,4 +259,5 @@ def build_agent_registry(
         client_manager=client_manager,
         include_project_skills=include_project_skills,
         mcp_server_types=mcp_server_types,
+        scan_skills=scan_skills,
     )

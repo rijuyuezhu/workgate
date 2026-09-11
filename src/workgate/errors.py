@@ -4,6 +4,21 @@ import os
 from pathlib import Path
 from typing import Any
 
+SESSION_TERMINATION_PROMPT = (
+    "This session was marked for immediate termination by the human control "
+    "plane. Stop immediately. Do not perform any further work or call any more "
+    "tools for this session. Tell the user that execution was terminated by "
+    "the human operator."
+)
+
+
+class SessionTerminationRequestedError(ValueError):
+    """Raised when a tool call references a session terminating on its owner."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(f"Session {session_id}: {SESSION_TERMINATION_PROMPT}")
+
 
 class PathNotFoundError(FileNotFoundError):
     """A missing filesystem path selected from a trusted operation endpoint."""

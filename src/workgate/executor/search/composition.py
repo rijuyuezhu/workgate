@@ -1,8 +1,8 @@
 """Narrow explicit composition helpers for the Search vertical."""
 
 from ...config.settings import Settings
-from ...tool_session.resolver import SessionResolver
-from ...tool_session.store import ToolSessionStore
+from ..tool_session.resolver import SessionResolver
+from ..tool_session.store import ToolSessionStore
 from .core import SearchConfig
 from .service import (
     LocalSearchRunner,

@@ -6,13 +6,13 @@ from ...agent_bridge.mcp import AgentMcpClientManager
 from ...agent_bridge.models import AgentCapabilityRegistry
 from ...agent_bridge.service import (
     agent_config_status_payload,
-    build_agent_registry_from_settings,
+    build_network_agent_registry_from_settings,
     call_agent_mcp_tool_payload,
     list_agent_mcp_servers_payload,
     list_agent_mcp_tools_payload,
 )
 from ...agent_bridge.tools import register_agent_bridge_dynamic_tools
-from ...config.settings import Settings
+from ...config.control import ControlSettingsView
 from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
 from ...schemas.input_models.agent import (
     AgentMcpSessionIdArg,
@@ -39,15 +39,12 @@ from ..metadata import oauth_security_meta
 
 
 def _agent_registry() -> AgentCapabilityRegistry:
-    return build_agent_registry_from_settings(
-        client_manager_factory=AgentMcpClientManager,
-        allow_stdio=False,
-        include_project_skills=False,
-        mcp_server_types=frozenset({"http", "sse"}),
+    return build_network_agent_registry_from_settings(
+        client_manager_factory=AgentMcpClientManager
     )
 
 
-def _agent_bridge_enabled(settings: Settings) -> bool:
+def _agent_bridge_enabled(settings: ControlSettingsView) -> bool:
     return settings.agent_bridge_enabled
 
 
@@ -184,12 +181,8 @@ def register_agent_bridge_dynamic_mcp(
 ) -> None:
     """Register dynamic MCP tools for this tool group."""
     settings = context.settings
-    registry = build_agent_registry_from_settings(
-        settings,
-        AgentMcpClientManager,
-        allow_stdio=False,
-        include_project_skills=False,
-        mcp_server_types=frozenset({"http", "sse"}),
+    registry = build_network_agent_registry_from_settings(
+        settings, AgentMcpClientManager
     )
     register_agent_bridge_dynamic_tools(
         mcp,
@@ -197,12 +190,6 @@ def register_agent_bridge_dynamic_mcp(
         oauth_security_meta(SUPPORTED_OAUTH_SCOPES),
         settings.agent_mcp_probe_timeout_s,
         None if settings.agent_dynamic_mcp_tools else False,
-        None if settings.agent_dynamic_skill_tools else False,
-        {
-            "max_skills": settings.max_skills,
-            "max_skill_related_files": settings.max_skill_related_files,
-            "max_skill_scan_entries": settings.max_skill_scan_entries,
-            "max_skill_path_bytes": settings.max_skill_path_bytes,
-            "max_skill_entry_bytes": settings.max_file_read_bytes,
-        },
+        False,
+        {},
     )

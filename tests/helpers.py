@@ -9,13 +9,13 @@ from typing import Any, cast
 
 from pydantic import JsonValue, TypeAdapter
 
-from workgate.composition.services import install_runtime_services
 from workgate.config.settings import Settings
 from workgate.control.runtime import ControlRuntime, build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
 from workgate.executor.connection import operation_error_from_exception
 from workgate.executor.hello import build_executor_hello
 from workgate.executor.runtime import ExecutorRuntime, build_executor_runtime
+from workgate.executor.services import install_runtime_services
 from workgate.persistence import use_state_store
 from workgate.protocol.credentials import (
     executor_credential_verifier,

@@ -70,7 +70,6 @@ def _configure_ui(monkeypatch, tmp_path, *, auth_mode="none", **values):
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_UI_TUI_COMMAND", "test-opentui")
     for name, value in values.items():
         monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value).lower())

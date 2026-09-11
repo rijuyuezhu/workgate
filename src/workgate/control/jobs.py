@@ -190,9 +190,7 @@ class ControlJobService:
         executor_available: bool,
         lines: int,
     ) -> JobOutput:
-        managed = await managed_job_list_execute(
-            session_id, include_finished, touch_session=False
-        )
+        managed = await managed_job_list_execute(session_id, include_finished)
         if not executor_available:
             if managed.jobs:
                 return JobOutput(

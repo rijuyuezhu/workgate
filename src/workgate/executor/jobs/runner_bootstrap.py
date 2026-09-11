@@ -8,7 +8,7 @@ def main() -> None:
     """Import the runner from the package tree containing this bootstrap."""
     runtime_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(runtime_root))
-    from workgate.jobs.runner import main as runner_main
+    from workgate.executor.jobs.runner import main as runner_main
 
     runner_main()
 

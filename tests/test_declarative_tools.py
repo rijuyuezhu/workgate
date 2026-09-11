@@ -5,17 +5,10 @@ import pytest
 from fastapi import HTTPException
 from mcp.types import ToolAnnotations
 
-import workgate.tools.declarative as declarative_module
-from workgate.config.settings import clear_settings_cache
 from workgate.oauth.core.context import (
     bind_oauth_claims,
     require_oauth_scopes,
     reset_oauth_claims,
-)
-from workgate.tool_session import (
-    SESSION_TERMINATION_PROMPT,
-    SessionTerminationRequestedError,
-    get_tool_session_store,
 )
 from workgate.tools.declarative import ToolDefinition
 
@@ -91,40 +84,6 @@ async def test_tool_definition_call_from_mapping_ignores_varargs_and_kwargs():
         "keyword": 5,
         "kwargs": {},
     }
-
-
-@pytest.mark.asyncio
-async def test_handler_owned_session_admission_skips_generic_wrapper(
-    monkeypatch,
-) -> None:
-    admissions: list[dict[str, Any]] = []
-
-    async def sample_tool(session_id: str) -> dict[str, str]:
-        return {"session_id": session_id}
-
-    monkeypatch.setattr(
-        declarative_module,
-        "enforce_tool_session_control",
-        lambda args, **_kwargs: admissions.append(args),
-    )
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-        session_admission="handler",
-    )
-
-    assert await definition.call_from_mapping({"session_id": "SESSION01"}) == {
-        "session_id": "SESSION01"
-    }
-    assert admissions == []
-
-    mcp = _FakeMcp()
-    definition.register_mcp(cast(Any, mcp), _sample_context())
-    handler = cast(Callable[[str], Awaitable[dict[str, str]]], mcp.handler)
-    assert await handler("SESSION02") == {"session_id": "SESSION02"}
-    assert admissions == []
 
 
 def _sample_context():
@@ -257,116 +216,3 @@ def test_tool_definition_rejects_unknown_annotations():
         ValueError, match="Invalid annotations: future-annotation"
     ):
         definition._mcp_annotations(_sample_context())
-
-
-@pytest.mark.asyncio
-async def test_http_style_tool_dispatch_stops_terminated_sessions(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    session = store.create_session(
-        session_id="sess_0000000000000000000001", workdir=tmp_path
-    )
-    store.request_termination(session.session_id)
-    called = False
-
-    async def sample_tool(session_id: str) -> dict[str, str]:
-        nonlocal called
-        called = True
-        return {"session_id": session_id}
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-    )
-
-    with pytest.raises(SessionTerminationRequestedError) as exc_info:
-        await definition.call_from_mapping({"session_id": session.session_id})
-    assert not called
-    assert SESSION_TERMINATION_PROMPT in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_tool_dispatch_ignores_session_like_values_in_free_form_data(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    session = store.create_session(
-        session_id="sess_0000000000000000000002", workdir=tmp_path
-    )
-    called = False
-
-    async def sample_tool(
-        session_id: str, env: dict[str, str]
-    ) -> dict[str, object]:
-        nonlocal called
-        called = True
-        return {"session_id": session_id, "env": env}
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-    )
-
-    result = await definition.call_from_mapping(
-        {
-            "session_id": session.session_id,
-            "env": {"session_id": "not-an-agent-session"},
-        }
-    )
-
-    assert called
-    assert result["env"] == {"session_id": "not-an-agent-session"}
-
-
-@pytest.mark.asyncio
-async def test_mcp_tool_dispatch_stops_terminated_sessions(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    session = store.create_session(
-        session_id="sess_0000000000000000000003", workdir=tmp_path
-    )
-    store.request_termination(session.session_id)
-    called = False
-
-    async def sample_tool(session_id: str) -> dict[str, str]:
-        nonlocal called
-        called = True
-        return {"session_id": session_id}
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-        oauth_scopes=("shell:read",),
-        mcp_error_handler=lambda exc, _args, _kwargs: {"adapted": str(exc)},
-    )
-    mcp = _FakeMcp()
-    definition.register_mcp(cast(Any, mcp), _sample_context())
-    handler = cast(Callable[[str], Awaitable[dict[str, str]]], mcp.handler)
-    claims_token = bind_oauth_claims({"scope": "shell:read"})
-    try:
-        with pytest.raises(SessionTerminationRequestedError) as exc_info:
-            await handler(session.session_id)
-    finally:
-        reset_oauth_claims(claims_token)
-    assert not called
-    assert SESSION_TERMINATION_PROMPT in str(exc_info.value)

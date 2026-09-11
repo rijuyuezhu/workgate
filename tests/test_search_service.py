@@ -11,11 +11,11 @@ from workgate.executor.search.composition import (
     build_search_service,
 )
 from workgate.executor.search.service import SearchRequest
+from workgate.executor.tool_session import store as store_module
+from workgate.executor.tool_session.bindings import SessionBinding
 from workgate.schemas.result_models.search import (
     GrepMatch,
 )
-from workgate.tool_session import store as store_module
-from workgate.tool_session.bindings import SessionBinding
 
 
 def _store_and_settings(tmp_path, monkeypatch):

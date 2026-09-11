@@ -1,5 +1,6 @@
 import pytest
 
+from workgate.config.control import ControlSettingsView
 from workgate.config.settings import Settings
 from workgate.tools.catalog import (
     BUILTIN_TOOL_REGISTRY_FACTORIES,
@@ -74,7 +75,7 @@ async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
     class BoundSearchRegistry(ToolRegistry):
         name = "search"
 
-        def __init__(self, settings: Settings | None) -> None:
+        def __init__(self, settings: ControlSettingsView | None) -> None:
             self.settings = settings
 
         def http_handlers(self):

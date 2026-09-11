@@ -1,6 +1,6 @@
 # Human interface
 
-The HTTP server includes a browser interface for managing the local server and enrolled remote workers. An optional OpenTUI client provides the same main areas in a terminal.
+The HTTP server includes a browser interface for managing the control service and paired executors. An optional OpenTUI client provides the same main areas in a terminal.
 
 ## Start the browser interface
 
@@ -47,11 +47,11 @@ existing persistent shells.
 
 ### Dashboard
 
-View health, resource usage, recent activity, and alerts for the selected local or remote machine. Missing metrics are shown as unavailable rather than guessed.
+View health, resource usage, recent activity, and alerts for the selected executor. Missing metrics are shown as unavailable rather than guessed.
 
-### Remotes
+### Executors
 
-Create an invite, see whether workers are online, copy a reconnect command, and revoke workers. Enrollment and service management are covered in [Remote workers](remote-workers.md).
+Approve pairing requests, inspect or rename executors, see whether they are online, and revoke trust from the **Executors** page. Pairing and reconnect behavior are covered in [Executors](remote-workers.md).
 
 ### Terminals
 
@@ -63,11 +63,11 @@ Interactive terminal support depends on the selected machine. When a full intera
 
 Browse the selected workspace, preview supported files, edit bounded UTF-8 text files, create files, and perform the operations offered by the selected machine. The UI refuses unsafe partial edits and reports when a file changed concurrently.
 
-Some remote file operations may be unavailable. The UI shows the available actions instead of emulating missing operations with shell commands. Use `session_copy` through an MCP client for cross-workspace transfers.
+Some executor file operations may be unavailable when the bound executor is offline or lacks the needed capability. The UI shows the available actions instead of emulating missing operations with control-local shell commands. Use `session_copy` through an MCP client for cross-workspace transfers.
 
 ### Todos
 
-View and update the Todo list associated with a local or remote workspace session. If another client changes the same list, reload the latest version instead of overwriting it.
+View and update the Todo list associated with a shared workspace session. If another client changes the same list, reload the latest version instead of overwriting it.
 
 ### Audit
 
@@ -86,7 +86,7 @@ The native OpenTUI client connects only through the trusted loopback Human UI AP
 
 - **`/ui` returns 404:** confirm the server is in supported `mcp` or `http` mode and the UI is enabled. The reserved `both` mode does not start a server.
 - **OpenTUI cannot start:** use the browser UI, then confirm that your installation contains a platform-native runtime.
-- **A remote panel is unavailable:** verify that the worker is online and supports the requested operation.
+- **An executor-backed panel is unavailable:** verify that the executor is online, the session is bound to it, and it supports the requested operation.
 - **A terminal looks disconnected:** reattach to the persistent shell or use its snapshot view.
 - **An action is forbidden:** sign in again with the scopes required for that operation.
 

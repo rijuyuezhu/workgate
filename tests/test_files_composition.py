@@ -1,10 +1,10 @@
 import pytest
 
-from workgate.composition.services import build_runtime_services
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.executor.search_composition import (
     build_executor_dispatcher_with_search,
 )
+from workgate.executor.services import build_runtime_services
 from workgate.tools.registry.files import FileToolRegistry
 from workgate.tools.registry.read import ReadToolRegistry
 

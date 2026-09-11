@@ -14,22 +14,22 @@ Use workgate in /workspace/project. Inspect the repository tree, instruction fil
 Use workgate in /workspace/project. Create a new branch, inspect the relevant code and tests, make the smallest requested change, run focused validation, show the final diff, and report anything not verified.
 ```
 
-## Enroll a remote worker
+## Pair an executor
 
 ```text
-Use workgate to create a one-time remote worker invite named gpu1 with workdir /home/me/project. Show me the command to run on that machine, then wait for me to confirm enrollment before checking its status.
+Help me pair a Workgate executor named gpu1 with my control service. Give me the `workgate executor connect CONTROL_URL --name gpu1` command, then explain where to approve the pairing request in the Executors UI.
 ```
 
-## Inspect a remote machine
+## Inspect an executor
 
 ```text
-Use workgate on remote machine gpu1 in /home/me/project. Inspect the repository and environment, run git status, and report what is available before editing.
+Use workgate on executor gpu1 in /home/me/project. Start a shared session there, inspect the repository and environment, run git status, and report what is available before editing.
 ```
 
-## Run a remote test
+## Run a test on an executor
 
 ```text
-Use workgate on gpu1. Find the relevant test for the requested change, run it as a bounded or background job as appropriate, and summarize the result and log location.
+Use workgate on executor gpu1. Start or reuse the appropriate shared session, find the relevant test for the requested change, run it as a bounded or background job as appropriate, and summarize the result.
 ```
 
 ## Copy an artifact

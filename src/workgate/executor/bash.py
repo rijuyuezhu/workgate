@@ -9,8 +9,6 @@ from ..schemas.result_models.shell import (
     RunPythonCodeOutput,
     ShellExecutionOutput,
 )
-from ..tool_session.lifecycle import session_lifecycle_lock
-from ..tool_session.store import ToolSessionStore
 from ..utils.serialization import to_jsonable
 from .config import ExecutorConfig
 from .shell import (
@@ -22,6 +20,8 @@ from .shell import (
     start_persistent_shell_execute,
 )
 from .temp_file import write_temp_text_file
+from .tool_session.lifecycle import session_lifecycle_lock
+from .tool_session.store import ToolSessionStore
 
 type JobStarter = Callable[
     [str, str, str, str | None], Awaitable[JobStartOutput]

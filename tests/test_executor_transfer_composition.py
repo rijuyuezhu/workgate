@@ -7,7 +7,7 @@ import workgate.executor.transfer as transfer_ops
 import workgate.executor.transfer_composition as transfer_composition
 from workgate.config.settings import Settings
 from workgate.executor.runtime import build_executor_runtime
-from workgate.tool_session.store import ToolSessionStore
+from workgate.executor.tool_session.store import ToolSessionStore
 
 
 @pytest.mark.asyncio
@@ -24,7 +24,6 @@ async def test_composed_transfer_uses_explicit_executor_authority(
     settings = Settings(
         workspace_root=workspace,
         state_dir=tmp_path / "state",
-        remote_enabled=False,
         agent_bridge_enabled=False,
     )
     runtime = build_executor_runtime(settings, enable_control_connection=False)
@@ -89,7 +88,6 @@ async def test_transfer_composition_preserves_unbound_command_admission(
         Settings(
             workspace_root=workspace,
             state_dir=tmp_path / "state",
-            remote_enabled=False,
             agent_bridge_enabled=False,
         ),
         enable_control_connection=False,

@@ -495,7 +495,9 @@ async def test_job_tool_schema_exposes_durable_companion_contract(
 
 
 @pytest.mark.asyncio
-async def test_tool_descriptions_include_runtime_limits(tmp_path, monkeypatch):
+async def test_machine_tool_descriptions_do_not_publish_control_limits(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_OUTPUT_BYTES", "12345")
     monkeypatch.setenv("WORKGATE_MAX_GREP_RESULTS", "678")
@@ -506,9 +508,11 @@ async def test_tool_descriptions_include_runtime_limits(tmp_path, monkeypatch):
     bash_description = tools["bash"].description or ""
     search_description = tools["search"].description or ""
     settings = get_settings()
-    assert str(settings.run_shell_default_timeout_s) in bash_description
-    assert str(settings.run_shell_max_timeout_s) in bash_description
-    assert str(settings.max_grep_results) in search_description
+    assert str(settings.run_shell_default_timeout_s) not in bash_description
+    assert str(settings.run_shell_max_timeout_s) not in bash_description
+    assert str(settings.max_grep_results) not in search_description
+    assert "bound executor" in bash_description
+    assert "bound executor" in search_description
 
 
 def test_transport_security_uses_exact_base_url_host(tmp_path, monkeypatch):

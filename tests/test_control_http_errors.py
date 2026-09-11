@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from workgate.control.http.errors import install_error_handlers
-from workgate.tool_session import SessionTerminationRequestedError
+from workgate.executor.tool_session import SessionTerminationRequestedError
 from workgate.tools.local_handlers import UnknownLocalToolError
 
 

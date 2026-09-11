@@ -9,12 +9,12 @@ import workgate.executor.shell_service as shell_service_module
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.shell_service import ShellService
+from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.schemas.result_models.shell import (
     KillPersistentShellOutput,
     ListPersistentShellsOutput,
     PersistentShellInfo,
 )
-from workgate.tool_session.store import ToolSessionStore
 
 
 class _Store:
@@ -38,7 +38,6 @@ def _service(tmp_path: Path) -> tuple[ShellService, _Store]:
         Settings(
             workspace_root=workspace,
             state_dir=tmp_path / "state",
-            remote_enabled=False,
             agent_bridge_enabled=False,
         )
     )

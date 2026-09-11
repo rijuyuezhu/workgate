@@ -13,7 +13,7 @@ from workgate.executor.patch import (
     apply_patch_execute,
 )
 from workgate.executor.runtime import build_executor_runtime
-from workgate.tool_session.store import ToolSessionStore
+from workgate.executor.tool_session.store import ToolSessionStore
 
 
 def test_patch_git_subprocesses_detach_stdio(
@@ -48,7 +48,6 @@ def _executor_session(
     settings = Settings(
         workspace_root=workspace,
         state_dir=state_dir,
-        remote_enabled=False,
         agent_bridge_enabled=False,
     )
     runtime = build_executor_runtime(settings, enable_control_connection=False)

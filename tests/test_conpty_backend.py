@@ -614,7 +614,6 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / ".state",
-            remote_enabled=False,
         ),
         enable_control_connection=False,
     )

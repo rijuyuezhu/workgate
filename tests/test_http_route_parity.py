@@ -36,13 +36,10 @@ def _route_paths(routes: Iterable[BaseRoute]) -> tuple[str, ...]:
 
 
 def test_shared_public_routes_have_rest_and_mcp_http_parity() -> None:
-    settings = Settings(mode="http", auth_mode="none", remote_enabled=False)
+    settings = Settings(mode="http", auth_mode="none")
     configure_settings(settings)
 
-    shared_routes = public_http_routes(
-        settings,
-        readyz_include_workspace_root=False,
-    )
+    shared_routes = public_http_routes()
     shared_signatures = _route_signatures(shared_routes)
     assert shared_signatures == _SHARED_PUBLIC_ROUTE_SIGNATURES
 
@@ -72,7 +69,6 @@ def test_human_ui_routes_have_rest_and_mcp_http_parity() -> None:
     settings = Settings(
         mode="mcp",
         auth_mode="none",
-        remote_enabled=False,
         ui_enabled=True,
     )
     configure_settings(settings)

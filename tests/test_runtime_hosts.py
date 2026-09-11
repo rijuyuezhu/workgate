@@ -11,16 +11,16 @@ from workgate.config.settings import Settings, configure_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp, build_mcp_http_app
 from workgate.control.runtime import build_control_runtime
+from workgate.executor.tool_session import (
+    configure_tool_session_store,
+    get_tool_session_store,
+)
+from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.persistence import (
     FileStateStore,
     configure_state_store,
     get_state_store,
 )
-from workgate.tool_session import (
-    configure_tool_session_store,
-    get_tool_session_store,
-)
-from workgate.tool_session.store import ToolSessionStore
 
 
 def _install_outer_stores(settings: Settings):
@@ -54,7 +54,6 @@ def test_rest_http_host_owns_control_runtime_lifespan(tmp_path):
         state_dir=tmp_path / "runtime-state",
         mode="http",
         auth_mode="none",
-        remote_enabled=False,
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
@@ -82,7 +81,6 @@ def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
         state_dir=tmp_path / "runtime-state",
         mode="http",
         auth_mode="none",
-        remote_enabled=False,
         host="127.0.0.1",
         port=8765,
     )
@@ -143,7 +141,6 @@ async def test_stdio_fastmcp_server_run_lifespan_owns_control_runtime(
         state_dir=tmp_path / "runtime-state",
         mode="stdio",
         auth_mode="none",
-        remote_enabled=False,
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
@@ -171,7 +168,6 @@ async def test_mcp_http_sessions_do_not_own_process_runtime(tmp_path):
         state_dir=tmp_path / "runtime-state",
         mode="mcp",
         auth_mode="none",
-        remote_enabled=False,
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
@@ -192,7 +188,6 @@ def test_mcp_http_host_owns_control_runtime_once(tmp_path):
         state_dir=tmp_path / "runtime-state",
         mode="mcp",
         auth_mode="none",
-        remote_enabled=False,
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)
@@ -218,7 +213,6 @@ def test_mcp_http_inner_startup_failure_closes_control_runtime(tmp_path):
         state_dir=tmp_path / "runtime-state",
         mode="mcp",
         auth_mode="none",
-        remote_enabled=False,
     )
     configure_settings(settings)
     outer_state_store, outer_session_store = _install_outer_stores(settings)

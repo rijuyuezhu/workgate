@@ -18,8 +18,8 @@ patch_tool = PatchToolRegistry.get_tool_decorator()
 
 
 def _apply_patch_description(context: McpToolContext) -> str:
-    settings = context.settings
-    return f"""Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. Current patch input cap: {settings.max_file_write_bytes} bytes."""
+    del context
+    return """Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. The bound executor applies its configured patch/write limit."""
 
 
 @patch_tool(

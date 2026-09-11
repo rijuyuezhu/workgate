@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import clear_settings_cache
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.jobs import managed as jobs_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as jobs_recovery
 from workgate.jobs import state as job_state
 from workgate.protocol.ids import new_session_id
-from workgate.tool_session.store import get_tool_session_store
 from workgate.utils import private_files
 
 pytestmark = pytest.mark.usefixtures("managed_jobs_runtime_owner")

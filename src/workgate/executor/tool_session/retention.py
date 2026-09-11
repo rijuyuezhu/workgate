@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Any
 
-from ..persistence import StateStore
-from ..utils.runtime_identity import managed_job_lease_state
+from ...persistence import StateStore
+from ...utils.runtime_identity import managed_job_lease_state
 from .records import valid_session_id
 
 JOB_STORE_READ_MAX_BYTES = 64 * 1024 * 1024

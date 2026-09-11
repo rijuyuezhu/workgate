@@ -36,7 +36,6 @@ from ..schemas.result_models.transfer import (
     TransferUnpackArchiveOutput,
     TransferWriteChunkOutput,
 )
-from ..tool_session.store import ToolSessionStore
 from ..utils.path_locks import path_lock, path_locks
 from ..utils.path_policy import (
     relative_display_from_root,
@@ -45,6 +44,7 @@ from ..utils.path_policy import (
 from ..utils.private_files import atomic_write_private_text
 from .config import ExecutorConfig
 from .path import prune_temp_dir, temp_dir
+from .tool_session.store import ToolSessionStore
 
 _TRANSFER_TMP_MARKER = "workgate-transfer"
 _TRANSFER_STALE_GRACE_S = 24 * 60 * 60

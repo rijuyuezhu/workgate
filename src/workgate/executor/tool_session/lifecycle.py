@@ -9,8 +9,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..persistence import get_state_store
-from ..utils.private_files import private_file_lock
+from ...persistence import get_state_store
+from ...utils.private_files import private_file_lock
 
 _FILE_LOCK_POLL_S = 0.1
 _THREAD_JOIN_POLL_S = 0.01

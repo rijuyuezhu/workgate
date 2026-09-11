@@ -50,7 +50,7 @@ The projects still share the same broad purpose and many operational outcomes:
 - controlled shell and Python execution;
 - persistent terminals and tracked background work;
 - workspace-confined file inspection and mutation;
-- remote workers that connect outbound to a controller;
+- executors that connect outbound to a control service;
 - OAuth-protected MCP and HTTP operation;
 - file links, Audit, Todos, Skills, and human interfaces;
 - standalone and Python deployment paths.

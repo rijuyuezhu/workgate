@@ -7,7 +7,7 @@ import json
 import time
 from typing import Any
 
-from ..config.settings import Settings
+from ..config.control import ControlSettingsView
 from ..persistence import StateStore
 from ..schemas.result_models.todo import (
     ReadTodosOutput,
@@ -25,7 +25,10 @@ class ControlTodoService:
     """Persist logical session todo state on the control plane."""
 
     def __init__(
-        self, state: ControlState, store: StateStore, settings: Settings
+        self,
+        state: ControlState,
+        store: StateStore,
+        settings: ControlSettingsView,
     ) -> None:
         self._state = state
         self._store = store

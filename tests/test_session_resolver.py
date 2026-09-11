@@ -1,10 +1,12 @@
 import pytest
 
 from workgate.config.settings import clear_settings_cache
-from workgate.tool_session import store as store_module
-from workgate.tool_session.bindings import SessionBinding
-from workgate.tool_session.resolver import SessionResolver
-from workgate.tool_session.store import SessionTerminationRequestedError
+from workgate.executor.tool_session import store as store_module
+from workgate.executor.tool_session.bindings import SessionBinding
+from workgate.executor.tool_session.resolver import SessionResolver
+from workgate.executor.tool_session.store import (
+    SessionTerminationRequestedError,
+)
 
 
 def _store(tmp_path, monkeypatch) -> store_module.ToolSessionStore:

@@ -26,7 +26,7 @@ from ..agent_bridge.redaction import (
 )
 from ..config.settings import Settings, get_settings
 from ..persistence import get_state_store
-from ..tool_session import get_tool_session_store, tool_input_session_ids
+from ..tools.session_args import tool_input_session_ids
 from ..utils.private_files import (
     append_private_bytes,
     atomic_write_private_bytes,
@@ -1005,7 +1005,6 @@ def query_session_audit(
     **filters: Any,
 ) -> dict[str, Any]:
     """Query the dedicated append-only audit log for one durable session."""
-    get_tool_session_store().require_session(session_id)
     return query_audit(
         **filters,
         _path=get_state_store().layout.session_audit_path(session_id),
@@ -1019,7 +1018,6 @@ def get_session_audit_entry(
     include_full_payloads: bool = False,
 ) -> dict[str, Any]:
     """Return one entry from a session's dedicated audit log."""
-    get_tool_session_store().require_session(session_id)
     return get_audit_entry(
         entry_id,
         include_full_payloads=include_full_payloads,

@@ -5,7 +5,7 @@ import argparse
 from .agent_bridge.cli import register_mcp_cli
 from .control.cli import register_server_cli
 from .executor.cli import register_executor_cli
-from .jobs.cli import register_job_runner_cli
+from .executor.jobs.cli import register_job_runner_cli
 from .ui.cli import register_tui_cli
 from .version import format_version_info, register_version_cli
 

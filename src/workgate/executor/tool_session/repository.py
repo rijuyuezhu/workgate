@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ..persistence import StateStore
+from ...persistence import StateStore
 from .records import AgentSession, session_from_payload, session_to_payload
 
 

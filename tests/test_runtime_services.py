@@ -1,16 +1,23 @@
 import pytest
 
-import workgate.composition.services as composition_services
+import workgate.executor.services as executor_services
 from workgate.composition.services import (
     build_control_services,
-    build_runtime_services,
     install_control_services,
-    install_runtime_services,
 )
 from workgate.config.settings import Settings
 from workgate.control.runtime import build_control_runtime
 from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
 from workgate.executor.runtime import build_executor_runtime
+from workgate.executor.services import (
+    build_runtime_services,
+    install_runtime_services,
+)
+from workgate.executor.tool_session import (
+    configure_tool_session_store,
+    get_tool_session_store,
+)
+from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.jobs.managed import (
     ManagedJobsRuntime,
     configure_managed_jobs_runtime,
@@ -26,11 +33,6 @@ from workgate.persistence import (
     configure_state_store,
     get_state_store,
 )
-from workgate.tool_session import (
-    configure_tool_session_store,
-    get_tool_session_store,
-)
-from workgate.tool_session.store import ToolSessionStore
 from workgate.ui.http.live_state import (
     build_human_ui_runtime,
     human_ui_runtime,
@@ -129,6 +131,7 @@ def test_control_service_installation_never_rebinds_tool_sessions(tmp_path):
         assert get_tool_session_store() is outer_session_store
     finally:
         installation.close()
+        installation.close()
         assert get_state_store() is outer_state_store
         assert get_tool_session_store() is outer_session_store
         configure_tool_session_store(None)
@@ -177,7 +180,6 @@ async def test_executor_runtime_lifespan_restores_bindings_after_exception(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "executor-state",
-            remote_enabled=False,
         ),
         enable_control_connection=False,
     )
@@ -216,7 +218,7 @@ def test_executor_service_installation_rolls_back_partial_startup(
         raise RuntimeError("session install failed")
 
     monkeypatch.setattr(
-        composition_services,
+        executor_services,
         "configure_tool_session_store",
         fail_session_install,
     )
@@ -241,7 +243,6 @@ async def test_executor_terminal_start_failure_restores_store_bindings(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / "executor-state",
-            remote_enabled=False,
         ),
         enable_control_connection=False,
     )

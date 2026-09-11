@@ -3,10 +3,10 @@ import asyncio
 import pytest
 
 from workgate.config.settings import get_settings
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.jobs import managed as jobs_managed
 from workgate.jobs.managed import ManagedJobsRuntime
 from workgate.protocol.ids import new_session_id
-from workgate.tool_session.store import get_tool_session_store
 
 
 def test_managed_jobs_handler_registration_is_owner_scoped() -> None:

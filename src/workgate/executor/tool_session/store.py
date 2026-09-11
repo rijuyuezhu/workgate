@@ -3,15 +3,19 @@
 import hashlib
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from ..config.settings import Settings, get_settings
-from ..persistence import StateStore, get_state_store
-from ..utils.path_policy import resolve_path_with_policy
+from ...config.settings import Settings, get_settings
+from ...errors import (
+    SessionTerminationRequestedError,
+)
+from ...persistence import StateStore, get_state_store
+from ...tools.session_args import tool_input_session_ids
+from ...utils.path_policy import resolve_path_with_policy
 from .records import (
     AgentSession,
     SnapshotRecord,
@@ -53,12 +57,6 @@ SESSION_METADATA_MAX_BYTES = 256_000
 SESSION_SNAPSHOTS_MAX_BYTES = _SESSION_SNAPSHOTS_MAX_BYTES
 JOB_STORE_READ_MAX_BYTES = _JOB_STORE_READ_MAX_BYTES
 ACTIVE_JOB_STATUSES = _ACTIVE_JOB_STATUSES
-SESSION_TERMINATION_PROMPT = (
-    "This session was marked for immediate termination by the human control "
-    "plane. Stop immediately. Do not perform any further work or call any more "
-    "tools for this session. Tell the user that execution was terminated by "
-    "the human operator."
-)
 
 
 class SessionPathResolver(Protocol):
@@ -102,14 +100,6 @@ def _settings_path_resolver(
 
 class UnknownAgentSessionError(ValueError):
     """Raised when a tool call references a missing agent session."""
-
-
-class SessionTerminationRequestedError(ValueError):
-    """Raised when a model invokes a tool for a terminated session."""
-
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        super().__init__(f"Session {session_id}: {SESSION_TERMINATION_PROMPT}")
 
 
 class ToolSessionStore:
@@ -699,37 +689,6 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def tool_input_session_ids(value: Any) -> tuple[str, ...]:
-    """Extract session ids only from semantic tool-argument positions."""
-    found: list[str] = []
-    seen: set[int] = set()
-    session_names = (
-        "session_id",
-        "src_session_id",
-        "dst_session_id",
-        "source_session_id",
-        "destination_session_id",
-    )
-    argument_envelopes = ("kwargs", "keyword_args")
-
-    def visit(candidate: Any) -> None:
-        if not isinstance(candidate, Mapping):
-            return
-        identity = id(candidate)
-        if identity in seen:
-            return
-        seen.add(identity)
-        for name in session_names:
-            child = candidate.get(name)
-            if isinstance(child, str) and child:
-                found.append(child)
-        for name in argument_envelopes:
-            visit(candidate.get(name))
-
-    visit(value)
-    return tuple(dict.fromkeys(found))
 
 
 def enforce_tool_session_control(

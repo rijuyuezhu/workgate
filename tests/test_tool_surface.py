@@ -182,7 +182,6 @@ async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
 
 def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "true")
     clear_settings_cache()
 
     catalog = build_tool_catalog()

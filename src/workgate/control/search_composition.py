@@ -1,6 +1,6 @@
 """Control-side tool catalog composition without machine implementation imports."""
 
-from ..config.settings import Settings
+from ..config.control import ControlSettingsView
 from ..tools.catalog import ToolCatalog, build_tool_catalog
 from .agent_bridge import ControlAgentBridgeService
 from .audit import ControlAuditService
@@ -13,7 +13,7 @@ from .tool_routing import ControlToolRouter, route_control_registry
 
 
 def build_control_tool_catalog(
-    settings: Settings,
+    settings: ControlSettingsView,
     sessions: ControlSessionCoordinator,
     session_copy: ControlSessionCopyService,
     jobs: ControlJobService,

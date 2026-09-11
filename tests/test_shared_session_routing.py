@@ -66,7 +66,6 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
             workspace_root=control_workspace,
             state_dir=tmp_path / "control-state",
             auth_mode="none",
-            remote_enabled=False,
             agent_bridge_enabled=False,
         )
     )
@@ -74,7 +73,6 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
         Settings(
             workspace_root=executor_workspace,
             state_dir=tmp_path / "executor-state",
-            remote_enabled=False,
             agent_bridge_enabled=False,
         ),
         enable_control_connection=False,

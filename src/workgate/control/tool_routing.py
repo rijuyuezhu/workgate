@@ -212,7 +212,7 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
             bound.apply_defaults()
             return await self._router.invoke(tool.name, dict(bound.arguments))
 
-        return replace(tool, func=routed, session_admission="handler")
+        return replace(tool, func=routed)
 
     def http_routes(self):
         return tuple(

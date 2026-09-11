@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import Settings
-from workgate.persistence import FileStateStore
-from workgate.tool_session.store import (
+from workgate.executor.tool_session.store import (
     SessionTerminationRequestedError,
     ToolSessionStore,
     UnknownAgentSessionError,
 )
+from workgate.persistence import FileStateStore
 
 
 def _session_id(index: int) -> str:
@@ -73,6 +73,19 @@ def test_create_session_requires_control_allocated_shared_id(
 
     with pytest.raises(ValueError, match="already exists"):
         _create(store, tmp_path, index=1)
+
+
+def test_session_workdirs_must_be_directories(tmp_path: Path) -> None:
+    store, _settings = _store(tmp_path)
+    not_a_directory = tmp_path / "file.txt"
+    not_a_directory.write_text("x", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError):
+        _create(store, not_a_directory, index=1)
+
+    session = _create(store, tmp_path, index=2)
+    with pytest.raises(NotADirectoryError):
+        store.change_session_workdir(session.session_id, not_a_directory)
 
 
 def test_require_session_rejects_unknown_shared_id(tmp_path: Path) -> None:
@@ -231,7 +244,7 @@ def test_multi_session_admission_validates_all_before_refreshing_any(
     second = _create(store, tmp_path, index=2)
     clock = [100.0]
     monkeypatch.setattr(
-        "workgate.tool_session.store.time.time", lambda: clock[0]
+        "workgate.executor.tool_session.store.time.time", lambda: clock[0]
     )
     first = store.touch_session(first.session_id)
     second = store.touch_session(second.session_id)
@@ -264,7 +277,7 @@ def test_list_sessions_orders_by_latest_activity(
     store, _settings = _store(tmp_path)
     clock = [100.0]
     monkeypatch.setattr(
-        "workgate.tool_session.store.time.time", lambda: clock[0]
+        "workgate.executor.tool_session.store.time.time", lambda: clock[0]
     )
     first = _create(store, tmp_path, index=1)
     clock[0] = 101.0
@@ -285,7 +298,7 @@ def test_snapshot_count_retention_keeps_newest_records(
     session = _create(store, tmp_path, index=1)
     clock = [100.0]
     monkeypatch.setattr(
-        "workgate.tool_session.store.time.time", lambda: clock[0]
+        "workgate.executor.tool_session.store.time.time", lambda: clock[0]
     )
 
     first = _snapshot(store, session.session_id, "one")
@@ -343,6 +356,33 @@ def test_persistent_shell_registry_releases_and_reconciles(
 
     store.release_persistent_shell("shell-two")
     assert store.persistent_shell_ids() == {"shell-three"}
+
+
+def test_persistent_shell_release_noops_are_stable(tmp_path: Path) -> None:
+    store, _settings = _store(tmp_path)
+    session = _create(store, tmp_path, index=1)
+
+    unchanged = store.release_session_persistent_shell(
+        session.session_id, "missing"
+    )
+    assert unchanged == session
+    store.release_persistent_shell("   ")
+    assert store.persistent_shell_ids() == set()
+
+
+def test_tool_call_allowed_facade_selects_active_or_cleanup_admission(
+    tmp_path: Path,
+) -> None:
+    store, _settings = _store(tmp_path)
+    session = _create(store, tmp_path, index=1)
+
+    store.assert_tool_call_allowed((session.session_id,))
+    store.request_termination(session.session_id)
+    store.assert_tool_call_allowed(
+        (session.session_id,), termination_cleanup=True
+    )
+    with pytest.raises(SessionTerminationRequestedError):
+        store.assert_tool_call_allowed((session.session_id,))
 
 
 def test_exclusive_shell_reservation_rejects_other_session_owner(

@@ -117,7 +117,7 @@ class JobTailOutput(BaseModel):
     )
     message: str | None = Field(
         default=None,
-        description="Diagnostic message when output or a remote worker snapshot is unavailable.",
+        description="Diagnostic message when output or an executor snapshot is unavailable.",
     )
 
 

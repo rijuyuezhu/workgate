@@ -6,11 +6,12 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 
-from ..errors import public_error_type
-from ..utils.private_files import atomic_write_private_text
-from ..utils.processes import user_subprocess_env
+from ...errors import public_error_type
+from ...jobs.logs import compact_log
+from ...utils.private_files import atomic_write_private_text
+from ...utils.processes import user_subprocess_env
 
 
 def _utc() -> float:
@@ -26,21 +27,6 @@ def _runner_shell_args(shell: str, command: str) -> list[str]:
     if name in {"cmd.exe", "cmd"}:
         return [shell, "/D", "/S", "/C", command]
     return [shell, "-lc", command]
-
-
-def compact_log(handle: BinaryIO, max_bytes: int) -> bool:
-    """Keep only the newest max_bytes of one open binary job log."""
-    handle.flush()
-    size = handle.tell()
-    if size <= max_bytes:
-        return False
-    handle.seek(max(0, size - max_bytes))
-    tail = handle.read(max_bytes)
-    handle.seek(0)
-    handle.truncate()
-    handle.write(tail)
-    handle.flush()
-    return True
 
 
 def configure_job_runner_parser(

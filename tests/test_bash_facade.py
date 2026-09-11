@@ -12,13 +12,16 @@ from tests.helpers import (
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
 from workgate.executor.config import ExecutorConfig, resolve_executor_config
+from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
+from workgate.executor.tool_session.store import (
+    ToolSessionStore,
+    get_tool_session_store,
+)
 from workgate.schemas.result_models.jobs import JobStartOutput
 from workgate.schemas.result_models.shell import (
     RunShellCommandOutput,
     StartPersistentShellOutput,
 )
-from workgate.tool_session.lifecycle import session_lifecycle_lock
-from workgate.tool_session.store import ToolSessionStore, get_tool_session_store
 
 
 def _create_session(

@@ -3,8 +3,8 @@
 from collections.abc import Callable
 from dataclasses import asdict
 
-from ..config.settings import Settings
-from ..persistence import StateStore
+from ...config.settings import Settings
+from ...persistence import StateStore
 from .records import (
     SnapshotRecord,
     encoded_snapshot_payload_bytes,

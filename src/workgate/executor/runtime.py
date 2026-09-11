@@ -8,12 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..composition.services import (
-    RuntimeServiceInstallation,
-    RuntimeServices,
-    build_runtime_services,
-    install_runtime_services,
-)
 from ..config.settings import Settings
 from ..protocol.executor import (
     SESSION_CHANGE_CWD_OP,
@@ -27,6 +21,12 @@ from .config import ExecutorConfig, resolve_executor_config
 from .dispatch import ExecutorDispatcher
 from .files import files_config_from_settings
 from .search_composition import build_executor_dispatcher_with_search
+from .services import (
+    RuntimeServiceInstallation,
+    RuntimeServices,
+    build_runtime_services,
+    install_runtime_services,
+)
 from .shell_service import ShellService
 from .terminal.runtime import TerminalRuntime, build_terminal_runtime
 from .ui_files import UiFilesService

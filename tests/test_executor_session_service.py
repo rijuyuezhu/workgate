@@ -12,11 +12,11 @@ from workgate.executor.errors import ExecutorOperationFailure
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.sessions import ExecutorSessionService
 from workgate.executor.shell_service import ShellService
-from workgate.persistence import FileStateStore
-from workgate.tool_session.store import (
+from workgate.executor.tool_session.store import (
     ToolSessionStore,
     UnknownAgentSessionError,
 )
+from workgate.persistence import FileStateStore
 
 
 def _real_service(tmp_path: Path) -> ExecutorSessionService:
@@ -25,7 +25,6 @@ def _real_service(tmp_path: Path) -> ExecutorSessionService:
     settings = Settings(
         workspace_root=workspace,
         state_dir=tmp_path / "state",
-        remote_enabled=False,
         agent_bridge_enabled=False,
     )
     store = ToolSessionStore(
@@ -43,7 +42,6 @@ def _config(tmp_path: Path):
         Settings(
             workspace_root=workspace,
             state_dir=tmp_path / "state",
-            remote_enabled=False,
             agent_bridge_enabled=False,
         )
     )
@@ -61,7 +59,6 @@ def test_executor_runtime_freezes_session_workspace_authority(
     settings = Settings(
         workspace_root=workspace,
         state_dir=tmp_path / "state",
-        remote_enabled=False,
         agent_bridge_enabled=False,
     )
     runtime = build_executor_runtime(settings, enable_control_connection=False)

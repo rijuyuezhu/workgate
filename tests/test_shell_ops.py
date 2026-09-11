@@ -39,8 +39,8 @@ from workgate.executor.shell import (
     run_shell_command_timeout,
     send_persistent_shell_input_execute,
 )
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.schemas.result_models.shell import CommandResult
-from workgate.tool_session.store import get_tool_session_store
 
 # Test-only providers preserve legacy regression injection points while the
 # production executor module remains free of ambient Settings/store globals.
@@ -625,7 +625,7 @@ from types import SimpleNamespace
 import workgate.executor.shell as shell_ops
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.config import resolve_executor_config
-from workgate.tool_session.store import get_tool_session_store
+from workgate.executor.tool_session.store import get_tool_session_store
 
 workspace = Path(__import__("sys").argv[1])
 active_path = Path(__import__("sys").argv[2])
@@ -766,7 +766,7 @@ from workgate.control.tool_timeouts import tool_timeout_s
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.terminal.runtime import build_terminal_runtime
 from workgate.persistence import get_state_store
-from workgate.tool_session.store import get_tool_session_store
+from workgate.executor.tool_session.store import get_tool_session_store
 
 workspace = Path(__import__("sys").argv[1])
 barrier_path = Path(__import__("sys").argv[2])

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..jobs import shell as shell_jobs
-from ..schemas.result_models.jobs import (
+from ...schemas.result_models.jobs import (
     JobListOutput,
     JobOutput,
     JobRetryOutput,
@@ -13,9 +12,10 @@ from ..schemas.result_models.jobs import (
     JobStopOutput,
     JobTailOutput,
 )
+from ..config import ExecutorConfig
 from ..tool_session.lifecycle import session_lifecycle_lock
 from ..tool_session.store import ToolSessionStore
-from .config import ExecutorConfig
+from . import shell as shell_jobs
 
 
 class ExecutorJobService:

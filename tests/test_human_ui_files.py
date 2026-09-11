@@ -49,7 +49,6 @@ def _configure(
         str(allow_full_control).lower(),
     )
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", "false")
     for name, value in values.items():
         monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value).lower())
     clear_settings_cache()

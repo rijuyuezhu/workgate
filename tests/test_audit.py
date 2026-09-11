@@ -30,8 +30,8 @@ from workgate.audit.core import (
 )
 from workgate.audit.payloads import AUDIT_PAYLOAD_KEY
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.tool_session import get_tool_session_store
 from workgate.protocol.ids import new_session_id
-from workgate.tool_session import get_tool_session_store
 
 
 def _configure_audit(

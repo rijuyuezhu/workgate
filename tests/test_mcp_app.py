@@ -8,6 +8,7 @@ from starlette.testclient import TestClient
 
 import workgate.control.mcp.app as mcp_app
 from workgate.config.settings import Settings, configure_settings
+from workgate.control.config import resolve_control_config
 from workgate.control.mcp.session_limits import (
     McpSessionLimitMiddleware,
 )
@@ -53,12 +54,7 @@ class _EmptyCatalog:
 
 def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
     return SimpleNamespace(
-        config=SimpleNamespace(
-            mode=settings.mode,
-            host=settings.host,
-            port=settings.port,
-        ),
-        legacy_settings=settings,
+        config=resolve_control_config(settings),
         tool_catalog=tool_catalog,
         control_state=object(),
         executor_transport=object(),
@@ -71,9 +67,7 @@ def _route_paths(app: Starlette) -> list[str]:
 
 
 def test_build_mcp_http_app_wraps_mcp_with_oauth_route_app():
-    configure_settings(
-        Settings(mode="mcp", auth_mode="none", remote_enabled=False)
-    )
+    configure_settings(Settings(mode="mcp", auth_mode="none"))
 
     app = mcp_app.build_mcp_http_app(cast(Any, _DummyMcp()))
 
@@ -97,7 +91,6 @@ def test_mcp_http_app_serves_public_ui_and_native_tui_api(tmp_path):
     settings = Settings(
         mode="mcp",
         auth_mode="oauth",
-        remote_enabled=False,
         base_url="http://127.0.0.1:8765",
         state_dir=tmp_path,
         ui_enabled=True,
@@ -123,9 +116,7 @@ def test_mcp_http_app_serves_public_ui_and_native_tui_api(tmp_path):
 
 
 def test_build_mcp_http_app_supports_sdk_sse_fallback():
-    configure_settings(
-        Settings(mode="mcp", auth_mode="none", remote_enabled=False)
-    )
+    configure_settings(Settings(mode="mcp", auth_mode="none"))
 
     app = mcp_app.build_mcp_http_app(cast(Any, _DummySseMcp()))
 
@@ -134,9 +125,7 @@ def test_build_mcp_http_app_supports_sdk_sse_fallback():
 
 
 def test_build_mcp_http_app_does_not_restore_legacy_remote_routes():
-    configure_settings(
-        Settings(mode="mcp", auth_mode="none", remote_enabled=True)
-    )
+    configure_settings(Settings(mode="mcp", auth_mode="none"))
 
     app = mcp_app.build_mcp_http_app(cast(Any, _DummyMcp()))
 
@@ -152,7 +141,6 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
         Settings(
             mode="mcp",
             auth_mode="none",
-            remote_enabled=False,
             mcp_max_sessions=2,
             max_http_request_bytes=100,
             mcp_session_idle_timeout_s=60,
@@ -161,7 +149,6 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
     runtime_settings = Settings(
         mode="mcp",
         auth_mode="oauth",
-        remote_enabled=True,
         remote_http_transfer_enabled=False,
         base_url="https://runtime.example",
         mcp_max_sessions=17,
@@ -225,7 +212,6 @@ def test_mcp_executor_admin_routes_require_auth_and_ui_csrf(tmp_path):
         base_url=base_url,
         oauth_admin_pin="test-admin-pin-1234",
         state_dir=tmp_path / "state",
-        remote_enabled=False,
     )
     configure_settings(settings)
     runtime = cast(Any, _runtime_stub(settings))
@@ -379,7 +365,6 @@ def test_oauth_challenge_metadata_url_matches_rfc9728_path_resource():
         Settings(
             mode="mcp",
             auth_mode="oauth",
-            remote_enabled=False,
             base_url="https://workgate.example.com",
         )
     )
@@ -418,7 +403,6 @@ def test_auth_middleware_uses_configured_public_route_matchers():
         Settings(
             mode="mcp",
             auth_mode="oauth",
-            remote_enabled=False,
             base_url="https://workgate.example.com",
         )
     )

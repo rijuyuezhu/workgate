@@ -4,7 +4,6 @@ import asyncio
 from typing import Any, cast
 
 from ..config.settings import Settings
-from ..tool_session.store import ToolSessionStore
 from .agent import ExecutorAgentBridgeService
 from .dispatch import ExecutorDispatcher, build_executor_dispatcher
 from .files import files_config_from_settings
@@ -13,6 +12,7 @@ from .search.composition import build_search_service
 from .search.core import SearchPaths
 from .secret_scan import SecretScanService
 from .shell_service import ShellService
+from .tool_session.store import ToolSessionStore
 from .transfer_composition import build_transfer_handlers
 from .workspace_connector import WorkspaceConnectorService
 

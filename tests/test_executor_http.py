@@ -113,7 +113,6 @@ async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
         workspace_root=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         auth_mode="oauth",
-        remote_enabled=False,
     )
     runtime = build_control_runtime(settings)
     runtime.control_state.start()
@@ -153,7 +152,6 @@ async def test_pairing_routes_are_public_and_first_hello_clears_delivery(
         workspace_root=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         auth_mode="oauth",
-        remote_enabled=False,
         base_url="https://control.test",
     )
     runtime = build_control_runtime(settings)

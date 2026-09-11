@@ -6,28 +6,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..config.settings import get_settings
-from ..executor.config import ExecutorConfig
-from ..executor.shell import check_command_policy
-from ..utils.private_files import write_private_text
-from . import status as job_status
-from .persistence import attempt_paths as _attempt_paths
-from .state import JobAttemptPaths, MutableJobRow
+from ...jobs import status as job_status
+from ...jobs.persistence import attempt_paths as _attempt_paths
+from ...jobs.state import JobAttemptPaths, MutableJobRow
+from ...utils.private_files import write_private_text
+from ..config import ExecutorConfig
+from ..shell import check_command_policy
 
 _adopt_pending_retry = job_status._adopt_pending_retry
 _clear_pending_retry = job_status._clear_pending_retry
 _read_status = job_status._read_status
 _read_status_path = job_status._read_status_path
 _observed_active_operation = job_status._observed_active_operation
-
-
-def _read_log_tail(path: str | None, lines: int) -> str:
-    """Compatibility seam using the shell owner's configured log bound."""
-    return job_status._read_log_tail(
-        path,
-        lines,
-        max_bytes=max(1, int(get_settings().max_job_log_bytes)),
-    )
 
 
 def _refresh_job_status(

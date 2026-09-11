@@ -14,7 +14,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..tool_session.store import ToolSessionStore, file_sha256
 from ..utils.image_preview import make_image_preview
 from ..utils.path_locks import path_locks
 from .files import (
@@ -26,6 +25,7 @@ from .files import (
     _resolve_file_path,
     _write_file_local,
 )
+from .tool_session.store import ToolSessionStore, file_sha256
 
 UI_FILE_PREVIEW_MAX_LINES = 400
 UI_FILE_DIRECTORY_MAX_ENTRIES = 1_000

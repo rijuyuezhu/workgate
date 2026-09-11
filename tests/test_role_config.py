@@ -69,7 +69,10 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
     executor = build_executor_runtime(executor_settings)
 
     assert control.config.mode == "http"
-    assert control.legacy_settings is control_settings
+    assert not hasattr(control, "legacy_settings")
+    assert control.config.state_dir == control_settings.state_dir.resolve(
+        strict=False
+    )
     assert (
         executor.config.workspace_root
         == executor_settings.workspace_root.resolve(strict=False)

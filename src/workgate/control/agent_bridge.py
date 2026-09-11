@@ -7,12 +7,12 @@ from typing import Any
 from ..agent_bridge.mcp import AgentMcpClientManager
 from ..agent_bridge.models import AgentCapabilityRegistry
 from ..agent_bridge.service import (
-    build_agent_registry_from_settings,
+    build_network_agent_registry_from_settings,
     call_agent_mcp_tool_payload,
     list_agent_mcp_servers_payload,
     list_agent_mcp_tools_payload,
 )
-from ..config.settings import Settings
+from ..config.control import ControlSettingsView
 from ..schemas.result_models.agent import (
     CallAgentMcpToolOutput,
     ListAgentMcpServersOutput,
@@ -25,18 +25,14 @@ class ControlAgentBridgeService:
     """Keep network MCP on control and route session-bound stdio MCP to executors."""
 
     def __init__(
-        self, settings: Settings, sessions: ControlSessionCoordinator
+        self, settings: ControlSettingsView, sessions: ControlSessionCoordinator
     ) -> None:
         self._settings = settings
         self._sessions = sessions
 
     def _network_registry(self) -> AgentCapabilityRegistry:
-        return build_agent_registry_from_settings(
-            self._settings,
-            AgentMcpClientManager,
-            allow_stdio=False,
-            include_project_skills=False,
-            mcp_server_types=frozenset({"http", "sse"}),
+        return build_network_agent_registry_from_settings(
+            self._settings, AgentMcpClientManager
         )
 
     @staticmethod
@@ -47,6 +43,29 @@ class ControlAgentBridgeService:
                 "pass session_id for executor-local stdio MCP servers"
             )
         return session_id
+
+    async def _resolve_server_owner(
+        self, server: str, session_id: str | None
+    ) -> tuple[AgentCapabilityRegistry, str]:
+        registry = self._network_registry()
+        control_has = server in registry.mcp_servers
+        if session_id is None:
+            return registry, "control" if control_has else "unknown"
+        payload = await self._sessions.call_session_tool(
+            "agent_mcp.list_servers", {"session_id": session_id}
+        )
+        executor_rows = ListAgentMcpServersOutput.model_validate(payload).root
+        executor_has = server in executor_rows
+        if control_has and executor_has:
+            raise ValueError(
+                "Agent MCP server name is ambiguous across control and the "
+                f"selected executor: {server}"
+            )
+        if control_has:
+            return registry, "control"
+        if executor_has:
+            return registry, "executor"
+        return registry, "unknown"
 
     @staticmethod
     def _merge_server_rows(
@@ -79,10 +98,15 @@ class ControlAgentBridgeService:
         self, server: str | None = None, session_id: str | None = None
     ) -> ListAgentMcpToolsOutput:
         registry = self._network_registry()
-        if server is not None and server in registry.mcp_servers:
-            return list_agent_mcp_tools_payload(registry, server)
         if server is not None:
+            registry, owner = await self._resolve_server_owner(
+                server, session_id
+            )
+            if owner == "control":
+                return list_agent_mcp_tools_payload(registry, server)
             selected_session = self._require_session_id(session_id, server)
+            if owner == "unknown":
+                raise ValueError(f"Unknown agent MCP server: {server}")
             payload = await self._sessions.call_session_tool(
                 "agent_mcp.list_tools",
                 {"session_id": selected_session, "server": server},
@@ -114,12 +138,14 @@ class ControlAgentBridgeService:
         args: dict[str, Any] | None = None,
         session_id: str | None = None,
     ) -> CallAgentMcpToolOutput:
-        registry = self._network_registry()
-        if server in registry.mcp_servers:
+        registry, owner = await self._resolve_server_owner(server, session_id)
+        if owner == "control":
             return await call_agent_mcp_tool_payload(
                 registry, server, tool, args or {}
             )
         selected_session = self._require_session_id(session_id, server)
+        if owner == "unknown":
+            raise ValueError(f"Unknown agent MCP server: {server}")
         payload = await self._sessions.call_session_tool(
             "agent_mcp.call_tool",
             {

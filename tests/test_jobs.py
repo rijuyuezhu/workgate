@@ -12,15 +12,16 @@ import pytest
 from tests.helpers import python_shell_command
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.config import resolve_executor_config
-from workgate.executor.jobs import ExecutorJobService
-from workgate.jobs import lifecycle as job_lifecycle
+from workgate.executor.jobs import ExecutorJobService, runner_bootstrap
+from workgate.executor.jobs import lifecycle as job_lifecycle
+from workgate.executor.jobs import runner as job_runner
+from workgate.executor.jobs import shell as job_shell
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.jobs import managed as job_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as job_recovery
-from workgate.jobs import runner as job_runner
-from workgate.jobs import runner_bootstrap
-from workgate.jobs import shell as job_shell
 from workgate.jobs import state as job_state
+from workgate.jobs import status as job_status
 from workgate.protocol.ids import new_session_id
 from workgate.schemas.result_models.jobs import (
     JobInfo,
@@ -35,7 +36,6 @@ from workgate.schemas.result_models.shell import (
     ReadPersistentShellOutput,
     StartPersistentShellOutput,
 )
-from workgate.tool_session.store import get_tool_session_store
 
 pytestmark = pytest.mark.usefixtures("managed_jobs_runtime_owner")
 
@@ -123,7 +123,7 @@ async def _test_job_list_execute(
     session_id: str, include_finished: bool = True
 ) -> JobListOutput:
     managed = await job_managed.managed_job_list_execute(
-        session_id, include_finished, touch_session=False
+        session_id, include_finished
     )
     shell = JobListOutput(jobs=[], counts={})
     if _has_shell_job(session_id):
@@ -202,13 +202,6 @@ def test_runner_command_quotes_powershell_arguments():
 def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(
-        job_lifecycle,
-        "get_settings",
-        lambda: SimpleNamespace(
-            shell_executable="/bin/sh", max_job_log_bytes=4
-        ),
-    )
     monkeypatch.setattr(job_lifecycle.sys, "frozen", True, raising=False)
     paths: job_state.JobAttemptPaths = {
         "command": tmp_path / "command.txt",
@@ -232,7 +225,9 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     ) == ('echo "hello world"')
 
     paths["log"].write_bytes(b"abcdef\n")
-    assert job_lifecycle._read_log_tail(str(paths["log"]), 1) == "def\n"
+    assert (
+        job_status._read_log_tail(str(paths["log"]), 1, max_bytes=4) == "def\n"
+    )
 
 
 def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
@@ -651,6 +646,43 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
     assert status["exit_code"] == 7
     assert status["error"] is None
     assert [line.rstrip() for line in output_lines] == ["failed-output"]
+
+
+def test_job_runner_shell_args_cover_windows_shell_families():
+    assert job_runner._runner_shell_args("pwsh", "Write-Output ok") == [
+        "pwsh",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Write-Output ok",
+    ]
+    assert job_runner._runner_shell_args("cmd.exe", "echo ok") == [
+        "cmd.exe",
+        "/D",
+        "/S",
+        "/C",
+        "echo ok",
+    ]
+
+
+def test_job_runner_records_startup_error_before_process_spawn(tmp_path):
+    status_file = tmp_path / "status.json"
+    args = SimpleNamespace(
+        command_file=str(tmp_path / "missing-command"),
+        log_file=str(tmp_path / "runner.log"),
+        status_file=str(status_file),
+        cwd=str(tmp_path),
+        shell="/bin/bash",
+        max_log_bytes=1024,
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        job_runner.run_job_runner_from_args(args)
+
+    status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert exit_info.value.code == 1
+    assert status["exit_code"] is None
+    assert status["error"].startswith("FileNotFoundError:")
 
 
 @pytest.mark.asyncio

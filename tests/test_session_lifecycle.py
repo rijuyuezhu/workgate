@@ -10,12 +10,12 @@ import pytest
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.jobs import ExecutorJobService
-from workgate.jobs import persistence as job_persistence
-from workgate.tool_session import lifecycle
-from workgate.tool_session.store import (
+from workgate.executor.tool_session import lifecycle
+from workgate.executor.tool_session.store import (
     UnknownAgentSessionError,
     get_tool_session_store,
 )
+from workgate.jobs import persistence as job_persistence
 from workgate.utils.private_files import private_file_lock
 
 
@@ -25,7 +25,7 @@ def _start_cross_process_lifecycle_holder(
     script = f"""
 import asyncio
 from pathlib import Path
-from workgate.tool_session.lifecycle import session_lifecycle_locks
+from workgate.executor.tool_session.lifecycle import session_lifecycle_locks
 
 async def main():
     async with session_lifecycle_locks({session_ids!r}):
@@ -134,7 +134,7 @@ async def test_session_lifecycle_lock_serializes_across_processes(tmp_path):
     script = f"""
 import asyncio
 from pathlib import Path
-from workgate.tool_session.lifecycle import session_lifecycle_lock
+from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
 
 async def main():
     async with session_lifecycle_lock("SESSION1"):
@@ -232,8 +232,8 @@ async def test_job_admission_revalidates_after_cross_process_teardown(
     script = f"""
 import asyncio
 from pathlib import Path
-from workgate.tool_session.lifecycle import session_lifecycle_lock
-from workgate.tool_session.store import get_tool_session_store
+from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
+from workgate.executor.tool_session.store import get_tool_session_store
 
 async def main():
     async with session_lifecycle_lock({session.session_id!r}):

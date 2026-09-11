@@ -96,7 +96,7 @@ def _policy() -> dict[str, Any]:
                 "src/workgate/control/pairing.py",
                 "src/workgate/control/state.py",
                 "src/workgate/protocol/credentials.py",
-                "src/workgate/tool_session/store.py",
+                "src/workgate/executor/tool_session/store.py",
                 "src/workgate/ui/security.py",
                 "src/workgate/utils/path_locks.py",
                 "src/workgate/utils/private_files.py",

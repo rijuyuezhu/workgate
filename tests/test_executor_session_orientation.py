@@ -13,8 +13,8 @@ from workgate.executor.session_orientation import (
     change_session_cwd,
     session_output,
 )
+from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.persistence import FileStateStore
-from workgate.tool_session.store import ToolSessionStore
 
 
 def _config(tmp_path: Path):
@@ -23,7 +23,6 @@ def _config(tmp_path: Path):
     settings = Settings(
         workspace_root=workspace,
         state_dir=tmp_path / "state",
-        remote_enabled=False,
         agent_bridge_enabled=False,
     )
     return settings, resolve_executor_config(settings)

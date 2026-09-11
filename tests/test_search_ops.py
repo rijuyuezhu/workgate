@@ -7,7 +7,7 @@ from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.files import files_config_from_settings
 from workgate.executor.files_service import FilesService
 from workgate.executor.search.composition import build_search_service
-from workgate.tool_session.store import get_tool_session_store
+from workgate.executor.tool_session.store import get_tool_session_store
 
 _SESSION_COUNTER = 0
 

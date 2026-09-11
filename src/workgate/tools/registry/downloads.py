@@ -1,6 +1,6 @@
 """Tokenized public file download link tool registry."""
 
-from ...config.settings import Settings
+from ...config.control import ControlSettingsView
 from ...schemas.input_models.downloads import (
     DownloadFilenameArg,
     DownloadPathArg,
@@ -30,7 +30,7 @@ class DownloadToolRegistry(DeclarativeToolRegistry):
 download_tool = DownloadToolRegistry.get_tool_decorator()
 
 
-def _download_tools_enabled(settings: Settings) -> bool:
+def _download_tools_enabled(settings: ControlSettingsView) -> bool:
     return settings.file_download_enabled and settings.mode in {"http", "mcp"}
 
 

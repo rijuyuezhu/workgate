@@ -375,10 +375,35 @@
       "num_statements": 38,
       "percent_covered": 91.304348
     },
-    "src/workgate/executor/jobs.py": {
+    "src/workgate/executor/jobs/__init__.py": {
       "num_branches": 14,
       "num_statements": 64,
       "percent_covered": 93.589744
+    },
+    "src/workgate/executor/jobs/cli.py": {
+      "num_branches": 0,
+      "num_statements": 10,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/jobs/lifecycle.py": {
+      "num_branches": 6,
+      "num_statements": 46,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/jobs/runner.py": {
+      "num_branches": 16,
+      "num_statements": 87,
+      "percent_covered": 82.524272
+    },
+    "src/workgate/executor/jobs/runner_bootstrap.py": {
+      "num_branches": 0,
+      "num_statements": 7,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/jobs/shell.py": {
+      "num_branches": 104,
+      "num_statements": 346,
+      "percent_covered": 81.555556
     },
     "src/workgate/executor/pairing.py": {
       "num_branches": 6,
@@ -495,6 +520,61 @@
       "num_statements": 31,
       "percent_covered": 100.0
     },
+    "src/workgate/executor/tool_session/__init__.py": {
+      "num_branches": 0,
+      "num_statements": 4,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/tool_session/bindings.py": {
+      "num_branches": 4,
+      "num_statements": 12,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/tool_session/lifecycle.py": {
+      "num_branches": 30,
+      "num_statements": 144,
+      "percent_covered": 89.08046
+    },
+    "src/workgate/executor/tool_session/records.py": {
+      "num_branches": 28,
+      "num_statements": 89,
+      "percent_covered": 79.487179
+    },
+    "src/workgate/executor/tool_session/repository.py": {
+      "num_branches": 10,
+      "num_statements": 52,
+      "percent_covered": 88.709677
+    },
+    "src/workgate/executor/tool_session/resolver.py": {
+      "num_branches": 0,
+      "num_statements": 9,
+      "percent_covered": 100.0
+    },
+    "src/workgate/executor/tool_session/resources.py": {
+      "num_branches": 14,
+      "num_statements": 40,
+      "percent_covered": 88.888889
+    },
+    "src/workgate/executor/tool_session/retention.py": {
+      "num_branches": 34,
+      "num_statements": 71,
+      "percent_covered": 57.142857
+    },
+    "src/workgate/executor/tool_session/selectors.py": {
+      "num_branches": 40,
+      "num_statements": 84,
+      "percent_covered": 85.483871
+    },
+    "src/workgate/executor/tool_session/snapshots.py": {
+      "num_branches": 16,
+      "num_statements": 65,
+      "percent_covered": 88.888889
+    },
+    "src/workgate/executor/tool_session/store.py": {
+      "num_branches": 68,
+      "num_statements": 347,
+      "percent_covered": 93.73494
+    },
     "src/workgate/executor/transfer.py": {
       "num_branches": 212,
       "num_statements": 632,
@@ -550,16 +630,6 @@
       "num_statements": 0,
       "percent_covered": 100.0
     },
-    "src/workgate/jobs/cli.py": {
-      "num_branches": 0,
-      "num_statements": 10,
-      "percent_covered": 100.0
-    },
-    "src/workgate/jobs/lifecycle.py": {
-      "num_branches": 6,
-      "num_statements": 46,
-      "percent_covered": 100.0
-    },
     "src/workgate/jobs/managed.py": {
       "num_branches": 138,
       "num_statements": 464,
@@ -579,21 +649,6 @@
       "num_branches": 70,
       "num_statements": 195,
       "percent_covered": 87.169811
-    },
-    "src/workgate/jobs/runner.py": {
-      "num_branches": 16,
-      "num_statements": 87,
-      "percent_covered": 82.524272
-    },
-    "src/workgate/jobs/runner_bootstrap.py": {
-      "num_branches": 0,
-      "num_statements": 7,
-      "percent_covered": 100.0
-    },
-    "src/workgate/jobs/shell.py": {
-      "num_branches": 104,
-      "num_statements": 346,
-      "percent_covered": 81.555556
     },
     "src/workgate/jobs/state.py": {
       "num_branches": 12,
@@ -944,61 +999,6 @@
       "num_branches": 30,
       "num_statements": 104,
       "percent_covered": 97.014925
-    },
-    "src/workgate/tool_session/__init__.py": {
-      "num_branches": 0,
-      "num_statements": 4,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tool_session/bindings.py": {
-      "num_branches": 4,
-      "num_statements": 12,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tool_session/lifecycle.py": {
-      "num_branches": 30,
-      "num_statements": 144,
-      "percent_covered": 89.08046
-    },
-    "src/workgate/tool_session/records.py": {
-      "num_branches": 28,
-      "num_statements": 89,
-      "percent_covered": 79.487179
-    },
-    "src/workgate/tool_session/repository.py": {
-      "num_branches": 10,
-      "num_statements": 52,
-      "percent_covered": 88.709677
-    },
-    "src/workgate/tool_session/resolver.py": {
-      "num_branches": 0,
-      "num_statements": 9,
-      "percent_covered": 100.0
-    },
-    "src/workgate/tool_session/resources.py": {
-      "num_branches": 14,
-      "num_statements": 40,
-      "percent_covered": 88.888889
-    },
-    "src/workgate/tool_session/retention.py": {
-      "num_branches": 34,
-      "num_statements": 71,
-      "percent_covered": 57.142857
-    },
-    "src/workgate/tool_session/selectors.py": {
-      "num_branches": 40,
-      "num_statements": 84,
-      "percent_covered": 85.483871
-    },
-    "src/workgate/tool_session/snapshots.py": {
-      "num_branches": 16,
-      "num_statements": 65,
-      "percent_covered": 88.888889
-    },
-    "src/workgate/tool_session/store.py": {
-      "num_branches": 68,
-      "num_statements": 347,
-      "percent_covered": 93.73494
     },
     "src/workgate/tools/__init__.py": {
       "num_branches": 0,
@@ -1366,8 +1366,8 @@
       "src/workgate/control/executor_transport.py",
       "src/workgate/control/pairing.py",
       "src/workgate/control/state.py",
+      "src/workgate/executor/tool_session/store.py",
       "src/workgate/protocol/credentials.py",
-      "src/workgate/tool_session/store.py",
       "src/workgate/ui/security.py",
       "src/workgate/utils/path_locks.py",
       "src/workgate/utils/private_files.py"

@@ -1,5 +1,6 @@
 import json
 import sys
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -11,6 +12,7 @@ from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control import agent_bridge as control_agent_bridge_module
+from workgate.control.agent_bridge import ControlAgentBridgeService
 from workgate.control.mcp.app import build_mcp
 from workgate.tools.registry import agent as tools_module
 
@@ -300,9 +302,7 @@ async def test_activate_agent_skill_returns_skill_content(
 
 
 @pytest.mark.asyncio
-async def test_control_dynamic_skills_exclude_project_local_source(
-    tmp_path, monkeypatch
-):
+async def test_control_exposes_no_dynamic_skill_aliases(tmp_path, monkeypatch):
     config_dir = app_paths().agent_config_dir
     managed_skill = config_dir / "skills" / "managed"
     managed_skill.mkdir(parents=True)
@@ -324,7 +324,7 @@ async def test_control_dynamic_skills_exclude_project_local_source(
 
     tool_names = {tool.name for tool in await build_mcp().list_tools()}
 
-    assert "activate_skill__managed" in tool_names
+    assert "activate_skill__managed" not in tool_names
     assert "activate_skill__project_local" not in tool_names
 
 
@@ -928,9 +928,7 @@ class FakeDynamicMcpManager:
 
 
 @pytest.mark.asyncio
-async def test_dynamic_skill_tool_is_visible_and_callable(
-    tmp_path, monkeypatch
-):
+async def test_dynamic_skill_alias_is_not_control_local(tmp_path, monkeypatch):
     config_dir = app_paths().agent_config_dir
     skill_dir = config_dir / "skills" / "paper-writer"
     skill_dir.mkdir(parents=True)
@@ -947,9 +945,8 @@ async def test_dynamic_skill_tool_is_visible_and_callable(
     mcp = build_mcp()
     tools = {tool.name for tool in await mcp.list_tools()}
 
-    assert "activate_skill__paper_writer" in tools
-    response = await mcp.call_tool("activate_skill__paper_writer", {})
-    assert "Draft papers." in mcp_text(response)
+    assert "activate_skill__paper_writer" not in tools
+    assert "activate_agent_skill" in tools
 
 
 @pytest.mark.asyncio
@@ -1156,7 +1153,7 @@ async def test_build_mcp_respects_manifest_dynamic_tool_disable(
 
 
 @pytest.mark.asyncio
-async def test_agent_bridge_hot_reloads_dynamic_skill_tools(
+async def test_control_dynamic_registry_ignores_skill_filesystem_changes(
     tmp_path, monkeypatch
 ):
     config_dir = app_paths().agent_config_dir
@@ -1174,7 +1171,7 @@ async def test_agent_bridge_hot_reloads_dynamic_skill_tools(
 
     mcp = build_mcp()
     tool_names = {tool.name for tool in await mcp.list_tools()}
-    assert "activate_skill__paper_writer" in tool_names
+    assert "activate_skill__paper_writer" not in tool_names
     assert "activate_skill__debugging" not in tool_names
 
     debugging_dir = config_dir / "skills" / "debugging"
@@ -1184,15 +1181,13 @@ async def test_agent_bridge_hot_reloads_dynamic_skill_tools(
     )
 
     tool_names = {tool.name for tool in await mcp.list_tools()}
-    assert "activate_skill__paper_writer" in tool_names
-    assert "activate_skill__debugging" in tool_names
-    response = await mcp.call_tool("activate_skill__debugging", {})
-    assert "Find root causes." in mcp_text(response)
+    assert "activate_skill__paper_writer" not in tool_names
+    assert "activate_skill__debugging" not in tool_names
 
     (skill_dir / "SKILL.md").unlink()
     tool_names = {tool.name for tool in await mcp.list_tools()}
     assert "activate_skill__paper_writer" not in tool_names
-    assert "activate_skill__debugging" in tool_names
+    assert "activate_skill__debugging" not in tool_names
 
 
 @pytest.mark.asyncio
@@ -1277,3 +1272,123 @@ async def test_agent_bridge_hot_reloads_mcp_server_tools(tmp_path, monkeypatch):
         "call_agent_mcp_tool", {"server": "api", "tool": "search"}
     )
     assert _payload(response)["url"] == "https://api.example/mcp"
+
+
+@pytest.mark.asyncio
+async def test_control_agent_bridge_rejects_same_name_across_owner_planes():
+    class Sessions:
+        async def call_session_tool(self, op, args):
+            assert op == "agent_mcp.list_servers"
+            assert args == {"session_id": "sess_owner"}
+            return {"same": {"available": True}}
+
+    service = ControlAgentBridgeService(
+        cast(Any, object()), cast(Any, Sessions())
+    )
+    service._network_registry = lambda: cast(
+        Any, SimpleNamespace(mcp_servers={"same": object()})
+    )
+
+    with pytest.raises(ValueError, match="ambiguous across control"):
+        await service.list_tools("same", "sess_owner")
+    with pytest.raises(ValueError, match="ambiguous across control"):
+        await service.call_tool("same", "ping", {}, "sess_owner")
+
+
+@pytest.mark.asyncio
+async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
+    class Sessions:
+        async def call_session_tool(self, op, args):
+            if op == "agent_mcp.list_servers":
+                return {"executor": {"available": True}}
+            if op == "agent_mcp.list_tools":
+                return {
+                    "tools": [
+                        {
+                            "server": "executor",
+                            "tool": "local",
+                            "description": "executor tool",
+                        }
+                    ]
+                }
+            if op == "agent_mcp.call_tool":
+                return {"owner": "executor", "tool": args["tool"]}
+            raise AssertionError(op)
+
+    registry = cast(Any, SimpleNamespace(mcp_servers={"control": object()}))
+    service = ControlAgentBridgeService(
+        cast(Any, object()), cast(Any, Sessions())
+    )
+    service._network_registry = lambda: registry
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "list_agent_mcp_tools_payload",
+        lambda _registry, server=None: (
+            control_agent_bridge_module.ListAgentMcpToolsOutput(
+                tools=[
+                    {
+                        "server": "control",
+                        "tool": "network",
+                        "description": "control tool",
+                    }
+                ]
+                if server in {None, "control"}
+                else []
+            )
+        ),
+    )
+
+    assert (await service._resolve_server_owner("control", "sess"))[
+        1
+    ] == "control"
+    assert (await service._resolve_server_owner("executor", "sess"))[
+        1
+    ] == "executor"
+    assert (await service._resolve_server_owner("missing", "sess"))[
+        1
+    ] == "unknown"
+    assert (await service.list_tools("control", "sess")).tools[0][
+        "tool"
+    ] == "network"
+    assert (await service.list_tools("executor", "sess")).tools[0][
+        "tool"
+    ] == "local"
+    called = await service.call_tool("executor", "local", {"x": 1}, "sess")
+    assert called.model_dump()["owner"] == "executor"
+    with pytest.raises(ValueError, match="Unknown agent MCP server"):
+        await service.list_tools("missing", "sess")
+    with pytest.raises(ValueError, match="Unknown agent MCP server"):
+        await service.call_tool("missing", "tool", {}, "sess")
+
+
+@pytest.mark.asyncio
+async def test_control_agent_bridge_rejects_duplicate_rows_when_listing_all(
+    monkeypatch,
+):
+    class Sessions:
+        async def call_session_tool(self, op, args):
+            assert op == "agent_mcp.list_tools"
+            assert args == {"session_id": "sess", "server": None}
+            return {"tools": [{"server": "same", "tool": "executor"}]}
+
+    service = ControlAgentBridgeService(
+        cast(Any, object()), cast(Any, Sessions())
+    )
+    service._network_registry = lambda: cast(
+        Any, SimpleNamespace(mcp_servers={"same": object()})
+    )
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "list_agent_mcp_tools_payload",
+        lambda _registry, server=None: (
+            control_agent_bridge_module.ListAgentMcpToolsOutput(
+                tools=[{"server": "same", "tool": "control"}]
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match="duplicates: same"):
+        await service.list_tools(session_id="sess")
+
+    with pytest.raises(ValueError, match="duplicates: same"):
+        service._merge_server_rows({"same": {}}, {"same": {}})

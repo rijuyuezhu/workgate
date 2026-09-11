@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from ..config.control import ControlSettingsView
 from ..config.settings import Settings, get_settings
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
@@ -16,7 +17,6 @@ from ..schemas.result_models.agent import (
     ListAgentMcpToolsOutput,
     ListAgentSkillsOutput,
 )
-from ..tool_session.store import get_tool_session_store
 from ..utils.serialization import to_jsonable
 from .auth import manager_redaction_maps
 from .auth_store import AgentAuthStore
@@ -41,7 +41,7 @@ _shared_mcp_manager_key: tuple[str, str, float, bool] | None = None
 
 
 def _shared_agent_mcp_client_manager(
-    settings: Settings,
+    settings: ControlSettingsView,
     *,
     allow_stdio: bool = True,
 ) -> AgentMcpClientManager:
@@ -90,18 +90,21 @@ def build_agent_registry_from_settings(
     settings: Settings | None = None,
     client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
     *,
-    session_id: str | None = None,
     project_root: Path | None = None,
     allow_stdio: bool = True,
     include_project_skills: bool = True,
     mcp_server_types: frozenset[str] | None = None,
+    scan_skills: bool = True,
 ) -> AgentCapabilityRegistry:
     """Build the current registry for the default workspace or one shared session."""
     active_settings = settings or get_settings()
-    active_project_root = project_root or active_settings.workspace_root
-    if session_id is not None:
-        session = get_tool_session_store().touch_session(session_id)
-        active_project_root = Path(session.workdir)
+    active_project_root = (
+        project_root
+        if project_root is not None
+        else active_settings.workspace_root
+        if scan_skills and include_project_skills
+        else active_settings.agent_config_dir
+    )
     if client_manager_factory is AgentMcpClientManager:
         client_manager = _shared_agent_mcp_client_manager(
             active_settings, allow_stdio=allow_stdio
@@ -115,15 +118,58 @@ def build_agent_registry_from_settings(
         client_manager,
         active_settings.agent_mcp_probe_timeout_s,
         None if active_settings.agent_dynamic_mcp_tools else False,
-        None if active_settings.agent_dynamic_skill_tools else False,
+        (None if active_settings.agent_dynamic_skill_tools else False)
+        if scan_skills
+        else False,
         project_root=Path(active_project_root),
-        max_skills=active_settings.max_skills,
-        max_skill_related_files=active_settings.max_skill_related_files,
-        max_skill_scan_entries=active_settings.max_skill_scan_entries,
-        max_skill_path_bytes=active_settings.max_skill_path_bytes,
-        max_skill_entry_bytes=active_settings.max_file_read_bytes,
+        max_skills=active_settings.max_skills if scan_skills else 0,
+        max_skill_related_files=(
+            active_settings.max_skill_related_files if scan_skills else 0
+        ),
+        max_skill_scan_entries=(
+            active_settings.max_skill_scan_entries if scan_skills else 0
+        ),
+        max_skill_path_bytes=(
+            active_settings.max_skill_path_bytes if scan_skills else 0
+        ),
+        max_skill_entry_bytes=(
+            active_settings.max_file_read_bytes if scan_skills else 0
+        ),
         include_project_skills=include_project_skills,
         mcp_server_types=mcp_server_types,
+        scan_skills=scan_skills,
+    )
+
+
+def build_network_agent_registry_from_settings(
+    settings: ControlSettingsView | None = None,
+    client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
+) -> AgentCapabilityRegistry:
+    """Build the control-owned HTTP/SSE registry without machine/Skill policy."""
+    active_settings: ControlSettingsView = settings or get_settings()
+    if client_manager_factory is AgentMcpClientManager:
+        client_manager = _shared_agent_mcp_client_manager(
+            active_settings, allow_stdio=False
+        )
+    else:
+        client_manager = client_manager_factory(
+            active_settings.agent_mcp_call_timeout_s
+        )
+    return build_agent_registry(
+        active_settings.agent_config_dir,
+        client_manager,
+        active_settings.agent_mcp_probe_timeout_s,
+        None if active_settings.agent_dynamic_mcp_tools else False,
+        False,
+        project_root=active_settings.agent_config_dir,
+        max_skills=0,
+        max_skill_related_files=0,
+        max_skill_scan_entries=0,
+        max_skill_path_bytes=0,
+        max_skill_entry_bytes=0,
+        include_project_skills=False,
+        mcp_server_types=frozenset({"http", "sse"}),
+        scan_skills=False,
     )
 
 

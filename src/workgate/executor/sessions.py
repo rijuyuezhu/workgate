@@ -8,13 +8,13 @@ from typing import Any
 
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
-from ..tool_session.lifecycle import session_lifecycle_lock
-from ..tool_session.store import ToolSessionStore, UnknownAgentSessionError
 from .config import ExecutorConfig
 from .errors import ExecutorOperationFailure
 from .path import resolve_path_with_policy
 from .session_orientation import change_session_cwd, session_output
 from .shell_service import ShellService
+from .tool_session.lifecycle import session_lifecycle_lock
+from .tool_session.store import ToolSessionStore, UnknownAgentSessionError
 
 
 class ExecutorSessionService:

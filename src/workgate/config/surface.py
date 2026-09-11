@@ -19,7 +19,7 @@ type SectionName = Literal[
     "Paths and state",
     "Authentication and OAuth",
     "Safety and resource limits",
-    "Remote workers",
+    "Cross-executor transfer",
     "Agent capability bridge",
     "Tool executables",
 ]
@@ -407,29 +407,30 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "Safety and resource limits",
         metavar="SECONDS",
     ),
-    SettingSpec("remote_enabled", "Remote workers"),
-    SettingSpec("remote_invite_ttl_s", "Remote workers", metavar="SECONDS"),
-    SettingSpec("remote_poll_timeout_s", "Remote workers", metavar="SECONDS"),
-    SettingSpec("remote_job_timeout_s", "Remote workers", metavar="SECONDS"),
-    SettingSpec("remote_max_pending_jobs", "Remote workers", metavar="COUNT"),
-    SettingSpec("remote_http_transfer_enabled", "Remote workers"),
+    SettingSpec("remote_http_transfer_enabled", "Cross-executor transfer"),
     SettingSpec(
         "remote_http_transfer_threshold_bytes",
-        "Remote workers",
+        "Cross-executor transfer",
         metavar="BYTES",
     ),
     SettingSpec(
-        "remote_http_transfer_chunk_bytes", "Remote workers", metavar="BYTES"
+        "remote_http_transfer_chunk_bytes",
+        "Cross-executor transfer",
+        metavar="BYTES",
     ),
     SettingSpec(
-        "remote_http_transfer_ticket_ttl_s", "Remote workers", metavar="SECONDS"
+        "remote_http_transfer_ticket_ttl_s",
+        "Cross-executor transfer",
+        metavar="SECONDS",
     ),
     SettingSpec(
-        "remote_http_transfer_max_active", "Remote workers", metavar="COUNT"
+        "remote_http_transfer_max_active",
+        "Cross-executor transfer",
+        metavar="COUNT",
     ),
     SettingSpec(
         "remote_http_transfer_max_spool_bytes",
-        "Remote workers",
+        "Cross-executor transfer",
         metavar="BYTES",
     ),
     SettingSpec("agent_bridge_enabled", "Agent capability bridge"),

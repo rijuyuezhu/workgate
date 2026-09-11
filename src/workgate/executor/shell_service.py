@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from ..schemas.result_models.shell import ListPersistentShellsOutput
-from ..tool_session.store import ToolSessionStore
 from .bash import bash_execute, run_python_code_execute
 from .config import ExecutorConfig
 from .jobs import ExecutorJobService
@@ -19,6 +18,7 @@ from .shell import (
     send_persistent_shell_input_execute,
     start_persistent_shell_execute,
 )
+from .tool_session.store import ToolSessionStore
 
 
 class ShellService:

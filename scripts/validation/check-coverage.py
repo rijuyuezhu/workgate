@@ -39,7 +39,7 @@ CRITICAL_FILES = frozenset(
         f"{SOURCE_PREFIX}control/pairing.py",
         f"{SOURCE_PREFIX}control/state.py",
         f"{SOURCE_PREFIX}protocol/credentials.py",
-        f"{SOURCE_PREFIX}tool_session/store.py",
+        f"{SOURCE_PREFIX}executor/tool_session/store.py",
         f"{SOURCE_PREFIX}ui/security.py",
         f"{SOURCE_PREFIX}utils/path_locks.py",
         f"{SOURCE_PREFIX}utils/private_files.py",

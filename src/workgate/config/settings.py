@@ -282,17 +282,7 @@ class Settings(BaseSettings):
     executor_pairing_ttl_s: int = Field(default=600, ge=60, le=24 * 3600)
     """Lifetime in seconds for one process-local executor pairing attempt."""
 
-    # Remote workers.
-    remote_enabled: bool = True
-    """Enable remote worker routes and MCP tools."""
-    remote_invite_ttl_s: int = 600
-    """One-time remote worker invite lifetime in seconds."""
-    remote_poll_timeout_s: int = 25
-    """Remote worker long-poll heartbeat timeout in seconds."""
-    remote_job_timeout_s: int = 3600
-    """Control-side remote job result timeout in seconds."""
-    remote_max_pending_jobs: int = 64
-    """Maximum queued or in-flight remote jobs allowed per worker."""
+    # Cross-executor transfer.
     remote_http_transfer_enabled: bool = True
     """Use the private resumable HTTP gateway for capable large session copies."""
     remote_http_transfer_threshold_bytes: int = 1024 * 1024

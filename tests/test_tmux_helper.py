@@ -107,7 +107,7 @@ async def test_list_persistent_shells_is_empty_when_default_tmux_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ):
     runtime = build_executor_runtime(
-        Settings(remote_enabled=False), enable_control_connection=False
+        Settings(), enable_control_connection=False
     )
     monkeypatch.setattr(
         shell, "_use_conpty_persistent_shell_backend", lambda: False

@@ -11,7 +11,8 @@ from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Mount
 
 from ...audit import audit
-from ...config.settings import Settings, get_settings
+from ...config.control import ControlSettingsView
+from ...config.settings import get_settings
 from ...http.public_routes import public_http_routes
 from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
@@ -51,9 +52,7 @@ def build_mcp(
     auto_runtime = runtime is None and tool_catalog is None
     if auto_runtime:
         runtime = build_control_runtime(get_settings())
-    settings = (
-        runtime.legacy_settings if runtime is not None else get_settings()
-    )
+    settings = runtime.config if runtime is not None else get_settings()
     if tool_catalog is not None:
         catalog = tool_catalog
     elif runtime is not None:
@@ -96,14 +95,14 @@ def build_mcp(
 def _add_public_routes_to_mcp_http_app(
     mcp_app: Starlette,
     *,
-    settings: Settings | None = None,
+    settings: ControlSettingsView | None = None,
     runtime: ControlRuntime | None = None,
 ) -> tuple[Starlette, list[BaseRoute]]:
     """Serve health/OAuth routes directly and send everything else to MCP."""
     active_settings = (
         settings
         if settings is not None
-        else runtime.legacy_settings
+        else runtime.config
         if runtime is not None
         else get_settings()
     )
@@ -121,10 +120,7 @@ def _add_public_routes_to_mcp_http_app(
             yield
 
     public_routes: list[BaseRoute] = [
-        *public_http_routes(
-            active_settings,
-            readyz_include_workspace_root=False,
-        ),
+        *public_http_routes(),
         *(
             executor_routes(
                 runtime.executor_transport,
@@ -163,14 +159,14 @@ def _build_authenticated_mcp_http_app(
     *,
     session_manager: object | None = None,
     mcp_path: str = "/mcp",
-    settings: Settings | None = None,
+    settings: ControlSettingsView | None = None,
     runtime: ControlRuntime | None = None,
 ) -> Starlette:
     """Add resource limits and OAuth protection around the MCP HTTP app."""
     active_settings = (
         settings
         if settings is not None
-        else runtime.legacy_settings
+        else runtime.config
         if runtime is not None
         else get_settings()
     )
@@ -210,9 +206,7 @@ def build_mcp_http_app(
             ControlRuntime | None, getattr(mcp, "_workgate_runtime", None)
         )
     settings = (
-        active_runtime.legacy_settings
-        if active_runtime is not None
-        else get_settings()
+        active_runtime.config if active_runtime is not None else get_settings()
     )
     if hasattr(mcp, "streamable_http_app"):
         inner: Starlette = mcp.streamable_http_app()
@@ -255,13 +249,14 @@ def run_mcp(
     runtime: ControlRuntime | None = None,
 ) -> None:
     """Start MCP with one control runtime owner over stdio or HTTP."""
-    settings = (
-        runtime.legacy_settings if runtime is not None else get_settings()
-    )
-    active_runtime = runtime or build_control_runtime(settings)
+    if runtime is None:
+        source_settings = get_settings()
+        active_runtime = build_control_runtime(source_settings)
+    else:
+        active_runtime = runtime
     mode = active_runtime.config.mode
     if mode != "stdio":
-        validate_public_oauth_configuration(settings)
+        validate_public_oauth_configuration(active_runtime.config)
     mcp = build_mcp(
         tool_catalog=tool_catalog,
         runtime=active_runtime,

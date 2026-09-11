@@ -12,16 +12,13 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
-from ..config.settings import Settings
+from ..config.control import ControlSettingsView
+from ..errors import SessionTerminationRequestedError
 from ..oauth.core.context import (
     MissingOAuthScopeError,
     require_oauth_scopes,
 )
 from ..oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
-from ..tool_session import (
-    SessionTerminationRequestedError,
-    enforce_tool_session_control,
-)
 from .contracts import (
     HttpMethod,
     HttpToolRoute,
@@ -33,9 +30,8 @@ from .metadata import oauth_security_meta
 
 type McpSecurityProfile = Literal["oauth", "connector_compatible"]
 type ToolAnnotation = Literal["read_only"]
-type SessionAdmissionOwner = Literal["wrapper", "handler"]
 type ToolDescription = str | Callable[[McpToolContext], str]
-type ToolEnabled = Callable[[Settings], bool]
+type ToolEnabled = Callable[[ControlSettingsView], bool]
 type ToolFunc = Callable[..., Awaitable[Any]]
 type McpErrorHandler = Callable[
     [Exception, tuple[Any, ...], dict[str, Any]], Any
@@ -88,12 +84,11 @@ class LocalToolDecoratorFactory(Protocol):
         description: ToolDescription | None = None,
         mcp_error_handler: McpErrorHandler | None = None,
         enabled: ToolEnabled = ...,
-        session_admission: SessionAdmissionOwner = "wrapper",
         timeout_cancellable: bool = True,
     ) -> Callable[[ToolFunc], ToolDefinition]: ...
 
 
-def _always_enabled(settings: Settings) -> bool:
+def _always_enabled(settings: ControlSettingsView) -> bool:
     return True
 
 
@@ -158,8 +153,6 @@ class ToolDefinition:
     """Optional MCP exception-to-result conversion used for tool errors and timeouts."""
     enabled: ToolEnabled = _always_enabled
     """Predicate controlling whether the tool is exposed for current settings."""
-    session_admission: SessionAdmissionOwner = "wrapper"
-    """Layer responsible for authoritative active-session admission."""
     timeout_cancellable: bool = True
     """Whether the REST watchdog may cancel this tool on timeout."""
 
@@ -168,7 +161,7 @@ class ToolDefinition:
         """Return the fully resolved public signature advertised to adapters."""
         return inspect.signature(self.func, eval_str=True)
 
-    def is_enabled(self, settings: Settings) -> bool:
+    def is_enabled(self, settings: ControlSettingsView) -> bool:
         """Return whether this tool should be exposed for current settings."""
         return self.enabled(settings)
 
@@ -187,21 +180,9 @@ class ToolDefinition:
         """Return server-enforced OAuth scopes for this tool."""
         return self.oauth_scopes or tuple(SUPPORTED_OAUTH_SCOPES)
 
-    def wrapper_owns_session_admission(self) -> bool:
-        """Return whether the declarative transport wrapper admits sessions."""
-        match self.session_admission:
-            case "wrapper":
-                return True
-            case "handler":
-                return False
-
     async def call_from_mapping(self, args: Mapping[str, Any]) -> Any:
         """Invoke the typed tool function from an HTTP-style argument mapping."""
         _enforce_oauth_scopes(self.required_oauth_scopes())
-        if self.wrapper_owns_session_admission():
-            enforce_tool_session_control(
-                dict(args), termination_cleanup=self.name == "session_end"
-            )
         try:
             return await self.func(
                 **_tool_kwargs_from_mapping(self.signature, args)
@@ -259,12 +240,6 @@ class ToolDefinition:
         async def mcp_handler(*args: Any, **kwargs: Any) -> Any:
             try:
                 _enforce_oauth_scopes(self.required_oauth_scopes())
-                bound = self.signature.bind_partial(*args, **kwargs)
-                if self.wrapper_owns_session_admission():
-                    enforce_tool_session_control(
-                        dict(bound.arguments),
-                        termination_cleanup=self.name == "session_end",
-                    )
                 return await self.func(*args, **kwargs)
             except SessionTerminationRequestedError:
                 raise
@@ -290,7 +265,7 @@ class ToolDefinition:
 class DeclarativeToolRegistry(ToolRegistry):
     """Registry base for tool registries that are in a declarative fashion."""
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: ControlSettingsView | None = None) -> None:
         self._configured_settings = settings
         self._context: McpToolContext | None = None
 
@@ -325,7 +300,6 @@ class DeclarativeToolRegistry(ToolRegistry):
             description: ToolDescription | None = None,
             mcp_error_handler: McpErrorHandler | None = None,
             enabled: ToolEnabled = _always_enabled,
-            session_admission: SessionAdmissionOwner = "wrapper",
             timeout_cancellable: bool = True,
         ) -> Callable[[ToolFunc], ToolDefinition]:
             def decorator(func: ToolFunc) -> ToolDefinition:
@@ -341,7 +315,6 @@ class DeclarativeToolRegistry(ToolRegistry):
                         description=description,
                         mcp_error_handler=mcp_error_handler,
                         enabled=enabled,
-                        session_admission=session_admission,
                         timeout_cancellable=timeout_cancellable,
                     )
                 )
@@ -354,7 +327,7 @@ class DeclarativeToolRegistry(ToolRegistry):
         settings = self._settings()
         return tuple(tool for tool in self.tools if tool.is_enabled(settings))
 
-    def _settings(self) -> Settings:
+    def _settings(self) -> ControlSettingsView:
         if self._context is not None:
             return self._context.settings
         if self._configured_settings is not None:

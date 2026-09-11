@@ -431,6 +431,110 @@ def test_agent_bridge_models_are_a_dependency_leaf() -> None:
     assert actual == frozenset()
 
 
+_EXECUTOR_POLICY_FIELDS = frozenset(
+    {
+        "workspace_root",
+        "allow_full_control",
+        "command_denylist",
+        "path_denylist",
+        "run_shell_default_timeout_s",
+        "run_shell_max_timeout_s",
+        "max_output_bytes",
+        "max_job_log_bytes",
+        "max_jobs",
+        "max_file_read_bytes",
+        "max_session_snapshots",
+        "max_session_snapshot_bytes",
+        "max_transfer_archive_entries",
+        "max_transfer_unpacked_bytes",
+        "max_tmp_files",
+        "max_tmp_bytes",
+        "max_file_write_bytes",
+        "max_view_image_bytes",
+        "max_grep_results",
+        "max_glob_results",
+        "max_tree_entries",
+        "max_directory_entries",
+        "max_skills",
+        "max_skill_related_files",
+        "max_skill_scan_entries",
+        "max_skill_path_bytes",
+        "shell_executable",
+        "tmux_bin",
+        "rg_bin",
+        "git_bin",
+        "python_bin",
+    }
+)
+
+
+def test_machine_session_and_shell_job_implementations_are_executor_owned() -> (
+    None
+):
+    assert (_PACKAGE_ROOT / "executor" / "tool_session").is_dir()
+    assert not (_PACKAGE_ROOT / "tool_session").exists()
+
+    executor_jobs = _PACKAGE_ROOT / "executor" / "jobs"
+    shared_jobs = _PACKAGE_ROOT / "jobs"
+    for name in (
+        "shell.py",
+        "lifecycle.py",
+        "runner.py",
+        "runner_bootstrap.py",
+    ):
+        assert (executor_jobs / name).is_file()
+        assert not (shared_jobs / name).exists()
+
+
+def test_shared_mechanism_layers_do_not_depend_on_executor_implementation() -> (
+    None
+):
+    shared_prefixes = (
+        f"{_PACKAGE_NAME}.agent_bridge",
+        f"{_PACKAGE_NAME}.composition",
+        f"{_PACKAGE_NAME}.jobs",
+        f"{_PACKAGE_NAME}.tools",
+    )
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(shared_prefixes)
+        and target.startswith(f"{_PACKAGE_NAME}.executor")
+    )
+
+    assert actual == frozenset()
+
+
+def test_control_shared_http_and_public_tools_do_not_read_executor_policy() -> (
+    None
+):
+    violations: list[tuple[str, int, str]] = []
+    roots = (
+        _PACKAGE_ROOT / "control",
+        _PACKAGE_ROOT / "http",
+        _PACKAGE_ROOT / "tools" / "registry",
+    )
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(
+                path.read_text(encoding="utf-8"), filename=str(path)
+            )
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in _EXECUTOR_POLICY_FIELDS
+                ):
+                    violations.append(
+                        (
+                            str(path.relative_to(_PROJECT_ROOT)),
+                            node.lineno,
+                            node.attr,
+                        )
+                    )
+
+    assert violations == []
+
+
 def test_legacy_execution_namespaces_are_physically_absent() -> None:
     for name in ("ops", "remote", "remote_worker"):
         assert not (_PACKAGE_ROOT / name).exists()

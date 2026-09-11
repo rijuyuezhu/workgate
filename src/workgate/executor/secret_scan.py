@@ -10,14 +10,14 @@ from pathlib import Path
 from pathspec import PathSpec
 
 from ..schemas.result_models.secret_scan import SecretFinding, SecretScanOutput
-from ..tool_session.resolver import SessionResolver
-from ..tool_session.store import ToolSessionStore
 from .files import (
     FilesConfig,
     _display_file,
     _read_file_local,
     _resolve_file_path,
 )
+from .tool_session.resolver import SessionResolver
+from .tool_session.store import ToolSessionStore
 
 SECRET_PATTERNS = {
     "github_token": r"gh[pousr]_[A-Za-z0-9_]{36,}",

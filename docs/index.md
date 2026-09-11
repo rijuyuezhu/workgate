@@ -35,7 +35,7 @@ See [Common workflows](guides/common-workflows.md) for practical examples and th
 
 The HTTP server includes a browser interface at `/ui`. An optional terminal client provides the same main management areas. See [Human interface](guides/human-interface.md).
 
-To work on another machine while keeping one public MCP endpoint, enroll a [remote worker](guides/remote-workers.md).
+To work on another machine while keeping one public MCP endpoint, pair an [executor](guides/remote-workers.md).
 
 !!! warning
     Give the service access only to workspaces you are prepared for an AI coding agent to modify. Keep OAuth enabled for public deployments, use narrow scopes, and leave full-control mode disabled unless the environment is disposable.

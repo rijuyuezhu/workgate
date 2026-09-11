@@ -30,8 +30,6 @@ from ..schemas.result_models.shell import (
     SendPersistentShellInputOutput,
     StartPersistentShellOutput,
 )
-from ..tool_session.lifecycle import cross_process_lock
-from ..tool_session.store import ToolSessionStore
 from ..utils.processes import new_process_group_kwargs, user_subprocess_env
 from .bounded_runner import bounded_runner_argv
 from .config import ExecutorConfig
@@ -47,6 +45,8 @@ from .terminal.contracts import (
     PERSISTENT_SHELL_MIN_ROWS,
 )
 from .terminal.tmux import require_tmux, resolve_tmux, tmux_env_overrides
+from .tool_session.lifecycle import cross_process_lock
+from .tool_session.store import ToolSessionStore
 
 GRACEFUL_TERMINATION_TIMEOUT_S = 5
 KILL_TERMINATION_TIMEOUT_S = 2

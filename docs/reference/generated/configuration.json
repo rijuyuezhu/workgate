@@ -11,7 +11,7 @@
     "Paths and state",
     "Authentication and OAuth",
     "Safety and resource limits",
-    "Remote workers",
+    "Cross-executor transfer",
     "Agent capability bridge",
     "Tool executables"
   ],
@@ -1630,109 +1630,9 @@
         "Default",
         "Description"
       ],
-      "heading": "Remote workers",
+      "heading": "Cross-executor transfer",
       "kind": "table",
       "rows": [
-        [
-          {
-            "code": "remote_enabled"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-enabled"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_ENABLED"
-          },
-          "true | false",
-          {
-            "code": "true"
-          },
-          "Enable remote worker routes and MCP tools."
-        ],
-        [
-          {
-            "code": "remote_invite_ttl_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-invite-ttl-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_INVITE_TTL_S"
-          },
-          "integer",
-          {
-            "code": "600"
-          },
-          "One-time remote worker invite lifetime in seconds."
-        ],
-        [
-          {
-            "code": "remote_poll_timeout_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-poll-timeout-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_POLL_TIMEOUT_S"
-          },
-          "integer",
-          {
-            "code": "25"
-          },
-          "Remote worker long-poll heartbeat timeout in seconds."
-        ],
-        [
-          {
-            "code": "remote_job_timeout_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-job-timeout-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_JOB_TIMEOUT_S"
-          },
-          "integer",
-          {
-            "code": "3600"
-          },
-          "Control-side remote job result timeout in seconds."
-        ],
-        [
-          {
-            "code": "remote_max_pending_jobs"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-max-pending-jobs"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_MAX_PENDING_JOBS"
-          },
-          "integer",
-          {
-            "code": "64"
-          },
-          "Maximum queued or in-flight remote jobs allowed per worker."
-        ],
         [
           {
             "code": "remote_http_transfer_enabled"
@@ -3143,74 +3043,6 @@
         "true",
         "false"
       ],
-      "cli": "--remote-enabled",
-      "default": true,
-      "default_display": "true",
-      "description": "Enable remote worker routes and MCP tools.",
-      "env": "WORKGATE_REMOTE_ENABLED",
-      "name": "remote_enabled",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "true | false",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-invite-ttl-s",
-      "default": 600,
-      "default_display": "600",
-      "description": "One-time remote worker invite lifetime in seconds.",
-      "env": "WORKGATE_REMOTE_INVITE_TTL_S",
-      "name": "remote_invite_ttl_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-poll-timeout-s",
-      "default": 25,
-      "default_display": "25",
-      "description": "Remote worker long-poll heartbeat timeout in seconds.",
-      "env": "WORKGATE_REMOTE_POLL_TIMEOUT_S",
-      "name": "remote_poll_timeout_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-job-timeout-s",
-      "default": 3600,
-      "default_display": "3600",
-      "description": "Control-side remote job result timeout in seconds.",
-      "env": "WORKGATE_REMOTE_JOB_TIMEOUT_S",
-      "name": "remote_job_timeout_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-max-pending-jobs",
-      "default": 64,
-      "default_display": "64",
-      "description": "Maximum queued or in-flight remote jobs allowed per worker.",
-      "env": "WORKGATE_REMOTE_MAX_PENDING_JOBS",
-      "name": "remote_max_pending_jobs",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "true",
-        "false"
-      ],
       "cli": "--remote-http-transfer-enabled",
       "default": true,
       "default_display": "true",
@@ -3218,7 +3050,7 @@
       "env": "WORKGATE_REMOTE_HTTP_TRANSFER_ENABLED",
       "name": "remote_http_transfer_enabled",
       "nullable": false,
-      "section": "Remote workers",
+      "section": "Cross-executor transfer",
       "type": "true | false",
       "unset_cli": null
     },
@@ -3231,7 +3063,7 @@
       "env": "WORKGATE_REMOTE_HTTP_TRANSFER_THRESHOLD_BYTES",
       "name": "remote_http_transfer_threshold_bytes",
       "nullable": false,
-      "section": "Remote workers",
+      "section": "Cross-executor transfer",
       "type": "integer",
       "unset_cli": null
     },
@@ -3244,7 +3076,7 @@
       "env": "WORKGATE_REMOTE_HTTP_TRANSFER_CHUNK_BYTES",
       "name": "remote_http_transfer_chunk_bytes",
       "nullable": false,
-      "section": "Remote workers",
+      "section": "Cross-executor transfer",
       "type": "integer",
       "unset_cli": null
     },
@@ -3257,7 +3089,7 @@
       "env": "WORKGATE_REMOTE_HTTP_TRANSFER_TICKET_TTL_S",
       "name": "remote_http_transfer_ticket_ttl_s",
       "nullable": false,
-      "section": "Remote workers",
+      "section": "Cross-executor transfer",
       "type": "integer",
       "unset_cli": null
     },
@@ -3270,7 +3102,7 @@
       "env": "WORKGATE_REMOTE_HTTP_TRANSFER_MAX_ACTIVE",
       "name": "remote_http_transfer_max_active",
       "nullable": false,
-      "section": "Remote workers",
+      "section": "Cross-executor transfer",
       "type": "integer",
       "unset_cli": null
     },
@@ -3283,7 +3115,7 @@
       "env": "WORKGATE_REMOTE_HTTP_TRANSFER_MAX_SPOOL_BYTES",
       "name": "remote_http_transfer_max_spool_bytes",
       "nullable": false,
-      "section": "Remote workers",
+      "section": "Cross-executor transfer",
       "type": "integer",
       "unset_cli": null
     },

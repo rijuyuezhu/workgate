@@ -194,17 +194,7 @@ executor_pairing_max_pending: 32
 # Lifetime in seconds for one process-local executor pairing attempt.
 executor_pairing_ttl_s: 600
 
-# Remote workers.
-# Enable remote worker routes and MCP tools.
-remote_enabled: true
-# One-time remote worker invite lifetime in seconds.
-remote_invite_ttl_s: 600
-# Remote worker long-poll heartbeat timeout in seconds.
-remote_poll_timeout_s: 25
-# Control-side remote job result timeout in seconds.
-remote_job_timeout_s: 3600
-# Maximum queued or in-flight remote jobs allowed per worker.
-remote_max_pending_jobs: 64
+# Cross-executor transfer.
 # Use the private resumable HTTP gateway for capable large session copies.
 remote_http_transfer_enabled: true
 # Minimum payload size selected for private HTTP streaming.
