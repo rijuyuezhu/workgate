@@ -229,6 +229,34 @@ def manager_redaction_maps(
     )
 
 
+def manager_redaction_cursor(
+    manager: Any,
+    server_name: str,
+    server: AgentMcpServerConfig,
+) -> Any:
+    """Start operation-local credential observation when the manager supports it."""
+    method = getattr(manager, "redaction_cursor", None)
+    if callable(method):
+        return method(server_name, server)
+    return None
+
+
+def manager_redaction_maps_since(
+    manager: Any,
+    server_name: str,
+    server: AgentMcpServerConfig,
+    cursor: Any,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Read all values observed during one operation, or fall back to current maps."""
+    method = getattr(manager, "redaction_maps_since", None)
+    if callable(method):
+        return cast(
+            tuple[dict[str, str], dict[str, str]],
+            method(server_name, server, cursor),
+        )
+    return manager_redaction_maps(manager, server_name, server)
+
+
 def manager_auth_status(
     manager: Any,
     server_name: str,

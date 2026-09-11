@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+import workgate.agent_bridge.auth_store as auth_store_module
 import workgate.agent_bridge.mcp as mcp_module
 from workgate.agent_bridge.auth import (
     PersistentOAuthClientProvider,
@@ -18,6 +19,7 @@ from workgate.agent_bridge.auth import (
     resolve_config_mapping,
 )
 from workgate.agent_bridge.auth_store import (
+    AgentAuthRedactionHistoryLostError,
     AgentAuthStore,
     AgentAuthStoreCorruptError,
     AgentOAuthTokenStorage,
@@ -191,6 +193,65 @@ def test_oauth_redaction_values_ignore_absent_optional_credentials(tmp_path):
     assert store.oauth_redaction_values("docs") == {
         "oauth_access_token": "access-only"
     }
+
+
+def test_oauth_redaction_journal_captures_intermediate_mutations_and_is_bounded(
+    tmp_path, monkeypatch
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "old-token", "token_type": "Bearer"}
+        ),
+    )
+    cursor = store.redaction_cursor("docs")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "mid-token", "token_type": "Bearer"}
+        ),
+    )
+    store.set_client_info("docs", _client_info())
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "new-token", "token_type": "Bearer"}
+        ),
+    )
+
+    assert set(store.oauth_redaction_values_since("docs", cursor).values()) == {
+        "mid-token",
+        "client-secret",
+        "new-token",
+    }
+    with pytest.raises(ValueError, match="non-negative"):
+        store.oauth_redaction_values_since("docs", -1)
+    with pytest.raises(ValueError, match="newer than credential history"):
+        store.oauth_redaction_values_since(
+            "docs", store.redaction_cursor("docs") + 1
+        )
+
+    monkeypatch.setattr(auth_store_module, "_MAX_REDACTION_JOURNAL_ENTRIES", 1)
+    bounded = AgentAuthStore(tmp_path / "bounded_auth")
+    bounded.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "old-bounded", "token_type": "Bearer"}
+        ),
+    )
+    stale_cursor = bounded.redaction_cursor("docs")
+    for token in ("mid-bounded", "new-bounded"):
+        bounded.set_tokens(
+            "docs",
+            OAuthToken.model_validate(
+                {"access_token": token, "token_type": "Bearer"}
+            ),
+        )
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history expired"
+    ):
+        bounded.oauth_redaction_values_since("docs", stale_cursor)
 
 
 @pytest.mark.asyncio

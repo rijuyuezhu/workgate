@@ -20,6 +20,7 @@ from ..utils.private_files import atomic_write_private_text, private_file_lock
 _STORE_VERSION = 1
 _MAX_STORE_BYTES = 1_048_576
 _MAX_SECRET_BYTES = 65_536
+_MAX_REDACTION_JOURNAL_ENTRIES = 256
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -33,6 +34,10 @@ class AgentAuthStoreCorruptError(AgentAuthStoreError):
 
 class AgentSecretNotFoundError(AgentAuthStoreError):
     """A configured secret reference is missing from the private store."""
+
+
+class AgentAuthRedactionHistoryLostError(AgentAuthStoreError):
+    """An operation outlived the bounded process-local credential journal."""
 
 
 def _validate_name(value: str, label: str) -> str:
@@ -56,7 +61,32 @@ class AgentAuthStore:
         self.path = self.root / "credentials.json"
         self.lock_path = self.root / "credentials.lock"
         self._thread_lock = threading.RLock()
+        self._redaction_generation: dict[str, int] = {}
+        self._redaction_journal: dict[
+            str, list[tuple[int, tuple[str, ...]]]
+        ] = {}
         self._ensure_private_dir()
+
+    def _record_redaction_values_unlocked(
+        self, server: str, values: tuple[str, ...]
+    ) -> None:
+        values = tuple(dict.fromkeys(value for value in values if value))
+        if not values:
+            return
+        generation = self._redaction_generation.get(server, 0) + 1
+        self._redaction_generation[server] = generation
+        journal = self._redaction_journal.setdefault(server, [])
+        journal.append((generation, values))
+        if len(journal) > _MAX_REDACTION_JOURNAL_ENTRIES:
+            del journal[: len(journal) - _MAX_REDACTION_JOURNAL_ENTRIES]
+
+    def _mutate_with_redaction(self, server: str, mutate) -> None:
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            values = tuple(mutate(data))
+            self._prune(data)
+            self._write_unlocked(data)
+            self._record_redaction_values_unlocked(server, values)
 
     def _ensure_private_dir(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -280,12 +310,49 @@ class AgentAuthStore:
                 values["oauth_client_secret"] = str(client_secret)
         return values
 
+    def redaction_cursor(self, server: str) -> int:
+        """Return a process-local cursor for subsequent credential mutations."""
+        server = _validate_name(server, "server name")
+        with self._thread_lock:
+            return self._redaction_generation.get(server, 0)
+
+    def oauth_redaction_values_since(
+        self, server: str, cursor: int
+    ) -> dict[str, str]:
+        """Return OAuth secrets observed after a cursor, failing closed if evicted."""
+        server = _validate_name(server, "server name")
+        if not isinstance(cursor, int) or cursor < 0:
+            raise ValueError("redaction cursor must be a non-negative integer")
+        with self._thread_lock:
+            generation = self._redaction_generation.get(server, 0)
+            if cursor > generation:
+                raise ValueError(
+                    "redaction cursor is newer than credential history"
+                )
+            journal = self._redaction_journal.get(server, [])
+            if journal and cursor < journal[0][0] - 1:
+                raise AgentAuthRedactionHistoryLostError(
+                    f"credential redaction history expired for server {server}"
+                )
+            values = tuple(
+                dict.fromkeys(
+                    value
+                    for entry_generation, entry_values in journal
+                    if entry_generation > cursor
+                    for value in entry_values
+                )
+            )
+        return {
+            f"oauth_observed_{index}": value
+            for index, value in enumerate(values)
+        }
+
     def set_tokens(self, server: str, tokens: OAuthToken) -> None:
         """Persist OAuth tokens and their absolute expiry timestamp."""
         server = _validate_name(server, "server name")
         now = time.time()
 
-        def mutate(data: dict[str, Any]) -> None:
+        def mutate(data: dict[str, Any]) -> tuple[str, ...]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
             previous = oauth.get("tokens") or {}
@@ -299,8 +366,13 @@ class AgentAuthStore:
                 if tokens.expires_in is not None
                 else None
             )
+            return tuple(
+                str(payload[field])
+                for field in ("access_token", "refresh_token")
+                if payload.get(field)
+            )
 
-        self._mutate(mutate)
+        self._mutate_with_redaction(server, mutate)
 
     def get_client_info(self, server: str) -> OAuthClientInformationFull | None:
         """Load persisted OAuth dynamic client information."""
@@ -322,14 +394,16 @@ class AgentAuthStore:
         """Persist OAuth dynamic client information."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> None:
+        def mutate(data: dict[str, Any]) -> tuple[str, ...]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
             oauth["client_info"] = client_info.model_dump(
                 mode="json", exclude_none=True
             )
+            client_secret = getattr(client_info, "client_secret", None)
+            return (str(client_secret),) if client_secret else ()
 
-        self._mutate(mutate)
+        self._mutate_with_redaction(server, mutate)
 
     def get_authorization_metadata(self, server: str) -> OAuthMetadata | None:
         """Load discovered public OAuth authorization-server metadata."""

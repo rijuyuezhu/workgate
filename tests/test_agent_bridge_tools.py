@@ -534,6 +534,15 @@ async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_au
             name,
             OAuthToken.model_validate(
                 {
+                    "access_token": "q6L1v9R3c8H2w4J7",
+                    "token_type": "Bearer",
+                }
+            ),
+        )
+        self.auth_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {
                     "access_token": "oauth-access-after",
                     "token_type": "Bearer",
                 }
@@ -542,6 +551,7 @@ async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_au
         return {
             "structured_content": {
                 "access_before": "oauth-access-before",
+                "access_intermediate": "q6L1v9R3c8H2w4J7",
                 "access_after": "oauth-access-after",
                 "refresh": "oauth-refresh-private",
             }
@@ -563,12 +573,14 @@ async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_au
     )
     assert result["structured_content"] == {
         "access_before": "<redacted>",
+        "access_intermediate": "<redacted>",
         "access_after": "<redacted>",
         "refresh": "<redacted>",
     }
     public_json = json.dumps(result, sort_keys=True)
     for secret in (
         "oauth-access-before",
+        "q6L1v9R3c8H2w4J7",
         "oauth-access-after",
         "oauth-refresh-private",
     ):
@@ -583,6 +595,7 @@ async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_au
         )
         for secret in (
             "oauth-access-before",
+            "q6L1v9R3c8H2w4J7",
             "oauth-access-after",
             "oauth-refresh-private",
         ):
@@ -1217,6 +1230,219 @@ def test_agent_mcp_probe_rotation_redacts_probe_error(tmp_path) -> None:
     assert old_token not in status_payload
     assert new_token not in status_payload
     assert "<redacted>" in status_payload
+
+
+def test_agent_mcp_probe_redacts_intermediate_oauth_credentials(
+    tmp_path, monkeypatch
+) -> None:
+    old_token = "m9X4q7V2z8N5p3K1"
+    mid_token = "q6L1v9R3c8H2w4J7"
+    new_token = "n2C8r6T4y1B7d5F3"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AgentAuthStore(tmp_path / "auth")
+    store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+    manager = AgentMcpClientManager(1, store)
+
+    async def rotating_list_tools(name, _server):
+        store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": mid_token, "token_type": "Bearer"}
+            ),
+        )
+        store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": new_token, "token_type": "Bearer"}
+            ),
+        )
+        return [
+            AgentMcpTool(
+                name="echo",
+                description=f"server saw {mid_token}",
+                input_schema={"seen": mid_token},
+            )
+        ]
+
+    monkeypatch.setattr(manager, "list_tools", rotating_list_tools)
+    try:
+        registry = build_agent_registry(
+            config_dir,
+            manager,
+            dynamic_mcp_tools=False,
+            dynamic_skill_tools=False,
+            scan_skills=False,
+        )
+    finally:
+        manager.close()
+
+    record = registry.mcp_servers["oauth"]
+    public_payload = json.dumps(list_agent_mcp_tools_payload(registry).tools)
+    assert record.tools[0].description == "server saw <redacted>"
+    assert record.tools[0].input_schema == {"seen": "<redacted>"}
+    assert set(record.probe_redaction_values) >= {
+        old_token,
+        mid_token,
+        new_token,
+    }
+    for secret in (old_token, mid_token, new_token):
+        assert secret not in public_payload
+
+
+@pytest.mark.parametrize("probe_fails", [False, True])
+def test_agent_mcp_probe_fails_closed_when_redaction_history_is_lost(
+    tmp_path, probe_fails
+) -> None:
+    secret = "q6L1v9R3c8H2w4J7"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class LostHistoryManager:
+        def redaction_cursor(self, _name, _server):
+            return 0
+
+        def redaction_maps(self, _name, _server):
+            return ({"oauth_access_token": secret}, {})
+
+        def redaction_maps_since(self, _name, _server, _cursor):
+            raise RuntimeError(f"lost history {secret}")
+
+        async def list_tools(self, _name, _server):
+            if probe_fails:
+                raise RuntimeError(f"upstream remembered {secret}")
+            return [
+                AgentMcpTool(
+                    name="echo",
+                    description=f"server saw {secret}",
+                    input_schema={},
+                )
+            ]
+
+    registry = build_agent_registry(
+        config_dir,
+        LostHistoryManager(),
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    record = registry.mcp_servers["oauth"]
+    assert record.available is False
+    assert record.error == "credential redaction history unavailable"
+    assert secret not in json.dumps(registry_config_status(registry))
+
+
+@pytest.mark.asyncio
+async def test_control_oauth_intermediate_credential_is_redacted_from_error_and_audit(
+    tmp_path, monkeypatch
+):
+    old_token = "m9X4q7V2z8N5p3K1"
+    mid_token = "q6L1v9R3c8H2w4J7"
+    new_token = "n2C8r6T4y1B7d5F3"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://oauth.example/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+    auth_store = AgentAuthStore(get_settings().agent_auth_dir)
+    auth_store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+
+    async def fake_list_tools(self, _name, _server):
+        return [AgentMcpTool(name="echo", description="Echo", input_schema={})]
+
+    async def fake_call_tool(self, name, _server, _tool, _args):
+        assert self.auth_store is not None
+        for token in (mid_token, new_token):
+            self.auth_store.set_tokens(
+                name,
+                OAuthToken.model_validate(
+                    {"access_token": token, "token_type": "Bearer"}
+                ),
+            )
+        raise RuntimeError(f"upstream remembered {mid_token}")
+
+    monkeypatch.setattr(AgentMcpClientManager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(AgentMcpClientManager, "call_tool", fake_call_tool)
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "AgentMcpClientManager",
+        AgentMcpClientManager,
+    )
+
+    with pytest.raises(ToolError) as exc_info:
+        await build_mcp().call_tool(
+            "call_agent_mcp_tool",
+            {"server": "oauth", "tool": "echo", "args": {}},
+        )
+    public_error = str(exc_info.value)
+    assert "<redacted>" in public_error
+    for secret in (old_token, mid_token, new_token):
+        assert secret not in public_error
+
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
+    assert audit_entries
+    for entry in audit_entries:
+        retained = json.dumps(
+            get_audit_entry(entry["id"], include_full_payloads=True),
+            sort_keys=True,
+        )
+        for secret in (old_token, mid_token, new_token):
+            assert secret not in retained
 
 
 @pytest.mark.asyncio

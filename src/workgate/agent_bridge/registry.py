@@ -8,7 +8,11 @@ import threading
 from pathlib import Path
 from typing import Any, cast
 
-from .auth import manager_redaction_maps
+from .auth import (
+    manager_redaction_cursor,
+    manager_redaction_maps,
+    manager_redaction_maps_since,
+)
 from .mcp import AgentMcpTool, normalize_mcp_tool
 from .models import (
     AgentCapabilityRegistry,
@@ -205,6 +209,9 @@ def build_agent_registry(
                 )
                 continue
 
+            redaction_cursor = manager_redaction_cursor(
+                client_manager, name, server
+            )
             before_env, before_headers = manager_redaction_maps(
                 client_manager, name, server
             )
@@ -217,15 +224,26 @@ def build_agent_registry(
                     timeout_s=probe_timeout,
                 )
             except Exception as exc:
-                after_env, after_headers = manager_redaction_maps(
-                    client_manager, name, server
-                )
+                try:
+                    operation_env, operation_headers = (
+                        manager_redaction_maps_since(
+                            client_manager, name, server, redaction_cursor
+                        )
+                    )
+                except Exception:
+                    mcp_servers[name] = AgentMcpServerRecord(
+                        name=name,
+                        config=server,
+                        available=False,
+                        error="credential redaction history unavailable",
+                    )
+                    continue
                 error = redact_configured_value_tree(
                     f"{type(exc).__name__}: {exc}",
                     before_env,
                     before_headers,
-                    after_env,
-                    after_headers,
+                    operation_env,
+                    operation_headers,
                 )
                 mcp_servers[name] = AgentMcpServerRecord(
                     name=name,
@@ -235,9 +253,18 @@ def build_agent_registry(
                 )
                 continue
 
-            after_env, after_headers = manager_redaction_maps(
-                client_manager, name, server
-            )
+            try:
+                operation_env, operation_headers = manager_redaction_maps_since(
+                    client_manager, name, server, redaction_cursor
+                )
+            except Exception:
+                mcp_servers[name] = AgentMcpServerRecord(
+                    name=name,
+                    config=server,
+                    available=False,
+                    error="credential redaction history unavailable",
+                )
+                continue
             raw_tool_names = tuple(
                 normalize_mcp_tool(tool).name for tool in tools
             )
@@ -246,8 +273,8 @@ def build_agent_registry(
                     tool,
                     before_env,
                     before_headers,
-                    after_env,
-                    after_headers,
+                    operation_env,
+                    operation_headers,
                 )
                 for tool in tools
             ]
@@ -258,7 +285,10 @@ def build_agent_registry(
                 tools=sanitized_tools,
                 raw_tool_names=raw_tool_names,
                 probe_redaction_values=_redaction_values(
-                    before_env, before_headers, after_env, after_headers
+                    before_env,
+                    before_headers,
+                    operation_env,
+                    operation_headers,
                 ),
             )
 

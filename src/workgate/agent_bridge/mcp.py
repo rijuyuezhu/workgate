@@ -360,6 +360,33 @@ class AgentMcpClientManager:
             env = {**env, **self.auth_store.oauth_redaction_values(name)}
         return env, headers
 
+    def redaction_cursor(
+        self, name: str, server: AgentMcpServerConfig
+    ) -> int | None:
+        """Start observing OAuth credential mutations for one MCP operation."""
+        if self.auth_store is None or server.auth.mode != "oauth":
+            return None
+        return self.auth_store.redaction_cursor(name)
+
+    def redaction_maps_since(
+        self,
+        name: str,
+        server: AgentMcpServerConfig,
+        cursor: int | None,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Resolve current values plus every OAuth secret mutated since a cursor."""
+        env, headers = self.redaction_maps(name, server)
+        if (
+            cursor is not None
+            and self.auth_store is not None
+            and server.auth.mode == "oauth"
+        ):
+            env = {
+                **env,
+                **self.auth_store.oauth_redaction_values_since(name, cursor),
+            }
+        return env, headers
+
     def auth_status(
         self, name: str, server: AgentMcpServerConfig
     ) -> dict[str, Any]:

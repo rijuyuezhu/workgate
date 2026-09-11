@@ -18,7 +18,11 @@ from ..schemas.result_models.agent import (
     ListAgentSkillsOutput,
 )
 from ..utils.serialization import to_jsonable
-from .auth import manager_redaction_maps
+from .auth import (
+    manager_redaction_cursor,
+    manager_redaction_maps,
+    manager_redaction_maps_since,
+)
 from .auth_store import AgentAuthStore
 from .mcp import AgentMcpClientManager
 from .models import AgentCapabilityRegistry, AgentMcpServerRecord, SkillRecord
@@ -352,6 +356,9 @@ async def call_agent_mcp_tool_payload(
             f"{_agent_mcp_unavailable_error(registry, record)}"
         )
     probe_secrets = _probe_redaction_map(record)
+    redaction_cursor = manager_redaction_cursor(
+        registry.client_manager, server, record.config
+    )
     before_env, before_headers = manager_redaction_maps(
         registry.client_manager, server, record.config
     )
@@ -360,27 +367,43 @@ async def call_agent_mcp_tool_payload(
             server, record.config, tool, args or {}
         )
     except Exception as exc:
-        after_env, after_headers = manager_redaction_maps(
-            registry.client_manager, server, record.config
-        )
+        try:
+            operation_env, operation_headers = manager_redaction_maps_since(
+                registry.client_manager,
+                server,
+                record.config,
+                redaction_cursor,
+            )
+        except Exception:
+            raise ValueError(
+                "Agent MCP tool call failed: credential redaction history unavailable"
+            ) from None
         raise redacted_mcp_call_error(
             exc,
             probe_secrets,
             before_env,
             before_headers,
-            after_env,
-            after_headers,
+            operation_env,
+            operation_headers,
         ) from None
-    after_env, after_headers = manager_redaction_maps(
-        registry.client_manager, server, record.config
-    )
+    try:
+        operation_env, operation_headers = manager_redaction_maps_since(
+            registry.client_manager,
+            server,
+            record.config,
+            redaction_cursor,
+        )
+    except Exception:
+        raise ValueError(
+            "Agent MCP tool call failed: credential redaction history unavailable"
+        ) from None
     output = redact_mcp_result_payload(
         data,
         probe_secrets,
         before_env,
         before_headers,
-        after_env,
-        after_headers,
+        operation_env,
+        operation_headers,
     )
     if not isinstance(output, dict):
         output = {"result": output}
