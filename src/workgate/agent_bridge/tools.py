@@ -115,20 +115,24 @@ class AgentBridgeToolReloader:
 
         for dynamic_name, record in self.registry.dynamic_mcp_tool_map.items():
             server_record = self.registry.mcp_servers[record.server_name]
-            tool = next(
-                candidate
-                for candidate in server_record.tools
-                if str(tool_value(candidate, "name", "")) == record.tool_name
+            public_tool = next(
+                tool
+                for raw_tool_name, tool in zip(
+                    server_record.raw_tool_names,
+                    server_record.tools,
+                    strict=True,
+                )
+                if raw_tool_name == record.tool_name
             )
             env, headers = manager_redaction_maps(
                 self.registry.client_manager,
                 record.server_name,
                 server_record.config,
             )
-            tool_description = redact_configured_value_tree(
-                str(tool_value(tool, "description", "") or record.tool_name),
-                env,
-                headers,
+            tool_description = str(
+                tool_value(public_tool, "description", "")
+                or tool_value(public_tool, "name", "")
+                or record.tool_name
             )
             description = redact_configured_value_tree(
                 f"[agent mcp: {record.server_name}] {tool_description}",

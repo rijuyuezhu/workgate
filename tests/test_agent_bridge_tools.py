@@ -11,6 +11,10 @@ from mcp.shared.auth import OAuthToken
 from tests.helpers import build_paired_mcp, mcp_structured, mcp_text
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.agent_bridge.mcp import AgentMcpClientManager, AgentMcpTool
+from workgate.agent_bridge.registry import build_agent_registry
+from workgate.agent_bridge.service import list_agent_mcp_tools_payload
+from workgate.agent_bridge.status import registry_config_status
+from workgate.agent_bridge.tools import AgentBridgeToolReloader
 from workgate.app_paths import app_paths
 from workgate.audit import get_audit_entry, query_audit
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -1055,6 +1059,158 @@ async def test_agent_mcp_public_metadata_redacts_configured_values(
     assert fake_manager.call_calls == [
         ("docs", upstream_tool_name, {"query": "abc"})
     ]
+
+
+def test_agent_mcp_probe_rotation_redacts_public_capability_metadata(
+    tmp_path,
+) -> None:
+    old_token = "oauth-access-before-probe"
+    new_token = "oauth-access-after-probe"
+    raw_tool_name = f"echo-{old_token}"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class RotatingProbeManager:
+        def __init__(self) -> None:
+            self.token = old_token
+
+        def redaction_maps(self, _name, _server):
+            return ({"oauth_access_token": self.token}, {})
+
+        async def list_tools(self, _name, _server):
+            assert self.token == old_token
+            self.token = new_token
+            return [
+                AgentMcpTool(
+                    name=raw_tool_name,
+                    description=f"saw {old_token}",
+                    input_schema={"note": old_token},
+                )
+            ]
+
+    manager = RotatingProbeManager()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=True,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    record = registry.mcp_servers["oauth"]
+    rows = list_agent_mcp_tools_payload(registry).tools
+    public_payload = json.dumps(rows)
+
+    assert manager.token == new_token
+    assert record.raw_tool_names == (raw_tool_name,)
+    assert record.tools[0].name == "echo-<redacted>"
+    assert record.tools[0].description == "saw <redacted>"
+    assert record.tools[0].input_schema == {"note": "<redacted>"}
+    assert rows[0]["tool"] == "echo-<redacted>"
+    assert rows[0]["description"] == "saw <redacted>"
+    assert rows[0]["input_schema"] == {"note": "<redacted>"}
+    assert old_token not in public_payload
+    assert new_token not in public_payload
+
+    dynamic_name, dynamic_record = next(
+        iter(registry.dynamic_mcp_tool_map.items())
+    )
+    assert dynamic_record.tool_name == raw_tool_name
+    assert old_token not in dynamic_name
+    assert new_token not in dynamic_name
+
+    class CapturingMcp:
+        def __init__(self) -> None:
+            self.descriptions: dict[str, str] = {}
+
+        def add_tool(self, _handler, *, name, description, **_kwargs) -> None:
+            self.descriptions[name] = description
+
+        def remove_tool(self, name) -> None:
+            self.descriptions.pop(name, None)
+
+    public_mcp = CapturingMcp()
+    reloader = AgentBridgeToolReloader(
+        public_mcp,
+        registry,
+        {},
+        5,
+        True,
+        False,
+    )
+    reloader.register_dynamic_tools()
+    dynamic_description = public_mcp.descriptions[dynamic_name]
+    assert old_token not in dynamic_description
+    assert new_token not in dynamic_description
+    assert "<redacted>" in dynamic_description
+
+
+def test_agent_mcp_probe_rotation_redacts_probe_error(tmp_path) -> None:
+    old_token = "oauth-access-before-probe"
+    new_token = "oauth-access-after-probe"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FailingRotatingProbeManager:
+        def __init__(self) -> None:
+            self.token = old_token
+
+        def redaction_maps(self, _name, _server):
+            return ({"oauth_access_token": self.token}, {})
+
+        async def list_tools(self, _name, _server):
+            assert self.token == old_token
+            self.token = new_token
+            raise RuntimeError(f"upstream echoed {old_token}")
+
+    manager = FailingRotatingProbeManager()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    record = registry.mcp_servers["oauth"]
+    status_payload = json.dumps(registry_config_status(registry))
+
+    assert manager.token == new_token
+    assert record.error == "RuntimeError: upstream echoed <redacted>"
+    assert record.error is not None
+    assert old_token not in record.error
+    assert new_token not in record.error
+    assert old_token not in status_payload
+    assert new_token not in status_payload
+    assert "<redacted>" in status_payload
 
 
 class FakeDynamicMcpManager:

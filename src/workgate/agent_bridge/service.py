@@ -305,11 +305,11 @@ def list_agent_mcp_tools_payload(
                 tool,
                 env,
                 headers,
-                dynamic_names.get(
-                    (server_name, str(tool_value(tool, "name", "")))
-                ),
+                dynamic_names.get((server_name, raw_tool_name)),
             )
-            for tool in record.tools
+            for raw_tool_name, tool in zip(
+                record.raw_tool_names, record.tools, strict=True
+            )
         )
     return ListAgentMcpToolsOutput(tools=rows)
 

@@ -221,7 +221,9 @@ class AgentMcpServerRecord:
     available: bool
     """Whether the server was reachable during probing."""
     tools: list[Any] = field(default_factory=list)
-    """Normalized upstream tools discovered from the server."""
+    """Probe-time sanitized capability metadata safe for public projection."""
+    raw_tool_names: tuple[str, ...] = ()
+    """Raw upstream tool identities retained only for dispatch."""
     error: str | None = None
     """Redacted probe error when the server is unavailable."""
 

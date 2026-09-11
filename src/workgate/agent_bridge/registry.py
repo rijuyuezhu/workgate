@@ -6,9 +6,10 @@ import queue
 import re
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .auth import manager_redaction_maps
+from .mcp import AgentMcpTool, normalize_mcp_tool
 from .models import (
     AgentCapabilityRegistry,
     AgentMcpServerRecord,
@@ -84,6 +85,29 @@ def _run_async_blocking(coro: Any, timeout_s: float | None = None) -> Any:
 def _probe_timeout_seconds(probe_timeout_s: float) -> float:
     """Clamp the MCP probe timeout to a positive value before probing upstream servers."""
     return max(0.001, probe_timeout_s)
+
+
+def _sanitize_probe_tool(
+    tool: Any, *redaction_maps: dict[str, str]
+) -> AgentMcpTool:
+    """Create public capability metadata without retaining probe-time credentials."""
+    normalized = normalize_mcp_tool(tool)
+    return AgentMcpTool(
+        name=str(
+            redact_configured_value_tree(normalized.name, *redaction_maps)
+        ),
+        description=str(
+            redact_configured_value_tree(
+                normalized.description, *redaction_maps
+            )
+        ),
+        input_schema=cast(
+            dict[str, Any],
+            redact_configured_value_tree(
+                normalized.input_schema, *redaction_maps
+            ),
+        ),
+    )
 
 
 def build_agent_registry(
@@ -172,6 +196,9 @@ def build_agent_registry(
                 )
                 continue
 
+            before_env, before_headers = manager_redaction_maps(
+                client_manager, name, server
+            )
             try:
                 tools = _run_async_blocking(
                     asyncio.wait_for(
@@ -181,11 +208,15 @@ def build_agent_registry(
                     timeout_s=probe_timeout,
                 )
             except Exception as exc:
-                redaction_maps = manager_redaction_maps(
+                after_env, after_headers = manager_redaction_maps(
                     client_manager, name, server
                 )
                 error = redact_configured_value_tree(
-                    f"{type(exc).__name__}: {exc}", *redaction_maps
+                    f"{type(exc).__name__}: {exc}",
+                    before_env,
+                    before_headers,
+                    after_env,
+                    after_headers,
                 )
                 mcp_servers[name] = AgentMcpServerRecord(
                     name=name,
@@ -195,11 +226,28 @@ def build_agent_registry(
                 )
                 continue
 
+            after_env, after_headers = manager_redaction_maps(
+                client_manager, name, server
+            )
+            raw_tool_names = tuple(
+                normalize_mcp_tool(tool).name for tool in tools
+            )
+            sanitized_tools = [
+                _sanitize_probe_tool(
+                    tool,
+                    before_env,
+                    before_headers,
+                    after_env,
+                    after_headers,
+                )
+                for tool in tools
+            ]
             mcp_servers[name] = AgentMcpServerRecord(
                 name=name,
                 config=server,
                 available=True,
-                tools=tools,
+                tools=sanitized_tools,
+                raw_tool_names=raw_tool_names,
             )
 
     effective_dynamic_skills = (
@@ -232,20 +280,19 @@ def build_agent_registry(
             env, headers = manager_redaction_maps(
                 client_manager, server_name, record.config
             )
-            for tool in record.tools:
-                display_server_name = str(
-                    redact_configured_value_tree(server_name, env, headers)
-                )
-                display_tool_name = str(
-                    redact_configured_value_tree(tool.name, env, headers)
-                )
+            display_server_name = str(
+                redact_configured_value_tree(server_name, env, headers)
+            )
+            for raw_tool_name, tool in zip(
+                record.raw_tool_names, record.tools, strict=True
+            ):
                 dynamic_name = make_unique_tool_name(
                     f"agent_mcp__{display_server_name}",
-                    display_tool_name,
+                    tool.name,
                     seen_names,
                 )
                 mcp_tool_map[dynamic_name] = DynamicMcpToolRecord(
-                    dynamic_name, server_name, tool.name
+                    dynamic_name, server_name, raw_tool_name
                 )
 
     return AgentCapabilityRegistry(
