@@ -12,7 +12,10 @@ from tests.helpers import build_paired_mcp, mcp_structured, mcp_text
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.agent_bridge.mcp import AgentMcpClientManager, AgentMcpTool
 from workgate.agent_bridge.registry import build_agent_registry
-from workgate.agent_bridge.service import list_agent_mcp_tools_payload
+from workgate.agent_bridge.service import (
+    call_agent_mcp_tool_payload,
+    list_agent_mcp_tools_payload,
+)
 from workgate.agent_bridge.status import registry_config_status
 from workgate.agent_bridge.tools import AgentBridgeToolReloader
 from workgate.app_paths import app_paths
@@ -1310,6 +1313,195 @@ def test_agent_mcp_probe_redacts_intermediate_oauth_credentials(
         assert secret not in public_payload
 
 
+def test_agent_mcp_probe_fails_closed_on_cross_instance_credential_write(
+    tmp_path, monkeypatch
+) -> None:
+    old_token = "oldOpaqueA1"
+    mid_token = "midOpaqueB2"
+    new_token = "newOpaqueC3"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_root = tmp_path / "auth"
+    service_store = AgentAuthStore(auth_root)
+    cli_store = AgentAuthStore(auth_root)
+    service_store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+    manager = AgentMcpClientManager(1, service_store)
+
+    async def externally_rotating_list_tools(name, _server):
+        cli_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": mid_token, "token_type": "Bearer"}
+            ),
+        )
+        observed_tokens = service_store.get_tokens(name)
+        assert observed_tokens is not None
+        assert observed_tokens.access_token == mid_token
+        cli_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": new_token, "token_type": "Bearer"}
+            ),
+        )
+        return [
+            AgentMcpTool(
+                name="echo",
+                description=f"server saw {mid_token}",
+                input_schema={"seen": mid_token},
+            )
+        ]
+
+    monkeypatch.setattr(manager, "list_tools", externally_rotating_list_tools)
+    try:
+        registry = build_agent_registry(
+            config_dir,
+            manager,
+            dynamic_mcp_tools=False,
+            dynamic_skill_tools=False,
+            scan_skills=False,
+        )
+    finally:
+        manager.close()
+
+    record = registry.mcp_servers["oauth"]
+    public_payload = json.dumps(registry_config_status(registry))
+    assert record.available is False
+    assert record.error == "credential redaction history unavailable"
+    for secret in (old_token, mid_token, new_token):
+        assert secret not in public_payload
+
+
+def test_agent_mcp_probe_fails_closed_when_redaction_cursor_is_unavailable(
+    tmp_path,
+) -> None:
+    secret = "cursorOpaqueQ7"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CursorFailureManager:
+        def redaction_cursor(self, _name, _server):
+            raise RuntimeError(f"credential store failed {secret}")
+
+        async def list_tools(self, _name, _server):
+            raise AssertionError(
+                "probe must not run without a redaction cursor"
+            )
+
+    registry = build_agent_registry(
+        config_dir,
+        CursorFailureManager(),
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    record = registry.mcp_servers["oauth"]
+    assert record.available is False
+    assert record.error == "credential redaction history unavailable"
+    assert secret not in json.dumps(registry_config_status(registry))
+
+
+@pytest.mark.asyncio
+async def test_agent_mcp_call_fails_closed_when_redaction_cursor_is_unavailable(
+    tmp_path,
+) -> None:
+    secret = "cursorOpaqueR8"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CursorFailureManager:
+        fail_cursor = False
+
+        def redaction_cursor(self, _name, _server):
+            if self.fail_cursor:
+                raise RuntimeError(f"credential store failed {secret}")
+            return None
+
+        def redaction_maps(self, _name, _server):
+            return ({}, {})
+
+        def redaction_maps_since(self, _name, _server, _cursor):
+            return ({}, {})
+
+        async def list_tools(self, _name, _server):
+            return [
+                AgentMcpTool(name="echo", description="Echo", input_schema={})
+            ]
+
+        async def call_tool(self, _name, _server, _tool, _args):
+            raise AssertionError(
+                "upstream call must not run without a redaction cursor"
+            )
+
+    manager = CursorFailureManager()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    assert registry.mcp_servers["oauth"].available is True
+    manager.fail_cursor = True
+
+    with pytest.raises(ValueError) as exc_info:
+        await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
+    public_error = str(exc_info.value)
+    assert public_error == (
+        "Agent MCP tool call failed: credential redaction history unavailable"
+    )
+    assert secret not in public_error
+
+
 @pytest.mark.parametrize("probe_fails", [False, True])
 def test_agent_mcp_probe_fails_closed_when_redaction_history_is_lost(
     tmp_path, probe_fails
@@ -1431,6 +1623,98 @@ async def test_control_oauth_intermediate_credential_is_redacted_from_error_and_
         )
     public_error = str(exc_info.value)
     assert "<redacted>" in public_error
+    for secret in (old_token, mid_token, new_token):
+        assert secret not in public_error
+
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
+    assert audit_entries
+    for entry in audit_entries:
+        retained = json.dumps(
+            get_audit_entry(entry["id"], include_full_payloads=True),
+            sort_keys=True,
+        )
+        for secret in (old_token, mid_token, new_token):
+            assert secret not in retained
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("upstream_fails", [False, True])
+async def test_control_oauth_cross_instance_rotation_fails_closed_and_audit_is_safe(
+    tmp_path, monkeypatch, upstream_fails
+):
+    old_token = "oldOpaqueA1"
+    mid_token = "midOpaqueB2"
+    new_token = "newOpaqueC3"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://oauth.example/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
+    clear_settings_cache()
+    initial_store = AgentAuthStore(get_settings().agent_auth_dir)
+    initial_store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+
+    async def fake_list_tools(self, _name, _server):
+        return [AgentMcpTool(name="echo", description="Echo", input_schema={})]
+
+    async def fake_call_tool(self, name, _server, _tool, _args):
+        assert self.auth_store is not None
+        external_store = AgentAuthStore(self.auth_store.root)
+        external_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": mid_token, "token_type": "Bearer"}
+            ),
+        )
+        assert self.auth_store.get_tokens(name).access_token == mid_token
+        external_store.set_tokens(
+            name,
+            OAuthToken.model_validate(
+                {"access_token": new_token, "token_type": "Bearer"}
+            ),
+        )
+        if upstream_fails:
+            raise RuntimeError(f"upstream remembered {mid_token}")
+        return {
+            "structured_content": {"server_saw": mid_token},
+            "content": [],
+            "is_error": False,
+        }
+
+    monkeypatch.setattr(AgentMcpClientManager, "list_tools", fake_list_tools)
+    monkeypatch.setattr(AgentMcpClientManager, "call_tool", fake_call_tool)
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "AgentMcpClientManager",
+        AgentMcpClientManager,
+    )
+
+    with pytest.raises(ToolError) as exc_info:
+        await build_mcp().call_tool(
+            "call_agent_mcp_tool",
+            {"server": "oauth", "tool": "echo", "args": {}},
+        )
+    public_error = str(exc_info.value)
+    assert "credential redaction history unavailable" in public_error
     for secret in (old_token, mid_token, new_token):
         assert secret not in public_error
 

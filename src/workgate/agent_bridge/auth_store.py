@@ -37,7 +37,7 @@ class AgentSecretNotFoundError(AgentAuthStoreError):
 
 
 class AgentAuthRedactionHistoryLostError(AgentAuthStoreError):
-    """An operation outlived the bounded process-local credential journal."""
+    """Credential mutations cannot be reconstructed safely for redaction."""
 
 
 def _validate_name(value: str, label: str) -> str:
@@ -50,7 +50,11 @@ def _validate_name(value: str, label: str) -> str:
 
 
 def _empty_store() -> dict[str, Any]:
-    return {"version": _STORE_VERSION, "servers": {}}
+    return {
+        "version": _STORE_VERSION,
+        "servers": {},
+        "credential_revisions": {},
+    }
 
 
 class AgentAuthStore:
@@ -61,32 +65,50 @@ class AgentAuthStore:
         self.path = self.root / "credentials.json"
         self.lock_path = self.root / "credentials.lock"
         self._thread_lock = threading.RLock()
-        self._redaction_generation: dict[str, int] = {}
         self._redaction_journal: dict[
             str, list[tuple[int, tuple[str, ...]]]
         ] = {}
         self._ensure_private_dir()
 
     def _record_redaction_values_unlocked(
-        self, server: str, values: tuple[str, ...]
+        self, server: str, revision: int, values: tuple[str, ...]
     ) -> None:
         values = tuple(dict.fromkeys(value for value in values if value))
-        if not values:
-            return
-        generation = self._redaction_generation.get(server, 0) + 1
-        self._redaction_generation[server] = generation
         journal = self._redaction_journal.setdefault(server, [])
-        journal.append((generation, values))
+        journal.append((revision, values))
         if len(journal) > _MAX_REDACTION_JOURNAL_ENTRIES:
             del journal[: len(journal) - _MAX_REDACTION_JOURNAL_ENTRIES]
 
-    def _mutate_with_redaction(self, server: str, mutate) -> None:
+    @staticmethod
+    def _credential_revision_unlocked(data: dict[str, Any], server: str) -> int:
+        revisions = data.get("credential_revisions") or {}
+        return int(revisions.get(server, 0))
+
+    @classmethod
+    def _bump_credential_revision_unlocked(
+        cls, data: dict[str, Any], server: str
+    ) -> int:
+        revisions = data.setdefault("credential_revisions", {})
+        revision = cls._credential_revision_unlocked(data, server) + 1
+        revisions[server] = revision
+        return revision
+
+    def _mutate_with_redaction(self, server: str, mutate) -> bool:
         with self._thread_lock, private_file_lock(self.lock_path):
             data = self._read_unlocked()
-            values = tuple(mutate(data))
+            changed, values = mutate(data)
+            revision = (
+                self._bump_credential_revision_unlocked(data, server)
+                if changed
+                else None
+            )
             self._prune(data)
             self._write_unlocked(data)
-            self._record_redaction_values_unlocked(server, values)
+            if revision is not None:
+                self._record_redaction_values_unlocked(
+                    server, revision, tuple(values)
+                )
+            return changed
 
     def _ensure_private_dir(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -127,6 +149,24 @@ class AgentAuthStore:
             raise AgentAuthStoreCorruptError(
                 "Agent Bridge credential store servers must be an object"
             )
+        revisions = data.get("credential_revisions", {})
+        if not isinstance(revisions, dict):
+            raise AgentAuthStoreCorruptError(
+                "Agent Bridge credential revisions must be an object"
+            )
+        for server_name, revision in revisions.items():
+            try:
+                _validate_name(server_name, "server name")
+            except ValueError as exc:
+                raise AgentAuthStoreCorruptError(str(exc)) from exc
+            if (
+                isinstance(revision, bool)
+                or not isinstance(revision, int)
+                or revision < 0
+            ):
+                raise AgentAuthStoreCorruptError(
+                    f"Agent Bridge credential revision for {server_name} must be a non-negative integer"
+                )
         for server_name, entry in servers.items():
             try:
                 _validate_name(server_name, "server name")
@@ -229,11 +269,12 @@ class AgentAuthStore:
         if len(value.encode("utf-8")) > _MAX_SECRET_BYTES:
             raise ValueError(f"secret value exceeds {_MAX_SECRET_BYTES} bytes")
 
-        def mutate(data: dict[str, Any]) -> None:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
             entry.setdefault("secrets", {})[name] = value
+            return True, (value,)
 
-        self._mutate(mutate)
+        self._mutate_with_redaction(server, mutate)
 
     def get_secret(self, server: str, name: str) -> str:
         """Return one private secret or raise a non-disclosing missing error."""
@@ -274,11 +315,14 @@ class AgentAuthStore:
         server = _validate_name(server, "server name")
         name = _validate_name(name, "secret name")
 
-        def mutate(data: dict[str, Any]) -> bool:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             secrets = data["servers"].get(server, {}).get("secrets", {})
-            return secrets.pop(name, None) is not None
+            removed = secrets.pop(name, None)
+            return removed is not None, (
+                (removed,) if removed is not None else ()
+            )
 
-        return bool(self._mutate(mutate))
+        return self._mutate_with_redaction(server, mutate)
 
     def get_tokens(self, server: str) -> OAuthToken | None:
         """Load persisted OAuth tokens for one server."""
@@ -311,39 +355,51 @@ class AgentAuthStore:
         return values
 
     def redaction_cursor(self, server: str) -> int:
-        """Return a process-local cursor for subsequent credential mutations."""
+        """Return the durable credential revision at operation start."""
         server = _validate_name(server, "server name")
-        with self._thread_lock:
-            return self._redaction_generation.get(server, 0)
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            return self._credential_revision_unlocked(data, server)
 
-    def oauth_redaction_values_since(
+    def credential_redaction_values_since(
         self, server: str, cursor: int
     ) -> dict[str, str]:
-        """Return OAuth secrets observed after a cursor, failing closed if evicted."""
+        """Return locally observed credential mutations, failing closed on gaps."""
         server = _validate_name(server, "server name")
         if not isinstance(cursor, int) or cursor < 0:
             raise ValueError("redaction cursor must be a non-negative integer")
-        with self._thread_lock:
-            generation = self._redaction_generation.get(server, 0)
-            if cursor > generation:
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            revision = self._credential_revision_unlocked(data, server)
+            if cursor > revision:
                 raise ValueError(
                     "redaction cursor is newer than credential history"
                 )
             journal = self._redaction_journal.get(server, [])
-            if journal and cursor < journal[0][0] - 1:
+            observed = {
+                entry_revision: entry_values
+                for entry_revision, entry_values in journal
+                if cursor < entry_revision <= revision
+            }
+            observed_revisions = sorted(observed)
+            if len(observed_revisions) != revision - cursor or any(
+                entry_revision != cursor + offset
+                for offset, entry_revision in enumerate(
+                    observed_revisions, start=1
+                )
+            ):
                 raise AgentAuthRedactionHistoryLostError(
-                    f"credential redaction history expired for server {server}"
+                    f"credential redaction history unavailable for server {server}"
                 )
             values = tuple(
                 dict.fromkeys(
                     value
-                    for entry_generation, entry_values in journal
-                    if entry_generation > cursor
-                    for value in entry_values
+                    for entry_revision in observed_revisions
+                    for value in observed[entry_revision]
                 )
             )
         return {
-            f"oauth_observed_{index}": value
+            f"credential_observed_{index}": value
             for index, value in enumerate(values)
         }
 
@@ -352,7 +408,7 @@ class AgentAuthStore:
         server = _validate_name(server, "server name")
         now = time.time()
 
-        def mutate(data: dict[str, Any]) -> tuple[str, ...]:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
             previous = oauth.get("tokens") or {}
@@ -366,7 +422,7 @@ class AgentAuthStore:
                 if tokens.expires_in is not None
                 else None
             )
-            return tuple(
+            return True, tuple(
                 str(payload[field])
                 for field in ("access_token", "refresh_token")
                 if payload.get(field)
@@ -394,14 +450,14 @@ class AgentAuthStore:
         """Persist OAuth dynamic client information."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> tuple[str, ...]:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
             oauth["client_info"] = client_info.model_dump(
                 mode="json", exclude_none=True
             )
             client_secret = getattr(client_info, "client_secret", None)
-            return (str(client_secret),) if client_secret else ()
+            return True, ((str(client_secret),) if client_secret else ())
 
         self._mutate_with_redaction(server, mutate)
 
@@ -455,24 +511,42 @@ class AgentAuthStore:
         """Remove stale tokens while retaining client and discovery metadata."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> bool:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             oauth = data["servers"].get(server, {}).get("oauth", {})
+            tokens = oauth.get("tokens") or {}
+            values = tuple(
+                str(tokens[field])
+                for field in ("access_token", "refresh_token")
+                if tokens.get(field)
+            )
             removed = oauth.pop("tokens", None) is not None
             oauth.pop("stored_at", None)
             oauth.pop("expires_at", None)
-            return removed
+            return removed, values
 
-        return bool(self._mutate(mutate))
+        return self._mutate_with_redaction(server, mutate)
 
     def clear_oauth(self, server: str) -> bool:
         """Remove all local OAuth state for one server."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> bool:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = data["servers"].get(server, {})
-            return entry.pop("oauth", None) is not None
+            oauth = entry.get("oauth") or {}
+            tokens = oauth.get("tokens") or {}
+            client_info = oauth.get("client_info") or {}
+            values = tuple(
+                str(value)
+                for value in (
+                    tokens.get("access_token"),
+                    tokens.get("refresh_token"),
+                    client_info.get("client_secret"),
+                )
+                if value
+            )
+            return entry.pop("oauth", None) is not None, values
 
-        return bool(self._mutate(mutate))
+        return self._mutate_with_redaction(server, mutate)
 
     def fingerprint_paths(self) -> tuple[Path, ...]:
         """Return stable paths whose metadata/content changes trigger bridge reload."""

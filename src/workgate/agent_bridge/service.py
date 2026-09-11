@@ -356,9 +356,14 @@ async def call_agent_mcp_tool_payload(
             f"{_agent_mcp_unavailable_error(registry, record)}"
         )
     probe_secrets = _probe_redaction_map(record)
-    redaction_cursor = manager_redaction_cursor(
-        registry.client_manager, server, record.config
-    )
+    try:
+        redaction_cursor = manager_redaction_cursor(
+            registry.client_manager, server, record.config
+        )
+    except Exception:
+        raise ValueError(
+            "Agent MCP tool call failed: credential redaction history unavailable"
+        ) from None
     before_env, before_headers = manager_redaction_maps(
         registry.client_manager, server, record.config
     )

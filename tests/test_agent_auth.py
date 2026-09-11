@@ -195,7 +195,7 @@ def test_oauth_redaction_values_ignore_absent_optional_credentials(tmp_path):
     }
 
 
-def test_oauth_redaction_journal_captures_intermediate_mutations_and_is_bounded(
+def test_credential_redaction_journal_captures_intermediate_mutations_and_is_bounded(
     tmp_path, monkeypatch
 ):
     store = AgentAuthStore(tmp_path / "agent_auth")
@@ -220,15 +220,17 @@ def test_oauth_redaction_journal_captures_intermediate_mutations_and_is_bounded(
         ),
     )
 
-    assert set(store.oauth_redaction_values_since("docs", cursor).values()) == {
+    assert set(
+        store.credential_redaction_values_since("docs", cursor).values()
+    ) == {
         "mid-token",
         "client-secret",
         "new-token",
     }
     with pytest.raises(ValueError, match="non-negative"):
-        store.oauth_redaction_values_since("docs", -1)
+        store.credential_redaction_values_since("docs", -1)
     with pytest.raises(ValueError, match="newer than credential history"):
-        store.oauth_redaction_values_since(
+        store.credential_redaction_values_since(
             "docs", store.redaction_cursor("docs") + 1
         )
 
@@ -249,9 +251,53 @@ def test_oauth_redaction_journal_captures_intermediate_mutations_and_is_bounded(
             ),
         )
     with pytest.raises(
-        AgentAuthRedactionHistoryLostError, match="history expired"
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
     ):
-        bounded.oauth_redaction_values_since("docs", stale_cursor)
+        bounded.credential_redaction_values_since("docs", stale_cursor)
+
+
+def test_credential_redaction_revision_detects_cross_instance_writes(tmp_path):
+    root = tmp_path / "agent_auth"
+    service_store = AgentAuthStore(root)
+    cli_store = AgentAuthStore(root)
+
+    service_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "oldOpaqueA1", "token_type": "Bearer"}
+        ),
+    )
+    cursor = service_store.redaction_cursor("docs")
+    cli_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "midOpaqueB2", "token_type": "Bearer"}
+        ),
+    )
+    observed_tokens = service_store.get_tokens("docs")
+    assert observed_tokens is not None
+    assert observed_tokens.access_token == "midOpaqueB2"
+    cli_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "newOpaqueC3", "token_type": "Bearer"}
+        ),
+    )
+
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        service_store.credential_redaction_values_since("docs", cursor)
+
+    service_store.set_secret("secret", "token", "oldSecretA1")
+    secret_cursor = service_store.redaction_cursor("secret")
+    cli_store.set_secret("secret", "token", "midSecretB2")
+    assert service_store.get_secret("secret", "token") == "midSecretB2"
+    cli_store.set_secret("secret", "token", "newSecretC3")
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        service_store.credential_redaction_values_since("secret", secret_cursor)
 
 
 @pytest.mark.asyncio
@@ -634,6 +680,26 @@ def test_agent_auth_store_rejects_invalid_inputs_and_oversized_state(tmp_path):
     [
         ({"version": 2, "servers": {}}, "schema version"),
         ({"version": 1, "servers": []}, "servers must be an object"),
+        (
+            {"version": 1, "servers": {}, "credential_revisions": []},
+            "credential revisions",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": -1},
+            },
+            "non-negative integer",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"bad server": 1},
+            },
+            "server name",
+        ),
         ({"version": 1, "servers": {"bad server": {}}}, "server name"),
         ({"version": 1, "servers": {"docs": []}}, "must be an object"),
         ({"version": 1, "servers": {"docs": {"secrets": []}}}, "secrets"),

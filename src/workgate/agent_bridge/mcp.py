@@ -363,8 +363,11 @@ class AgentMcpClientManager:
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Start observing OAuth credential mutations for one MCP operation."""
-        if self.auth_store is None or server.auth.mode != "oauth":
+        """Start observing private credential mutations for one MCP operation."""
+        if self.auth_store is None or server.auth.mode not in {
+            "oauth",
+            "secret",
+        }:
             return None
         return self.auth_store.redaction_cursor(name)
 
@@ -374,16 +377,18 @@ class AgentMcpClientManager:
         server: AgentMcpServerConfig,
         cursor: int | None,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        """Resolve current values plus every OAuth secret mutated since a cursor."""
+        """Resolve current values plus every private credential mutated since a cursor."""
         env, headers = self.redaction_maps(name, server)
         if (
             cursor is not None
             and self.auth_store is not None
-            and server.auth.mode == "oauth"
+            and server.auth.mode in {"oauth", "secret"}
         ):
             env = {
                 **env,
-                **self.auth_store.oauth_redaction_values_since(name, cursor),
+                **self.auth_store.credential_redaction_values_since(
+                    name, cursor
+                ),
             }
         return env, headers
 

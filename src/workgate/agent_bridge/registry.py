@@ -209,9 +209,18 @@ def build_agent_registry(
                 )
                 continue
 
-            redaction_cursor = manager_redaction_cursor(
-                client_manager, name, server
-            )
+            try:
+                redaction_cursor = manager_redaction_cursor(
+                    client_manager, name, server
+                )
+            except Exception:
+                mcp_servers[name] = AgentMcpServerRecord(
+                    name=name,
+                    config=server,
+                    available=False,
+                    error="credential redaction history unavailable",
+                )
+                continue
             before_env, before_headers = manager_redaction_maps(
                 client_manager, name, server
             )
