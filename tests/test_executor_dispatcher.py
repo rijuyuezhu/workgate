@@ -124,6 +124,66 @@ async def test_default_terminal_bridge_handler_applies_protocol_defaults(
     assert observed == [("shell-1", 120, 36)]
 
 
+@pytest.mark.asyncio
+async def test_terminal_bridge_handlers_adapt_protocol_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import workgate.executor.terminal.bridge as bridge
+
+    observed: list[tuple[Any, ...]] = []
+
+    async def read_bridge(bridge_id: str, max_bytes: int, wait_ms: int) -> str:
+        observed.append(("read", bridge_id, max_bytes, wait_ms))
+        return "read"
+
+    async def write_bridge(bridge_id: str, data_b64: str) -> str:
+        observed.append(("write", bridge_id, data_b64))
+        return "write"
+
+    async def resize_bridge(bridge_id: str, cols: int, rows: int) -> str:
+        observed.append(("resize", bridge_id, cols, rows))
+        return "resize"
+
+    async def close_bridge(bridge_id: str) -> str:
+        observed.append(("close", bridge_id))
+        return "close"
+
+    monkeypatch.setattr(bridge, "read_terminal_bridge_execute", read_bridge)
+    monkeypatch.setattr(bridge, "write_terminal_bridge_execute", write_bridge)
+    monkeypatch.setattr(bridge, "resize_terminal_bridge_execute", resize_bridge)
+    monkeypatch.setattr(bridge, "close_terminal_bridge_execute", close_bridge)
+
+    assert (
+        await execute_executor_tool("read_terminal_bridge", {"bridge_id": "b1"})
+        == "read"
+    )
+    assert (
+        await execute_executor_tool(
+            "write_terminal_bridge", {"bridge_id": "b1", "data_b64": "ZGF0YQ=="}
+        )
+        == "write"
+    )
+    assert (
+        await execute_executor_tool(
+            "resize_terminal_bridge",
+            {"bridge_id": "b1", "cols": 90, "rows": 40},
+        )
+        == "resize"
+    )
+    assert (
+        await execute_executor_tool(
+            "close_terminal_bridge", {"bridge_id": "b1"}
+        )
+        == "close"
+    )
+    assert observed == [
+        ("read", "b1", 65_536, 0),
+        ("write", "b1", "ZGF0YQ=="),
+        ("resize", "b1", 90, 40),
+        ("close", "b1"),
+    ]
+
+
 def test_executor_dispatcher_requires_exact_handler_set() -> None:
     dispatcher = build_executor_dispatcher()
     handlers = dict(dispatcher.handlers)

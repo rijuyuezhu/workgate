@@ -167,6 +167,32 @@ def test_agent_oauth_storage_persists_expiry_client_and_refresh_token(tmp_path):
     }
 
 
+def test_oauth_redaction_values_ignore_absent_optional_credentials(tmp_path):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    assert store.oauth_redaction_values("missing") == {}
+
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "access-only", "token_type": "Bearer"}
+        ),
+    )
+    store.set_client_info(
+        "docs",
+        OAuthClientInformationFull.model_validate(
+            {
+                "client_id": "public-client",
+                "redirect_uris": ["http://127.0.0.1/callback"],
+                "token_endpoint_auth_method": "none",
+            }
+        ),
+    )
+
+    assert store.oauth_redaction_values("docs") == {
+        "oauth_access_token": "access-only"
+    }
+
+
 @pytest.mark.asyncio
 async def test_persistent_oauth_provider_restores_absolute_expiry(tmp_path):
     store = AgentAuthStore(tmp_path / "agent_auth")

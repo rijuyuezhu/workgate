@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue
 
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
@@ -13,12 +14,14 @@ from workgate.executor.profile import (
 from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.executor import (
+    SESSION_CHANGE_CWD_OP,
+    SESSION_CREATE_OP,
     ExecutorCommand,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
 )
-from workgate.protocol.ids import new_executor_id
+from workgate.protocol.ids import new_command_id, new_executor_id
 
 
 class _FakeControlClient:
@@ -81,10 +84,75 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
     await runtime.start()
     try:
         assert runtime.connection is None
+        await runtime.start()
         with executor_run_lock(runtime.services.state_store):
             pass
     finally:
         await runtime.aclose()
+
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        await runtime.start()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("op", "session_id", "args", "message"),
+    [
+        (
+            "ui.dashboard.snapshot",
+            "sess_0000000000000000000001",
+            {},
+            "must not carry",
+        ),
+        ("ui.files.list", "sess_0000000000000000000001", {}, "must not carry"),
+        (
+            "ui.terminals.list",
+            "sess_0000000000000000000001",
+            {},
+            "must not carry",
+        ),
+        (SESSION_CREATE_OP, None, {"workdir": "."}, "requires session_id"),
+        (
+            SESSION_CREATE_OP,
+            "sess_0000000000000000000001",
+            {"workdir": ""},
+            "requires workdir",
+        ),
+        (
+            SESSION_CREATE_OP,
+            "sess_0000000000000000000001",
+            {"workdir": ".", "label": 7},
+            "label must be a string",
+        ),
+        (
+            SESSION_CHANGE_CWD_OP,
+            "sess_0000000000000000000001",
+            {"workdir": ""},
+            "requires workdir",
+        ),
+    ],
+)
+async def test_executor_runtime_protocol_guards_fail_closed(
+    tmp_path: Path,
+    op: str,
+    session_id: str | None,
+    args: dict[str, JsonValue],
+    message: str,
+) -> None:
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                workspace_root=tmp_path / "workspace",
+                state_dir=tmp_path / "state",
+            )
+        )
+    )
+    command = ExecutorCommand(
+        id=new_command_id(), op=op, session_id=session_id, args=args
+    )
+
+    with pytest.raises(ValueError, match=message):
+        await runtime._execute_protocol_command(command)
 
 
 @pytest.mark.asyncio

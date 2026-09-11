@@ -132,6 +132,21 @@ def test_config_file_errors(tmp_path):
     empty.write_text("", encoding="utf-8")
     assert settings_module.read_config_file(empty) == {}
 
+    nullable_path = tmp_path / "nullable-path.yaml"
+    nullable_path.write_text("workspace_root: null\n", encoding="utf-8")
+    assert settings_module.read_config_file(nullable_path) == {
+        "workspace_root": None
+    }
+
+
+def test_settings_expose_platform_owned_namespaces() -> None:
+    settings = Settings()
+    paths = settings_module.app_paths()
+
+    assert settings.config_dir == paths.config_dir
+    assert settings.data_dir == paths.data_dir
+    assert settings.cache_dir == paths.cache_dir
+
 
 def test_workspace_defaults_to_invocation_cwd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

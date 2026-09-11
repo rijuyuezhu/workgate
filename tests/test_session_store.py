@@ -4,6 +4,7 @@ import pytest
 
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
+from workgate.executor.tool_session.snapshots import SnapshotRepository
 from workgate.executor.tool_session.store import (
     SessionTerminationRequestedError,
     ToolSessionStore,
@@ -323,6 +324,64 @@ def test_snapshot_metadata_rejects_record_over_byte_limit(
             total_lines=1,
             seen_ranges=((1, 1),),
         )
+
+
+def test_snapshot_repository_rejects_invalid_or_cross_session_payloads(
+    tmp_path: Path,
+) -> None:
+    state_store = FileStateStore(lambda: tmp_path / ".state")
+    repository = SnapshotRepository(
+        state_store, max_snapshots=2, max_bytes=4096
+    )
+    session_id = _session_id(1)
+    path = state_store.layout.session_snapshots_path(session_id)
+
+    state_store.write_json(path, {"snapshots": "invalid"})
+    with pytest.raises(ValueError, match="snapshots array"):
+        repository.get(session_id, "snap-1")
+
+    state_store.write_json(
+        path,
+        {
+            "snapshots": [
+                {
+                    "session_id": _session_id(2),
+                    "snapshot_id": "snap-1",
+                    "path": "file.txt",
+                    "file_sha256": "a" * 64,
+                    "total_lines": 1,
+                    "seen_ranges": [[1, 1]],
+                    "created_at": 1.0,
+                    "sequence": 1,
+                }
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="owner does not match"):
+        repository.get(session_id, "snap-1")
+
+
+def test_snapshot_repository_zero_retention_removes_empty_index(
+    tmp_path: Path,
+) -> None:
+    state_store = FileStateStore(lambda: tmp_path / ".state")
+    repository = SnapshotRepository(
+        state_store, max_snapshots=0, max_bytes=4096
+    )
+    session_id = _session_id(1)
+
+    repository.record(
+        session_id=session_id,
+        snapshot_id="snap-1",
+        path="file.txt",
+        file_sha256="a" * 64,
+        total_lines=1,
+        seen_ranges=((1, 1),),
+        created_at=1.0,
+    )
+
+    assert repository.get(session_id, "snap-1") is None
+    assert not state_store.layout.session_snapshots_path(session_id).exists()
 
 
 def test_persistent_shell_registry_releases_and_reconciles(
