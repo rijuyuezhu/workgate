@@ -20,7 +20,7 @@ from ..utils.private_files import atomic_write_private_text, private_file_lock
 _STORE_VERSION = 1
 _MAX_STORE_BYTES = 1_048_576
 _MAX_SECRET_BYTES = 65_536
-_MAX_REDACTION_JOURNAL_ENTRIES = 256
+_MAX_REDACTION_HISTORY_ENTRIES = 256
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -54,6 +54,7 @@ def _empty_store() -> dict[str, Any]:
         "version": _STORE_VERSION,
         "servers": {},
         "credential_revisions": {},
+        "credential_redaction_history": {},
     }
 
 
@@ -65,19 +66,46 @@ class AgentAuthStore:
         self.path = self.root / "credentials.json"
         self.lock_path = self.root / "credentials.lock"
         self._thread_lock = threading.RLock()
-        self._redaction_journal: dict[
-            str, list[tuple[int, tuple[str, ...]]]
-        ] = {}
         self._ensure_private_dir()
 
+    @staticmethod
     def _record_redaction_values_unlocked(
-        self, server: str, revision: int, values: tuple[str, ...]
+        data: dict[str, Any],
+        server: str,
+        revision: int,
+        values: tuple[str, ...],
     ) -> None:
         values = tuple(dict.fromkeys(value for value in values if value))
-        journal = self._redaction_journal.setdefault(server, [])
-        journal.append((revision, values))
-        if len(journal) > _MAX_REDACTION_JOURNAL_ENTRIES:
-            del journal[: len(journal) - _MAX_REDACTION_JOURNAL_ENTRIES]
+        histories = data.setdefault("credential_redaction_history", {})
+        history = histories.setdefault(server, [])
+        history.append({"revision": revision, "values": list(values)})
+        if len(history) > _MAX_REDACTION_HISTORY_ENTRIES:
+            del history[: len(history) - _MAX_REDACTION_HISTORY_ENTRIES]
+
+    @staticmethod
+    def _encoded_size_unlocked(data: dict[str, Any]) -> int:
+        encoded = json.dumps(
+            data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return len(encoded.encode("utf-8"))
+
+    @classmethod
+    def _trim_redaction_history_to_fit_unlocked(
+        cls, data: dict[str, Any]
+    ) -> None:
+        histories = data.get("credential_redaction_history", {})
+        while cls._encoded_size_unlocked(data) > _MAX_STORE_BYTES:
+            candidates = [
+                (len(history), server)
+                for server, history in histories.items()
+                if history
+            ]
+            if not candidates:
+                return
+            _, server = max(candidates)
+            del histories[server][0]
+            if not histories[server]:
+                del histories[server]
 
     @staticmethod
     def _credential_revision_unlocked(data: dict[str, Any], server: str) -> int:
@@ -102,12 +130,12 @@ class AgentAuthStore:
                 if changed
                 else None
             )
-            self._prune(data)
-            self._write_unlocked(data)
             if revision is not None:
                 self._record_redaction_values_unlocked(
-                    server, revision, tuple(values)
+                    data, server, revision, tuple(values)
                 )
+            self._prune(data)
+            self._write_unlocked(data)
             return changed
 
     def _ensure_private_dir(self) -> None:
@@ -167,6 +195,62 @@ class AgentAuthStore:
                 raise AgentAuthStoreCorruptError(
                     f"Agent Bridge credential revision for {server_name} must be a non-negative integer"
                 )
+
+        histories = data.get("credential_redaction_history", {})
+        if not isinstance(histories, dict):
+            raise AgentAuthStoreCorruptError(
+                "Agent Bridge credential redaction history must be an object"
+            )
+        for server_name, history in histories.items():
+            try:
+                _validate_name(server_name, "server name")
+            except ValueError as exc:
+                raise AgentAuthStoreCorruptError(str(exc)) from exc
+            if not isinstance(history, list):
+                raise AgentAuthStoreCorruptError(
+                    f"Agent Bridge credential redaction history for {server_name} must be a list"
+                )
+            if len(history) > _MAX_REDACTION_HISTORY_ENTRIES:
+                raise AgentAuthStoreCorruptError(
+                    f"Agent Bridge credential redaction history for {server_name} exceeds retention limit"
+                )
+            previous_revision: int | None = None
+            for item in history:
+                if not isinstance(item, dict):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history for {server_name} is invalid"
+                    )
+                entry_revision = item.get("revision")
+                values = item.get("values")
+                if (
+                    isinstance(entry_revision, bool)
+                    or not isinstance(entry_revision, int)
+                    or entry_revision <= 0
+                ):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history revision for {server_name} must be a positive integer"
+                    )
+                if (
+                    previous_revision is not None
+                    and entry_revision <= previous_revision
+                ):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history for {server_name} must be strictly increasing"
+                    )
+                if entry_revision > revisions.get(server_name, 0):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history revision for {server_name} exceeds the current revision"
+                    )
+                if not isinstance(values, list):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction values for {server_name} must be a list"
+                    )
+                for value in values:
+                    if not isinstance(value, str) or not value:
+                        raise AgentAuthStoreCorruptError(
+                            f"Agent Bridge credential redaction value for {server_name} must be non-empty text"
+                        )
+                previous_revision = entry_revision
         for server_name, entry in servers.items():
             try:
                 _validate_name(server_name, "server name")
@@ -216,6 +300,7 @@ class AgentAuthStore:
                         )
 
     def _write_unlocked(self, data: dict[str, Any]) -> None:
+        self._trim_redaction_history_to_fit_unlocked(data)
         self._validate_store(data)
         encoded = json.dumps(
             data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -368,7 +453,7 @@ class AgentAuthStore:
     def credential_redaction_values_since(
         self, server: str, cursor: int
     ) -> dict[str, str]:
-        """Return locally observed credential mutations, failing closed on gaps."""
+        """Return durable credential mutations, failing closed on history gaps."""
         server = _validate_name(server, "server name")
         if not isinstance(cursor, int) or cursor < 0:
             raise ValueError("redaction cursor must be a non-negative integer")
@@ -379,11 +464,13 @@ class AgentAuthStore:
                 raise ValueError(
                     "redaction cursor is newer than credential history"
                 )
-            journal = self._redaction_journal.get(server, [])
+            history = data.get("credential_redaction_history", {}).get(
+                server, []
+            )
             observed = {
-                entry_revision: entry_values
-                for entry_revision, entry_values in journal
-                if cursor < entry_revision <= revision
+                int(item["revision"]): tuple(item["values"])
+                for item in history
+                if cursor < int(item["revision"]) <= revision
             }
             observed_revisions = sorted(observed)
             if len(observed_revisions) != revision - cursor or any(

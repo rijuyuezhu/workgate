@@ -1313,7 +1313,7 @@ def test_agent_mcp_probe_redacts_intermediate_oauth_credentials(
         assert secret not in public_payload
 
 
-def test_agent_mcp_probe_fails_closed_on_cross_instance_credential_write(
+def test_agent_mcp_probe_redacts_cross_instance_credential_history(
     tmp_path, monkeypatch
 ) -> None:
     old_token = "oldOpaqueA1"
@@ -1384,9 +1384,16 @@ def test_agent_mcp_probe_fails_closed_on_cross_instance_credential_write(
         manager.close()
 
     record = registry.mcp_servers["oauth"]
-    public_payload = json.dumps(registry_config_status(registry))
-    assert record.available is False
-    assert record.error == "credential redaction history unavailable"
+    public_payload = json.dumps(list_agent_mcp_tools_payload(registry).tools)
+    assert record.available is True
+    assert record.error is None
+    assert record.tools[0].description == "server saw <redacted>"
+    assert record.tools[0].input_schema == {"seen": "<redacted>"}
+    assert set(record.probe_redaction_values) >= {
+        old_token,
+        mid_token,
+        new_token,
+    }
     for secret in (old_token, mid_token, new_token):
         assert secret not in public_payload
 
@@ -1740,8 +1747,122 @@ async def test_agent_mcp_call_retains_retired_credentials_across_later_calls(
 
 
 @pytest.mark.asyncio
+async def test_agent_mcp_restart_redacts_retired_credentials_from_metadata_and_call(
+    tmp_path, monkeypatch
+):
+    old_token = "oldRestartA1"
+    mid_token = "midRestartB2"
+    new_token = "newRestartC3"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "oauth": {
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_root = tmp_path / "auth"
+    first_store = AgentAuthStore(auth_root)
+    first_store.set_tokens(
+        "oauth",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+    first_manager = AgentMcpClientManager(1, first_store)
+
+    async def first_list_tools(_name, _server):
+        return [AgentMcpTool(name="echo", description="Echo", input_schema={})]
+
+    async def rotating_call(name, _server, _tool, _args):
+        for token in (mid_token, new_token):
+            first_store.set_tokens(
+                name,
+                OAuthToken.model_validate(
+                    {"access_token": token, "token_type": "Bearer"}
+                ),
+            )
+        return {
+            "structured_content": {"ok": True},
+            "content": [],
+            "is_error": False,
+        }
+
+    monkeypatch.setattr(first_manager, "list_tools", first_list_tools)
+    monkeypatch.setattr(first_manager, "call_tool", rotating_call)
+    try:
+        first_registry = build_agent_registry(
+            config_dir,
+            first_manager,
+            dynamic_mcp_tools=False,
+            dynamic_skill_tools=False,
+            scan_skills=False,
+        )
+        await call_agent_mcp_tool_payload(first_registry, "oauth", "echo", {})
+    finally:
+        first_manager.close()
+
+    restarted_store = AgentAuthStore(auth_root)
+    restarted_manager = AgentMcpClientManager(1, restarted_store)
+
+    async def restarted_list_tools(_name, _server):
+        return [
+            AgentMcpTool(
+                name="echo",
+                description=f"remembered {mid_token}",
+                input_schema={"token": mid_token},
+            )
+        ]
+
+    async def restarted_call(_name, _server, _tool, _args):
+        return {
+            "structured_content": {"server_remembered": mid_token},
+            "content": [],
+            "is_error": False,
+        }
+
+    monkeypatch.setattr(restarted_manager, "list_tools", restarted_list_tools)
+    monkeypatch.setattr(restarted_manager, "call_tool", restarted_call)
+    try:
+        restarted_registry = build_agent_registry(
+            config_dir,
+            restarted_manager,
+            dynamic_mcp_tools=False,
+            dynamic_skill_tools=False,
+            scan_skills=False,
+        )
+        metadata_payload = json.dumps(
+            list_agent_mcp_tools_payload(restarted_registry).tools,
+            sort_keys=True,
+        )
+        result = await call_agent_mcp_tool_payload(
+            restarted_registry, "oauth", "echo", {}
+        )
+        call_payload = json.dumps(
+            result.model_dump(mode="json"), sort_keys=True
+        )
+    finally:
+        restarted_manager.close()
+
+    assert "<redacted>" in metadata_payload
+    assert "<redacted>" in call_payload
+    for secret in (old_token, mid_token, new_token):
+        assert secret not in metadata_payload
+        assert secret not in call_payload
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("upstream_fails", [False, True])
-async def test_control_oauth_cross_instance_rotation_fails_closed_and_audit_is_safe(
+async def test_control_oauth_cross_instance_rotation_is_redacted_and_audit_is_safe(
     tmp_path, monkeypatch, upstream_fails
 ):
     old_token = "oldOpaqueA1"
@@ -1810,15 +1931,23 @@ async def test_control_oauth_cross_instance_rotation_fails_closed_and_audit_is_s
         AgentMcpClientManager,
     )
 
-    with pytest.raises(ToolError) as exc_info:
-        await build_mcp().call_tool(
+    mcp = build_mcp()
+    if upstream_fails:
+        with pytest.raises(ToolError) as exc_info:
+            await mcp.call_tool(
+                "call_agent_mcp_tool",
+                {"server": "oauth", "tool": "echo", "args": {}},
+            )
+        public_payload = str(exc_info.value)
+    else:
+        response = await mcp.call_tool(
             "call_agent_mcp_tool",
             {"server": "oauth", "tool": "echo", "args": {}},
         )
-    public_error = str(exc_info.value)
-    assert "credential redaction history unavailable" in public_error
+        public_payload = json.dumps(_payload(response), sort_keys=True)
+    assert "<redacted>" in public_payload
     for secret in (old_token, mid_token, new_token):
-        assert secret not in public_error
+        assert secret not in public_payload
 
     audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
     assert audit_entries
@@ -1832,7 +1961,7 @@ async def test_control_oauth_cross_instance_rotation_fails_closed_and_audit_is_s
 
 
 @pytest.mark.asyncio
-async def test_dynamic_mcp_external_rotation_reload_remains_fail_closed(
+async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
     tmp_path, monkeypatch
 ):
     old_token = "oldReloadA1"
@@ -1905,14 +2034,14 @@ async def test_dynamic_mcp_external_rotation_reload_remains_fail_closed(
             ),
         )
 
-    with pytest.raises(ToolError) as exc_info:
-        await mcp.call_tool(dynamic_name, {"args": {}})
-    public_error = str(exc_info.value)
-    assert upstream_calls == 0
+    response = await mcp.call_tool(dynamic_name, {"args": {}})
+    public_payload = mcp_text(response)
+    assert upstream_calls == 1
+    assert "<redacted>" in public_payload
     for secret in (old_token, mid_token, new_token):
-        assert secret not in public_error
+        assert secret not in public_payload
 
-    assert dynamic_name not in {tool.name for tool in await mcp.list_tools()}
+    assert dynamic_name in {tool.name for tool in await mcp.list_tools()}
     audit_entries = query_audit(search=dynamic_name)["entries"]
     for entry in audit_entries:
         retained = json.dumps(

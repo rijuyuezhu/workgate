@@ -25,12 +25,11 @@ from .auth_store import AgentAuthStore
 from .models import AgentMcpServerConfig
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True)
 class _CredentialRedactionBaseline:
     """Long-lived credential history anchor for one configured MCP server."""
 
     revision: int
-    values: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -372,23 +371,10 @@ class AgentMcpClientManager:
             env = {**env, **self.auth_store.oauth_redaction_values(name)}
         return env, headers
 
-    @staticmethod
-    def _extend_redaction_map(
-        mapping: dict[str, str], values: tuple[str, ...], *, prefix: str
-    ) -> dict[str, str]:
-        """Add private values under collision-free synthetic keys for sanitizers."""
-        result = dict(mapping)
-        for index, value in enumerate(values):
-            key = f"__workgate_{prefix}_{index}"
-            while key in result:
-                key += "_"
-            result[key] = value
-        return result
-
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Return the manager-lifetime credential history baseline for one server."""
+        """Return a durable-history baseline for one authenticated MCP server."""
         if self.auth_store is None:
             return None
         with self._credential_redaction_lock:
@@ -401,16 +387,15 @@ class AgentMcpClientManager:
             revision = self.auth_store.redaction_cursor(name)
             if not self.auth_status(name, server).get("authorized", False):
                 # No authenticated upstream operation can use these credentials yet.
-                # Keep this cursor operation-local so initial authorization can occur
-                # in another process without poisoning a never-used baseline.
                 return revision
 
-            env, headers = self.redaction_maps(name, server)
-            values = tuple(dict.fromkeys((*env.values(), *headers.values())))
+            # A fresh manager must reconstruct the complete retained history instead
+            # of silently rebasing at the current revision after a process restart.
+            self.auth_store.credential_redaction_values_since(name, 0)
             self._credential_redaction_baselines[name] = (
-                _CredentialRedactionBaseline(revision=revision, values=values)
+                _CredentialRedactionBaseline(revision=0)
             )
-            return revision
+            return 0
 
     def redaction_maps_since(
         self,
@@ -418,7 +403,7 @@ class AgentMcpClientManager:
         server: AgentMcpServerConfig,
         cursor: int | None,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        """Resolve current and retained credentials since the manager baseline."""
+        """Resolve current and durable retained credentials since the safe baseline."""
         env, headers = self.redaction_maps(name, server)
         if cursor is None or self.auth_store is None:
             return env, headers
@@ -431,12 +416,7 @@ class AgentMcpClientManager:
         observed = self.auth_store.credential_redaction_values_since(
             name, effective_cursor
         )
-        env = {**env, **observed}
-        if baseline is not None:
-            env = self._extend_redaction_map(
-                env, baseline.values, prefix="credential_baseline"
-            )
-        return env, headers
+        return {**env, **observed}, headers
 
     def auth_status(
         self, name: str, server: AgentMcpServerConfig

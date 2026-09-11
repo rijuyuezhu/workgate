@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import stat
+import subprocess
+import sys
 import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -195,7 +197,7 @@ def test_oauth_redaction_values_ignore_absent_optional_credentials(tmp_path):
     }
 
 
-def test_credential_redaction_journal_captures_intermediate_mutations_and_is_bounded(
+def test_credential_redaction_history_captures_intermediate_mutations_and_is_bounded(
     tmp_path, monkeypatch
 ):
     store = AgentAuthStore(tmp_path / "agent_auth")
@@ -244,7 +246,7 @@ def test_credential_redaction_journal_captures_intermediate_mutations_and_is_bou
             "docs", store.redaction_cursor("docs") + 1
         )
 
-    monkeypatch.setattr(auth_store_module, "_MAX_REDACTION_JOURNAL_ENTRIES", 1)
+    monkeypatch.setattr(auth_store_module, "_MAX_REDACTION_HISTORY_ENTRIES", 1)
     bounded = AgentAuthStore(tmp_path / "bounded_auth")
     bounded.set_tokens(
         "docs",
@@ -266,7 +268,52 @@ def test_credential_redaction_journal_captures_intermediate_mutations_and_is_bou
         bounded.credential_redaction_values_since("docs", stale_cursor)
 
 
-def test_credential_redaction_revision_detects_cross_instance_writes(tmp_path):
+def test_credential_redaction_history_size_eviction_keeps_mutation_available(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(auth_store_module, "_MAX_STORE_BYTES", 1_400)
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    old_secret = "A" * 400
+    new_secret = "B" * 400
+    store.set_secret("docs", "token", old_secret)
+    store.set_secret("docs", "token", new_secret)
+
+    assert store.get_secret("docs", "token") == new_secret
+    assert store.path.stat().st_size <= 1_400
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        store.credential_redaction_values_since("docs", 0)
+
+
+def test_credential_redaction_history_gap_allows_new_writes_but_fails_closed(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {"docs": {"secrets": {"token": "midMixedB2"}}},
+                "credential_revisions": {"docs": 2},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 1, "values": ["oldMixedA1"]}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store.set_secret("docs", "token", "newMixedC3")
+    assert store.get_secret("docs", "token") == "newMixedC3"
+    assert store.redaction_cursor("docs") == 3
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        store.credential_redaction_values_since("docs", 0)
+
+
+def test_credential_redaction_history_survives_cross_instance_writes(tmp_path):
     root = tmp_path / "agent_auth"
     service_store = AgentAuthStore(root)
     cli_store = AgentAuthStore(root)
@@ -294,20 +341,61 @@ def test_credential_redaction_revision_detects_cross_instance_writes(tmp_path):
         ),
     )
 
-    with pytest.raises(
-        AgentAuthRedactionHistoryLostError, match="history unavailable"
-    ):
-        service_store.credential_redaction_values_since("docs", cursor)
+    assert set(
+        service_store.credential_redaction_values_since("docs", cursor).values()
+    ) == {"oldOpaqueA1", "midOpaqueB2", "newOpaqueC3"}
 
     service_store.set_secret("secret", "token", "oldSecretA1")
     secret_cursor = service_store.redaction_cursor("secret")
     cli_store.set_secret("secret", "token", "midSecretB2")
     assert service_store.get_secret("secret", "token") == "midSecretB2"
     cli_store.set_secret("secret", "token", "newSecretC3")
-    with pytest.raises(
-        AgentAuthRedactionHistoryLostError, match="history unavailable"
-    ):
-        service_store.credential_redaction_values_since("secret", secret_cursor)
+    assert set(
+        service_store.credential_redaction_values_since(
+            "secret", secret_cursor
+        ).values()
+    ) == {"oldSecretA1", "midSecretB2", "newSecretC3"}
+
+
+def test_credential_redaction_history_survives_child_process_writer(tmp_path):
+    root = tmp_path / "agent_auth"
+    old_token = "oldChildA1"
+    mid_token = "midChildB2"
+    new_token = "newChildC3"
+    AgentAuthStore(root).set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+
+    child_code = """
+import sys
+from pathlib import Path
+from mcp.shared.auth import OAuthToken
+from workgate.agent_bridge.auth_store import AgentAuthStore
+
+store = AgentAuthStore(Path(sys.argv[1]))
+for value in sys.argv[2:]:
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": value, "token_type": "Bearer"}
+        ),
+    )
+"""
+    subprocess.run(
+        [sys.executable, "-c", child_code, str(root), mid_token, new_token],
+        check=True,
+    )
+
+    restarted_store = AgentAuthStore(root)
+    restarted_tokens = restarted_store.get_tokens("docs")
+    assert restarted_tokens is not None
+    assert restarted_tokens.access_token == new_token
+    assert set(
+        restarted_store.credential_redaction_values_since("docs", 0).values()
+    ) == {old_token, mid_token, new_token}
 
 
 def test_mcp_manager_retains_credential_redaction_history_across_operations(
@@ -336,7 +424,7 @@ def test_mcp_manager_retains_credential_redaction_history_across_operations(
     manager = AgentMcpClientManager(1, store)
     try:
         baseline = manager.redaction_cursor("docs", server)
-        assert baseline == store.redaction_cursor("docs")
+        assert baseline == 0
 
         store.set_tokens("docs", token(mid_token))
         first_values = set(
@@ -360,12 +448,18 @@ def test_mcp_manager_retains_credential_redaction_history_across_operations(
         )
         assert {old_token, mid_token, new_token} <= third_values
 
-        external_store.set_tokens("docs", token("externalRetiredD4"))
+        external_token = "externalRetiredD4"
+        external_store.set_tokens("docs", token(external_token))
         assert manager.redaction_cursor("docs", server) == baseline
-        with pytest.raises(
-            AgentAuthRedactionHistoryLostError, match="history unavailable"
-        ):
-            manager.redaction_maps_since("docs", server, baseline)
+        external_values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert {
+            old_token,
+            mid_token,
+            new_token,
+            external_token,
+        } <= external_values
     finally:
         manager.close()
 
@@ -394,11 +488,89 @@ def test_mcp_manager_does_not_anchor_redaction_before_initial_authorization(
         )
 
         baseline = manager.redaction_cursor("docs", server)
-        assert baseline == 1
+        assert baseline == 0
         values = set(
             manager.redaction_maps_since("docs", server, baseline)[0].values()
         )
         assert "firstAuthorizedA1" in values
+    finally:
+        manager.close()
+
+
+def test_mcp_manager_reconstructs_durable_redaction_history_after_restart(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+
+    def token(value: str) -> OAuthToken:
+        return OAuthToken.model_validate(
+            {"access_token": value, "token_type": "Bearer"}
+        )
+
+    old_token = "oldRestartA1"
+    mid_token = "midRestartB2"
+    new_token = "newRestartC3"
+    store = AgentAuthStore(root)
+    store.set_tokens("docs", token(old_token))
+    first_manager = AgentMcpClientManager(1, store)
+    try:
+        assert first_manager.redaction_cursor("docs", server) == 0
+        store.set_tokens("docs", token(mid_token))
+        store.set_tokens("docs", token(new_token))
+    finally:
+        first_manager.close()
+
+    restarted_store = AgentAuthStore(root)
+    restarted_manager = AgentMcpClientManager(1, restarted_store)
+    try:
+        baseline = restarted_manager.redaction_cursor("docs", server)
+        assert baseline == 0
+        values = set(
+            restarted_manager.redaction_maps_since("docs", server, baseline)[
+                0
+            ].values()
+        )
+        assert {old_token, mid_token, new_token} <= values
+    finally:
+        restarted_manager.close()
+
+
+def test_mcp_manager_fails_closed_when_durable_revision_history_is_missing(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {"docs": {"secrets": {"token": "currentSecretC3"}}},
+                "credential_revisions": {"docs": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_cursor("docs", server)
     finally:
         manager.close()
 
@@ -802,6 +974,81 @@ def test_agent_auth_store_rejects_invalid_inputs_and_oversized_state(tmp_path):
                 "credential_revisions": {"bad server": 1},
             },
             "server name",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_redaction_history": [],
+            },
+            "redaction history must be an object",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {"docs": {}},
+            },
+            "must be a list",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 0, "values": []}]
+                },
+            },
+            "positive integer",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 2},
+                "credential_redaction_history": {
+                    "docs": [
+                        {"revision": 2, "values": []},
+                        {"revision": 1, "values": []},
+                    ]
+                },
+            },
+            "strictly increasing",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 2, "values": []}]
+                },
+            },
+            "exceeds the current revision",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 1, "values": "secret"}]
+                },
+            },
+            "redaction values",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 1, "values": [""]}]
+                },
+            },
+            "non-empty text",
         ),
         ({"version": 1, "servers": {"bad server": {}}}, "server name"),
         ({"version": 1, "servers": {"docs": []}}, "must be an object"),
