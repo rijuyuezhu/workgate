@@ -869,6 +869,15 @@ def test_mcp_logout_resolves_live_oauth_by_stable_integration_id_after_rename(
     assert payload["local_credentials_cleared"] is True
     assert store.has_oauth_state("docs-stable") is False
 
+    # With the bucket now empty, the stable integrationId still resolves the
+    # renamed live server instead of being treated as an unknown label.
+    calls.clear()
+    args.handler(args)
+    assert calls == [("docs-renamed", "docs-stable")]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "revoked"
+    assert payload["local_credentials_cleared"] is False
+
 
 def test_mcp_logout_detached_identity_wins_over_reused_live_display_name(
     monkeypatch, tmp_path, capsys
@@ -961,6 +970,13 @@ def test_mcp_cli_reports_manifest_and_server_errors(tmp_path, capsys):
         missing_manifest.handler(missing_manifest)
     assert "manifest is unavailable" in capsys.readouterr().err
 
+    missing_manifest_logout = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+    with pytest.raises(SystemExit, match="2"):
+        missing_manifest_logout.handler(missing_manifest_logout)
+    assert "manifest is unavailable" in capsys.readouterr().err
+
     _write_agent_manifest(
         state_dir,
         {
@@ -976,11 +992,25 @@ def test_mcp_cli_reports_manifest_and_server_errors(tmp_path, capsys):
         unknown.handler(unknown)
     assert "Unknown Agent Bridge MCP server" in capsys.readouterr().err
 
+    unknown_logout = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "unknown", "--logout"]
+    )
+    with pytest.raises(SystemExit, match="2"):
+        unknown_logout.handler(unknown_logout)
+    assert "Unknown Agent Bridge MCP server" in capsys.readouterr().err
+
     non_oauth = parser.parse_args(
         ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--status"]
     )
     with pytest.raises(SystemExit, match="2"):
         non_oauth.handler(non_oauth)
+    assert "not configured for OAuth" in capsys.readouterr().err
+
+    non_oauth_logout = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+    with pytest.raises(SystemExit, match="2"):
+        non_oauth_logout.handler(non_oauth_logout)
     assert "not configured for OAuth" in capsys.readouterr().err
 
 
