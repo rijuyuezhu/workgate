@@ -385,6 +385,7 @@ def test_server_overrides_include_only_explicit_values():
 
 def _write_agent_manifest(state_dir, server):
     _ = state_dir
+    server = {"integrationId": "docs", **server}
     config_dir = app_paths().agent_config_dir
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "config.json").write_text(
@@ -481,6 +482,45 @@ def test_mcp_secret_set_list_delete_never_print_values(
     delete_args.handler(delete_args)
     assert json.loads(capsys.readouterr().out)["deleted"] is True
     assert store.list_secrets("docs") == {}
+
+
+def test_mcp_secret_list_keeps_current_server_name_after_manifest_rename(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs2": {
+                        "integrationId": "docs",
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "enabled": False,
+                        "headers": {"Authorization": {"secret": "token"}},
+                        "auth": {"mode": "secret"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    AgentAuthStore(state_dir / "agent_auth").set_secret(
+        "docs", "token", "private-value"
+    )
+    parser = cli._build_parser()
+    args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list", "docs2"]
+    )
+
+    args.handler(args)
+
+    output = capsys.readouterr().out
+    assert "private-value" not in output
+    assert json.loads(output) == {"secrets": {"docs2": ["token"]}}
 
 
 def test_mcp_auth_status_reports_only_safe_metadata(tmp_path, capsys):

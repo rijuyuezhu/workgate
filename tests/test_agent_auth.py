@@ -33,6 +33,7 @@ from workgate.agent_bridge.cli import (
 )
 from workgate.agent_bridge.mcp import AgentMcpClientManager
 from workgate.agent_bridge.models import AgentMcpServerConfig
+from workgate.agent_bridge.redaction import redact_configured_value_tree
 from workgate.agent_bridge.state import agent_registry_fingerprint
 from workgate.agent_bridge.status import registry_config_status
 
@@ -448,6 +449,7 @@ def test_mcp_manager_redacts_manifest_literals_across_server_rename_and_restart(
     def server(value: str) -> AgentMcpServerConfig:
         return AgentMcpServerConfig.model_validate(
             {
+                "integrationId": "docs-integration",
                 "type": "http",
                 "url": "https://same.example/mcp",
                 "headers": {"Authorization": value},
@@ -511,60 +513,7 @@ def test_durable_redaction_values_do_not_replace_current_env_redaction(
         manager.close()
 
 
-def test_store_wide_redaction_includes_active_legacy_secret_after_server_rename(
-    tmp_path,
-):
-    root = tmp_path / "agent_auth"
-    store = AgentAuthStore(root)
-    store.path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "servers": {
-                    "docs": {
-                        "secrets": {"token": "activeBeforeRenameA1"},
-                        "oauth": {
-                            "tokens": {
-                                "access_token": "activeOauthBeforeRenameB2",
-                                "refresh_token": "refreshBeforeRenameC3",
-                                "token_type": "Bearer",
-                            },
-                            "client_info": {
-                                "client_id": "legacy-client",
-                                "client_secret": "clientBeforeRenameD4",
-                            },
-                        },
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    current = AgentMcpServerConfig.model_validate(
-        {
-            "type": "http",
-            "url": "https://same.example/mcp",
-            "headers": {"Authorization": "newAfterRenameB2"},
-        }
-    )
-    manager = AgentMcpClientManager(1, store)
-    try:
-        baseline = manager.redaction_cursor("docs2", current)
-        env, headers = manager.redaction_maps_since("docs2", current, baseline)
-        assert {
-            "activeBeforeRenameA1",
-            "activeOauthBeforeRenameB2",
-            "refreshBeforeRenameC3",
-            "clientBeforeRenameD4",
-            "newAfterRenameB2",
-        } <= set((*env.values(), *headers.values()))
-    finally:
-        manager.close()
-
-
-def test_store_wide_redaction_fails_closed_on_history_gap_under_old_server_name(
-    tmp_path,
-):
+def test_redaction_history_gap_is_scoped_to_one_integration(tmp_path):
     root = tmp_path / "agent_auth"
     store = AgentAuthStore(root)
     store.path.write_text(
@@ -572,26 +521,116 @@ def test_store_wide_redaction_fails_closed_on_history_gap_under_old_server_name(
             {
                 "version": 1,
                 "servers": {},
-                "credential_revisions": {"docs": 2},
+                "credential_revisions": {"integration-a": 2},
                 "credential_redaction_history": {
-                    "docs": [{"revision": 2, "values": ["retiredOldB2"]}]
+                    "integration-a": [
+                        {"revision": 2, "values": ["retiredOldB2"]}
+                    ]
                 },
             }
         ),
         encoding="utf-8",
     )
-    current = AgentMcpServerConfig.model_validate(
+    server_a = AgentMcpServerConfig.model_validate(
         {
+            "integrationId": "integration-a",
             "type": "http",
-            "url": "https://same.example/mcp",
+            "url": "https://a.example/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    server_b = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "integration-b",
+            "type": "http",
+            "url": "https://b.example/mcp",
+            "auth": {"mode": "oauth"},
         }
     )
     manager = AgentMcpClientManager(1, store)
     try:
+        assert manager.redaction_cursor("server-b", server_b) == 0
         with pytest.raises(
             AgentAuthRedactionHistoryLostError, match="history unavailable"
         ):
-            manager.redaction_cursor("docs2", current)
+            manager.redaction_cursor("server-a", server_a)
+    finally:
+        manager.close()
+
+
+def test_identical_credential_writes_do_not_consume_redaction_history(tmp_path):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    token = OAuthToken.model_validate(
+        {"access_token": "sameTokenA1", "token_type": "Bearer"}
+    )
+    for _ in range(300):
+        store.set_tokens("oauth-a", token)
+    assert store.redaction_cursor("oauth-a") == 1
+    assert set(
+        store.credential_redaction_values_since("oauth-a", 0).values()
+    ) == {"sameTokenA1"}
+
+    store.set_secret("secret-a", "token", "sameSecretB2")
+    store.set_secret("secret-a", "token", "sameSecretB2")
+    assert store.redaction_cursor("secret-a") == 1
+
+    client = _client_info()
+    store.set_client_info("client-a", client)
+    store.set_client_info("client-a", client)
+    assert store.redaction_cursor("client-a") == 1
+
+
+def test_non_sensitive_literal_is_not_a_cross_integration_redaction_filter(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    server_a = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://a.example/mcp",
+            "headers": {"X-Mode": "1"},
+        }
+    )
+    server_b = AgentMcpServerConfig.model_validate(
+        {"type": "http", "url": "https://b.example/mcp"}
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        manager.redaction_cursor("server-a", server_a)
+        cursor = manager.redaction_cursor("server-b", server_b)
+        env, headers = manager.redaction_maps_since(
+            "server-b", server_b, cursor
+        )
+        result = redact_configured_value_tree(
+            {"text": "server-b version 1 production ready"}, env, headers
+        )
+        assert result == {"text": "server-b version 1 production ready"}
+    finally:
+        manager.close()
+
+
+def test_stable_integration_id_preserves_structured_secret_across_server_rename(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.set_secret("docs-integration", "token", "privateTokenA1")
+    renamed = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "docs-integration",
+            "type": "http",
+            "url": "https://same.example/mcp",
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        _env, headers = manager.resolved_maps("docs2", renamed)
+        assert headers["Authorization"] == "privateTokenA1"
+        cursor = manager.redaction_cursor("docs2", renamed)
+        env, headers = manager.redaction_maps_since("docs2", renamed, cursor)
+        assert "privateTokenA1" in {*env.values(), *headers.values()}
     finally:
         manager.close()
 
@@ -1017,6 +1056,7 @@ def test_public_registry_status_hides_secret_reference_names_and_values(
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "enabled": False,

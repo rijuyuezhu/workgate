@@ -35,6 +35,7 @@ Example with one upstream MCP server and managed Skills:
   "version": 1,
   "mcpServers": {
     "docs": {
+      "integrationId": "docs",
       "type": "http",
       "url": "https://docs.example.com/mcp",
       "auth": {
@@ -56,6 +57,8 @@ Example with one upstream MCP server and managed Skills:
 ```
 
 Supported upstream types are `stdio`, `http`, and `sse`. Review every command, URL, tool description, and requested scope before enabling a server.
+
+Credential-bearing servers use `integrationId` as their stable private identity. Set it when using OAuth, structured secret references, or credential-like literal headers/environment values. It must be unique within the manifest and must stay unchanged if you later rename the `mcpServers` key. For an existing configuration, using the current server key as the initial `integrationId` preserves the natural credential-store identity. Servers with only ordinary non-sensitive literals do not require one.
 
 Enabled `stdio` servers are kept alive and reused by the Agent Bridge instead of being restarted for every probe or tool call. This is required for upstreams that hold process-local state or accept a secondary long-lived connection, such as browser-extension MCP servers. Changing, disabling, or removing the configured server tears down the retained process.
 
@@ -86,6 +89,7 @@ Secret references are valid only when the same server uses `auth.mode="secret"`.
   "version": 1,
   "mcpServers": {
     "github": {
+      "integrationId": "github",
       "type": "http",
       "url": "https://github.example.com/mcp",
       "headers": {
@@ -105,6 +109,10 @@ printf '%s\n' "$GITHUB_TOKEN" | workgate mcp secret set github github_token --st
 workgate mcp secret list github
 workgate mcp secret delete github github_token
 ```
+
+The CLI resolves that display name to the entry's stable `integrationId` before reading or changing private credentials. Therefore a later rename from `github` to another `mcpServers` key does not reset credential or redaction history as long as `integrationId` remains `github`.
+
+Literal `env` and `headers` are still accepted for compatibility. Credential-like literal keys such as `Authorization`, `Cookie`, `TOKEN`, `PASSWORD`, or API-key fields participate in durable retired-value redaction and therefore also require `integrationId`. Ordinary literal values such as `MODE=production`, `LOG_LEVEL=info`, or `X-Mode: 1` are redacted only for the current server snapshot and are not persisted as a global substring filter. Prefer structured secret references for credentials, especially when the application uses an unusual key name.
 
 ## Authorize an OAuth server
 

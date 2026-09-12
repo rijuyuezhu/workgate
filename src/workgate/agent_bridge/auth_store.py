@@ -390,7 +390,7 @@ class AgentAuthStore:
             secrets = entry.setdefault("secrets", {})
             previous = secrets.get(name)
             secrets[name] = value
-            return True, tuple(
+            return previous != value, tuple(
                 str(candidate) for candidate in (previous, value) if candidate
             )
 
@@ -526,37 +526,6 @@ class AgentAuthStore:
             for index, value in enumerate(values)
         }
 
-    def global_redaction_values(self) -> dict[str, str]:
-        """Return all private values in this store's redaction security domain."""
-        with self._thread_lock, private_file_lock(self.lock_path):
-            data = self._read_unlocked()
-            values: list[str] = []
-            for server in sorted(data.get("credential_revisions", {})):
-                values.extend(
-                    self._redaction_values_since_unlocked(data, server, 0)
-                )
-            for server in sorted(data["servers"]):
-                entry = data["servers"][server]
-                values.extend(
-                    str(value) for value in entry.get("secrets", {}).values()
-                )
-                oauth = entry.get("oauth") or {}
-                tokens = oauth.get("tokens") or {}
-                values.extend(
-                    str(value)
-                    for value in (
-                        tokens.get("access_token"),
-                        tokens.get("refresh_token"),
-                        (oauth.get("client_info") or {}).get("client_secret"),
-                    )
-                    if value
-                )
-            retained = tuple(dict.fromkeys(value for value in values if value))
-        return {
-            f"credential_observed_{index}": value
-            for index, value in enumerate(retained)
-        }
-
     def set_tokens(self, server: str, tokens: OAuthToken) -> None:
         """Persist OAuth tokens and their absolute expiry timestamp."""
         server = _validate_name(server, "server name")
@@ -576,13 +545,19 @@ class AgentAuthStore:
                 if tokens.expires_in is not None
                 else None
             )
-            return True, tuple(
+            previous_material = (
+                previous.get("access_token"),
+                previous.get("refresh_token"),
+            )
+            current_material = (
+                payload.get("access_token"),
+                payload.get("refresh_token"),
+            )
+            return previous_material != current_material, tuple(
                 str(candidate)
                 for candidate in (
-                    previous.get("access_token"),
-                    previous.get("refresh_token"),
-                    payload.get("access_token"),
-                    payload.get("refresh_token"),
+                    *previous_material,
+                    *current_material,
                 )
                 if candidate
             )
@@ -617,10 +592,11 @@ class AgentAuthStore:
                 mode="json", exclude_none=True
             )
             client_secret = getattr(client_info, "client_secret", None)
-            return True, tuple(
+            previous_secret = previous.get("client_secret")
+            return previous_secret != client_secret, tuple(
                 str(candidate)
                 for candidate in (
-                    previous.get("client_secret"),
+                    previous_secret,
                     client_secret,
                 )
                 if candidate

@@ -1,5 +1,6 @@
 """Agent bridge configuration and registry data models."""
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -11,6 +12,12 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+SENSITIVE_KEY_PATTERN = (
+    r"(?:authorization|cookie|credentials?|api[_-]?key|access[_-]?key|private[_-]?key|"
+    r"token|secret|password|passwd)"
+)
+SENSITIVE_KEY_RE = re.compile(SENSITIVE_KEY_PATTERN, re.I)
 
 
 class AgentSecretReference(BaseModel):
@@ -61,6 +68,20 @@ AgentConfigValue = str | AgentSecretReference
 
 class AgentMcpServerConfig(BaseModel):
     """Configuration for one upstream MCP server exposed through the agent bridge."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    integration_id: str | None = Field(
+        default=None,
+        alias="integrationId",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        description=(
+            "Stable credential/redaction identity. Required when the server carries "
+            "managed auth or credential-like literal env/header values."
+        ),
+    )
 
     type: Literal["stdio", "http", "sse"]
     """Transport type used to connect to the upstream MCP server."""
@@ -161,6 +182,33 @@ class AgentBridgeManifest(BaseModel):
         if value != 1:
             raise ValueError("version must be 1")
         return value
+
+    @model_validator(mode="after")
+    def unique_integration_ids(self) -> AgentBridgeManifest:
+        """Require stable identities for credential-bearing configured integrations."""
+        owners: dict[str, str] = {}
+        for name, server in self.mcp_servers.items():
+            integration_id = server.integration_id
+            sensitive_literals = any(
+                isinstance(value, str) and SENSITIVE_KEY_RE.search(str(key))
+                for mapping in (server.env, server.headers)
+                for key, value in mapping.items()
+            )
+            if (
+                server.auth.mode in {"secret", "oauth"} or sensitive_literals
+            ) and integration_id is None:
+                raise ValueError(
+                    f"credential-bearing MCP server {name!r} requires a stable integrationId"
+                )
+            if integration_id is None:
+                continue
+            previous = owners.setdefault(integration_id, name)
+            if previous != name:
+                raise ValueError(
+                    f"integrationId {integration_id!r} is shared by servers "
+                    f"{previous!r} and {name!r}"
+                )
+        return self
 
 
 @dataclass(frozen=True)

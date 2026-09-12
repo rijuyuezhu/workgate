@@ -4,11 +4,8 @@ import json
 import re
 from typing import Any
 
-SENSITIVE_KEY_PATTERN = (
-    r"(?:authorization|cookie|credentials?|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"token|secret|password|passwd)"
-)
-SENSITIVE_KEY_RE = re.compile(SENSITIVE_KEY_PATTERN, re.I)
+from .models import SENSITIVE_KEY_PATTERN, SENSITIVE_KEY_RE
+
 SENSITIVE_ARG_RE = re.compile(
     rf"(?P<prefix>--?[A-Za-z0-9_.-]*{SENSITIVE_KEY_PATTERN}[A-Za-z0-9_.-]*=)\S+",
     re.I,

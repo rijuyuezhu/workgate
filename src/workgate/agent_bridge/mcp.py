@@ -18,9 +18,10 @@ from ..utils.serialization import to_jsonable
 from .auth import (
     OAuthProviderFactory,
     build_stored_oauth_provider,
-    literal_config_mapping,
+    credential_store_key,
     oauth_status,
     resolve_config_mapping,
+    sensitive_literal_config_mapping,
 )
 from .auth_store import AgentAuthStore
 from .models import AgentMcpServerConfig
@@ -361,9 +362,12 @@ class AgentMcpClientManager:
         self, name: str, server: AgentMcpServerConfig
     ) -> tuple[dict[str, str], dict[str, str]]:
         """Resolve transport env/headers immediately before opening a connection."""
+        credential_key = credential_store_key(name, server)
         return (
-            resolve_config_mapping(self.auth_store, name, server.env),
-            resolve_config_mapping(self.auth_store, name, server.headers),
+            resolve_config_mapping(self.auth_store, credential_key, server.env),
+            resolve_config_mapping(
+                self.auth_store, credential_key, server.headers
+            ),
         )
 
     def redaction_maps(
@@ -372,22 +376,27 @@ class AgentMcpClientManager:
         """Resolve transport and owner-held credential values solely for redaction."""
         env, headers = self.resolved_maps(name, server)
         if self.auth_store is not None and server.auth.mode == "oauth":
-            env = {**env, **self.auth_store.oauth_redaction_values(name)}
+            credential_key = credential_store_key(name, server)
+            env = {
+                **env,
+                **self.auth_store.oauth_redaction_values(credential_key),
+            }
         return env, headers
 
     def redaction_cursor(
         self, name: str, server: AgentMcpServerConfig
     ) -> int | None:
-        """Validate the store-wide private-value redaction domain before use."""
+        """Validate this integration's durable private-value history before use."""
         if self.auth_store is None:
             return None
+        credential_key = credential_store_key(name, server)
         literal_values = tuple(
-            literal_config_mapping(server.env).values()
-        ) + tuple(literal_config_mapping(server.headers).values())
-        self.auth_store.observe_redaction_values(name, literal_values)
-        # Local server labels are mutable and therefore not confidentiality
-        # boundaries. Validate the complete store-wide history before upstream use.
-        self.auth_store.global_redaction_values()
+            sensitive_literal_config_mapping(server.env).values()
+        ) + tuple(sensitive_literal_config_mapping(server.headers).values())
+        self.auth_store.observe_redaction_values(credential_key, literal_values)
+        # The stable integration identity, rather than the mutable manifest label,
+        # is the confidentiality and fail-closed boundary.
+        self.auth_store.credential_redaction_values_since(credential_key, 0)
         return 0
 
     def redaction_maps_since(
@@ -400,7 +409,10 @@ class AgentMcpClientManager:
         env, headers = self.redaction_maps(name, server)
         if cursor is None or self.auth_store is None:
             return env, headers
-        observed = self.auth_store.global_redaction_values()
+        credential_key = credential_store_key(name, server)
+        observed = self.auth_store.credential_redaction_values_since(
+            credential_key, cursor
+        )
         return _extend_redaction_map(env, observed), headers
 
     def auth_status(

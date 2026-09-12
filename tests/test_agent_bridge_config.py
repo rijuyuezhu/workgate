@@ -82,12 +82,14 @@ def test_load_agent_manifest_valid_config(tmp_path):
         "version": 1,
         "mcpServers": {
             "github": {
+                "integrationId": "github",
                 "type": "stdio",
                 "command": "github-mcp-server",
                 "args": ["stdio"],
                 "env": {"GITHUB_TOKEN": "secret"},
             },
             "docs": {
+                "integrationId": "docs",
                 "type": "http",
                 "url": "https://example.com/mcp",
                 "headers": {"Authorization": "Bearer secret"},
@@ -179,6 +181,96 @@ def test_load_agent_manifest_invalid_schema_does_not_leak_sensitive_inputs(
     assert manifest.errors
     assert "Bearer secret" not in errors
     assert "ghp_secret" not in errors
+
+
+@pytest.mark.parametrize(
+    "server",
+    [
+        {
+            "type": "http",
+            "url": "https://oauth.example.test/mcp",
+            "auth": {"mode": "oauth"},
+        },
+        {
+            "type": "http",
+            "url": "https://secret.example.test/mcp",
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        },
+        {
+            "type": "http",
+            "url": "https://legacy.example.test/mcp",
+            "headers": {"Authorization": "Bearer legacy-token"},
+        },
+    ],
+)
+def test_credential_bearing_manifest_requires_stable_integration_id(
+    tmp_path, server
+):
+    (tmp_path / "config.json").write_text(
+        json.dumps({"version": 1, "mcpServers": {"docs": server}}),
+        encoding="utf-8",
+    )
+
+    manifest = load_agent_manifest(tmp_path)
+
+    assert manifest.status == "invalid_config"
+    assert "requires a stable integrationId" in "\n".join(manifest.errors)
+
+
+def test_non_sensitive_literal_manifest_does_not_require_integration_id(
+    tmp_path,
+):
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs": {
+                        "type": "http",
+                        "url": "https://docs.example.test/mcp",
+                        "headers": {"X-Mode": "1"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_agent_manifest(tmp_path)
+
+    assert manifest.status == "loaded"
+    assert manifest.data.mcp_servers["docs"].integration_id is None
+
+
+def test_manifest_rejects_duplicate_stable_integration_ids(tmp_path):
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs": {
+                        "integrationId": "shared",
+                        "type": "http",
+                        "url": "https://docs.example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    },
+                    "api": {
+                        "integrationId": "shared",
+                        "type": "http",
+                        "url": "https://api.example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_agent_manifest(tmp_path)
+
+    assert manifest.status == "invalid_config"
+    assert "is shared by servers" in "\n".join(manifest.errors)
 
 
 def test_redact_mapping_hides_secret_values():

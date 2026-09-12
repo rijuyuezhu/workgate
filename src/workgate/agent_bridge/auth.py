@@ -9,7 +9,12 @@ from mcp.client.auth.oauth2 import OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
 
 from .auth_store import AgentAuthStore, AgentOAuthTokenStorage
-from .models import AgentConfigValue, AgentMcpServerConfig, AgentSecretReference
+from .models import (
+    SENSITIVE_KEY_RE,
+    AgentConfigValue,
+    AgentMcpServerConfig,
+    AgentSecretReference,
+)
 
 type OAuthProviderFactory = Callable[[str, AgentMcpServerConfig], httpx.Auth]
 
@@ -21,6 +26,22 @@ def literal_config_mapping(
     return {
         key: value for key, value in values.items() if isinstance(value, str)
     }
+
+
+def sensitive_literal_config_mapping(
+    values: Mapping[str, AgentConfigValue],
+) -> dict[str, str]:
+    """Return credential-like literal manifest values eligible for durable redaction."""
+    return {
+        key: value
+        for key, value in literal_config_mapping(values).items()
+        if SENSITIVE_KEY_RE.search(str(key))
+    }
+
+
+def credential_store_key(server_name: str, server: AgentMcpServerConfig) -> str:
+    """Return the stable private credential/history identity for one integration."""
+    return server.integration_id or server_name
 
 
 def secret_reference_names(
@@ -124,7 +145,9 @@ def build_stored_oauth_provider(
     """Create the MCP SDK provider for one stored Agent Bridge OAuth identity."""
     if not server.url:
         raise ValueError(f"OAuth MCP server {server_name} requires url")
-    storage = AgentOAuthTokenStorage(store, server_name)
+    storage = AgentOAuthTokenStorage(
+        store, credential_store_key(server_name, server)
+    )
 
     async def deny_redirect(_url: str) -> None:
         raise RuntimeError(
@@ -155,6 +178,7 @@ def oauth_status(
 ) -> dict[str, Any]:
     """Return public auth metadata without secret, token, or client values."""
     mode = server.auth.mode
+    credential_key = credential_store_key(server_name, server)
     if mode == "none":
         return {
             "mode": mode,
@@ -170,7 +194,7 @@ def oauth_status(
             missing = len(references)
         else:
             missing = sum(
-                not store.has_secret(server_name, reference)
+                not store.has_secret(credential_key, reference)
                 for reference in references
             )
         return {
@@ -186,7 +210,7 @@ def oauth_status(
     if store is None:
         metadata: dict[str, Any] = {}
     else:
-        metadata = store.oauth_metadata(server_name)
+        metadata = store.oauth_metadata(credential_key)
     expires_at = metadata.get("expires_at")
     has_access = bool(metadata.get("has_access_token"))
     has_refresh = bool(metadata.get("has_refresh_token"))

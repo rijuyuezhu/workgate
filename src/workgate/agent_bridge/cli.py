@@ -19,7 +19,11 @@ from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..config.cli import register_config_and_setting_args, settings_from_args
 from ..config.settings import Settings
-from .auth import build_stored_oauth_provider, oauth_status
+from .auth import (
+    build_stored_oauth_provider,
+    credential_store_key,
+    oauth_status,
+)
 from .auth_store import AgentAuthStore
 from .mcp import AgentMcpClientManager
 from .models import AgentMcpServerConfig
@@ -307,8 +311,9 @@ async def revoke_stored_oauth(
     store: AgentAuthStore, server_name: str, server: AgentMcpServerConfig
 ) -> RevocationResult:
     """Attempt standards-based remote token revocation before local logout."""
-    tokens = store.get_tokens(server_name)
-    client_info = store.get_client_info(server_name)
+    credential_key = credential_store_key(server_name, server)
+    tokens = store.get_tokens(credential_key)
+    client_info = store.get_client_info(credential_key)
     if tokens is None or not server.url:
         return RevocationResult("not_authorized")
     token = tokens.refresh_token or tokens.access_token
@@ -362,11 +367,16 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
         settings = _settings_from_args(args)
         store = AgentAuthStore(settings.agent_auth_dir)
         if args.mcp_command == "secret":
+            if args.secret_command not in {"set", "list", "delete"}:
+                raise ValueError(
+                    f"unsupported secret command: {args.secret_command}"
+                )
+            server = _configured_server(settings, args.server)
+            credential_key = credential_store_key(args.server, server)
             match args.secret_command:
                 case "set":
-                    _configured_server(settings, args.server)
                     store.set_secret(
-                        args.server, args.name, _read_secret_stdin()
+                        credential_key, args.name, _read_secret_stdin()
                     )
                     _print_json(
                         {
@@ -377,10 +387,15 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
                     )
                     return
                 case "list":
-                    _print_json({"secrets": store.list_secrets(args.server)})
+                    stored = store.list_secrets(credential_key).get(
+                        credential_key, []
+                    )
+                    _print_json(
+                        {"secrets": ({args.server: stored} if stored else {})}
+                    )
                     return
                 case "delete":
-                    deleted = store.delete_secret(args.server, args.name)
+                    deleted = store.delete_secret(credential_key, args.name)
                     _print_json(
                         {
                             "server": args.server,
@@ -389,10 +404,6 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
                         }
                     )
                     return
-                case _:
-                    raise ValueError(
-                        f"unsupported secret command: {args.secret_command}"
-                    )
 
         server = _configured_server(settings, args.server)
         if server.auth.mode != "oauth":
@@ -408,7 +419,9 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
             revocation = asyncio.run(
                 revoke_stored_oauth(store, args.server, server)
             )
-            cleared = store.clear_oauth(args.server)
+            cleared = store.clear_oauth(
+                credential_store_key(args.server, server)
+            )
             _print_json(
                 {
                     "server": args.server,

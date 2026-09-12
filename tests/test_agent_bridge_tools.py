@@ -157,6 +157,7 @@ async def test_agent_config_status_redacts_probe_error(tmp_path, monkeypatch):
                 "version": 1,
                 "mcpServers": {
                     "bad": {
+                        "integrationId": "bad",
                         "type": "http",
                         "url": "https://bad.example/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
@@ -207,6 +208,7 @@ async def test_agent_config_status_redacts_env_and_header_values(
                 "version": 1,
                 "mcpServers": {
                     "off": {
+                        "integrationId": "off",
                         "type": "http",
                         "url": "https://off.example/mcp",
                         "enabled": False,
@@ -244,6 +246,7 @@ async def test_agent_config_status_redacts_serialized_configured_values(
                 "version": 1,
                 "mcpServers": {
                     "bad": {
+                        "integrationId": "bad",
                         "type": "http",
                         "url": "https://bad.example/mcp",
                         "env": {"CUSTOM": SERIALIZED_ENV_VALUE},
@@ -377,6 +380,7 @@ if __name__ == "__main__":
                 "version": 1,
                 "mcpServers": {
                     "stdio": {
+                        "integrationId": "stdio",
                         "type": "stdio",
                         "command": sys.executable,
                         "args": [str(server_script)],
@@ -490,6 +494,7 @@ async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_au
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://oauth.example/mcp",
                         "auth": {"mode": "oauth"},
@@ -619,6 +624,7 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
                     "docs": {"type": "http", "url": "https://docs.example/mcp"},
                     "bad": {"type": "http", "url": "https://bad.example/mcp"},
                     "off": {
+                        "integrationId": "off",
                         "type": "http",
                         "url": "https://off.example/mcp",
                         "enabled": False,
@@ -735,6 +741,7 @@ async def test_call_agent_mcp_tool_redacts_unavailable_probe_error(
                 "version": 1,
                 "mcpServers": {
                     "bad": {
+                        "integrationId": "bad",
                         "type": "http",
                         "url": "https://bad.example/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
@@ -793,6 +800,7 @@ async def test_call_agent_mcp_tool_redacts_call_error(tmp_path, monkeypatch):
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://docs.example/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
@@ -851,6 +859,7 @@ async def test_call_agent_mcp_tool_redacts_serialized_configured_values(
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://docs.example/mcp",
                         "env": {"CUSTOM": SERIALIZED_ENV_VALUE},
@@ -902,6 +911,7 @@ async def test_call_agent_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://docs.example/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
@@ -984,6 +994,7 @@ async def test_agent_mcp_public_metadata_redacts_configured_values(
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://docs.example/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
@@ -1091,6 +1102,7 @@ def test_agent_mcp_probe_rotation_redacts_public_capability_metadata(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1192,6 +1204,7 @@ def test_agent_mcp_probe_rotation_redacts_probe_error(tmp_path) -> None:
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1249,6 +1262,7 @@ def test_agent_mcp_probe_redacts_intermediate_oauth_credentials(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1327,6 +1341,7 @@ def test_agent_mcp_probe_redacts_cross_instance_credential_history(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1412,6 +1427,7 @@ def test_agent_mcp_probe_redacts_logged_out_retired_oauth_credentials(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1499,6 +1515,7 @@ def test_agent_mcp_probe_fails_closed_when_redaction_cursor_is_unavailable(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1544,6 +1561,7 @@ async def test_agent_mcp_call_fails_closed_when_redaction_cursor_is_unavailable(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1611,6 +1629,7 @@ def test_agent_mcp_probe_fails_closed_when_redaction_history_is_lost(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1670,6 +1689,7 @@ async def test_control_oauth_intermediate_credential_is_redacted_from_error_and_
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://oauth.example/mcp",
                         "auth": {"mode": "oauth"},
@@ -1748,6 +1768,7 @@ async def test_agent_mcp_call_retains_retired_credentials_across_later_calls(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1850,6 +1871,7 @@ async def test_agent_mcp_restart_redacts_retired_credentials_from_metadata_and_c
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -1965,6 +1987,7 @@ async def test_control_oauth_cross_instance_rotation_is_redacted_and_audit_is_sa
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://oauth.example/mcp",
                         "auth": {"mode": "oauth"},
@@ -2064,6 +2087,7 @@ async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://oauth.example/mcp",
                         "auth": {"mode": "oauth"},
@@ -2157,6 +2181,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_probe_value(
                     "version": 1,
                     "mcpServers": {
                         "docs": {
+                            "integrationId": "docs",
                             "type": "http",
                             "url": "https://docs.example/mcp",
                             "headers": {"Authorization": value},
@@ -2225,6 +2250,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
                     "version": 1,
                     "mcpServers": {
                         "docs": {
+                            "integrationId": "docs",
                             "type": "http",
                             "url": "https://docs.example/mcp",
                             "headers": {"Authorization": value},
@@ -2315,6 +2341,7 @@ async def test_dynamic_mcp_server_rename_retains_literal_redaction_domain(
                     "version": 1,
                     "mcpServers": {
                         server_name: {
+                            "integrationId": "docs-integration",
                             "type": "http",
                             "url": "https://same.example/mcp",
                             "headers": {"Authorization": value},
@@ -2401,6 +2428,7 @@ async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
                 "version": 1,
                 "mcpServers": {
                     "oauth": {
+                        "integrationId": "oauth",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "auth": {"mode": "oauth"},
@@ -2565,6 +2593,7 @@ async def test_dynamic_mcp_tool_redacts_configured_values_in_call_error(
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://example.com/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
@@ -2615,6 +2644,7 @@ async def test_dynamic_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://example.com/mcp",
                         "env": {"CUSTOM": CONFIGURED_ENV_VALUE},
