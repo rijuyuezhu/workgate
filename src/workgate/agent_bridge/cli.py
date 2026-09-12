@@ -118,6 +118,43 @@ def _credential_key_for_cleanup(
     return identifier
 
 
+def _oauth_logout_target(
+    settings: Settings,
+    store: AgentAuthStore,
+    identifier: str,
+) -> tuple[str, str | None, AgentMcpServerConfig | None]:
+    """Resolve logout without letting a reused display name capture detached state."""
+    loaded = load_agent_manifest(settings.agent_config_dir)
+    servers = loaded.data.mcp_servers if loaded.status == "loaded" else {}
+
+    if store.has_oauth_state(identifier):
+        for server_name, server in servers.items():
+            if (
+                server.auth.mode == "oauth"
+                and credential_store_key(server_name, server) == identifier
+            ):
+                return identifier, server_name, server
+        return identifier, None, None
+
+    if loaded.status != "loaded":
+        detail = "; ".join(loaded.errors) or loaded.status
+        raise ValueError(f"Agent Bridge manifest is unavailable: {detail}")
+
+    server = servers.get(identifier)
+    if server is not None:
+        if server.auth.mode != "oauth":
+            raise ValueError(
+                f"Agent Bridge server {identifier} is not configured for OAuth"
+            )
+        return credential_store_key(identifier, server), identifier, server
+
+    for server_name, server in servers.items():
+        if server.auth.mode == "oauth" and server.integration_id == identifier:
+            return identifier, server_name, server
+
+    raise ValueError(f"Unknown Agent Bridge MCP server: {identifier}")
+
+
 def _print_json(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
@@ -283,7 +320,7 @@ class RevocationResult:
     """Remote OAuth revocation outcome reported by logout."""
 
     status: str
-    """Stable result category: revoked, unsupported, failed, or not_authorized."""
+    """Stable result category, including unavailable for detached local cleanup."""
     detail: str | None = None
     """Optional bounded explanation that never includes token values."""
 
@@ -430,23 +467,20 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
                     )
                     return
 
-        server = _configured_server(settings, args.server)
-        if server.auth.mode != "oauth":
-            raise ValueError(
-                f"Agent Bridge server {args.server} is not configured for OAuth"
-            )
-        if args.status:
-            status = oauth_status(store, args.server, server)
-            status["server"] = args.server
-            _print_json(status)
-            return
         if args.logout:
-            revocation = asyncio.run(
-                revoke_stored_oauth(store, args.server, server)
+            credential_key, server_name, server = _oauth_logout_target(
+                settings, store, args.server
             )
-            cleared = store.clear_oauth(
-                credential_store_key(args.server, server)
-            )
+            if server is None or server_name is None:
+                revocation = RevocationResult(
+                    "unavailable",
+                    "integration is not currently configured for OAuth; local state only",
+                )
+            else:
+                revocation = asyncio.run(
+                    revoke_stored_oauth(store, server_name, server)
+                )
+            cleared = store.clear_oauth(credential_key)
             _print_json(
                 {
                     "server": args.server,
@@ -457,6 +491,17 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
             )
             if revocation.status == "failed":
                 raise SystemExit(1)
+            return
+
+        server = _configured_server(settings, args.server)
+        if server.auth.mode != "oauth":
+            raise ValueError(
+                f"Agent Bridge server {args.server} is not configured for OAuth"
+            )
+        if args.status:
+            status = oauth_status(store, args.server, server)
+            status["server"] = args.server
+            _print_json(status)
             return
         _print_json(
             asyncio.run(

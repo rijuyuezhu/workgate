@@ -3,7 +3,7 @@ import json
 import textwrap
 
 import pytest
-from mcp.shared.auth import OAuthToken
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 import workgate.agent_bridge.cli as agent_cli
 import workgate.control.cli as server_cli
@@ -762,6 +762,159 @@ def test_mcp_logout_reports_revocation_and_clears_local_credentials(
     assert payload["remote_revocation"] == "unsupported"
     assert payload["local_credentials_cleared"] is True
     assert store.get_tokens("docs") is None
+
+
+def test_mcp_logout_cleans_detached_oauth_state_without_remote_revocation(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {
+                "access_token": "detached-access",
+                "refresh_token": "detached-refresh",
+                "token_type": "Bearer",
+            }
+        ),
+    )
+    store.set_client_info(
+        "docs",
+        OAuthClientInformationFull.model_validate(
+            {
+                "client_id": "client-1",
+                "client_secret": "detached-client-secret",
+                "redirect_uris": ["http://127.0.0.1/callback"],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "client_secret_post",
+            }
+        ),
+    )
+
+    async def unexpected_revoke(*_args):
+        raise AssertionError(
+            "detached cleanup must not attempt remote revocation"
+        )
+
+    monkeypatch.setattr(agent_cli, "revoke_stored_oauth", unexpected_revoke)
+    args = cli._build_parser().parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+
+    args.handler(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "unavailable"
+    assert payload["local_credentials_cleared"] is True
+    assert store.get_tokens("docs") is None
+    assert store.get_client_info("docs") is None
+    assert store.has_oauth_state("docs") is False
+
+
+def test_mcp_logout_resolves_live_oauth_by_stable_integration_id_after_rename(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs-renamed": {
+                        "integrationId": "docs-stable",
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "enabled": False,
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_tokens(
+        "docs-stable",
+        OAuthToken.model_validate(
+            {"access_token": "access", "token_type": "Bearer"}
+        ),
+    )
+    calls = []
+
+    async def fake_revoke(_store, server_name, server):
+        calls.append((server_name, server.integration_id))
+        return agent_cli.RevocationResult("revoked")
+
+    monkeypatch.setattr(agent_cli, "revoke_stored_oauth", fake_revoke)
+    args = cli._build_parser().parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "auth",
+            "docs-stable",
+            "--logout",
+        ]
+    )
+
+    args.handler(args)
+
+    assert calls == [("docs-renamed", "docs-stable")]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "revoked"
+    assert payload["local_credentials_cleared"] is True
+    assert store.has_oauth_state("docs-stable") is False
+
+
+def test_mcp_logout_detached_identity_wins_over_reused_live_display_name(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    _write_agent_manifest(
+        state_dir,
+        {
+            "integrationId": "current",
+            "type": "http",
+            "url": "https://current.example.test/mcp",
+            "enabled": False,
+            "auth": {"mode": "oauth"},
+        },
+    )
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "retired-access", "token_type": "Bearer"}
+        ),
+    )
+    store.set_tokens(
+        "current",
+        OAuthToken.model_validate(
+            {"access_token": "current-access", "token_type": "Bearer"}
+        ),
+    )
+
+    async def unexpected_revoke(*_args):
+        raise AssertionError(
+            "stale identity must not revoke the reused live label"
+        )
+
+    monkeypatch.setattr(agent_cli, "revoke_stored_oauth", unexpected_revoke)
+    args = cli._build_parser().parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+
+    args.handler(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "unavailable"
+    assert payload["local_credentials_cleared"] is True
+    assert store.has_oauth_state("docs") is False
+    assert store.get_tokens("current") is not None
 
 
 def test_secret_stdin_reader_validates_tty_size_encoding_and_newlines(

@@ -633,6 +633,12 @@ class AgentAuthStore:
 
         self._mutate(mutate)
 
+    def has_oauth_state(self, server: str) -> bool:
+        """Return whether one credential identity still owns local OAuth state."""
+        server = _validate_name(server, "server name")
+        oauth = self._read()["servers"].get(server, {}).get("oauth")
+        return bool(oauth)
+
     def oauth_metadata(self, server: str) -> dict[str, Any]:
         """Return non-sensitive OAuth status metadata for one server."""
         server = _validate_name(server, "server name")

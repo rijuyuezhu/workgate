@@ -126,6 +126,8 @@ workgate mcp auth docs --logout
 
 Use `--no-open` when the CLI should print the authorization URL instead of opening a browser.
 
+`--logout` is also the local cleanup path for retired OAuth identities. If the argument names stored OAuth state that no currently configured OAuth server owns, Workgate clears that local state without attempting network revocation and reports `remote_revocation: "unavailable"`. If a renamed live OAuth server still owns the same stable `integrationId`, supplying that identity resolves back to the live server so remote revocation can still be attempted. An exact detached OAuth identity takes precedence over a reused display name, preventing stale cleanup from touching a different live integration.
+
 ## Use bridge capabilities
 
 Start by asking the client to show what is available:
