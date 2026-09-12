@@ -389,6 +389,11 @@ class AgentMcpClientManager:
         """Validate this integration's durable private-value history before use."""
         if self.auth_store is None:
             return None
+        if (
+            server.integration_id is None
+            and not server.requires_stable_integration_id()
+        ):
+            return None
         credential_key = credential_store_key(name, server)
         literal_values = tuple(
             sensitive_literal_config_mapping(server.env).values()

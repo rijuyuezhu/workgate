@@ -523,6 +523,146 @@ def test_mcp_secret_list_keeps_current_server_name_after_manifest_rename(
     assert json.loads(output) == {"secrets": {"docs2": ["token"]}}
 
 
+def test_mcp_secret_cleanup_survives_manifest_removal(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    _write_agent_manifest(
+        state_dir,
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "enabled": False,
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        },
+    )
+    parser = cli._build_parser()
+    monkeypatch.setattr(
+        agent_cli, "_read_secret_stdin", lambda: "private-value"
+    )
+    set_args = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "set",
+            "docs",
+            "token",
+            "--stdin",
+        ]
+    )
+    set_args.handler(set_args)
+    capsys.readouterr()
+
+    (app_paths().agent_config_dir / "config.json").unlink()
+
+    list_all_args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list"]
+    )
+    list_all_args.handler(list_all_args)
+    list_all_output = capsys.readouterr().out
+    assert "private-value" not in list_all_output
+    assert json.loads(list_all_output) == {"secrets": {"docs": ["token"]}}
+
+    list_args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list", "docs"]
+    )
+    list_args.handler(list_args)
+    assert json.loads(capsys.readouterr().out) == {
+        "secrets": {"docs": ["token"]}
+    }
+
+    delete_args = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "delete",
+            "docs",
+            "token",
+        ]
+    )
+    delete_args.handler(delete_args)
+    assert json.loads(capsys.readouterr().out)["deleted"] is True
+    assert AgentAuthStore(state_dir / "agent_auth").list_secrets("docs") == {}
+
+
+def test_mcp_secret_cleanup_prefers_exact_stored_identity_over_live_label(
+    tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "shared": {
+                        "integrationId": "current",
+                        "type": "http",
+                        "url": "https://current.example.test/mcp",
+                        "enabled": False,
+                        "headers": {"Authorization": {"secret": "token"}},
+                        "auth": {"mode": "secret"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_secret("shared", "retired", "old-private-value")
+    store.set_secret("current", "token", "current-private-value")
+    parser = cli._build_parser()
+
+    list_args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list", "shared"]
+    )
+    list_args.handler(list_args)
+    output = capsys.readouterr().out
+    assert "old-private-value" not in output
+    assert "current-private-value" not in output
+    assert json.loads(output) == {"secrets": {"shared": ["retired"]}}
+
+    # The detached bucket owns this exact identifier as a whole. A missing
+    # secret must not fall through to the live server that reuses the label.
+    wrong_bucket_delete = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "delete",
+            "shared",
+            "token",
+        ]
+    )
+    wrong_bucket_delete.handler(wrong_bucket_delete)
+    assert json.loads(capsys.readouterr().out)["deleted"] is False
+    assert store.list_secrets("shared") == {"shared": ["retired"]}
+    assert store.list_secrets("current") == {"current": ["token"]}
+
+    delete_args = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "delete",
+            "shared",
+            "retired",
+        ]
+    )
+    delete_args.handler(delete_args)
+    assert json.loads(capsys.readouterr().out)["deleted"] is True
+    assert store.list_secrets("shared") == {}
+    assert store.list_secrets("current") == {"current": ["token"]}
+
+
 def test_mcp_auth_status_reports_only_safe_metadata(tmp_path, capsys):
     state_dir = tmp_path / "state"
     _write_agent_manifest(

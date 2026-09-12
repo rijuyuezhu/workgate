@@ -102,6 +102,22 @@ def _configured_server(
         ) from exc
 
 
+def _credential_key_for_cleanup(
+    settings: Settings,
+    store: AgentAuthStore,
+    identifier: str,
+) -> str:
+    """Resolve a live label while preserving direct detached-id cleanup."""
+    if store.list_secrets(identifier):
+        return identifier
+    loaded = load_agent_manifest(settings.agent_config_dir)
+    if loaded.status == "loaded":
+        server = loaded.data.mcp_servers.get(identifier)
+        if server is not None:
+            return credential_store_key(identifier, server)
+    return identifier
+
+
 def _print_json(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
@@ -371,10 +387,10 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
                 raise ValueError(
                     f"unsupported secret command: {args.secret_command}"
                 )
-            server = _configured_server(settings, args.server)
-            credential_key = credential_store_key(args.server, server)
             match args.secret_command:
                 case "set":
+                    server = _configured_server(settings, args.server)
+                    credential_key = credential_store_key(args.server, server)
                     store.set_secret(
                         credential_key, args.name, _read_secret_stdin()
                     )
@@ -387,6 +403,12 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
                     )
                     return
                 case "list":
+                    if args.server is None:
+                        _print_json({"secrets": store.list_secrets()})
+                        return
+                    credential_key = _credential_key_for_cleanup(
+                        settings, store, args.server
+                    )
                     stored = store.list_secrets(credential_key).get(
                         credential_key, []
                     )
@@ -395,6 +417,9 @@ def run_mcp_cli_from_args(args: argparse.Namespace) -> None:
                     )
                     return
                 case "delete":
+                    credential_key = _credential_key_for_cleanup(
+                        settings, store, args.server
+                    )
                     deleted = store.delete_secret(credential_key, args.name)
                     _print_json(
                         {

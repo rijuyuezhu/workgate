@@ -273,6 +273,36 @@ def test_manifest_rejects_duplicate_stable_integration_ids(tmp_path):
     assert "is shared by servers" in "\n".join(manifest.errors)
 
 
+def test_plain_server_name_may_match_another_servers_integration_id(tmp_path):
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "shared": {
+                        "type": "http",
+                        "url": "https://plain.example.test/mcp",
+                        "headers": {"X-Mode": "1"},
+                    },
+                    "oauth": {
+                        "integrationId": "shared",
+                        "type": "http",
+                        "url": "https://oauth.example.test/mcp",
+                        "auth": {"mode": "oauth"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_agent_manifest(tmp_path)
+
+    assert manifest.status == "loaded"
+    assert manifest.data.mcp_servers["shared"].integration_id is None
+    assert manifest.data.mcp_servers["oauth"].integration_id == "shared"
+
+
 def test_redact_mapping_hides_secret_values():
     redacted = redact_mapping(
         {

@@ -610,6 +610,96 @@ def test_non_sensitive_literal_is_not_a_cross_integration_redaction_filter(
         manager.close()
 
 
+def test_explicit_integration_id_keeps_retired_history_after_decredentialization(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.set_secret("docs-integration", "token", "retiredPrivateA1")
+    assert store.delete_secret("docs-integration", "token") is True
+    plain = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "docs-integration",
+            "type": "http",
+            "url": "https://plain.example/mcp",
+            "headers": {"X-Mode": "1"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        cursor = manager.redaction_cursor("docs-renamed", plain)
+        assert cursor == 0
+        env, headers = manager.redaction_maps_since(
+            "docs-renamed", plain, cursor
+        )
+        result = redact_configured_value_tree(
+            {"text": "retiredPrivateA1 must stay private"}, env, headers
+        )
+        assert result == {"text": "<redacted> must stay private"}
+    finally:
+        manager.close()
+
+
+def test_plain_server_does_not_join_colliding_durable_integration_domain(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    plain = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://plain.example/mcp",
+            "headers": {"X-Mode": "1"},
+        }
+    )
+    oauth = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "shared",
+            "type": "http",
+            "url": "https://oauth.example/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    store.set_tokens(
+        "shared",
+        OAuthToken.model_validate(
+            {"access_token": "production", "token_type": "Bearer"}
+        ),
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        cursor = manager.redaction_cursor("shared", plain)
+        assert cursor is None
+        env, headers = manager.redaction_maps_since("shared", plain, cursor)
+        result = redact_configured_value_tree(
+            {"text": "plain server says production ready"}, env, headers
+        )
+        assert result == {"text": "plain server says production ready"}
+    finally:
+        manager.close()
+
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"shared": 2},
+                "credential_redaction_history": {
+                    "shared": [{"revision": 2, "values": ["retired"]}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        assert manager.redaction_cursor("shared", plain) is None
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_cursor("oauth", oauth)
+    finally:
+        manager.close()
+
+
 def test_stable_integration_id_preserves_structured_secret_across_server_rename(
     tmp_path,
 ):

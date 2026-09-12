@@ -137,6 +137,15 @@ class AgentMcpServerConfig(BaseModel):
             )
         return self
 
+    def requires_stable_integration_id(self) -> bool:
+        """Return whether this server owns durable credential/redaction state."""
+        sensitive_literals = any(
+            isinstance(value, str) and SENSITIVE_KEY_RE.search(str(key))
+            for mapping in (self.env, self.headers)
+            for key, value in mapping.items()
+        )
+        return self.auth.mode in {"secret", "oauth"} or sensitive_literals
+
 
 class AgentSkillsConfig(BaseModel):
     """Configuration for loading Markdown-based agent skills."""
@@ -189,14 +198,10 @@ class AgentBridgeManifest(BaseModel):
         owners: dict[str, str] = {}
         for name, server in self.mcp_servers.items():
             integration_id = server.integration_id
-            sensitive_literals = any(
-                isinstance(value, str) and SENSITIVE_KEY_RE.search(str(key))
-                for mapping in (server.env, server.headers)
-                for key, value in mapping.items()
-            )
             if (
-                server.auth.mode in {"secret", "oauth"} or sensitive_literals
-            ) and integration_id is None:
+                server.requires_stable_integration_id()
+                and integration_id is None
+            ):
                 raise ValueError(
                     f"credential-bearing MCP server {name!r} requires a stable integrationId"
                 )

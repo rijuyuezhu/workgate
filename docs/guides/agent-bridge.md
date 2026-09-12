@@ -102,7 +102,7 @@ Secret references are valid only when the same server uses `auth.mode="secret"`.
 }
 ```
 
-Set the referenced value through standard input so it does not appear in the command arguments. The server name in the secret command must match the `mcpServers` key:
+Set the referenced value through standard input so it does not appear in the command arguments. For a configured integration, use its `mcpServers` display name:
 
 ```bash
 printf '%s\n' "$GITHUB_TOKEN" | workgate mcp secret set github github_token --stdin
@@ -110,7 +110,9 @@ workgate mcp secret list github
 workgate mcp secret delete github github_token
 ```
 
-The CLI resolves that display name to the entry's stable `integrationId` before reading or changing private credentials. Therefore a later rename from `github` to another `mcpServers` key does not reset credential or redaction history as long as `integrationId` remains `github`.
+The CLI resolves that display name to the entry's stable `integrationId` before reading or changing private credentials. Therefore a later rename from `github` to another `mcpServers` key does not reset credential or redaction history as long as `integrationId` remains `github`. Keeping that explicit `integrationId` also preserves retired-value redaction history if the integration is later reconfigured without credentials.
+
+`secret set` always requires a currently configured server. `secret list` and `secret delete` also support cleanup after an integration has been removed: `workgate mcp secret list` shows stored integration identities, and a detached `integrationId` can be supplied in the normal server position to inspect or delete its stored secret names. If a live display name is present, it is resolved to its stable identity unless that exact argument already names a stored secret bucket.
 
 Literal `env` and `headers` are still accepted for compatibility. Credential-like literal keys such as `Authorization`, `Cookie`, `TOKEN`, `PASSWORD`, or API-key fields participate in durable retired-value redaction and therefore also require `integrationId`. Ordinary literal values such as `MODE=production`, `LOG_LEVEL=info`, or `X-Mode: 1` are redacted only for the current server snapshot and are not persisted as a global substring filter. Prefer structured secret references for credentials, especially when the application uses an unusual key name.
 
