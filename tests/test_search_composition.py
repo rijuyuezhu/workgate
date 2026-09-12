@@ -2,37 +2,16 @@ import shutil
 
 import pytest
 
-from workgate.composition.services import (
-    build_runtime_services,
-    install_runtime_services,
-)
 from workgate.config.settings import Settings, clear_settings_cache
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.search_composition import (
     build_executor_dispatcher_with_search,
 )
-from workgate.ops.search.composition import build_search_service
-from workgate.ops.search.service import RemoteSearchClient
-from workgate.ops.utils.remote_session import call_remote_session_tool
-from workgate.persistence import configure_state_store
-from workgate.remote.manager import (
-    RemoteManager,
-    configure_remote_manager,
-)
-from workgate.schemas.result_models.search import (
-    GrepSearchOutput,
-)
-from workgate.tool_session import configure_tool_session_store
+from workgate.executor.services import build_runtime_services
 from workgate.tools.registry.search import SearchToolRegistry
-
-
-@pytest.fixture(autouse=True)
-def _restore_global_runtime_services():
-    configure_remote_manager(None)
-    yield
-    configure_remote_manager(None)
-    configure_tool_session_store(None)
-    configure_state_store(None)
-    clear_settings_cache()
+from workgate.tools.registry.workspace_connector import (
+    WorkspaceConnectorToolRegistry,
+)
 
 
 def _settings(tmp_path, monkeypatch) -> Settings:
@@ -42,253 +21,126 @@ def _settings(tmp_path, monkeypatch) -> Settings:
     return Settings()
 
 
-def _configure_runtime_services(settings: Settings):
-    services = build_runtime_services(settings)
-    install_runtime_services(services)
-    return services
+def _session_id(index: int) -> str:
+    return f"sess_{index:022d}"
 
 
 @pytest.mark.asyncio
-async def test_bound_search_registry_uses_explicit_service(
+async def test_executor_dispatcher_uses_composed_search_discovery_and_connector(
     tmp_path, monkeypatch
 ):
     if not shutil.which("rg"):
         pytest.skip("missing rg")
     settings = _settings(tmp_path, monkeypatch)
-    services = _configure_runtime_services(settings)
-    (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
-    session = services.tool_session_store.create_session(workdir=tmp_path)
-
-    search_service = build_search_service(
-        settings, services.tool_session_store, remote=None
-    )
-    registry = SearchToolRegistry(settings, search_service=search_service)
-    bound_search = next(
-        tool for tool in registry._enabled_tools() if tool.name == "search"
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
+    store = services.tool_session_store
+    session = store.create_session(session_id=_session_id(1), workdir=tmp_path)
+    dispatcher = build_executor_dispatcher_with_search(config, store)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "demo.txt").write_text(
+        "alpha\nneedle here\ngamma\n", encoding="utf-8"
     )
 
-    assert bound_search.session_admission == "handler"
-    assert (
-        next(
-            tool
-            for tool in registry._enabled_tools()
-            if tool.name == "tree_view"
-        ).session_admission
-        == "wrapper"
-    )
-    result = await bound_search.func(
-        session.session_id,
-        "needle",
-        regex=False,
-        gitignore=False,
-    )
-    assert result.ok is True
-    assert result.count == 1
-    assert result.matches[0].snapshot_id is not None
-
-
-@pytest.mark.asyncio
-async def test_search_remote_client_uses_owned_manager(tmp_path, monkeypatch):
-    settings = _settings(tmp_path, monkeypatch)
-    services = _configure_runtime_services(settings)
-    session = services.tool_session_store.create_session(
-        target="remote",
-        workdir="/remote/work",
-        machine="worker-a",
-        worker_session_id="WORKER01",
-    )
-    manager = RemoteManager(lambda: settings, state_store=services.state_store)
-    calls = []
-    output = GrepSearchOutput(
-        ok=True,
-        matches=[],
-        displayed_lines=[],
-        count=0,
-        displayed_count=0,
-        context_radius=0,
-        skipped=0,
-        truncated=False,
-        stderr="",
-        numbered_content="",
-    )
-
-    async def fake_call(machine, tool, args, timeout_s=None):
-        calls.append((machine, tool, args, timeout_s))
-        return {"ok": True, "data": output.model_dump(mode="json")}
-
-    monkeypatch.setattr(manager, "call", fake_call)
-
-    async def call_remote_search(binding, tool, args):
-        return await call_remote_session_tool(
-            binding,
-            tool,
-            args,
-            call_worker=manager.call,
-        )
-
-    search_service = build_search_service(
-        settings,
-        services.tool_session_store,
-        remote=RemoteSearchClient(call=call_remote_search),
-    )
-    registry = SearchToolRegistry(settings, search_service=search_service)
-    bound_search = next(
-        tool for tool in registry._enabled_tools() if tool.name == "search"
-    )
-
-    result = await bound_search.func(session.session_id, "needle")
-
-    assert result == output
-    assert calls == [
-        (
-            "worker-a",
-            "search",
-            {
-                "pattern": "needle",
-                "paths": None,
-                "regex": True,
-                "case_sensitive": True,
-                "max_results": None,
-                "skip": 0,
-                "gitignore": True,
-                "session_id": "WORKER01",
-            },
-            None,
-        )
-    ]
-
-
-@pytest.mark.asyncio
-async def test_executor_dispatcher_uses_composed_search_override(
-    tmp_path, monkeypatch
-):
-    if not shutil.which("rg"):
-        pytest.skip("missing rg")
-    settings = _settings(tmp_path, monkeypatch)
-    services = _configure_runtime_services(settings)
-    dispatcher = build_executor_dispatcher_with_search(
-        settings, services.tool_session_store
-    )
-    (tmp_path / "demo.txt").write_text("needle\n", encoding="utf-8")
-    session = await dispatcher.execute(
-        "session_start",
-        {
-            "workdir": str(tmp_path),
-            "target": "local",
-            "machine": None,
-            "label": None,
-        },
-    )
-
-    import workgate.ops.search as search_ops
-
-    async def legacy_search_should_not_run(*_args, **_kwargs):
-        raise AssertionError(
-            "executor Search fell back to legacy search_execute"
-        )
-
-    monkeypatch.setattr(
-        search_ops, "search_execute", legacy_search_should_not_run
-    )
-    result = await dispatcher.execute(
+    search = await dispatcher.execute(
         "search",
         {
             "session_id": session.session_id,
             "pattern": "needle",
-            "paths": None,
+            "paths": "src",
             "regex": False,
-            "case_sensitive": True,
-            "max_results": None,
-            "skip": 0,
             "gitignore": False,
         },
     )
-
-    assert result.ok is True
-    assert result.count == 1
-    assert result.matches[0].session_id == session.session_id
-
-
-@pytest.mark.asyncio
-async def test_unbound_search_registry_rejects_bound_handler_use():
-    registry = SearchToolRegistry()
-    with pytest.raises(RuntimeError, match="Search service is not bound"):
-        await registry._bound_search("SESSION01", "needle")
-
-
-@pytest.mark.asyncio
-async def test_unbound_search_registry_uses_direct_search_handler(monkeypatch):
-    calls = []
-    output = GrepSearchOutput(
-        ok=True,
-        matches=[],
-        displayed_lines=[],
-        count=0,
-        displayed_count=0,
-        context_radius=0,
-        skipped=0,
-        truncated=False,
-        stderr="",
-        numbered_content="",
-    )
-
-    async def fake_search_execute(
-        pattern,
-        paths,
-        cwd,
-        regex,
-        case_sensitive,
-        max_results,
-        session_id,
-        skip,
-        gitignore,
-    ):
-        calls.append(
-            {
-                "pattern": pattern,
-                "paths": paths,
-                "cwd": cwd,
-                "regex": regex,
-                "case_sensitive": case_sensitive,
-                "max_results": max_results,
-                "session_id": session_id,
-                "skip": skip,
-                "gitignore": gitignore,
-            }
-        )
-        return output
-
-    monkeypatch.setattr(
-        "workgate.tools.registry.search.search_execute",
-        fake_search_execute,
-    )
-    registry = SearchToolRegistry()
-    direct_search = next(
-        tool for tool in registry._enabled_tools() if tool.name == "search"
-    )
-
-    result = await direct_search.func(
-        "SESSION01",
-        "needle",
-        ["src"],
-        False,
-        False,
-        17,
-        3,
-        False,
-    )
-
-    assert result == output
-    assert calls == [
+    glob = await dispatcher.execute(
+        "glob_search",
         {
-            "pattern": "needle",
-            "paths": ["src"],
+            "session_id": session.session_id,
+            "pattern": "*.txt",
             "cwd": ".",
-            "regex": False,
-            "case_sensitive": False,
-            "max_results": 17,
-            "session_id": "SESSION01",
-            "skip": 3,
-            "gitignore": False,
-        }
-    ]
+        },
+    )
+    tree = await dispatcher.execute(
+        "tree_view",
+        {"session_id": session.session_id, "cwd": ".", "depth": 2},
+    )
+    connector = await dispatcher.execute(
+        "workspace_search",
+        {"session_id": session.session_id, "query": "needle"},
+    )
+    fetched = await dispatcher.execute(
+        "fetch",
+        {"session_id": session.session_id, "id": "src/demo.txt"},
+    )
+
+    assert search.ok is True
+    assert [match.path for match in search.matches] == ["src/demo.txt"]
+    assert glob.paths == ["src/demo.txt"]
+    assert "src/" in tree.entries
+    assert "  demo.txt" in tree.entries
+    assert [result.id for result in connector.results] == ["src/demo.txt"]
+    assert fetched.id == "src/demo.txt"
+    assert fetched.text == "alpha\nneedle here\ngamma\n"
+
+
+@pytest.mark.asyncio
+async def test_composed_search_resolves_each_operation_from_session_workdir(
+    tmp_path, monkeypatch
+):
+    if not shutil.which("rg"):
+        pytest.skip("missing rg")
+    settings = _settings(tmp_path, monkeypatch)
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
+    store = services.tool_session_store
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "one.txt").write_text("needle first\n", encoding="utf-8")
+    (second / "two.txt").write_text("needle second\n", encoding="utf-8")
+    session = store.create_session(session_id=_session_id(2), workdir=first)
+    dispatcher = build_executor_dispatcher_with_search(config, store)
+
+    first_result = await dispatcher.execute(
+        "workspace_search",
+        {"session_id": session.session_id, "query": "needle"},
+    )
+    store.change_session_workdir(session.session_id, second)
+    second_result = await dispatcher.execute(
+        "workspace_search",
+        {"session_id": session.session_id, "query": "needle"},
+    )
+
+    assert [item.id for item in first_result.results] == ["first/one.txt"]
+    assert [item.id for item in second_result.results] == ["second/two.txt"]
+
+
+@pytest.mark.asyncio
+async def test_search_registry_is_declaration_only_and_fails_closed() -> None:
+    registry = SearchToolRegistry()
+    tools = {tool.name: tool for tool in registry._enabled_tools()}
+
+    with pytest.raises(
+        RuntimeError, match="tree_view requires control routing"
+    ):
+        await tools["tree_view"].func(_session_id(1))
+    with pytest.raises(
+        RuntimeError, match="glob_search requires control routing"
+    ):
+        await tools["glob_search"].func(_session_id(1), "*.py")
+    with pytest.raises(RuntimeError, match="search requires control routing"):
+        await tools["search"].func(_session_id(1), "needle")
+
+
+@pytest.mark.asyncio
+async def test_workspace_connector_registry_is_declaration_only() -> None:
+    registry = WorkspaceConnectorToolRegistry()
+    tools = {tool.name: tool for tool in registry._enabled_tools()}
+
+    with pytest.raises(
+        RuntimeError, match="workspace_search requires control routing"
+    ):
+        await tools["workspace_search"].func(_session_id(1), "needle")
+    with pytest.raises(RuntimeError, match="fetch requires control routing"):
+        await tools["fetch"].func(_session_id(1), "demo.txt")

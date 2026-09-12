@@ -69,7 +69,7 @@ Pair or select the intended executor, then start a session with its stable execu
 Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-The normal file, search, shell, job, Todo, and Audit tools all route through the executor bound to that shared session. See [Executors and legacy remote workers](remote-workers.md) for pairing and migration-era lifecycle management.
+The normal file, search, shell, job, Todo, and Audit tools all route through the executor bound to that shared session. See [Executors](remote-workers.md) for pairing, reconnect, and trust management.
 
 ## Review activity
 

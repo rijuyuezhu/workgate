@@ -7,7 +7,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..config.settings import Settings, get_settings
+from ..config.control import ControlSettingsView
+from ..config.settings import get_settings
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
     AgentConfigStatusOutput,
@@ -16,9 +17,12 @@ from ..schemas.result_models.agent import (
     ListAgentMcpToolsOutput,
     ListAgentSkillsOutput,
 )
-from ..tool_session.store import get_tool_session_store
 from ..utils.serialization import to_jsonable
-from .auth import manager_redaction_maps
+from .auth import (
+    manager_redaction_cursor,
+    manager_redaction_maps,
+    manager_redaction_maps_since,
+)
 from .auth_store import AgentAuthStore
 from .mcp import AgentMcpClientManager
 from .models import AgentCapabilityRegistry, AgentMcpServerRecord, SkillRecord
@@ -37,19 +41,22 @@ type AgentMcpClientManagerFactory = Callable[[float], Any]
 
 _shared_mcp_manager_lock = threading.RLock()
 _shared_mcp_manager: AgentMcpClientManager | None = None
-_shared_mcp_manager_key: tuple[str, str, float] | None = None
+_shared_mcp_manager_key: tuple[str, str, float, bool] | None = None
 
 
 def _shared_agent_mcp_client_manager(
-    settings: Settings,
+    settings: ControlSettingsView,
+    *,
+    allow_stdio: bool = True,
 ) -> AgentMcpClientManager:
-    """Reuse one manager per active service configuration so stdio upstreams can persist."""
+    """Reuse one manager per active transport policy and service configuration."""
     global _shared_mcp_manager, _shared_mcp_manager_key
 
     key = (
         str(Path(settings.agent_config_dir).expanduser().resolve()),
         str(Path(settings.agent_auth_dir).expanduser().resolve()),
         float(settings.agent_mcp_call_timeout_s),
+        allow_stdio,
     )
     with _shared_mcp_manager_lock:
         if _shared_mcp_manager is not None and _shared_mcp_manager_key == key:
@@ -61,6 +68,7 @@ def _shared_agent_mcp_client_manager(
         manager = AgentMcpClientManager(
             settings.agent_mcp_call_timeout_s,
             AgentAuthStore(settings.agent_auth_dir),
+            allow_stdio=allow_stdio,
         )
         _shared_mcp_manager = manager
         _shared_mcp_manager_key = key
@@ -82,25 +90,16 @@ def _close_shared_agent_mcp_client_manager() -> None:
 atexit.register(_close_shared_agent_mcp_client_manager)
 
 
-def build_agent_registry_from_settings(
-    settings: Settings | None = None,
+def build_network_agent_registry_from_settings(
+    settings: ControlSettingsView | None = None,
     client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
-    *,
-    session_id: str | None = None,
-    project_root: Path | None = None,
 ) -> AgentCapabilityRegistry:
-    """Build the current registry for the default workspace or one explicit local session."""
-    active_settings = settings or get_settings()
-    active_project_root = project_root or active_settings.workspace_root
-    if session_id is not None:
-        session = get_tool_session_store().touch_session(session_id)
-        if session.target != "local":
-            raise ValueError(
-                "remote agent Skill registries must be dispatched to the worker"
-            )
-        active_project_root = Path(session.workdir)
+    """Build the control-owned HTTP/SSE registry without machine/Skill policy."""
+    active_settings: ControlSettingsView = settings or get_settings()
     if client_manager_factory is AgentMcpClientManager:
-        client_manager = _shared_agent_mcp_client_manager(active_settings)
+        client_manager = _shared_agent_mcp_client_manager(
+            active_settings, allow_stdio=False
+        )
     else:
         client_manager = client_manager_factory(
             active_settings.agent_mcp_call_timeout_s
@@ -110,13 +109,16 @@ def build_agent_registry_from_settings(
         client_manager,
         active_settings.agent_mcp_probe_timeout_s,
         None if active_settings.agent_dynamic_mcp_tools else False,
-        None if active_settings.agent_dynamic_skill_tools else False,
-        project_root=Path(active_project_root),
-        max_skills=active_settings.max_skills,
-        max_skill_related_files=active_settings.max_skill_related_files,
-        max_skill_scan_entries=active_settings.max_skill_scan_entries,
-        max_skill_path_bytes=active_settings.max_skill_path_bytes,
-        max_skill_entry_bytes=active_settings.max_file_read_bytes,
+        False,
+        project_root=active_settings.agent_config_dir,
+        max_skills=0,
+        max_skill_related_files=0,
+        max_skill_scan_entries=0,
+        max_skill_path_bytes=0,
+        max_skill_entry_bytes=0,
+        include_project_skills=False,
+        mcp_server_types=frozenset({"http", "sse"}),
+        scan_skills=False,
     )
 
 
@@ -184,13 +186,17 @@ def redact_mcp_payload_strings(value: Any, *maps: dict[str, str]) -> Any:
     return redact_configured_value_tree(value, *maps)
 
 
-def redact_mcp_error_payload(data: Any, *maps: dict[str, str]) -> Any:
-    """Redact only MCP tool-result payloads that are explicitly marked as errors."""
-    if not isinstance(data, dict) or not (
-        data.get("is_error") or data.get("isError")
-    ):
-        return data
+def redact_mcp_result_payload(data: Any, *maps: dict[str, str]) -> Any:
+    """Redact configured secrets and sensitive fields from any MCP tool result."""
     return redact_mcp_payload_strings(redact_mapping(data), *maps)
+
+
+def _probe_redaction_map(record: AgentMcpServerRecord) -> dict[str, str]:
+    """Expose private probe credentials only to downstream sanitizers."""
+    return {
+        f"probe_{index}": value
+        for index, value in enumerate(record.probe_redaction_values)
+    }
 
 
 def agent_config_status_payload(
@@ -311,11 +317,11 @@ def list_agent_mcp_tools_payload(
                 tool,
                 env,
                 headers,
-                dynamic_names.get(
-                    (server_name, str(tool_value(tool, "name", "")))
-                ),
+                dynamic_names.get((server_name, raw_tool_name)),
             )
-            for tool in record.tools
+            for raw_tool_name, tool in zip(
+                record.raw_tool_names, record.tools, strict=True
+            )
         )
     return ListAgentMcpToolsOutput(tools=rows)
 
@@ -349,7 +355,16 @@ async def call_agent_mcp_tool_payload(
             f"MCP server {server} is unavailable: "
             f"{_agent_mcp_unavailable_error(registry, record)}"
         )
-    env, headers = manager_redaction_maps(
+    probe_secrets = _probe_redaction_map(record)
+    try:
+        redaction_cursor = manager_redaction_cursor(
+            registry.client_manager, server, record.config
+        )
+    except Exception:
+        raise ValueError(
+            "Agent MCP tool call failed: credential redaction history unavailable"
+        ) from None
+    before_env, before_headers = manager_redaction_maps(
         registry.client_manager, server, record.config
     )
     try:
@@ -357,8 +372,44 @@ async def call_agent_mcp_tool_payload(
             server, record.config, tool, args or {}
         )
     except Exception as exc:
-        raise redacted_mcp_call_error(exc, env, headers) from None
-    output = redact_mcp_error_payload(data, env, headers)
+        try:
+            operation_env, operation_headers = manager_redaction_maps_since(
+                registry.client_manager,
+                server,
+                record.config,
+                redaction_cursor,
+            )
+        except Exception:
+            raise ValueError(
+                "Agent MCP tool call failed: credential redaction history unavailable"
+            ) from None
+        raise redacted_mcp_call_error(
+            exc,
+            probe_secrets,
+            before_env,
+            before_headers,
+            operation_env,
+            operation_headers,
+        ) from None
+    try:
+        operation_env, operation_headers = manager_redaction_maps_since(
+            registry.client_manager,
+            server,
+            record.config,
+            redaction_cursor,
+        )
+    except Exception:
+        raise ValueError(
+            "Agent MCP tool call failed: credential redaction history unavailable"
+        ) from None
+    output = redact_mcp_result_payload(
+        data,
+        probe_secrets,
+        before_env,
+        before_headers,
+        operation_env,
+        operation_headers,
+    )
     if not isinstance(output, dict):
         output = {"result": output}
     return CallAgentMcpToolOutput(**output)

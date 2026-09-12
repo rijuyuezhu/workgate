@@ -2,7 +2,7 @@
 
 This page records the stable architecture contracts of the project: process
 composition, dependency direction, runtime ownership, session authority,
-durability, remote trust, trimmed worker-runtime constraints, and protocol/UI
+durability, executor trust, machine-runtime constraints, and protocol/UI
 boundaries. Architecture tests exact-freeze membership only where membership is
 itself a security, packaging, public-surface, or process contract. Ordinary
 internal files may move or split without being added to a central filename
@@ -22,32 +22,30 @@ operations, and domain services:
 ```text
 workgate/
   main.py                 argparse root and command registration
+  protocol/               dependency-light control/executor wire contracts
   control/
     mcp/                   MCP control-plane adapter and middleware
     http/                  REST/tool HTTP control-plane adapter
-  executor/                executor composition root and resolved machine config
+  executor/
+    jobs/                  shell-backed job lifecycle and durable runner
+    tool_session/          machine session, grounding, and resource ownership
+    terminal/              executor terminal runtime and bridge
+    ...                    files/search/shell/integration implementations
   http/                    transport-neutral ASGI and HTTP infrastructure
   ui/
     ...                    transport-neutral Human UI core and runtimes
     http/                  Human UI HTTP adapters and routes
-  tools/                   public tool contracts and registration
-    ops/                   audited tool-owned operation implementations
-    schemas/               audited tool-owned input and result contracts
-  jobs/                    shared durable background-job domain
-  ops/                     shared transport-neutral operations
+  tools/                   public tool contracts, metadata, and registration
+  jobs/                    process-neutral/control-managed job mechanisms
   schemas/                 shared cross-domain contracts
-  config/                  settings and configuration surface
-  agent_bridge/            external agent capability domain
-  remote/                  legacy control-side remote-worker domain
-  remote_worker/           legacy machine implementation migration source
-  tool_session/            explicit local/remote workspace session state
+  config/                  user settings plus resolved role-specific views
+  agent_bridge/            shared Agent Bridge contracts/mechanisms
   utils/                   small dependency-leaf technical primitives
 ```
 
 MCP and REST/tool HTTP delivery adapters live under `control`. The executor
-process composition owner lives under `executor`; the remaining
-`remote_worker` modules are explicit migration sources until machine
-implementations move under that root in later control/executor refactor PRs.
+process composition owner and all machine-authoritative session, filesystem,
+shell/job, PTY, and local-integration implementations live under `executor`.
 Human UI delivery adapters live in `ui/http`, and transport-neutral ASGI
 infrastructure lives in `http`. The obsolete `executors` and `server` packages
 have been removed and must not be restored.
@@ -61,17 +59,19 @@ General rules:
 - `main.py` owns only the root argparse parser and composes domain-owned CLI
   registration functions. Command modules load settings and invoke their own
   runtime handlers; `main.py` must not inspect `sys.argv` or import runtime apps.
-- Control delivery adapters may compose tools, OAuth, remote services, shared HTTP
-  infrastructure, and UI route contributions.
+- Control delivery adapters may compose public tools, OAuth, executor trust and
+  routing, shared HTTP infrastructure, control-owned integrations, and UI route
+  contributions. They must not import executor implementation modules or read
+  executor workspace/path/command/machine policy.
 - `http` must not import control delivery adapters or Human UI implementations.
-- UI core must not import control delivery adapters. `ui/http` may depend on UI core and
-  transport-neutral operations and domain services.
-- `ops`, `tools`, `schemas`, domain packages, and worker code must not import
-  control delivery adapters or UI HTTP adapters. A module moves into `tools/{ops,schemas}` only
-  after its complete consumer graph is tool-owned; shared UI, worker, remote,
-  release, terminal, or infrastructure contracts remain in an explicit shared
-  domain until separately extracted. Every remaining top-level `ops` family has
-  completed this audit and is a deliberate shared owner, not migration backlog.
+- UI core must not import control delivery adapters. `ui/http` may depend on UI
+  core and explicit control-side adapter seams.
+- `tools`, `jobs`, `agent_bridge`, and `composition` are shared mechanism/contract
+  layers. They must not depend on executor implementation modules. Machine
+  behavior belongs under `executor`; public declarations stay fail-closed until
+  role composition binds them to their owner.
+- `schemas`, `protocol`, and small `utils` modules remain dependency-light shared
+  contracts/primitives and must not become alternate homes for machine policy.
 - `utils` is for small dependency-leaf technical primitives, not a holding area
   for domain algorithms or large workflows.
 
@@ -119,24 +119,21 @@ the process-local `OAuthState`. Human UI connection/session registries and other
 ordinary live coordination are likewise rebuilt empty after control restart;
 this persistence seam is intentionally not a command database or workflow log.
 
-`RemoteManager` follows the same ownership rule. The module no longer constructs
-a process singleton at import time. `ControlRuntime` constructs one manager,
-starts its loop-owned enrollment lock and durable worker queues in the control
-lifespan, stops admission during close, and cancels pending remote calls and
-long-poll waiters before the shared store bindings are restored. A reversible
-non-owning compatibility pointer remains only for legacy control consumers;
-migrated domains receive the manager's narrow capabilities explicitly.
+Executor trust and delivery state follow the same ownership rule. `ControlRuntime`
+constructs the control state, executor transport, pairing service, and session
+coordinator explicitly. The control lifespan stops admission and interrupts
+pending executor calls before restoring compatibility state-store bindings; no
+module-level remote-manager runtime or local-execution fallback participates.
 
 Managed background Jobs are control-owned rather than module-owned.
 `ControlRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
 asyncio tasks, and cross-process liveness leases are scoped to that owner. The
 `session_copy` managed handler is registered explicitly during control
-composition, while legacy remote-worker runtimes do not construct a managed Jobs owner
-because their tracked jobs are shell-backed. Shutdown stops managed-job
-admission and cancels/awaits owned tasks before UI, OAuth, remote, terminal, or
-shared-store teardown, so cancellation can commit `stopped` (or durably journal
-the deferred store update) before its lease is released. The remaining
-compatibility binding is reversible and non-owning.
+composition. Executor shell-backed jobs have a separate executor-owned runtime.
+Shutdown stops managed-job admission and cancels/awaits owned tasks before UI,
+OAuth, executor transport, or shared-store teardown, so cancellation can commit
+`stopped` (or durably journal the deferred store update) before its lease is
+released. The remaining compatibility binding is reversible and non-owning.
 
 Terminal live state is similarly process-owned rather than module-owned.
 `ControlRuntime` and `ExecutorRuntime` each construct a fresh `TerminalRuntime`.
@@ -229,80 +226,38 @@ Rejected ownership alternatives:
   either location would reverse the other adapter's dependency direction.
 
 
-## `ops`: shared transport-neutral operations
+## Shared mechanisms and role composition
 
-The `ops` package is the shared application-operation layer. These modules back
-public tools, but they also serve legacy remote-worker execution, Human UI adapters, generic
-HTTP routes, remote transfer services, the job runtime, or other operation
-families. Consequently, importing them from `tools` would reverse dependency
-direction: shared runtimes would depend on the public tool-registration layer.
-The current consumer graph has been fully audited; `ops` is no longer a staging
-area for unaudited moves. Shared operation families stay here while they have
-real consumers across tools, workers, UI/HTTP, remote services, Jobs, or other
-domains. Tool-only families may move behind the tool layer only when their
-complete production consumer graph becomes tool-specific. Search and Files are
-examples of explicit service composition within this shared layer: control
-and executor construction pass narrow stores/config/callables into the domain
-service rather than making the service depend on a process runtime object.
+Shared packages contain contracts and mechanisms that have genuine consumers in
+both roles; they do not provide an alternate machine-execution layer. Control and
+executor construction pass narrow stores, configs, and callables into shared
+mechanisms instead of making those mechanisms depend on a process runtime object.
+Machine-facing implementations move under `executor`; control-owned orchestration
+moves under `control`.
 
 Rejected ownership alternatives:
 
-- moving the complete `ops/` tree under `tools/ops`: this would make executor-side code,
-  UI/HTTP adapters, remote services, and the job runtime depend on public tool
-  ownership and would require bundling control-only `tools` code on executors.
-- treating top-level `ops` as unfinished migration: architecture tests require
-  each shared top-level operation family to retain both its public registry consumer
-  and a genuine non-registry consumer. A family may move only after that shared use
-  disappears or a more truthful shared domain is extracted.
-- moving only `ops/remote.py`: its shared result contracts keep the remote family
-  cross-domain, and partial family migration would weaken the registry/operation/
-  schema alignment contract.
+- restoring a top-level `ops/` implementation namespace: machine-facing behavior now has an explicit executor owner, while public/control orchestration belongs under `control` or a narrow shared mechanism package;
+- moving machine implementations under `tools`: executors should not depend on public tool registration merely to perform local work;
+- putting role-specific runtime state into `utils`: ownership and lifecycle policy are domain behavior, not dependency-leaf helpers.
 
-## `jobs`: shared durable background-job domain
+## `jobs`: shared mechanisms and executor shell-job ownership
 
-The `jobs` package owns durable tracked-job state and execution that must work
-independently of public tool registration. The worker-required subset is included
-in the trimmed worker bundle and may depend on shell operations, session state, configuration,
-audit recording, private-file primitives, and shared job result contracts. It
-must not import `tools`, control delivery adapters, UI adapters, or control-only
-remote orchestration.
+The top-level `jobs` package retains process-neutral durable job records, recovery helpers, and control-managed job machinery. Shell-backed execution, subprocess runner lifecycle, and machine-session coupling live under `executor/jobs/`.
 
-Rejected ownership alternatives:
+This split lets control-managed work such as background session copy retain durable job semantics without gaining executor shell authority. Executor shell jobs can consume shared job records/mechanisms, but shared `jobs` modules must not import executor implementations.
 
-- `ops/jobs.py`: the old module mixed shared persistence/runner behavior with the
-  public control-side job companion, preventing a truthful single owner for
-  the `job` tool family.
-- `tools/ops/jobs.py`: only control-side local/remote result orchestration
-  belongs there; moving the runtime would force executor processes and process
-  entrypoints to depend on the tool-registration layer.
-- `utils`: job state, lifecycle, and recovery form a cohesive domain rather than
-  small dependency-leaf helpers.
+## `tools`: public contracts and registration
 
-## `tools`: public contracts and tool-owned implementations
+The `tools` package owns public tool declarations, schemas/adapters, metadata, and registration. Machine-facing declarations are fail-closed on their own and become executable only when role composition routes them to the bound executor. Control-owned tools are routed to control services explicitly.
 
-The `tools` package owns public tool registration, metadata, and implementation
-slices whose complete production consumer graph is tool-specific. The current
-migration audit is complete: top-level `ops` and `schemas` are deliberate shared
-owners, while each accepted tool-only slice moves operation and schema contracts
-together without compatibility wrappers.
+Machine implementations do not live under `tools`: filesystem/search/shell/job/PTY/local-integration behavior belongs under `executor`. Shared tool machinery must therefore remain independent of executor implementation modules.
 
-Rejected ownership alternatives:
+## `executor/tool_session`: machine workspace-session state
 
-- top-level `ops/{audit,jobs,version,workspace_connector}.py` and corresponding
-  `schemas/**` files: their placement advertised transport-neutral reuse despite
-  exclusively tool-owned consumer graphs.
-- matching `tools/registry/*.py`: registration adapts operations to declarative
-  tool metadata; combining implementation and schemas into registry adapters
-  would erase the operation/contract boundary.
-- trimmed legacy worker bundle: the executor-side runtime executes shared job actions but does
-  not import control-side public-tool orchestration, so migrated `tools/` files
-  must not be included incidentally by operation or schema wildcards.
+`executor/tool_session` owns durable executor-side session metadata, grounding snapshots, machine-session admission, persistent-shell resource ownership, and retention helpers. Control separately owns the public session identity/binding/lifecycle projection; both sides use the same opaque `session_id` but do not share one physical session store.
 
-## `tool_session`: explicit workspace-session state
-
-The `tool_session` package owns durable local/remote agent-session metadata,
-grounding snapshots, session admission, resource ownership, and retention policy.
-Filesystem layout and atomic storage mechanics remain below it in `persistence`.
+Filesystem layout and atomic storage mechanics remain below these owners in `persistence`.
 
 ## `persistence`: shared private-state layout and file-store primitives
 
@@ -310,8 +265,8 @@ The `persistence` package owns the canonical directory layout below the configur
 state root and the small filesystem primitives shared by durable repositories. It
 does not own domain schemas, retention policy, migrations, or application-level
 state transitions. Session metadata, snapshots, Todo, session-local Audit, jobs,
-OAuth, downloads, remote workers, and UI modules retain their own validation and
-lifecycle rules while resolving paths through this package.
+OAuth, downloads, executor trust/session state, and UI modules retain their own
+validation and lifecycle rules while resolving paths through this package.
 
 Rejected ownership alternatives:
 
@@ -329,8 +284,8 @@ Rejected ownership alternatives:
 
 The `telemetry` package collects best-effort runtime observations without
 choosing how they are displayed. It may depend on configuration and operating
-system APIs, but it must not import UI projections, control delivery adapters, HTTP
-adapters, audit presentation, or remote-controller services.
+system APIs, but it must not import UI projections, control delivery adapters,
+HTTP adapters, audit presentation, or role-composition services.
 
 Rejected ownership alternatives:
 
@@ -344,10 +299,10 @@ Rejected ownership alternatives:
 ## `ui`: transport-neutral Human UI core
 
 The `ui` package owns Human UI view models, native-client runtime contracts, and
-UI-specific security behavior. UI core must not import control delivery adapters or
-HTTP route adapters. Control and legacy remote-worker adapters may invoke UI
-core capabilities when serving a Human UI, but those capabilities remain
-internal rather than public tools.
+UI-specific security behavior. UI core must not import control delivery adapters
+or HTTP route adapters. Control-side adapters may invoke UI core capabilities
+when serving the Human UI, but those capabilities remain internal rather than
+public tools.
 
 Rejected ownership alternatives:
 
@@ -355,10 +310,9 @@ Rejected ownership alternatives:
   mixed generic host sampling with UI projection.
 - `telemetry`: audit activity labels, alerts, health presentation, and redaction
   choices are view-model policy rather than raw observations.
-- `server/http`: the same Dashboard projection is used locally and through a
-  remote worker before any HTTP response is built. Image decoding likewise
-  belongs below the HTTP adapter because it is independent of query parameters
-  and JSON response construction.
+- `control/http`: Dashboard projection and image decoding belong below the
+  delivery adapter because they are independent of query parameters and JSON
+  response construction.
 - top-level `image_preview.py`: a package-root file hid that thumbnail generation
   is a Human UI rendering capability rather than a project-wide utility.
 - top-level `ui_security.py`: the old location obscured that the local-token
@@ -442,10 +396,10 @@ Rejected ownership alternatives:
   terminal capability they serve.
 - `utils`: ConPTY and bridge registries own stateful process, capability, and
   stream lifecycles rather than reusable stateless helpers.
-- `ops/shell.py`: shell operations select and orchestrate terminal backends; they
-  should not own backend implementations or shared terminal-dimension contracts.
-- `ui/http`: Human UI adapters consume raw bridges, but the same lifecycle is
-  also used by local tools and remote workers before HTTP delivery.
+- public tool registries: shell declarations select an operation but should not
+  own backend implementations or terminal lifecycle state.
+- `ui/http`: Human UI adapters consume terminal bridges, but executor terminal
+  lifetime remains below HTTP delivery.
 
 ## `audit`: redacted event persistence and query
 
@@ -497,31 +451,25 @@ Rejected ownership alternatives:
 - `utils`: these contracts and projections are specific to the Agent Bridge
   product surface rather than generic serialization helpers.
 
-## `remote_worker/state.py`: worker process path contract
+## Executor machine-state ownership
 
-The worker keeps persistent installation paths separate from bundle installation
-and process-lock policy. Each content-addressed runtime owns a locked uv environment,
-while `state.py` remains a stdlib-only dependency leaf so bootstrap-visible path
-derivation does not depend on an already-installed project environment. Dependency direction is intentionally
-one-way: `remote_worker/lifecycle.py` and `remote_worker/runtime.py` consume the
-state contract; runtime may request lifecycle lock handoff during re-exec, but
-lifecycle must not import runtime.
+Executor-owned machine state is physically colocated with executor authority.
+`executor/tool_session/` owns workspace-session records, grounding snapshots,
+path resolution, and persistent-shell resource ownership. `executor/jobs/` owns
+shell-backed job lifecycle and the durable subprocess runner. The top-level
+`jobs/` package retains only process-neutral/control-managed job mechanisms.
 
-Rejected ownership alternatives:
-
-- `remote_worker/runtime.py`: owning shared paths there forced lifecycle locking
-  to depend on bundle installation and created a cycle when runtime requested a
-  lock-preserving re-exec.
-- `remote_worker/lifecycle.py`: runtime installation, service generation, and
-  capability probes also consume the same persistent root.
-- general `utils`: the environment names and derived layout are a worker product
-  contract rather than a reusable filesystem primitive.
+Control keeps only logical session identity/binding and orchestration state. Its
+runtime carries a resolved `ControlConfig` that intentionally has no
+`workspace_root`, path/command denylist, shell executable, or executor file/search
+limits. Public machine-tool descriptions therefore state that the bound executor
+enforces its own policy instead of advertising the control host's values.
 
 ## `release`: artifact construction and verification
 
 The `release` package owns build-time artifact assembly and validation. It is
-outside runtime execution paths and must not depend on control delivery adapters, HTTP adapters,
-terminal runtime state, remote workers, or tool operations. Its only project-local
+outside runtime execution paths and must not depend on control delivery adapters,
+HTTP adapters, executor runtime state, or tool operations. Its only project-local
 dependency is the dependency-leaf OpenTUI filename contract in `ui/contracts.py`.
 
 Rejected ownership alternatives:

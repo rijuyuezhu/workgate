@@ -11,7 +11,7 @@
     "Paths and state",
     "Authentication and OAuth",
     "Safety and resource limits",
-    "Remote workers",
+    "Cross-executor transfer",
     "Agent capability bridge",
     "Tool executables"
   ],
@@ -697,7 +697,7 @@
           {
             "code": "60"
           },
-          "Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded cleanup time beyond run_shell_max_timeout_s."
+          "Base control-owned MCP/HTTP tool watchdog timeout in seconds."
         ],
         [
           {
@@ -1630,240 +1630,6 @@
         "Default",
         "Description"
       ],
-      "heading": "Remote workers",
-      "kind": "table",
-      "rows": [
-        [
-          {
-            "code": "remote_enabled"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-enabled"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_ENABLED"
-          },
-          "true | false",
-          {
-            "code": "true"
-          },
-          "Enable remote worker routes and MCP tools."
-        ],
-        [
-          {
-            "code": "remote_invite_ttl_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-invite-ttl-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_INVITE_TTL_S"
-          },
-          "integer",
-          {
-            "code": "600"
-          },
-          "One-time remote worker invite lifetime in seconds."
-        ],
-        [
-          {
-            "code": "remote_poll_timeout_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-poll-timeout-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_POLL_TIMEOUT_S"
-          },
-          "integer",
-          {
-            "code": "25"
-          },
-          "Remote worker long-poll heartbeat timeout in seconds."
-        ],
-        [
-          {
-            "code": "remote_job_timeout_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-job-timeout-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_JOB_TIMEOUT_S"
-          },
-          "integer",
-          {
-            "code": "3600"
-          },
-          "Control-side remote job result timeout in seconds."
-        ],
-        [
-          {
-            "code": "remote_max_pending_jobs"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-max-pending-jobs"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_MAX_PENDING_JOBS"
-          },
-          "integer",
-          {
-            "code": "64"
-          },
-          "Maximum queued or in-flight remote jobs allowed per worker."
-        ],
-        [
-          {
-            "code": "remote_http_transfer_enabled"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-http-transfer-enabled"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_HTTP_TRANSFER_ENABLED"
-          },
-          "true | false",
-          {
-            "code": "true"
-          },
-          "Use the private resumable HTTP gateway for capable large session copies."
-        ],
-        [
-          {
-            "code": "remote_http_transfer_threshold_bytes"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-http-transfer-threshold-bytes"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_HTTP_TRANSFER_THRESHOLD_BYTES"
-          },
-          "integer",
-          {
-            "code": "1048576"
-          },
-          "Minimum payload size selected for private HTTP streaming."
-        ],
-        [
-          {
-            "code": "remote_http_transfer_chunk_bytes"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-http-transfer-chunk-bytes"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_HTTP_TRANSFER_CHUNK_BYTES"
-          },
-          "integer",
-          {
-            "code": "1048576"
-          },
-          "Maximum request or response chunk size for private HTTP transfer routes."
-        ],
-        [
-          {
-            "code": "remote_http_transfer_ticket_ttl_s"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-http-transfer-ticket-ttl-s"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_HTTP_TRANSFER_TICKET_TTL_S"
-          },
-          "integer",
-          {
-            "code": "300"
-          },
-          "Lifetime of a private transfer grant before it must be renewed."
-        ],
-        [
-          {
-            "code": "remote_http_transfer_max_active"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-http-transfer-max-active"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_HTTP_TRANSFER_MAX_ACTIVE"
-          },
-          "integer",
-          {
-            "code": "16"
-          },
-          "Maximum non-terminal private transfer objects retained concurrently."
-        ],
-        [
-          {
-            "code": "remote_http_transfer_max_spool_bytes"
-          },
-          {
-            "lines": [
-              {
-                "code": "--remote-http-transfer-max-spool-bytes"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_REMOTE_HTTP_TRANSFER_MAX_SPOOL_BYTES"
-          },
-          "integer",
-          {
-            "code": "10737418240"
-          },
-          "Maximum aggregate bytes reserved by private controller transfer spools."
-        ]
-      ]
-    },
-    {
-      "headers": [
-        "Setting",
-        "CLI",
-        "Environment",
-        "Type",
-        "Default",
-        "Description"
-      ],
       "heading": "Agent capability bridge",
       "kind": "table",
       "rows": [
@@ -1946,26 +1712,6 @@
             "code": "true"
           },
           "Register dynamic MCP bridge tools."
-        ],
-        [
-          {
-            "code": "agent_dynamic_skill_tools"
-          },
-          {
-            "lines": [
-              {
-                "code": "--agent-dynamic-skill-tools"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_AGENT_DYNAMIC_SKILL_TOOLS"
-          },
-          "true | false",
-          {
-            "code": "true"
-          },
-          "Register dynamic skill bridge tools."
         ]
       ]
     },
@@ -2508,7 +2254,7 @@
       "cli": "--tool-timeout-s",
       "default": 60,
       "default_display": "60",
-      "description": "Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded cleanup time beyond run_shell_max_timeout_s.",
+      "description": "Base control-owned MCP/HTTP tool watchdog timeout in seconds.",
       "env": "WORKGATE_TOOL_TIMEOUT_S",
       "name": "tool_timeout_s",
       "nullable": false,
@@ -3143,155 +2889,6 @@
         "true",
         "false"
       ],
-      "cli": "--remote-enabled",
-      "default": true,
-      "default_display": "true",
-      "description": "Enable remote worker routes and MCP tools.",
-      "env": "WORKGATE_REMOTE_ENABLED",
-      "name": "remote_enabled",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "true | false",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-invite-ttl-s",
-      "default": 600,
-      "default_display": "600",
-      "description": "One-time remote worker invite lifetime in seconds.",
-      "env": "WORKGATE_REMOTE_INVITE_TTL_S",
-      "name": "remote_invite_ttl_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-poll-timeout-s",
-      "default": 25,
-      "default_display": "25",
-      "description": "Remote worker long-poll heartbeat timeout in seconds.",
-      "env": "WORKGATE_REMOTE_POLL_TIMEOUT_S",
-      "name": "remote_poll_timeout_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-job-timeout-s",
-      "default": 3600,
-      "default_display": "3600",
-      "description": "Control-side remote job result timeout in seconds.",
-      "env": "WORKGATE_REMOTE_JOB_TIMEOUT_S",
-      "name": "remote_job_timeout_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-max-pending-jobs",
-      "default": 64,
-      "default_display": "64",
-      "description": "Maximum queued or in-flight remote jobs allowed per worker.",
-      "env": "WORKGATE_REMOTE_MAX_PENDING_JOBS",
-      "name": "remote_max_pending_jobs",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "true",
-        "false"
-      ],
-      "cli": "--remote-http-transfer-enabled",
-      "default": true,
-      "default_display": "true",
-      "description": "Use the private resumable HTTP gateway for capable large session copies.",
-      "env": "WORKGATE_REMOTE_HTTP_TRANSFER_ENABLED",
-      "name": "remote_http_transfer_enabled",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "true | false",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-http-transfer-threshold-bytes",
-      "default": 1048576,
-      "default_display": "1048576",
-      "description": "Minimum payload size selected for private HTTP streaming.",
-      "env": "WORKGATE_REMOTE_HTTP_TRANSFER_THRESHOLD_BYTES",
-      "name": "remote_http_transfer_threshold_bytes",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-http-transfer-chunk-bytes",
-      "default": 1048576,
-      "default_display": "1048576",
-      "description": "Maximum request or response chunk size for private HTTP transfer routes.",
-      "env": "WORKGATE_REMOTE_HTTP_TRANSFER_CHUNK_BYTES",
-      "name": "remote_http_transfer_chunk_bytes",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-http-transfer-ticket-ttl-s",
-      "default": 300,
-      "default_display": "300",
-      "description": "Lifetime of a private transfer grant before it must be renewed.",
-      "env": "WORKGATE_REMOTE_HTTP_TRANSFER_TICKET_TTL_S",
-      "name": "remote_http_transfer_ticket_ttl_s",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-http-transfer-max-active",
-      "default": 16,
-      "default_display": "16",
-      "description": "Maximum non-terminal private transfer objects retained concurrently.",
-      "env": "WORKGATE_REMOTE_HTTP_TRANSFER_MAX_ACTIVE",
-      "name": "remote_http_transfer_max_active",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--remote-http-transfer-max-spool-bytes",
-      "default": 10737418240,
-      "default_display": "10737418240",
-      "description": "Maximum aggregate bytes reserved by private controller transfer spools.",
-      "env": "WORKGATE_REMOTE_HTTP_TRANSFER_MAX_SPOOL_BYTES",
-      "name": "remote_http_transfer_max_spool_bytes",
-      "nullable": false,
-      "section": "Remote workers",
-      "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "true",
-        "false"
-      ],
       "cli": "--agent-bridge-enabled",
       "default": true,
       "default_display": "true",
@@ -3340,22 +2937,6 @@
       "description": "Register dynamic MCP bridge tools.",
       "env": "WORKGATE_AGENT_DYNAMIC_MCP_TOOLS",
       "name": "agent_dynamic_mcp_tools",
-      "nullable": false,
-      "section": "Agent capability bridge",
-      "type": "true | false",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "true",
-        "false"
-      ],
-      "cli": "--agent-dynamic-skill-tools",
-      "default": true,
-      "default_display": "true",
-      "description": "Register dynamic skill bridge tools.",
-      "env": "WORKGATE_AGENT_DYNAMIC_SKILL_TOOLS",
-      "name": "agent_dynamic_skill_tools",
       "nullable": false,
       "section": "Agent capability bridge",
       "type": "true | false",

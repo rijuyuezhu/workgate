@@ -85,6 +85,9 @@ class AgentBridgeToolReloader:
                 self.dynamic_mcp_tools,
                 self.dynamic_skill_tools,
                 project_root=self.registry.project_root,
+                include_project_skills=self.registry.include_project_skills,
+                mcp_server_types=self.registry.mcp_server_types,
+                scan_skills=self.registry.scan_skills,
                 **self.skill_limits,
             )
             self._fingerprint = fingerprint
@@ -112,20 +115,24 @@ class AgentBridgeToolReloader:
 
         for dynamic_name, record in self.registry.dynamic_mcp_tool_map.items():
             server_record = self.registry.mcp_servers[record.server_name]
-            tool = next(
-                candidate
-                for candidate in server_record.tools
-                if str(tool_value(candidate, "name", "")) == record.tool_name
+            public_tool = next(
+                tool
+                for raw_tool_name, tool in zip(
+                    server_record.raw_tool_names,
+                    server_record.tools,
+                    strict=True,
+                )
+                if raw_tool_name == record.tool_name
             )
             env, headers = manager_redaction_maps(
                 self.registry.client_manager,
                 record.server_name,
                 server_record.config,
             )
-            tool_description = redact_configured_value_tree(
-                str(tool_value(tool, "description", "") or record.tool_name),
-                env,
-                headers,
+            tool_description = str(
+                tool_value(public_tool, "description", "")
+                or tool_value(public_tool, "name", "")
+                or record.tool_name
             )
             description = redact_configured_value_tree(
                 f"[agent mcp: {record.server_name}] {tool_description}",
@@ -142,6 +149,12 @@ class AgentBridgeToolReloader:
                 meta=self.meta,
             )
             self._dynamic_tool_names.add(dynamic_name)
+
+        reinstall_watchdogs = getattr(
+            self.mcp, "_workgate_install_tool_watchdogs", None
+        )
+        if callable(reinstall_watchdogs):
+            reinstall_watchdogs(self.mcp)
 
     def _remove_dynamic_tools(self) -> None:
         """Remove previously generated dynamic tools before rebuilding the registry."""

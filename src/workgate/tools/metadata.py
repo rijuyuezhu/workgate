@@ -41,7 +41,6 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "job",
         "kill_persistent_shell",
         "list_agent_mcp_tools",
-        "remote_admin",
         "resize_persistent_shell",
         "revoke_file_link",
         "run_python_code",

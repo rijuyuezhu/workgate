@@ -5,7 +5,7 @@ export function createFilesController({
   formatFileBytes,
 }) {
   const controllerState = {
-    fileMachine: "local",
+    fileExecutorId: "",
     filePath: ".",
     fileParentPath: ".",
     fileEntries: [],
@@ -23,19 +23,18 @@ export function createFilesController({
     },
   };
 
-  function defaultFileMutations(machine = controllerState.fileMachine) {
-    const local = machine === "local";
+  function defaultFileMutations() {
     return {
       write: true,
       delete: true,
-      copy: local,
-      move: local,
-      rename: local,
+      copy: true,
+      move: true,
+      rename: true,
     };
   }
 
-  function resetFileWorkspace(machine) {
-    controllerState.fileMachine = machine || "local";
+  function resetFileWorkspace(executorId = "") {
+    controllerState.fileExecutorId = executorId;
     controllerState.filePath = ".";
     controllerState.fileParentPath = ".";
     controllerState.fileEntries = [];
@@ -43,50 +42,45 @@ export function createFilesController({
     controllerState.fileListGeneration += 1;
     controllerState.filePreviewGeneration += 1;
     clearFileEditor();
-    controllerState.fileMutations = defaultFileMutations(controllerState.fileMachine);
-    elements.fileMachine.value = controllerState.fileMachine;
+    controllerState.fileMutations = defaultFileMutations(controllerState.fileExecutorId);
+    elements.fileExecutor.value = controllerState.fileExecutorId;
     elements.filePath.value = ".";
     renderFileList();
-    showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileMachine}.`);
+    showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileExecutorId}.`);
   }
 
-  function renderFileMachines(machines) {
-    const available = Array.isArray(machines) ? machines : [];
-    elements.fileMachine.replaceChildren();
+  function renderFileExecutors(targets) {
+    const available = Array.isArray(targets) ? targets : [];
+    elements.fileExecutor.replaceChildren();
     let currentAvailable = false;
-    for (const machine of available) {
-      const name = text(machine.name, "");
-      if (!name) continue;
+    for (const executor of available) {
+      const executorId = text(executor.executor_id, "");
+      if (!executorId) continue;
+      const online = executor.status === "online";
       const option = document.createElement("option");
-      const online = name === "local" || machine.status === "online";
-      option.value = name;
-      option.textContent = online ? name : `${name} (${text(machine.status, "offline")})`;
+      option.value = executorId;
+      const label = text(executor.name, executorId);
+      option.textContent = online ? label : `${label} (${text(executor.status, "offline")})`;
       option.disabled = !online;
-      option.selected = online && name === controllerState.fileMachine;
+      option.selected = online && executorId === controllerState.fileExecutorId;
       if (option.selected) currentAvailable = true;
-      elements.fileMachine.append(option);
-    }
-    if (!elements.fileMachine.options.length) {
-      const local = document.createElement("option");
-      local.value = "local";
-      local.textContent = "local";
-      local.selected = controllerState.fileMachine === "local";
-      currentAvailable = local.selected;
-      elements.fileMachine.append(local);
+      elements.fileExecutor.append(option);
     }
     if (!currentAvailable) {
-      const changed = controllerState.fileMachine !== "local";
-      resetFileWorkspace("local");
-      if (changed) void refreshFiles();
-    } else {
-      elements.fileMachine.value = controllerState.fileMachine;
+      const firstOnline = available.find((item) => item.status === "online");
+      const nextExecutorId = firstOnline?.executor_id || "";
+      const changed = controllerState.fileExecutorId !== nextExecutorId;
+      resetFileWorkspace(nextExecutorId);
+      if (changed && nextExecutorId) void refreshFiles();
+      return;
     }
+    elements.fileExecutor.value = controllerState.fileExecutorId;
   }
 
 
   function fileQuery(path, value) {
     const query = new URLSearchParams({
-      machine: controllerState.fileMachine,
+      executor_id: controllerState.fileExecutorId,
       path: value,
     });
     return `${path}?${query.toString()}`;
@@ -96,7 +90,7 @@ export function createFilesController({
     return request(`/files/${encodeURIComponent(action)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, machine: controllerState.fileMachine }),
+      body: JSON.stringify({ ...body, executor_id: controllerState.fileExecutorId }),
     });
   }
 
@@ -120,7 +114,7 @@ export function createFilesController({
 
   function setFileMutationBusy(busy) {
     controllerState.fileMutationBusy = busy;
-    elements.fileMachine.disabled = busy;
+    elements.fileExecutor.disabled = busy;
     elements.filePath.disabled = busy;
     elements.fileRefresh.disabled = busy;
     elements.fileShowHidden.disabled = busy;
@@ -151,10 +145,9 @@ export function createFilesController({
     elements.fileRename.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.rename || !entry;
     elements.fileDelete.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.delete || !entry;
     elements.fileUp.disabled = controllerState.fileMutationBusy || controllerState.filePath === controllerState.fileParentPath;
-    const localOnly = controllerState.fileMachine === "local" ? "" : "Only available for local Files";
-    elements.fileCopy.title = controllerState.fileMutations.copy ? "" : localOnly;
-    elements.fileMove.title = controllerState.fileMutations.move ? "" : localOnly;
-    elements.fileRename.title = controllerState.fileMutations.rename ? "" : localOnly;
+    elements.fileCopy.title = "";
+    elements.fileMove.title = "";
+    elements.fileRename.title = "";
   }
 
   function showFilePreviewMessage(title, detail) {
@@ -313,34 +306,39 @@ export function createFilesController({
   }
 
   async function refreshFiles({ previewSelection = false } = {}) {
+    if (!controllerState.fileExecutorId) {
+      elements.fileState.textContent = "No online executor available";
+      renderFileList({ entries: [] });
+      return null;
+    }
     const generation = ++controllerState.fileListGeneration;
-    const requestedMachine = controllerState.fileMachine;
+    const requestedExecutor = controllerState.fileExecutorId;
     const requestedPath = controllerState.filePath;
     elements.fileRefresh.disabled = true;
-    elements.fileState.textContent = `Loading ${requestedMachine}:${requestedPath}`;
+    elements.fileState.textContent = `Loading ${requestedExecutor}:${requestedPath}`;
     try {
       const payload = await request(fileQuery("/files", requestedPath));
-      if (generation !== controllerState.fileListGeneration || requestedMachine !== controllerState.fileMachine) return null;
-      controllerState.fileMachine = text(payload.machine, requestedMachine);
+      if (generation !== controllerState.fileListGeneration || requestedExecutor !== controllerState.fileExecutorId) return null;
+      controllerState.fileExecutorId = text(payload.executor_id, requestedExecutor);
       controllerState.filePath = text(payload.path, ".");
       controllerState.fileParentPath = text(payload.parent, controllerState.filePath);
       controllerState.fileEntries = Array.isArray(payload.entries) ? payload.entries : [];
       controllerState.fileMutations = {
-        ...defaultFileMutations(controllerState.fileMachine),
+        ...defaultFileMutations(controllerState.fileExecutorId),
         ...(payload.mutations && typeof payload.mutations === "object" ? payload.mutations : {}),
       };
-      elements.fileMachine.value = controllerState.fileMachine;
+      elements.fileExecutor.value = controllerState.fileExecutorId;
       elements.filePath.value = controllerState.filePath;
       const selected = currentFileEntry();
       if (!selected) {
         controllerState.selectedFilePath = "";
         controllerState.filePreviewGeneration += 1;
         clearFileEditor();
-        showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileMachine}.`);
+        showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileExecutorId}.`);
       }
       renderFileList();
       if (selected && previewSelection) void previewFile(selected);
-      elements.fileState.textContent = `${controllerState.fileMachine}:${controllerState.filePath} · ${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
+      elements.fileState.textContent = `${controllerState.fileExecutorId}:${controllerState.filePath} · ${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
       return payload;
     } finally {
       if (generation === controllerState.fileListGeneration) {
@@ -354,7 +352,7 @@ export function createFilesController({
     controllerState.selectedFilePath = selection;
     controllerState.filePreviewGeneration += 1;
     clearFileEditor();
-    showFilePreviewMessage("Loading directory", `${controllerState.fileMachine}:${controllerState.filePath}`);
+    showFilePreviewMessage("Loading directory", `${controllerState.fileExecutorId}:${controllerState.filePath}`);
     try {
       await refreshFiles({ previewSelection: Boolean(selection) });
       return true;
@@ -519,9 +517,9 @@ export function createFilesController({
   }
 
   function bind() {
-  elements.fileMachine.addEventListener("change", () => {
+  elements.fileExecutor.addEventListener("change", () => {
     if (controllerState.fileMutationBusy) return;
-    resetFileWorkspace(elements.fileMachine.value || "local");
+    resetFileWorkspace(elements.fileExecutor.value);
     void refreshFiles();
   });
   elements.filePathForm.addEventListener("submit", (event) => {
@@ -548,9 +546,9 @@ export function createFilesController({
     const entry = currentFileEntry();
     controllerState.filePreviewGeneration += 1;
     clearFileEditor();
-    elements.fileState.textContent = `${controllerState.fileMachine}:${controllerState.filePath}`;
+    elements.fileState.textContent = `${controllerState.fileExecutorId}:${controllerState.filePath}`;
     if (entry) void previewFile(entry);
-    else showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileMachine}.`);
+    else showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileExecutorId}.`);
   });
   elements.fileEditorForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -559,7 +557,7 @@ export function createFilesController({
     const button = elements.fileEditorForm.querySelector('button[type="submit"]');
     button.disabled = true;
     setFileMutationBusy(true);
-    elements.fileState.textContent = `Saving ${controllerState.fileMachine}:${path}`;
+    elements.fileState.textContent = `Saving ${controllerState.fileExecutorId}:${path}`;
     try {
       await fileAction("write", {
         path,
@@ -571,7 +569,7 @@ export function createFilesController({
       await refreshFiles();
       const entry = currentFileEntry();
       if (entry) await previewFile(entry);
-      elements.fileState.textContent = `Saved ${controllerState.fileMachine}:${path}`;
+      elements.fileState.textContent = `Saved ${controllerState.fileExecutorId}:${path}`;
     } catch (error) {
       elements.fileState.textContent = error instanceof Error ? error.message : String(error);
     } finally {
@@ -586,7 +584,7 @@ export function createFilesController({
     bind,
     invalidate,
     refresh: refreshFiles,
-    renderMachines: renderFileMachines,
+    renderExecutors: renderFileExecutors,
     reset: resetFileWorkspace,
     showMessage: showFilePreviewMessage,
   };

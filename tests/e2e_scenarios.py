@@ -51,7 +51,8 @@ async def exercise_environment_tool(
 ) -> None:
     payload = await client.call_tool("session_start", {"workdir": "."})
 
-    assert payload["target"] == "local"
+    assert isinstance(payload["executor_id"], str)
+    assert payload["executor_id"]
     assert payload["workdir"] == str(workspace)
     assert payload["workspace_root"] == str(workspace)
     assert payload["session_id"].startswith("sess_")
@@ -73,7 +74,8 @@ async def exercise_explicit_session_workflow(
     session_id = session["session_id"]
     assert session_id.startswith("sess_")
     assert len(session_id) >= 27
-    assert session["target"] == "local"
+    assert isinstance(session["executor_id"], str)
+    assert session["executor_id"]
     assert session["workdir"] == str(session_dir)
 
     read_result = await client.call_tool(
@@ -332,8 +334,8 @@ async def exercise_session_copy_tool(
         file_copy["source"]["executor_id"]
         == file_copy["destination"]["executor_id"]
     )
-    assert file_copy["source"]["target"] is None
-    assert file_copy["destination"]["target"] is None
+    assert "target" not in file_copy["source"]
+    assert "target" not in file_copy["destination"]
     assert file_copy["chunks"] > 1
     assert (dst_dir / "artifact-copy.bin").read_bytes() == payload
 

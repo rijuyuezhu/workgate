@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -92,62 +91,3 @@ def test_sorted_entry_payloads_places_directories_first() -> None:
         ("file", "Alpha"),
         ("file", "beta"),
     ]
-
-
-def _patch_remote_inventory(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    enabled: bool,
-    machines: list[SimpleNamespace],
-) -> None:
-    monkeypatch.setattr(
-        ui_common,
-        "get_settings",
-        lambda: SimpleNamespace(remote_enabled=enabled),
-    )
-    monkeypatch.setattr(
-        ui_common,
-        "remote_manager",
-        lambda: SimpleNamespace(
-            list_machines=lambda: SimpleNamespace(machines=machines)
-        ),
-    )
-
-
-def test_require_remote_machine_rejects_disabled_remote(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_remote_inventory(monkeypatch, enabled=False, machines=[])
-
-    with pytest.raises(ValueError, match="Remote workers are disabled"):
-        ui_common.require_remote_machine("worker-a")
-
-
-def test_require_remote_machine_rejects_unknown_and_offline_workers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_remote_inventory(monkeypatch, enabled=True, machines=[])
-    with pytest.raises(ValueError, match="Unknown remote machine: worker-a"):
-        ui_common.require_remote_machine("worker-a")
-
-    _patch_remote_inventory(
-        monkeypatch,
-        enabled=True,
-        machines=[SimpleNamespace(name="worker-a", status="offline")],
-    )
-    with pytest.raises(
-        ConnectionError, match="Remote machine worker-a is offline"
-    ):
-        ui_common.require_remote_machine("worker-a")
-
-
-def test_require_remote_machine_accepts_online_worker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_remote_inventory(
-        monkeypatch,
-        enabled=True,
-        machines=[SimpleNamespace(name="worker-a", status="online")],
-    )
-
-    ui_common.require_remote_machine("worker-a")

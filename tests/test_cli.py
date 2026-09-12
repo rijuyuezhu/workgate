@@ -3,17 +3,18 @@ import json
 import textwrap
 
 import pytest
-from mcp.shared.auth import OAuthToken
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 import workgate.agent_bridge.cli as agent_cli
 import workgate.control.cli as server_cli
-import workgate.jobs.cli as jobs_cli
+import workgate.executor.cli as executor_cli
+import workgate.executor.jobs.cli as jobs_cli
 import workgate.main as cli
 import workgate.ui.cli as tui_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.app_paths import app_paths
-from workgate.config.settings import load_settings
+from workgate.config.settings import Settings, load_settings
 from workgate.config.surface import (
     SETTING_SPECS,
     cli_overrides_from_args,
@@ -76,8 +77,6 @@ def test_server_subcommand_parses_runtime_settings():
             "pin",
             "--allow-full-control",
             "true",
-            "--remote-enabled",
-            "false",
         ]
     )
 
@@ -91,7 +90,6 @@ def test_server_subcommand_parses_runtime_settings():
     assert args.base_url == "https://example.com"
     assert args.oauth_admin_pin == "pin"
     assert args.allow_full_control is True
-    assert args.remote_enabled is False
 
 
 def test_root_parser_requires_an_explicit_command():
@@ -108,7 +106,7 @@ def test_root_help_lists_registered_commands():
         "server",
         "tui",
         "mcp",
-        "worker",
+        "executor",
         "version",
         "job-runner",
     ):
@@ -149,6 +147,23 @@ def test_every_setting_has_cli_option():
             assert spec.unset_cli_flag in help_text
         else:
             assert spec.unset_cli_flag not in help_text
+
+
+def test_removed_remote_worker_settings_stay_out_of_public_config_surface():
+    removed = {
+        "remote_enabled",
+        "remote_invite_ttl_s",
+        "remote_poll_timeout_s",
+        "remote_job_timeout_s",
+        "remote_max_pending_jobs",
+    }
+    spec_names = {spec.name for spec in SETTING_SPECS}
+    help_text = _command_parser("server").format_help()
+
+    assert removed.isdisjoint(Settings.model_fields)
+    assert removed.isdisjoint(spec_names)
+    for name in removed:
+        assert f"--{name.replace('_', '-')}" not in help_text
 
 
 def test_nullable_cli_values_can_be_explicitly_unset():
@@ -193,40 +208,33 @@ def test_bool_cli_values_parse_explicitly():
         ).allow_full_control
         is False
     )
-    assert (
-        parser.parse_args(
-            ["server", "--remote-enabled", "false"]
-        ).remote_enabled
-        is False
-    )
-    assert (
-        parser.parse_args(["server", "--remote-enabled", "true"]).remote_enabled
-        is True
-    )
 
 
-def test_worker_subcommand_parse_to_worker_handler():
+def test_removed_remote_transfer_flag_is_not_accepted():
+    parser = cli._build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["server", "--remote-http-transfer-enabled", "false"])
+
+
+def test_executor_connect_subcommand_parses_final_pairing_contract():
     args = cli._build_parser().parse_args(
         [
-            "worker",
+            "executor",
             "connect",
-            "--server",
             "https://example.com",
-            "--invite",
-            "workgate_inv_xxxxx",
             "--name",
             "npu-4card",
-            "--workdir",
+            "--workspace-root",
             "/home/user/project",
         ]
     )
 
-    assert args.worker_command == "connect"
-    assert args.server == "https://example.com"
-    assert args.invite == "workgate_inv_xxxxx"
+    assert args.handler is executor_cli._connect_from_args
+    assert args.executor_command == "connect"
+    assert args.control_url == "https://example.com"
     assert args.name == "npu-4card"
-    assert args.workdir == "/home/user/project"
-    assert not hasattr(args, "persist")
+    assert args.workspace_root == "/home/user/project"
+    assert not hasattr(args, "invite")
 
 
 def test_tui_subcommand_parses_loopback_api_base():
@@ -262,13 +270,13 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
     calls = []
 
     def run_from_args(args):
-        calls.append((args.mode, args.remote_enabled))
+        calls.append(args.mode)
 
     monkeypatch.setattr(server_cli, "run_server_from_args", run_from_args)
 
-    cli.main(["server", "--mode", "stdio", "--remote-enabled", "true"])
+    cli.main(["server", "--mode", "stdio"])
 
-    assert calls == [("stdio", True)]
+    assert calls == ["stdio"]
 
 
 def test_server_handler_dispatches_control_modes(monkeypatch):
@@ -370,18 +378,14 @@ def test_internal_job_runner_is_dispatched_by_argparse(monkeypatch):
 
 
 def test_server_overrides_include_only_explicit_values():
-    args = cli._build_parser().parse_args(
-        ["server", "--mode", "stdio", "--remote-enabled", "false"]
-    )
+    args = cli._build_parser().parse_args(["server", "--mode", "stdio"])
 
-    assert cli_overrides_from_args(args) == {
-        "mode": "stdio",
-        "remote_enabled": False,
-    }
+    assert cli_overrides_from_args(args) == {"mode": "stdio"}
 
 
 def _write_agent_manifest(state_dir, server):
     _ = state_dir
+    server = {"integrationId": "docs", **server}
     config_dir = app_paths().agent_config_dir
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "config.json").write_text(
@@ -478,6 +482,185 @@ def test_mcp_secret_set_list_delete_never_print_values(
     delete_args.handler(delete_args)
     assert json.loads(capsys.readouterr().out)["deleted"] is True
     assert store.list_secrets("docs") == {}
+
+
+def test_mcp_secret_list_keeps_current_server_name_after_manifest_rename(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs2": {
+                        "integrationId": "docs",
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "enabled": False,
+                        "headers": {"Authorization": {"secret": "token"}},
+                        "auth": {"mode": "secret"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    AgentAuthStore(state_dir / "agent_auth").set_secret(
+        "docs", "token", "private-value"
+    )
+    parser = cli._build_parser()
+    args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list", "docs2"]
+    )
+
+    args.handler(args)
+
+    output = capsys.readouterr().out
+    assert "private-value" not in output
+    assert json.loads(output) == {"secrets": {"docs2": ["token"]}}
+
+
+def test_mcp_secret_cleanup_survives_manifest_removal(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    _write_agent_manifest(
+        state_dir,
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "enabled": False,
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        },
+    )
+    parser = cli._build_parser()
+    monkeypatch.setattr(
+        agent_cli, "_read_secret_stdin", lambda: "private-value"
+    )
+    set_args = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "set",
+            "docs",
+            "token",
+            "--stdin",
+        ]
+    )
+    set_args.handler(set_args)
+    capsys.readouterr()
+
+    (app_paths().agent_config_dir / "config.json").unlink()
+
+    list_all_args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list"]
+    )
+    list_all_args.handler(list_all_args)
+    list_all_output = capsys.readouterr().out
+    assert "private-value" not in list_all_output
+    assert json.loads(list_all_output) == {"secrets": {"docs": ["token"]}}
+
+    list_args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list", "docs"]
+    )
+    list_args.handler(list_args)
+    assert json.loads(capsys.readouterr().out) == {
+        "secrets": {"docs": ["token"]}
+    }
+
+    delete_args = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "delete",
+            "docs",
+            "token",
+        ]
+    )
+    delete_args.handler(delete_args)
+    assert json.loads(capsys.readouterr().out)["deleted"] is True
+    assert AgentAuthStore(state_dir / "agent_auth").list_secrets("docs") == {}
+
+
+def test_mcp_secret_cleanup_prefers_exact_stored_identity_over_live_label(
+    tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "shared": {
+                        "integrationId": "current",
+                        "type": "http",
+                        "url": "https://current.example.test/mcp",
+                        "enabled": False,
+                        "headers": {"Authorization": {"secret": "token"}},
+                        "auth": {"mode": "secret"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_secret("shared", "retired", "old-private-value")
+    store.set_secret("current", "token", "current-private-value")
+    parser = cli._build_parser()
+
+    list_args = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "secret", "list", "shared"]
+    )
+    list_args.handler(list_args)
+    output = capsys.readouterr().out
+    assert "old-private-value" not in output
+    assert "current-private-value" not in output
+    assert json.loads(output) == {"secrets": {"shared": ["retired"]}}
+
+    # The detached bucket owns this exact identifier as a whole. A missing
+    # secret must not fall through to the live server that reuses the label.
+    wrong_bucket_delete = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "delete",
+            "shared",
+            "token",
+        ]
+    )
+    wrong_bucket_delete.handler(wrong_bucket_delete)
+    assert json.loads(capsys.readouterr().out)["deleted"] is False
+    assert store.list_secrets("shared") == {"shared": ["retired"]}
+    assert store.list_secrets("current") == {"current": ["token"]}
+
+    delete_args = parser.parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "secret",
+            "delete",
+            "shared",
+            "retired",
+        ]
+    )
+    delete_args.handler(delete_args)
+    assert json.loads(capsys.readouterr().out)["deleted"] is True
+    assert store.list_secrets("shared") == {}
+    assert store.list_secrets("current") == {"current": ["token"]}
 
 
 def test_mcp_auth_status_reports_only_safe_metadata(tmp_path, capsys):
@@ -581,6 +764,168 @@ def test_mcp_logout_reports_revocation_and_clears_local_credentials(
     assert store.get_tokens("docs") is None
 
 
+def test_mcp_logout_cleans_detached_oauth_state_without_remote_revocation(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {
+                "access_token": "detached-access",
+                "refresh_token": "detached-refresh",
+                "token_type": "Bearer",
+            }
+        ),
+    )
+    store.set_client_info(
+        "docs",
+        OAuthClientInformationFull.model_validate(
+            {
+                "client_id": "client-1",
+                "client_secret": "detached-client-secret",
+                "redirect_uris": ["http://127.0.0.1/callback"],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "client_secret_post",
+            }
+        ),
+    )
+
+    async def unexpected_revoke(*_args):
+        raise AssertionError(
+            "detached cleanup must not attempt remote revocation"
+        )
+
+    monkeypatch.setattr(agent_cli, "revoke_stored_oauth", unexpected_revoke)
+    args = cli._build_parser().parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+
+    args.handler(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "unavailable"
+    assert payload["local_credentials_cleared"] is True
+    assert store.get_tokens("docs") is None
+    assert store.get_client_info("docs") is None
+    assert store.has_oauth_state("docs") is False
+
+
+def test_mcp_logout_resolves_live_oauth_by_stable_integration_id_after_rename(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    config_dir = app_paths().agent_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs-renamed": {
+                        "integrationId": "docs-stable",
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                        "enabled": False,
+                        "auth": {"mode": "oauth"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_tokens(
+        "docs-stable",
+        OAuthToken.model_validate(
+            {"access_token": "access", "token_type": "Bearer"}
+        ),
+    )
+    calls = []
+
+    async def fake_revoke(_store, server_name, server):
+        calls.append((server_name, server.integration_id))
+        return agent_cli.RevocationResult("revoked")
+
+    monkeypatch.setattr(agent_cli, "revoke_stored_oauth", fake_revoke)
+    args = cli._build_parser().parse_args(
+        [
+            "mcp",
+            "--state-dir",
+            str(state_dir),
+            "auth",
+            "docs-stable",
+            "--logout",
+        ]
+    )
+
+    args.handler(args)
+
+    assert calls == [("docs-renamed", "docs-stable")]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "revoked"
+    assert payload["local_credentials_cleared"] is True
+    assert store.has_oauth_state("docs-stable") is False
+
+    # With the bucket now empty, the stable integrationId still resolves the
+    # renamed live server instead of being treated as an unknown label.
+    calls.clear()
+    args.handler(args)
+    assert calls == [("docs-renamed", "docs-stable")]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "revoked"
+    assert payload["local_credentials_cleared"] is False
+
+
+def test_mcp_logout_detached_identity_wins_over_reused_live_display_name(
+    monkeypatch, tmp_path, capsys
+):
+    state_dir = tmp_path / "state"
+    _write_agent_manifest(
+        state_dir,
+        {
+            "integrationId": "current",
+            "type": "http",
+            "url": "https://current.example.test/mcp",
+            "enabled": False,
+            "auth": {"mode": "oauth"},
+        },
+    )
+    store = AgentAuthStore(state_dir / "agent_auth")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "retired-access", "token_type": "Bearer"}
+        ),
+    )
+    store.set_tokens(
+        "current",
+        OAuthToken.model_validate(
+            {"access_token": "current-access", "token_type": "Bearer"}
+        ),
+    )
+
+    async def unexpected_revoke(*_args):
+        raise AssertionError(
+            "stale identity must not revoke the reused live label"
+        )
+
+    monkeypatch.setattr(agent_cli, "revoke_stored_oauth", unexpected_revoke)
+    args = cli._build_parser().parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+
+    args.handler(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_revocation"] == "unavailable"
+    assert payload["local_credentials_cleared"] is True
+    assert store.has_oauth_state("docs") is False
+    assert store.get_tokens("current") is not None
+
+
 def test_secret_stdin_reader_validates_tty_size_encoding_and_newlines(
     monkeypatch,
 ):
@@ -625,6 +970,13 @@ def test_mcp_cli_reports_manifest_and_server_errors(tmp_path, capsys):
         missing_manifest.handler(missing_manifest)
     assert "manifest is unavailable" in capsys.readouterr().err
 
+    missing_manifest_logout = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+    with pytest.raises(SystemExit, match="2"):
+        missing_manifest_logout.handler(missing_manifest_logout)
+    assert "manifest is unavailable" in capsys.readouterr().err
+
     _write_agent_manifest(
         state_dir,
         {
@@ -640,11 +992,25 @@ def test_mcp_cli_reports_manifest_and_server_errors(tmp_path, capsys):
         unknown.handler(unknown)
     assert "Unknown Agent Bridge MCP server" in capsys.readouterr().err
 
+    unknown_logout = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "unknown", "--logout"]
+    )
+    with pytest.raises(SystemExit, match="2"):
+        unknown_logout.handler(unknown_logout)
+    assert "Unknown Agent Bridge MCP server" in capsys.readouterr().err
+
     non_oauth = parser.parse_args(
         ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--status"]
     )
     with pytest.raises(SystemExit, match="2"):
         non_oauth.handler(non_oauth)
+    assert "not configured for OAuth" in capsys.readouterr().err
+
+    non_oauth_logout = parser.parse_args(
+        ["mcp", "--state-dir", str(state_dir), "auth", "docs", "--logout"]
+    )
+    with pytest.raises(SystemExit, match="2"):
+        non_oauth_logout.handler(non_oauth_logout)
     assert "not configured for OAuth" in capsys.readouterr().err
 
 

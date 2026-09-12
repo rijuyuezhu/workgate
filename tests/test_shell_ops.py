@@ -4,14 +4,16 @@ import os
 import signal
 import subprocess
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
 import workgate.control.http.tool_routes as http_tool_routes_module
-import workgate.ops.shell as shell_ops
+import workgate.executor.shell as shell_ops
 from tests.helpers import (
     build_paired_http_app,
     build_paired_mcp,
@@ -22,8 +24,9 @@ from tests.helpers import (
 )
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
-from workgate.ops.shell import (
-    SHELL_TIMEOUT_CLEANUP_GRACE_S,
+from workgate.control.tool_timeouts import tool_timeout_s
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.shell import (
     _shared_tail_bytes,
     _shell_command_args,
     _subprocess_env,
@@ -35,11 +38,28 @@ from workgate.ops.shell import (
     run_shell,
     run_shell_command_timeout,
     send_persistent_shell_input_execute,
-    tool_timeout_s,
 )
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.schemas.result_models.shell import CommandResult
-from workgate.tool_session.store import get_tool_session_store
-from workgate.tools.registry import files as fs_tools_module
+
+# Test-only providers preserve legacy regression injection points while the
+# production executor module remains free of ambient Settings/store globals.
+_shell_ops_test_hooks = cast(Any, shell_ops)
+_shell_ops_test_hooks.get_settings = get_settings
+_shell_ops_test_hooks.get_tool_session_store = get_tool_session_store
+
+
+def _executor_config(**overrides):
+    provider = getattr(shell_ops, "get_settings", get_settings)
+    config = resolve_executor_config(provider())
+    return replace(config, **overrides) if overrides else config
+
+
+def _executor_store():
+    provider = getattr(
+        shell_ops, "get_tool_session_store", get_tool_session_store
+    )
+    return provider()
 
 
 def test_shell_command_args_are_native_for_supported_shells():
@@ -72,7 +92,7 @@ def test_bounded_runner_uses_trusted_absolute_script(monkeypatch):
     assert argv[0] == sys.executable
     assert os.path.isabs(argv[1])
     assert argv[1].endswith(
-        os.path.join("workgate", "ops", "utils", "bounded_runner.py")
+        os.path.join("workgate", "executor", "bounded_runner.py")
     )
     assert "-m" not in argv
 
@@ -110,18 +130,18 @@ async def test_persistent_shell_creation_is_serialized(monkeypatch):
     peak = 0
 
     async def fake_start(
+        _config,
+        _store,
         cwd=".",
         name=None,
         command=None,
         *,
         owner_session_id=None,
         shell_id=None,
-        preserve_shell_ids=None,
     ):
         nonlocal active, peak
         assert owner_session_id is None
         assert shell_id is None
-        assert preserve_shell_ids is None
         active += 1
         peak = max(peak, active)
         await asyncio.sleep(0.02)
@@ -131,8 +151,12 @@ async def test_persistent_shell_creation_is_serialized(monkeypatch):
     monkeypatch.setattr(shell_ops, "_start_persistent_shell_locked", fake_start)
 
     results = await asyncio.gather(
-        shell_ops.start_persistent_shell_execute(".", "one", "echo one"),
-        shell_ops.start_persistent_shell_execute(".", "two", "echo two"),
+        shell_ops.start_persistent_shell_execute(
+            _executor_config(), _executor_store(), ".", "one", "echo one"
+        ),
+        shell_ops.start_persistent_shell_execute(
+            _executor_config(), _executor_store(), ".", "two", "echo two"
+        ),
     )
 
     assert peak == 1
@@ -209,6 +233,8 @@ async def test_owned_tmux_shell_is_reserved_before_backend_start(monkeypatch):
             events.append(("release", f"{session_id}:{shell_id}"))
 
     async def fake_start(
+        _config,
+        _store,
         cwd=".",
         name=None,
         command=None,
@@ -230,10 +256,12 @@ async def test_owned_tmux_shell_is_reserved_before_backend_start(monkeypatch):
     monkeypatch.setattr(
         shell_ops, "_tmux_session_name", lambda _name: "reserved-shell"
     )
-    monkeypatch.setattr(shell_ops, "get_tool_session_store", FakeStore)
+    store = FakeStore()
     monkeypatch.setattr(shell_ops, "_start_persistent_shell_locked", fake_start)
 
     result = await shell_ops.start_persistent_shell_execute(
+        _executor_config(),
+        cast(Any, store),
         ".",
         "owned",
         "echo ok",
@@ -265,6 +293,11 @@ async def test_owned_conpty_shell_uses_shared_admission_and_reservation(
             events.append(("reserve", f"{session_id}:{shell_id}"))
             return True
 
+        def release_session_persistent_shell(
+            self, session_id: str, shell_id: str
+        ) -> None:
+            events.append(("release", f"{session_id}:{shell_id}"))
+
     @contextlib.asynccontextmanager
     async def fake_cross_process_lock(namespace: str, key: str):
         events.append(("lock-enter", f"{namespace}:{key}"))
@@ -274,6 +307,8 @@ async def test_owned_conpty_shell_uses_shared_admission_and_reservation(
             events.append(("lock-exit", f"{namespace}:{key}"))
 
     async def fake_start(
+        _config,
+        _store,
         cwd=".",
         name=None,
         command=None,
@@ -300,11 +335,16 @@ async def test_owned_conpty_shell_uses_shared_admission_and_reservation(
     monkeypatch.setattr(
         shell_ops, "cross_process_lock", fake_cross_process_lock
     )
-    monkeypatch.setattr(shell_ops, "get_tool_session_store", FakeStore)
+    store = FakeStore()
     monkeypatch.setattr(shell_ops, "_start_persistent_shell_locked", fake_start)
 
     result = await shell_ops.start_persistent_shell_execute(
-        ".", "owned", "echo ok", owner_session_id="SESSION1"
+        _executor_config(),
+        cast(Any, store),
+        ".",
+        "owned",
+        "echo ok",
+        owner_session_id="SESSION1",
     )
 
     assert result.shell_id == "conpty-shell"
@@ -331,12 +371,14 @@ async def test_tmux_reconciliation_preserves_inflight_reservation(
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    session = store.create_session(workdir=tmp_path)
+    session = store.create_session(
+        session_id="sess_0000000000000000000001", workdir=tmp_path
+    )
     assert store.reserve_persistent_shell(
         session.session_id, "reserved-shell", exclusive=True
     )
 
-    async def fake_tmux(args: list[str], timeout_s: int = 10):
+    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
         _ = timeout_s
         assert args[0] == "list-sessions"
         return CommandResult(
@@ -356,7 +398,9 @@ async def test_tmux_reconciliation_preserves_inflight_reservation(
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path="/usr/bin/tmux", source="system"),
+        lambda _configured: SimpleNamespace(
+            path="/usr/bin/tmux", source="system"
+        ),
     )
     monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
 
@@ -365,7 +409,9 @@ async def test_tmux_reconciliation_preserves_inflight_reservation(
     )
     try:
         assert (
-            await shell_ops.authoritative_persistent_shell_ids_execute()
+            await shell_ops.authoritative_persistent_shell_ids_execute(
+                _executor_config(), store
+            )
             == set()
         )
     finally:
@@ -374,7 +420,12 @@ async def test_tmux_reconciliation_preserves_inflight_reservation(
     assert store.require_session(session.session_id).persistent_shell_ids == (
         "reserved-shell",
     )
-    assert await shell_ops.authoritative_persistent_shell_ids_execute() == set()
+    assert (
+        await shell_ops.authoritative_persistent_shell_ids_execute(
+            _executor_config(), store
+        )
+        == set()
+    )
     assert store.require_session(session.session_id).persistent_shell_ids == ()
 
 
@@ -411,14 +462,18 @@ async def test_owned_tmux_shell_rolls_back_reservation_after_confirmed_failure(
     monkeypatch.setattr(
         shell_ops, "_tmux_session_name", lambda _name: "reserved-shell"
     )
-    monkeypatch.setattr(shell_ops, "get_tool_session_store", FakeStore)
+    store = FakeStore()
     monkeypatch.setattr(
         shell_ops, "_start_persistent_shell_locked", failing_start
     )
 
     with pytest.raises(RuntimeError, match="backend start failed"):
         await shell_ops.start_persistent_shell_execute(
-            ".", "owned", owner_session_id="SESSION1"
+            _executor_config(),
+            cast(Any, store),
+            ".",
+            "owned",
+            owner_session_id="SESSION1",
         )
 
     assert events == [
@@ -463,7 +518,7 @@ async def test_owned_tmux_shell_keeps_reservation_when_cleanup_is_uncertain(
     monkeypatch.setattr(
         shell_ops, "_tmux_session_name", lambda _name: "reserved-shell"
     )
-    monkeypatch.setattr(shell_ops, "get_tool_session_store", FakeStore)
+    store = FakeStore()
     monkeypatch.setattr(
         shell_ops, "_start_persistent_shell_locked", uncertain_start
     )
@@ -473,7 +528,11 @@ async def test_owned_tmux_shell_keeps_reservation_when_cleanup_is_uncertain(
         match="cleanup not confirmed",
     ):
         await shell_ops.start_persistent_shell_execute(
-            ".", "owned", owner_session_id="SESSION1"
+            _executor_config(),
+            cast(Any, store),
+            ".",
+            "owned",
+            owner_session_id="SESSION1",
         )
 
     assert events == [
@@ -506,7 +565,7 @@ async def test_owned_tmux_name_collision_preserves_existing_ownership(
         ) -> None:
             events.append(("release", f"{session_id}:{shell_id}"))
 
-    async def active_inventory(*, preserve_shell_ids=None):
+    async def active_inventory(_config, _store, *, preserve_shell_ids=None):
         assert preserve_shell_ids == {"existing-shell"}
         return {"existing-shell"}
 
@@ -524,20 +583,16 @@ async def test_owned_tmux_name_collision_preserves_existing_ownership(
         "_authoritative_persistent_shell_ids_locked",
         active_inventory,
     )
-    monkeypatch.setattr(
-        shell_ops,
-        "get_settings",
-        lambda: SimpleNamespace(max_tmux_sessions=8),
-    )
-    monkeypatch.setattr(
-        shell_ops, "resolve_path", lambda *_args, **_kwargs: tmp_path
-    )
-    monkeypatch.setattr(shell_ops, "get_tool_session_store", FakeStore)
+    store = FakeStore()
     monkeypatch.setattr(shell_ops, "tmux", unexpected_tmux)
 
     with pytest.raises(RuntimeError, match="already exists: existing-shell"):
         await shell_ops.start_persistent_shell_execute(
-            str(tmp_path), "existing", owner_session_id="SESSION1"
+            _executor_config(max_tmux_sessions=8, workspace_root=tmp_path),
+            cast(Any, store),
+            str(tmp_path),
+            "existing",
+            owner_session_id="SESSION1",
         )
 
     expected = [("reserve", "SESSION1:existing-shell")]
@@ -567,8 +622,11 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import workgate.ops.shell as shell_ops
+import workgate.executor.shell as shell_ops
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.services import build_runtime_services
+from workgate.persistence import configure_state_store
 
 workspace = Path(__import__("sys").argv[1])
 active_path = Path(__import__("sys").argv[2])
@@ -576,16 +634,18 @@ barrier_path = Path(__import__("sys").argv[3])
 result_path = Path(__import__("sys").argv[4])
 shell_name = __import__("sys").argv[5]
 clear_settings_cache()
+config = resolve_executor_config(get_settings())
+services = build_runtime_services(config)
+configure_state_store(services.state_store)
+store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: False
-shell_ops.resolve_path = lambda *_args, **_kwargs: workspace
 shell_ops._tmux_session_name = lambda _name: shell_name
-shell_ops._resolved_tmux_shell = lambda _cwd: "/bin/sh"
+shell_ops._resolved_tmux_shell = lambda _config, _cwd: "/bin/sh"
 shell_ops.shutil.which = lambda *_args, **_kwargs: "/bin/sh"
-shell_ops.check_command_policy = lambda _command: None
-shell_ops.relative_display = lambda _path: "."
+shell_ops.check_command_policy = lambda _config, _command: None
 
-async def inventory(*, preserve_shell_ids=None):
+async def inventory(_config, _store, *, preserve_shell_ids=None):
     assert preserve_shell_ids == set()
     if not active_path.exists():
         return set()
@@ -595,7 +655,7 @@ async def inventory(*, preserve_shell_ids=None):
         if value
     }
 
-async def fake_tmux(args, timeout_s=10):
+async def fake_tmux(_config, args, timeout_s=10):
     _ = timeout_s
     if args[0] != "new-session":
         raise AssertionError(f"unexpected tmux call: {args}")
@@ -618,7 +678,7 @@ while not barrier_path.exists():
 try:
     output = asyncio.run(
         shell_ops.start_persistent_shell_execute(
-            ".", shell_name, "sleep 1"
+            config, store, ".", shell_name, "sleep 1"
         )
     )
 except Exception as exc:
@@ -702,11 +762,14 @@ import asyncio
 import time
 from pathlib import Path
 
-import workgate.ops.shell as shell_ops
-import workgate.terminal.conpty as conpty
+import workgate.executor.shell as shell_ops
+import workgate.executor.terminal.conpty as conpty
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.terminal.runtime import build_terminal_runtime
-from workgate.tool_session.store import get_tool_session_store
+from workgate.control.tool_timeouts import tool_timeout_s
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.services import build_runtime_services
+from workgate.executor.terminal.runtime import build_terminal_runtime
+from workgate.persistence import configure_state_store
 
 workspace = Path(__import__("sys").argv[1])
 barrier_path = Path(__import__("sys").argv[2])
@@ -714,13 +777,15 @@ result_path = Path(__import__("sys").argv[3])
 shell_name = __import__("sys").argv[4]
 owner_bound = __import__("sys").argv[5] == "1"
 clear_settings_cache()
+config = resolve_executor_config(get_settings())
+services = build_runtime_services(config)
+configure_state_store(services.state_store)
+store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: True
-shell_ops.resolve_path = lambda *_args, **_kwargs: workspace
 shell_ops._tmux_session_name = lambda name: str(name)
-shell_ops.check_command_policy = lambda _command: None
+shell_ops.check_command_policy = lambda _config, _command: None
 conpty.is_available = lambda: True
-conpty.relative_display = lambda path: str(path)
 
 class FakePty:
     exitstatus = None
@@ -742,18 +807,22 @@ class FakePty:
 conpty._spawn_pty = lambda *_args: FakePty()
 owner_session_id = None
 if owner_bound:
-    owner_session_id = get_tool_session_store().create_session(
-        workdir=workspace
-    ).session_id
+    owner_session_id = (
+        "sess_0000000000000000000001"
+        if result_path.name.endswith("one")
+        else "sess_0000000000000000000002"
+    )
+    store.create_session(session_id=owner_session_id, workdir=workspace)
 while not barrier_path.exists():
     time.sleep(0.01)
 
 async def main():
-    runtime = build_terminal_runtime()
+    runtime = build_terminal_runtime(services.state_store, workspace_root=Path.cwd())
     await runtime.start()
     try:
         output = await shell_ops.start_persistent_shell_execute(
-            ".", shell_name, "echo ready", owner_session_id=owner_session_id
+            config, store, ".", shell_name, "echo ready",
+            owner_session_id=owner_session_id,
         )
     except Exception as exc:
         result_path.write_text(f"error:{exc}", encoding="utf-8")
@@ -820,11 +889,10 @@ async def test_tmux_start_cancellation_cleans_created_session(
             stderr=stderr,
         )
 
-    async def empty_inventory(*, preserve_shell_ids=None):
-        assert preserve_shell_ids is None
+    async def empty_inventory(_config, _store):
         return set()
 
-    async def fake_tmux(args: list[str], timeout_s: int = 10):  # noqa: ARG001
+    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):  # noqa: ARG001
         calls.append(args)
         if args[0] == "new-session":
             assert args[-6:] == [
@@ -846,30 +914,24 @@ async def test_tmux_start_cancellation_cleans_created_session(
         shell_ops, "authoritative_persistent_shell_ids_execute", empty_inventory
     )
     monkeypatch.setattr(
-        shell_ops,
-        "get_settings",
-        lambda: SimpleNamespace(max_tmux_sessions=8),
-    )
-    monkeypatch.setattr(
-        shell_ops, "resolve_path", lambda *_args, **_kwargs: tmp_path
-    )
-    monkeypatch.setattr(
         shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
     )
     monkeypatch.setattr(shell_ops, "_tmux_session_name", lambda _name: "owned")
     monkeypatch.setattr(
-        shell_ops, "_resolved_tmux_shell", lambda _cwd: "/bin/sh"
+        shell_ops, "_resolved_tmux_shell", lambda _config, _cwd: "/bin/sh"
     )
     monkeypatch.setattr(
         shell_ops.shutil, "which", lambda *_args, **_kwargs: "/bin/sh"
     )
     monkeypatch.setattr(
-        shell_ops, "check_command_policy", lambda _command: None
+        shell_ops, "check_command_policy", lambda _config, _command: None
     )
     monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
 
     task = asyncio.create_task(
         shell_ops._start_persistent_shell_locked(
+            _executor_config(max_tmux_sessions=8, workspace_root=tmp_path),
+            _executor_store(),
             str(tmp_path),
             "owned",
             "sleep 60",
@@ -889,7 +951,7 @@ async def test_tmux_start_cancellation_cleans_created_session(
 async def test_failed_tmux_start_cleanup_must_be_authoritative(
     tmp_path, monkeypatch
 ):
-    async def failed_cleanup(_args: list[str], timeout_s: int = 10):  # noqa: ARG001
+    async def failed_cleanup(_config, _args: list[str], timeout_s: int = 10):  # noqa: ARG001
         return CommandResult(
             ok=False,
             exit_code=1,
@@ -904,7 +966,7 @@ async def test_failed_tmux_start_cleanup_must_be_authoritative(
     monkeypatch.setattr(shell_ops, "tmux", failed_cleanup)
 
     with pytest.raises(RuntimeError, match="permission denied"):
-        await shell_ops._cleanup_failed_tmux_start("owned")
+        await shell_ops._cleanup_failed_tmux_start(_executor_config(), "owned")
 
 
 @pytest.mark.parametrize(
@@ -928,7 +990,7 @@ async def test_list_persistent_shells_clears_stale_owners_when_server_is_absent(
         shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
     )
 
-    async def fake_tmux(_args, timeout_s=10):  # noqa: ARG001
+    async def fake_tmux(_config, _args, timeout_s=10):  # noqa: ARG001
         return CommandResult(
             ok=False,
             exit_code=1,
@@ -941,7 +1003,9 @@ async def test_list_persistent_shells_clears_stale_owners_when_server_is_absent(
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path="/usr/bin/tmux", source="system"),
+        lambda _configured: SimpleNamespace(
+            path="/usr/bin/tmux", source="system"
+        ),
     )
     monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
     monkeypatch.setattr(
@@ -954,7 +1018,9 @@ async def test_list_persistent_shells_clears_stale_owners_when_server_is_absent(
         ),
     )
 
-    result = await shell_ops.list_persistent_shells_execute()
+    result = await shell_ops.list_persistent_shells_execute(
+        _executor_config(), _executor_store()
+    )
 
     assert result.shells == []
     assert reconciled == [set()]
@@ -969,7 +1035,7 @@ async def test_list_persistent_shells_preserves_owners_on_unknown_tmux_failure(
         shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
     )
 
-    async def fake_tmux(_args, timeout_s=10):  # noqa: ARG001
+    async def fake_tmux(_config, _args, timeout_s=10):  # noqa: ARG001
         return CommandResult(
             ok=False,
             exit_code=1,
@@ -982,7 +1048,9 @@ async def test_list_persistent_shells_preserves_owners_on_unknown_tmux_failure(
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path="/usr/bin/tmux", source="system"),
+        lambda _configured: SimpleNamespace(
+            path="/usr/bin/tmux", source="system"
+        ),
     )
     monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
     monkeypatch.setattr(
@@ -995,7 +1063,9 @@ async def test_list_persistent_shells_preserves_owners_on_unknown_tmux_failure(
         ),
     )
 
-    result = await shell_ops.list_persistent_shells_execute()
+    result = await shell_ops.list_persistent_shells_execute(
+        _executor_config(), _executor_store()
+    )
 
     assert result.shells == []
     assert reconciled == []
@@ -1011,10 +1081,12 @@ async def test_list_owned_shells_returns_none_on_unknown_tmux_failure(
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path="/usr/bin/tmux", source="system"),
+        lambda _configured: SimpleNamespace(
+            path="/usr/bin/tmux", source="system"
+        ),
     )
 
-    async def failed_tmux(_args, timeout_s=10):  # noqa: ARG001
+    async def failed_tmux(_config, _args, timeout_s=10):  # noqa: ARG001
         return CommandResult(
             ok=False,
             exit_code=1,
@@ -1027,7 +1099,9 @@ async def test_list_owned_shells_returns_none_on_unknown_tmux_failure(
     monkeypatch.setattr(shell_ops, "tmux", failed_tmux)
 
     assert (
-        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        await shell_ops.list_owned_persistent_shell_ids_execute(
+            _executor_config(), _executor_store(), "SESSION1"
+        )
         is None
     )
 
@@ -1048,7 +1122,7 @@ async def test_list_owned_shells_handles_unavailable_tmux_from_durable_ownership
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path=None, source="unavailable"),
+        lambda _configured: SimpleNamespace(path=None, source="unavailable"),
     )
     monkeypatch.setattr(
         shell_ops,
@@ -1062,7 +1136,9 @@ async def test_list_owned_shells_handles_unavailable_tmux_from_durable_ownership
     )
 
     assert (
-        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        await shell_ops.list_owned_persistent_shell_ids_execute(
+            _executor_config(), _executor_store(), "SESSION1"
+        )
         == expected
     )
 
@@ -1100,7 +1176,9 @@ async def test_list_owned_shells_handles_unavailable_conpty_from_durable_ownersh
     )
 
     assert (
-        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        await shell_ops.list_owned_persistent_shell_ids_execute(
+            _executor_config(), _executor_store(), "SESSION1"
+        )
         == expected
     )
 
@@ -1115,10 +1193,12 @@ async def test_list_owned_shells_treats_absent_server_as_authoritative_empty(
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path="/usr/bin/tmux", source="system"),
+        lambda _configured: SimpleNamespace(
+            path="/usr/bin/tmux", source="system"
+        ),
     )
 
-    async def absent_tmux(_args, timeout_s=10):  # noqa: ARG001
+    async def absent_tmux(_config, _args, timeout_s=10):  # noqa: ARG001
         return CommandResult(
             ok=False,
             exit_code=1,
@@ -1131,7 +1211,9 @@ async def test_list_owned_shells_treats_absent_server_as_authoritative_empty(
     monkeypatch.setattr(shell_ops, "tmux", absent_tmux)
 
     assert (
-        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        await shell_ops.list_owned_persistent_shell_ids_execute(
+            _executor_config(), _executor_store(), "SESSION1"
+        )
         == []
     )
 
@@ -1146,10 +1228,12 @@ async def test_list_owned_shells_filters_owner_from_authoritative_inventory(
     monkeypatch.setattr(
         shell_ops,
         "resolve_tmux",
-        lambda: SimpleNamespace(path="/usr/bin/tmux", source="system"),
+        lambda _configured: SimpleNamespace(
+            path="/usr/bin/tmux", source="system"
+        ),
     )
 
-    async def listed_tmux(_args, timeout_s=10):  # noqa: ARG001
+    async def listed_tmux(_config, _args, timeout_s=10):  # noqa: ARG001
         return CommandResult(
             ok=True,
             exit_code=0,
@@ -1162,7 +1246,7 @@ async def test_list_owned_shells_filters_owner_from_authoritative_inventory(
     monkeypatch.setattr(shell_ops, "tmux", listed_tmux)
 
     assert await shell_ops.list_owned_persistent_shell_ids_execute(
-        "SESSION1"
+        _executor_config(), _executor_store(), "SESSION1"
     ) == ["owned"]
 
 
@@ -1195,7 +1279,9 @@ async def test_conpty_owned_inventory_is_unknown_for_peer_durable_shell(
     )
 
     assert (
-        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        await shell_ops.list_owned_persistent_shell_ids_execute(
+            _executor_config(), _executor_store(), "SESSION1"
+        )
         is None
     )
 
@@ -1227,7 +1313,7 @@ async def test_conpty_owned_inventory_accepts_current_process_shells(
     )
 
     assert await shell_ops.list_owned_persistent_shell_ids_execute(
-        "SESSION1"
+        _executor_config(), _executor_store(), "SESSION1"
     ) == ["local-shell"]
 
 
@@ -1261,7 +1347,9 @@ async def test_conpty_owned_inventory_clears_dead_peer_reservation(monkeypatch):
     )
 
     assert (
-        await shell_ops.list_owned_persistent_shell_ids_execute("SESSION1")
+        await shell_ops.list_owned_persistent_shell_ids_execute(
+            _executor_config(), _executor_store(), "SESSION1"
+        )
         == []
     )
     assert released == [("SESSION1", "dead-peer-shell")]
@@ -1291,7 +1379,9 @@ async def test_conpty_authoritative_inventory_reconciles_from_live_leases(
         ),
     )
 
-    assert await shell_ops.authoritative_persistent_shell_ids_execute() == {
+    assert await shell_ops.authoritative_persistent_shell_ids_execute(
+        _executor_config(), _executor_store()
+    ) == {
         "local-shell",
         "peer-shell",
     }
@@ -1319,9 +1409,9 @@ async def test_conpty_authoritative_inventory_clears_dead_durable_ids(
         ),
     )
 
-    assert await shell_ops.authoritative_persistent_shell_ids_execute() == {
-        "local-shell"
-    }
+    assert await shell_ops.authoritative_persistent_shell_ids_execute(
+        _executor_config(), _executor_store()
+    ) == {"local-shell"}
     assert reconciled == [{"local-shell"}]
 
 
@@ -1345,17 +1435,19 @@ async def test_conpty_listing_does_not_reconcile_peer_durable_ids(monkeypatch):
         ),
     )
 
-    result = await shell_ops.list_persistent_shells_execute()
+    result = await shell_ops.list_persistent_shells_execute(
+        _executor_config(), _executor_store()
+    )
     assert result.shells == []
 
 
 def test_command_with_env_uses_powershell_assignments(monkeypatch):
     monkeypatch.setattr(
-        shell_ops, "_effective_shell_executable", lambda: "pwsh.exe"
+        shell_ops, "_effective_shell_executable", lambda _config: "pwsh.exe"
     )
 
     command = shell_ops._command_with_env(
-        "Write-Output ok", {"TOKEN": "O'Reilly"}
+        _executor_config(), "Write-Output ok", {"TOKEN": "O'Reilly"}
     )
 
     assert command == "$env:TOKEN='O''Reilly'; Write-Output ok"
@@ -1363,10 +1455,12 @@ def test_command_with_env_uses_powershell_assignments(monkeypatch):
 
 def test_command_with_env_uses_cmd_assignments(monkeypatch):
     monkeypatch.setattr(
-        shell_ops, "_effective_shell_executable", lambda: "cmd.exe"
+        shell_ops, "_effective_shell_executable", lambda _config: "cmd.exe"
     )
 
-    command = shell_ops._command_with_env("echo ok", {"TOKEN": "a b"})
+    command = shell_ops._command_with_env(
+        _executor_config(), "echo ok", {"TOKEN": "a b"}
+    )
 
     assert command == 'set "TOKEN=a b" && echo ok'
 
@@ -1376,7 +1470,7 @@ def test_command_denylist_matching_is_case_insensitive(monkeypatch):
     clear_settings_cache()
 
     with pytest.raises(PermissionError, match="denylisted fragment"):
-        check_command_policy("rm -rf /tmp/example")
+        check_command_policy(_executor_config(), "rm -rf /tmp/example")
 
 
 def test_tmux_session_name_strips_invalid_edges_and_has_safe_fallback():
@@ -1408,16 +1502,21 @@ async def test_bash_rejects_timeout_above_public_cap(tmp_path, monkeypatch):
         )
 
 
-def test_shell_tool_watchdog_reserves_cleanup_budget(tmp_path, monkeypatch):
+def test_control_tool_watchdog_ignores_executor_shell_policy(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "1")
     clear_settings_cache()
 
-    assert SHELL_TIMEOUT_CLEANUP_GRACE_S == 10
     assert tool_timeout_s("list_files") == 0.01
-    assert tool_timeout_s("bash") == 11
-    assert tool_timeout_s("run_python_code") == 11
+    assert tool_timeout_s("bash") == 0.01
+    assert tool_timeout_s("run_python_code") == 0.01
+
+    monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "120")
+    clear_settings_cache()
+    assert tool_timeout_s("bash") == 0.01
 
 
 @pytest.mark.asyncio
@@ -1431,8 +1530,7 @@ async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "3")
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "15")
     clear_settings_cache()
     command = _python_shell_command(
         'import sys, time; print("partial-out", flush=True); '
@@ -1469,8 +1567,7 @@ def test_rest_shell_timeout_returns_partial_output_after_cleanup(
     session_id = client.post(
         "/tools/session_start", json={"workdir": "."}
     ).json()["session_id"]
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "3")
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "15")
     clear_settings_cache()
     command = _python_shell_command(
         'import sys, time; print("partial-out", flush=True); '
@@ -1532,13 +1629,6 @@ def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
             await asyncio.sleep(0.2)
         return await original_call(executor_id, op, args, **kwargs)
 
-    async def blocking_list_dir(*args, **kwargs):
-        await asyncio.sleep(0.2)
-        return []
-
-    monkeypatch.setattr(
-        fs_tools_module, "list_files_dispatch_execute", blocking_list_dir
-    )
     monkeypatch.setattr(
         harness.control.executor_transport, "call", blocking_call
     )
@@ -1611,13 +1701,6 @@ async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
             await asyncio.sleep(0.2)
         return await original_call(executor_id, op, args, **kwargs)
 
-    async def blocking_list_dir(*args, **kwargs):
-        await asyncio.sleep(0.2)
-        return []
-
-    monkeypatch.setattr(
-        fs_tools_module, "list_files_dispatch_execute", blocking_list_dir
-    )
     monkeypatch.setattr(
         harness.control.executor_transport, "call", blocking_call
     )
@@ -1645,13 +1728,14 @@ def test_run_shell_command_timeout_uses_ten_second_default(
     monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "10")
     clear_settings_cache()
 
-    assert run_shell_command_timeout(None) == 10
+    assert run_shell_command_timeout(_executor_config(), None) == 10
 
 
 @pytest.mark.asyncio
 async def test_spawn_process_uses_native_shell_api_for_cmd_on_windows(
     monkeypatch,
 ):
+    config = _executor_config()
     calls = []
     sentinel = object()
 
@@ -1667,7 +1751,7 @@ async def test_spawn_process_uses_native_shell_api_for_cmd_on_windows(
         shell_ops, "new_process_group_kwargs", lambda: {"creationflags": 512}
     )
     monkeypatch.setattr(
-        shell_ops, "_effective_shell_executable", lambda: "cmd.exe"
+        shell_ops, "_effective_shell_executable", lambda _config: "cmd.exe"
     )
     monkeypatch.setattr(shell_ops.shutil, "which", lambda command, **_: command)
     monkeypatch.setattr(shell_ops, "_subprocess_env", lambda: {"BASE": "1"})
@@ -1678,7 +1762,9 @@ async def test_spawn_process_uses_native_shell_api_for_cmd_on_windows(
         shell_ops.asyncio, "create_subprocess_exec", unexpected_exec
     )
 
-    result = await shell_ops._spawn_process("echo hi", ".", {"EXTRA": "2"})
+    result = await shell_ops._spawn_process(
+        config, "echo hi", ".", {"EXTRA": "2"}
+    )
 
     assert result is sentinel
     assert calls[0][0] == "echo hi"
@@ -1691,6 +1777,7 @@ async def test_spawn_process_uses_native_shell_api_for_cmd_on_windows(
 async def test_spawn_process_uses_native_exec_for_powershell_on_windows(
     monkeypatch,
 ):
+    config = _executor_config()
     calls = []
     sentinel = object()
 
@@ -1703,12 +1790,12 @@ async def test_spawn_process_uses_native_exec_for_powershell_on_windows(
         shell_ops, "new_process_group_kwargs", lambda: {"creationflags": 512}
     )
     monkeypatch.setattr(
-        shell_ops, "_effective_shell_executable", lambda: "pwsh.exe"
+        shell_ops, "_effective_shell_executable", lambda _config: "pwsh.exe"
     )
     monkeypatch.setattr(shell_ops.shutil, "which", lambda command, **_: command)
     monkeypatch.setattr(shell_ops.asyncio, "create_subprocess_exec", fake_exec)
 
-    result = await shell_ops._spawn_process("Write-Output hi", ".")
+    result = await shell_ops._spawn_process(config, "Write-Output hi", ".")
 
     assert result is sentinel
     assert calls[0][0] == (
@@ -1724,13 +1811,16 @@ async def test_spawn_process_uses_native_exec_for_powershell_on_windows(
 async def test_spawn_process_resolves_relative_shell_from_command_cwd(
     tmp_path, monkeypatch
 ):
+    config = _executor_config()
     monkeypatch.setattr(shell_ops.os, "name", "posix")
     shell = tmp_path / "bin" / "custom-shell"
     shell.parent.mkdir()
     shell.write_text("#!/bin/sh\n", encoding="utf-8")
     shell.chmod(0o700)
     monkeypatch.setattr(
-        shell_ops, "_effective_shell_executable", lambda: "bin/custom-shell"
+        shell_ops,
+        "_effective_shell_executable",
+        lambda _config: "bin/custom-shell",
     )
     monkeypatch.setattr(
         shell_ops.shutil,
@@ -1746,7 +1836,7 @@ async def test_spawn_process_resolves_relative_shell_from_command_cwd(
 
     monkeypatch.setattr(shell_ops.asyncio, "create_subprocess_exec", fake_exec)
 
-    result = await shell_ops._spawn_process("echo hi", str(tmp_path))
+    result = await shell_ops._spawn_process(config, "echo hi", str(tmp_path))
 
     assert result is sentinel
     argv = calls[0][0]
@@ -1759,7 +1849,7 @@ def test_run_shell_command_timeout_allows_explicit_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    assert run_shell_command_timeout(120) == 120
+    assert run_shell_command_timeout(_executor_config(), 120) == 120
 
 
 def test_internal_shell_timeout_uses_at_least_builtin_default(
@@ -1769,7 +1859,7 @@ def test_internal_shell_timeout_uses_at_least_builtin_default(
     monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "5")
     clear_settings_cache()
 
-    assert clamp_timeout(None) == 60
+    assert clamp_timeout(_executor_config(), None) == 60
 
 
 def test_internal_shell_timeout_uses_larger_run_shell_values(
@@ -1780,8 +1870,8 @@ def test_internal_shell_timeout_uses_larger_run_shell_values(
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "7200")
     clear_settings_cache()
 
-    assert clamp_timeout(None) == 120
-    assert clamp_timeout(9999) == 7200
+    assert clamp_timeout(_executor_config(), None) == 120
+    assert clamp_timeout(_executor_config(), 9999) == 7200
 
 
 @pytest.mark.asyncio
@@ -1792,13 +1882,13 @@ async def test_run_shell_command_timeout_includes_subprocess_spawn(
     clear_settings_cache()
 
     async def hanging_spawn(
-        command: str, cwd: str, env: dict[str, str] | None = None
+        _config, command: str, cwd: str, env: dict[str, str] | None = None
     ):
         await asyncio.sleep(5)
 
-    monkeypatch.setattr("workgate.ops.shell._spawn_process", hanging_spawn)
+    monkeypatch.setattr("workgate.executor.shell._spawn_process", hanging_spawn)
 
-    result = await run_shell("echo never", timeout_s=1)
+    result = await run_shell(_executor_config(), "echo never", timeout_s=1)
 
     assert result.ok is False
     assert result.timed_out is True
@@ -1811,7 +1901,7 @@ async def test_run_shell_command_fast_command_succeeds(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    result = await run_shell("echo ok", timeout_s=5)
+    result = await run_shell(_executor_config(), "echo ok", timeout_s=5)
 
     assert result.ok is True
     assert result.timed_out is False
@@ -1827,6 +1917,7 @@ async def test_bounded_command_reaps_same_group_background_child(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         "sleep 60 >/dev/null 2>&1 & echo $!",
         timeout_s=5,
     )
@@ -1849,6 +1940,7 @@ async def test_bounded_command_reaps_descendant_that_escapes_process_group(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         "setsid sleep 60 >/dev/null 2>&1 & echo $!",
         timeout_s=5,
     )
@@ -1871,6 +1963,7 @@ async def test_timed_out_bounded_command_reaps_escaped_descendant(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         "setsid sleep 60 >/dev/null 2>&1 & echo $!; sleep 60",
         timeout_s=1,
     )
@@ -1892,6 +1985,7 @@ async def test_run_shell_command_streams_and_bounds_large_output(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         _python_shell_command('import sys; sys.stdout.write("x" * 200000)'),
         timeout_s=5,
         max_output_bytes=1000,
@@ -1946,6 +2040,7 @@ async def test_run_shell_uses_unused_stderr_budget_for_stdout(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         _python_shell_command('import sys; sys.stdout.write("x" * 1500)'),
         timeout_s=5,
         max_output_bytes=2000,
@@ -1965,6 +2060,7 @@ async def test_run_shell_shares_total_budget_between_streams(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         _python_shell_command(
             'import sys; sys.stdout.write("o" * 900); '
             'sys.stderr.write("e" * 900)'
@@ -1987,7 +2083,7 @@ async def test_run_shell_command_timeout_marks_result_and_cleans_up(
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    result = await run_shell("sleep 30", timeout_s=1)
+    result = await run_shell(_executor_config(), "sleep 30", timeout_s=1)
 
     assert result.ok is False
     assert result.timed_out is True
@@ -2000,7 +2096,7 @@ async def test_read_persistent_shell_preserves_ansi_only_when_requested(
 ):
     calls = []
 
-    async def fake_tmux(args: list[str], timeout_s: int = 10):
+    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
         calls.append((args, timeout_s))
         return CommandResult(
             ok=True,
@@ -2012,11 +2108,13 @@ async def test_read_persistent_shell_preserves_ansi_only_when_requested(
             stdout="\x1b[32mready\x1b[0m",
         )
 
-    monkeypatch.setattr("workgate.ops.shell.tmux", fake_tmux)
+    monkeypatch.setattr("workgate.executor.shell.tmux", fake_tmux)
 
-    plain = await read_persistent_shell_output_execute("shell-1", 40)
+    plain = await read_persistent_shell_output_execute(
+        _executor_config(), "shell-1", 40
+    )
     colored = await read_persistent_shell_output_execute(
-        "shell-1", 40, preserve_ansi=True
+        _executor_config(), "shell-1", 40, preserve_ansi=True
     )
 
     assert plain.output == "\x1b[32mready\x1b[0m"
@@ -2032,7 +2130,7 @@ async def test_read_persistent_shell_preserves_ansi_only_when_requested(
 async def test_resize_persistent_shell_resizes_tmux_window(monkeypatch):
     calls = []
 
-    async def fake_tmux(args: list[str], timeout_s: int = 10):
+    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
         calls.append((args, timeout_s))
         return CommandResult(
             ok=True,
@@ -2043,9 +2141,11 @@ async def test_resize_persistent_shell_resizes_tmux_window(monkeypatch):
             command="tmux",
         )
 
-    monkeypatch.setattr("workgate.ops.shell.tmux", fake_tmux)
+    monkeypatch.setattr("workgate.executor.shell.tmux", fake_tmux)
 
-    result = await resize_persistent_shell_execute("shell-1", 180, 42)
+    result = await resize_persistent_shell_execute(
+        _executor_config(), "shell-1", 180, 42
+    )
 
     assert result.model_dump() == {
         "shell_id": "shell-1",
@@ -2062,9 +2162,13 @@ async def test_resize_persistent_shell_resizes_tmux_window(monkeypatch):
 @pytest.mark.asyncio
 async def test_resize_persistent_shell_rejects_invalid_dimensions():
     with pytest.raises(ValueError, match="cols must be between"):
-        await resize_persistent_shell_execute("shell-1", 10, 24)
+        await resize_persistent_shell_execute(
+            _executor_config(), "shell-1", 10, 24
+        )
     with pytest.raises(ValueError, match="rows must be between"):
-        await resize_persistent_shell_execute("shell-1", 80, 2)
+        await resize_persistent_shell_execute(
+            _executor_config(), "shell-1", 80, 2
+        )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="tmux-specific behavior")
@@ -2072,7 +2176,7 @@ async def test_resize_persistent_shell_rejects_invalid_dimensions():
 async def test_send_shell_invokes_tmux_promptly(monkeypatch):
     calls = []
 
-    async def fake_tmux(args: list[str], timeout_s: int = 10):
+    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
         calls.append((args, timeout_s))
         return CommandResult(
             ok=True,
@@ -2083,10 +2187,12 @@ async def test_send_shell_invokes_tmux_promptly(monkeypatch):
             command="tmux",
         )
 
-    monkeypatch.setattr("workgate.ops.shell.tmux", fake_tmux)
+    monkeypatch.setattr("workgate.executor.shell.tmux", fake_tmux)
 
     result = await asyncio.wait_for(
-        send_persistent_shell_input_execute("shell-1", "echo ok", enter=True),
+        send_persistent_shell_input_execute(
+            _executor_config(), "shell-1", "echo ok", enter=True
+        ),
         timeout=1,
     )
 
@@ -2114,6 +2220,7 @@ async def test_run_shell_command_filters_server_environment(
     clear_settings_cache()
 
     result = await run_shell(
+        _executor_config(),
         _python_shell_command(
             "import os; "
             "blocked = ('PYTHONPATH', 'CLOUDFLARE_TUNNEL_TOKEN'); "

@@ -9,9 +9,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from ...ops.shell import tool_timeout_s
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import ToolHandler
+from ..tool_timeouts import tool_timeout_s
 from .invocations import call_http_tool
 
 type ToolRouteHandler = Callable[..., Awaitable[Any]]

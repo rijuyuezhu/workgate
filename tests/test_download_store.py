@@ -1,4 +1,4 @@
-import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -8,12 +8,17 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.ops.downloads import (
-    create_file_link_dispatch_execute,
-    list_file_links_execute,
+from workgate.control.download_snapshot import (
+    DownloadSnapshot,
+    new_staging_path,
+    open_private_staging,
+    snapshot_directory,
 )
-from workgate.ops.utils.download_snapshot import snapshot_directory
-from workgate.ops.utils.download_store import backup_path, store_path
+from workgate.control.download_store import backup_path, store_path
+from workgate.control.downloads import (
+    _list_file_links_owned,
+    _register_snapshot,
+)
 
 
 def _configure(tmp_path: Path, monkeypatch) -> None:
@@ -25,7 +30,28 @@ def _configure(tmp_path: Path, monkeypatch) -> None:
 
 
 def _create_file_link(path: str) -> None:
-    asyncio.run(create_file_link_dispatch_execute(path, ttl_s=60))
+    source = Path(path)
+    if not source.is_absolute():
+        source = get_settings().workspace_root / source
+    data = source.read_bytes()
+    staging = new_staging_path()
+    with open_private_staging(staging) as handle:
+        handle.write(data)
+    snapshot = DownloadSnapshot(
+        staging_path=staging,
+        display_path=str(source),
+        source_name=source.name,
+        size=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
+    _register_snapshot(
+        snapshot,
+        ttl_s=60,
+        filename=None,
+        max_downloads=None,
+        inline=False,
+        session_id=None,
+    )
 
 
 def test_concurrent_processes_do_not_lose_links(tmp_path, monkeypatch):
@@ -37,11 +63,28 @@ def test_concurrent_processes_do_not_lose_links(tmp_path, monkeypatch):
         sources.append(source.name)
 
     script = """
+import hashlib
 import sys
+from pathlib import Path
 from workgate.config.settings import clear_settings_cache
-from workgate.ops.downloads import create_file_link_dispatch_execute
+from workgate.control.download_snapshot import DownloadSnapshot, new_staging_path, open_private_staging
+from workgate.control.downloads import _register_snapshot
 clear_settings_cache()
-__import__("asyncio").run(create_file_link_dispatch_execute(sys.argv[1], ttl_s=60))
+source = Path(sys.argv[1])
+data = source.read_bytes()
+staging = new_staging_path()
+with open_private_staging(staging) as handle:
+    handle.write(data)
+_register_snapshot(
+    DownloadSnapshot(
+        staging_path=staging,
+        display_path=str(source),
+        source_name=source.name,
+        size=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+    ),
+    ttl_s=60, filename=None, max_downloads=None, inline=False, session_id=None,
+)
 """
     environment = os.environ.copy()
     processes = [
@@ -63,7 +106,7 @@ __import__("asyncio").run(create_file_link_dispatch_execute(sys.argv[1], ttl_s=6
 
     assert failures == []
     clear_settings_cache()
-    links = list_file_links_execute().links
+    links = _list_file_links_owned().links
     assert len(links) == len(sources)
     assert {Path(link.path or "").name for link in links} == set(sources)
     assert len(list(snapshot_directory().glob("*.bin"))) == len(sources)
@@ -77,7 +120,7 @@ def test_corrupt_primary_and_backup_refuse_silent_reset(tmp_path, monkeypatch):
     backup_path().write_text("{broken-backup", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="no valid backup"):
-        list_file_links_execute()
+        _list_file_links_owned()
 
     assert store_path().read_text(encoding="utf-8") == "{broken-primary"
     assert backup_path().read_text(encoding="utf-8") == "{broken-backup"
@@ -103,7 +146,7 @@ def test_legacy_live_path_links_are_dropped_on_migration(tmp_path, monkeypatch):
     }
     store_path().write_text(json.dumps(legacy), encoding="utf-8")
 
-    assert list_file_links_execute().links == []
+    assert _list_file_links_owned().links == []
     assert json.loads(store_path().read_text(encoding="utf-8")) == {
         "links": {},
         "version": 2,
@@ -124,7 +167,7 @@ def test_prune_removes_only_stale_staging_files(tmp_path, monkeypatch):
     old = 1_700_000_000
     os.utime(stale, (old, old))
 
-    list_file_links_execute()
+    _list_file_links_owned()
 
     assert not stale.exists()
     assert recent.read_bytes() == b"recent"

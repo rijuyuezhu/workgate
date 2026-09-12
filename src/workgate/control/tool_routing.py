@@ -8,27 +8,29 @@ from typing import Any
 
 from mcp.types import CallToolResult
 
-from ..remote.tool_specs import REMOTE_WORKER_TOOL_NAMES
 from ..tools.contracts import McpToolContext, ToolRegistry
 from ..tools.declarative import DeclarativeToolRegistry, ToolDefinition
+from ..tools.machine import MACHINE_TOOL_NAMES
+from .agent_bridge import ControlAgentBridgeService
+from .audit import ControlAuditService
 from .downloads import ControlDownloadService
 from .jobs import ControlJobService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
+from .todos import ControlTodoService
 
-_MACHINE_TOOL_NAMES = frozenset(
-    {
-        *REMOTE_WORKER_TOOL_NAMES,
-        "view_image",
-        "workspace_search",
-        "fetch",
-    }
-)
+_MACHINE_TOOL_NAMES = MACHINE_TOOL_NAMES
 _SESSION_CONTROL_TOOLS = frozenset(
     {"session_start", "session_change_cwd", "session_end", "session_copy"}
 )
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
     {"create_file_link", "list_file_links", "revoke_file_link"}
+)
+_TODO_CONTROL_TOOLS = frozenset({"read_todos", "write_todos"})
+_AUDIT_CONTROL_TOOLS = frozenset({"audit_tail"})
+_JOB_CONTROL_TOOLS = frozenset({"job"})
+_AGENT_MCP_CONTROL_TOOLS = frozenset(
+    {"list_agent_mcp_servers", "list_agent_mcp_tools", "call_agent_mcp_tool"}
 )
 
 
@@ -41,11 +43,17 @@ class ControlToolRouter:
         session_copy: ControlSessionCopyService,
         jobs: ControlJobService,
         downloads: ControlDownloadService,
+        todos: ControlTodoService,
+        audit: ControlAuditService,
+        agent_bridge: ControlAgentBridgeService,
     ) -> None:
         self._sessions = sessions
         self._session_copy = session_copy
         self._jobs = jobs
         self._downloads = downloads
+        self._todos = todos
+        self._audit = audit
+        self._agent_bridge = agent_bridge
 
     async def invoke(self, tool_name: str, args: dict[str, Any]) -> Any:
         if tool_name == "session_start":
@@ -85,6 +93,43 @@ class ControlToolRouter:
                 include_finished=bool(args.get("include_finished", True)),
                 lines=int(args.get("lines", 200)),
             )
+        if tool_name == "read_todos":
+            return await self._todos.read(str(args["session_id"]))
+        if tool_name == "write_todos":
+            return await self._todos.write(
+                str(args["session_id"]),
+                list(args.get("todos") or []),
+                args.get("expected_revision"),
+            )
+        if tool_name == "audit_tail":
+            return await self._audit.execute(
+                session_id=str(args["session_id"]),
+                limit=int(args.get("limit", 100)),
+                event=args.get("event"),
+                operation=args.get("operation"),
+                audit_session=args.get("audit_session"),
+                search=args.get("search"),
+                start_ts=args.get("start_ts"),
+                end_ts=args.get("end_ts"),
+                sort=str(args.get("sort", "desc")),
+                entry_id=args.get("entry_id"),
+                include_full_payloads=bool(
+                    args.get("include_full_payloads", False)
+                ),
+            )
+        if tool_name == "list_agent_mcp_servers":
+            return await self._agent_bridge.list_servers(args.get("session_id"))
+        if tool_name == "list_agent_mcp_tools":
+            return await self._agent_bridge.list_tools(
+                args.get("server"), args.get("session_id")
+            )
+        if tool_name == "call_agent_mcp_tool":
+            return await self._agent_bridge.call_tool(
+                str(args["server"]),
+                str(args["tool"]),
+                dict(args.get("args") or {}),
+                args.get("session_id"),
+            )
         if tool_name == "create_file_link":
             return await self._downloads.create(
                 session_id=str(args["session_id"]),
@@ -121,7 +166,13 @@ def route_control_registry(
         # source registry intentionally keeps them off public HTTP/MCP surfaces.
         return registry
     route_names = (
-        _MACHINE_TOOL_NAMES | _SESSION_CONTROL_TOOLS | _DOWNLOAD_CONTROL_TOOLS
+        _MACHINE_TOOL_NAMES
+        | _SESSION_CONTROL_TOOLS
+        | _DOWNLOAD_CONTROL_TOOLS
+        | _TODO_CONTROL_TOOLS
+        | _AUDIT_CONTROL_TOOLS
+        | _JOB_CONTROL_TOOLS
+        | _AGENT_MCP_CONTROL_TOOLS
     )
     if not any(tool.name in route_names for tool in registry._enabled_tools()):
         return registry
@@ -148,6 +199,10 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
             _MACHINE_TOOL_NAMES
             | _SESSION_CONTROL_TOOLS
             | _DOWNLOAD_CONTROL_TOOLS
+            | _TODO_CONTROL_TOOLS
+            | _AUDIT_CONTROL_TOOLS
+            | _JOB_CONTROL_TOOLS
+            | _AGENT_MCP_CONTROL_TOOLS
         ):
             return tool
 
@@ -157,7 +212,7 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
             bound.apply_defaults()
             return await self._router.invoke(tool.name, dict(bound.arguments))
 
-        return replace(tool, func=routed, session_admission="handler")
+        return replace(tool, func=routed)
 
     def http_routes(self):
         return tuple(

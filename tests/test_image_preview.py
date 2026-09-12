@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
-import workgate.ui.image_preview as preview_module
+import workgate.utils.image_preview as preview_module
 
 
 class _OversizedImage:

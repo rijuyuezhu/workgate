@@ -3,7 +3,7 @@ import pytest
 from tests.helpers import build_paired_control_harness, mcp_structured
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
-from workgate.tool_session.selectors import parse_read_target
+from workgate.executor.tool_session.selectors import parse_read_target
 
 
 def test_parse_read_target_rejects_missing_plus_count():

@@ -9,7 +9,6 @@ void (async () => {
   const [
     { createDashboardController },
     { createExecutorsController },
-    { createRemotesController },
     { createAuditView },
     { createAuditController },
     { createTerminalController },
@@ -18,7 +17,6 @@ void (async () => {
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
     import(assetUrl("executors.js")),
-    import(assetUrl("remotes.js")),
     import(assetUrl("audit_view.js")),
     import(assetUrl("audit.js")),
     import(assetUrl("terminal.js")),
@@ -52,19 +50,11 @@ void (async () => {
   const viewDefinitions = Object.freeze({
     overview: {
       title: "Overview",
-      description: "System health across local and remote coding environments.",
-    },
-    machines: {
-      title: "Machines",
-      description: "Controller and worker targets available to the Human UI.",
+      description: "System health across connected executor environments.",
     },
     executors: {
       title: "Executors",
       description: "Pair, inspect, rename, and revoke final executor identities.",
-    },
-    remotes: {
-      title: "Remotes",
-      description: "Inspect and administer the legacy remote runtime bridge during migration.",
     },
     sessions: {
       title: "Sessions",
@@ -72,15 +62,15 @@ void (async () => {
     },
     terminals: {
       title: "Terminals",
-      description: "Persistent local and remote tmux terminals with interactive streaming.",
+      description: "Persistent executor terminals with interactive streaming.",
     },
     files: {
       title: "Files",
-      description: "Browse and edit workspace-scoped files on the selected machine.",
+      description: "Browse and edit workspace-scoped files on the selected executor.",
     },
     audit: {
       title: "Audit",
-      description: "Search machine-wide activity and control-plane events.",
+      description: "Search control-owned product and tool activity.",
     },
     console: {
       title: "OpenTUI",
@@ -114,7 +104,7 @@ void (async () => {
     dashboardHealthCard: document.getElementById("dashboard-health-card"),
     dashboardHealthDetail: document.getElementById("dashboard-health-detail"),
     dashboardLoad: document.getElementById("dashboard-load"),
-    dashboardMachine: document.getElementById("dashboard-machine"),
+    dashboardExecutor: document.getElementById("dashboard-executor"),
     dashboardMemory: document.getElementById("dashboard-memory"),
     dashboardMemoryBar: document.getElementById("dashboard-memory-bar"),
     dashboardMemoryTrend: document.getElementById("dashboard-memory-trend"),
@@ -138,8 +128,7 @@ void (async () => {
     auditFilterForm: document.getElementById("audit-filter-form"),
     auditLimit: document.getElementById("audit-limit"),
     auditList: document.getElementById("audit-list"),
-    auditMachine: document.getElementById("audit-machine"),
-    auditOperation: document.getElementById("audit-operation"),
+        auditOperation: document.getElementById("audit-operation"),
     auditRefresh: document.getElementById("audit-refresh"),
     auditSearch: document.getElementById("audit-search"),
     auditSort: document.getElementById("audit-sort"),
@@ -157,7 +146,7 @@ void (async () => {
     fileEditorCancel: document.getElementById("file-editor-cancel"),
     fileEditorForm: document.getElementById("file-editor-form"),
     fileList: document.getElementById("file-list"),
-    fileMachine: document.getElementById("file-machine"),
+    fileExecutor: document.getElementById("file-executor"),
     fileMove: document.getElementById("file-move"),
     fileNew: document.getElementById("file-new"),
     fileOpen: document.getElementById("file-open"),
@@ -171,10 +160,6 @@ void (async () => {
     fileShowHidden: document.getElementById("file-show-hidden"),
     fileState: document.getElementById("file-state"),
     fileUp: document.getElementById("file-up"),
-    lastUpdated: document.getElementById("last-updated"),
-    machineList: document.getElementById("machine-list"),
-    machineOnline: document.getElementById("machine-online"),
-    machineTotal: document.getElementById("machine-total"),
     oauthLogin: document.getElementById("oauth-login"),
     executorDetailCreated: document.getElementById("executor-detail-created"),
     executorDetailId: document.getElementById("executor-detail-id"),
@@ -212,36 +197,9 @@ void (async () => {
     executorRevokeOpen: document.getElementById("executor-revoke-open"),
     executorRevoked: document.getElementById("executor-revoked"),
     executorState: document.getElementById("executor-state"),
+    executorTargetOnline: document.getElementById("executor-target-online"),
+    executorTargetTotal: document.getElementById("executor-target-total"),
     executorTotal: document.getElementById("executor-total"),
-    remoteController: document.getElementById("remote-controller"),
-    remoteDetailCapabilities: document.getElementById("remote-detail-capabilities"),
-    remoteDetailHostname: document.getElementById("remote-detail-hostname"),
-    remoteDetailLastSeen: document.getElementById("remote-detail-last-seen"),
-    remoteDetailName: document.getElementById("remote-detail-name"),
-    remoteDetailPlatform: document.getElementById("remote-detail-platform"),
-    remoteDetailProfile: document.getElementById("remote-detail-profile"),
-    remoteDetailPython: document.getElementById("remote-detail-python"),
-    remoteDetailQueue: document.getElementById("remote-detail-queue"),
-    remoteDetailReconnect: document.getElementById("remote-detail-reconnect"),
-    remoteDetailStatus: document.getElementById("remote-detail-status"),
-    remoteDetailUser: document.getElementById("remote-detail-user"),
-    remoteDetailVersion: document.getElementById("remote-detail-version"),
-    remoteDetailWorkdir: document.getElementById("remote-detail-workdir"),
-    remoteList: document.getElementById("remote-list"),
-    remoteOffline: document.getElementById("remote-offline"),
-    remoteOnline: document.getElementById("remote-online"),
-    remoteRefresh: document.getElementById("remote-refresh"),
-    remoteReconnectCopy: document.getElementById("remote-reconnect-copy"),
-    remoteRenameDialog: document.getElementById("remote-rename-dialog"),
-    remoteRenameForm: document.getElementById("remote-rename-form"),
-    remoteRenameName: document.getElementById("remote-rename-name"),
-    remoteRenameOpen: document.getElementById("remote-rename-open"),
-    remoteRevokeDialog: document.getElementById("remote-revoke-dialog"),
-    remoteRevokeForm: document.getElementById("remote-revoke-form"),
-    remoteRevokeName: document.getElementById("remote-revoke-name"),
-    remoteRevokeOpen: document.getElementById("remote-revoke-open"),
-    remoteState: document.getElementById("remote-state"),
-    remoteTotal: document.getElementById("remote-total"),
     refresh: document.getElementById("refresh"),
     signOut: document.getElementById("sign-out"),
     terminalInput: document.getElementById("terminal-input"),
@@ -250,7 +208,7 @@ void (async () => {
     terminalKill: document.getElementById("terminal-kill"),
     terminalLatest: document.getElementById("terminal-latest"),
     terminalList: document.getElementById("terminal-list"),
-    terminalMachine: document.getElementById("terminal-machine"),
+    terminalExecutor: document.getElementById("terminal-executor"),
     terminalName: document.getElementById("terminal-name"),
     terminalOutput: document.getElementById("terminal-output"),
     terminalPendingCount: document.getElementById("terminal-pending-count"),
@@ -272,15 +230,14 @@ void (async () => {
     sessionAuditSummary: document.getElementById("session-audit-summary"),
     sessionDetailCreated: document.getElementById("session-detail-created"),
     sessionDetailId: document.getElementById("session-detail-id"),
-    sessionDetailMachine: document.getElementById("session-detail-machine"),
+    sessionDetailExecutor: document.getElementById("session-detail-executor"),
     sessionDetailStatus: document.getElementById("session-detail-status"),
-    sessionDetailTarget: document.getElementById("session-detail-target"),
-    sessionDetailTitle: document.getElementById("session-detail-title"),
+        sessionDetailTitle: document.getElementById("session-detail-title"),
     sessionDetailUpdated: document.getElementById("session-detail-updated"),
     sessionDetailWorkdir: document.getElementById("session-detail-workdir"),
     sessionIncludeInactive: document.getElementById("session-include-inactive"),
     sessionList: document.getElementById("session-list"),
-    sessionMachine: document.getElementById("session-machine"),
+    sessionExecutor: document.getElementById("session-executor"),
     sessionRefresh: document.getElementById("session-refresh"),
     sessionState: document.getElementById("session-state"),
     sessionTerminate: document.getElementById("session-terminate"),
@@ -371,16 +328,6 @@ void (async () => {
     reloadApp: () => load(),
   });
   executors.bind();
-
-  const remotes = createRemotesController({
-    elements,
-    request,
-    text,
-    authMode: config.authMode,
-    isAuthenticated: () => authenticated,
-    reloadApp: () => load(),
-  });
-  remotes.bind();
 
   function normalizeView(value) {
     const candidate = String(value || "").replace(/^#/, "");
@@ -750,40 +697,6 @@ void (async () => {
     return true;
   }
 
-  function machineCard(machine) {
-    const article = document.createElement("article");
-    article.className = "machine";
-
-    const header = document.createElement("div");
-    header.className = "machine-header";
-
-    const name = document.createElement("span");
-    name.className = "machine-name";
-    name.textContent = text(machine.name, "unnamed");
-
-    const status = document.createElement("span");
-    const state = machine.status === "online" ? "online" : "offline";
-    status.className = `status status-${state}`;
-    status.textContent = text(machine.status, "unknown");
-    header.append(name, status);
-
-    const workdir = document.createElement("p");
-    workdir.className = "machine-detail";
-    workdir.textContent = text(machine.workdir, "No workdir reported");
-
-    const meta = document.createElement("div");
-    meta.className = "machine-meta";
-    const queue = document.createElement("span");
-    queue.textContent = `queue ${text(machine.queue_depth, "0")}`;
-    const capabilities = document.createElement("span");
-    const values = Array.isArray(machine.capabilities) ? machine.capabilities : [];
-    capabilities.textContent = values.length ? values.join(" · ") : "capabilities unavailable";
-    meta.append(queue, capabilities);
-
-    article.append(header, workdir, meta);
-    return article;
-  }
-
   function formatFileBytes(value) {
     const bytes = Number(value);
     if (!Number.isFinite(bytes) || bytes < 0) return "size unavailable";
@@ -799,28 +712,17 @@ void (async () => {
   }
 
   function render(data) {
-    const counts = data.counts || {};
-    const machines = Array.isArray(data.machines) ? data.machines : [];
+    const executorCounts = data.executor_counts || {};
+    const executorTargets = Array.isArray(data.executor_targets) ? data.executor_targets : [];
     elements.version.textContent = text(data.version && data.version.version);
-    elements.machineTotal.textContent = text(counts.total, machines.length);
-    elements.machineOnline.textContent = text(counts.online, "0");
+    elements.executorTargetTotal.textContent = text(executorCounts.total, executorTargets.length);
+    elements.executorTargetOnline.textContent = text(executorCounts.online, "0");
     elements.authMode.textContent = text(data.ui && data.ui.auth_mode, config.authMode);
-    elements.lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
-    dashboard.renderMachines(machines);
-    terminal.renderMachines(machines);
-    files.renderMachines(machines);
-    sessions.renderMachines(machines);
-    audit.renderMachines(machines);
-    elements.machineList.replaceChildren();
-    if (!machines.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "No machines are registered.";
-      elements.machineList.append(empty);
-    } else {
-      for (const machine of machines) elements.machineList.append(machineCard(machine));
-    }
+    dashboard.renderExecutors(executorTargets);
+    terminal.renderExecutors(executorTargets);
+    files.renderExecutors(executorTargets);
+    sessions.renderExecutors(executorTargets);
     hideAuthentication();
     setConnection("Connected", "online");
   }
@@ -834,8 +736,6 @@ void (async () => {
       dashboard.startPolling();
       await executors.refresh({ force: true });
       executors.startPolling();
-      await remotes.refresh({ force: true });
-      remotes.startPolling();
       try {
         await terminal.refresh();
       } catch (error) {
@@ -861,24 +761,21 @@ void (async () => {
       await audit.refresh();
     } catch (error) {
       if (error.authenticationRequired) {
-        terminal.reset("local");
+        terminal.reset("");
         elements.terminalState.textContent = "Authentication required";
         dashboard.stopPolling();
         executors.stopPolling();
-        remotes.stopPolling();
         dashboard.invalidate();
         files.invalidate();
         sessions.invalidate();
         audit.invalidate();
 
-        dashboard.reset("local");
+        dashboard.reset("");
         executors.reset("Authentication required");
-        remotes.reset("Authentication required");
         elements.dashboardState.textContent = "Authentication required";
         showAuthentication("Authentication required");
       } else {
         setConnection("Unavailable", "error");
-        elements.lastUpdated.textContent = error instanceof Error ? error.message : String(error);
       }
     } finally {
       elements.refresh.disabled = false;
@@ -891,9 +788,7 @@ void (async () => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await load();
-      if (elements.authPanel.hidden) {
-        elements.lastUpdated.textContent = `OAuth callback ignored: ${message}`;
-      } else {
+      if (!elements.authPanel.hidden) {
         showAuthentication("Unable to sign in", message);
       }
       return;
@@ -946,16 +841,14 @@ void (async () => {
     } catch {
       // Local UI state is still cleared when the server session already expired.
     }
-    terminal.reset("local");
+    terminal.reset("");
     dashboard.stopPolling();
     executors.stopPolling();
-    remotes.stopPolling();
-    dashboard.reset("local");
+    dashboard.reset("");
     executors.reset("Authentication required");
-    remotes.reset("Authentication required");
-    files.reset("local");
-    sessions.reset("local");
-    audit.reset("local");
+    files.reset("");
+    sessions.reset("");
+    audit.reset();
     elements.terminalState.textContent = "Authentication required";
     elements.dashboardState.textContent = "Authentication required";
     elements.fileState.textContent = "Authentication required";
@@ -993,7 +886,6 @@ void (async () => {
   window.addEventListener("beforeunload", () => {
     dashboard.stopPolling();
     executors.stopPolling();
-    remotes.stopPolling();
     terminal.close();
   });
   elements.oauthLogin.hidden = !oauthAvailable();

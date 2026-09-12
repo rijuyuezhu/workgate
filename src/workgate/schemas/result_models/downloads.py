@@ -1,7 +1,5 @@
 """Typed structured outputs for tokenized download-link tools."""
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
@@ -39,12 +37,6 @@ class FileLinkSummary(BaseModel):
     )
     max_downloads: int = Field(
         description="Maximum allowed downloads, or 0 for unlimited."
-    )
-    target: Literal["local", "remote"] = Field(
-        description="Session target from which the snapshot was created."
-    )
-    machine: str | None = Field(
-        description="Remote worker machine for remote snapshots, otherwise null."
     )
 
 

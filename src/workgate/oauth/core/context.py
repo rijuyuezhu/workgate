@@ -14,7 +14,7 @@ _CURRENT_OAUTH_CLAIMS: ContextVar[OAuthClaims | None] = ContextVar(
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class MissingOAuthScopeError(Exception):
     """Raised when the current OAuth claims lack a required scope."""
 

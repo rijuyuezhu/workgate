@@ -10,8 +10,8 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ..audit import audit
-from ..ops.downloads import DOWNLOAD_PREFIX, claim_download
-from ..ops.utils.download_store import ClaimedDownload, release_claim
+from ..control.download_store import ClaimedDownload, release_claim
+from ..control.downloads import DOWNLOAD_PREFIX, claim_download
 
 
 def download_error_response(payload: dict[str, Any]) -> JSONResponse:

@@ -15,6 +15,7 @@ from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import ExecutorConnection
 from workgate.executor.control_client import ExecutorControlClient
 from workgate.executor.hello import build_executor_hello
@@ -66,16 +67,16 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
             workspace_root=control_workspace,
             state_dir=tmp_path / "control-state",
             auth_mode="none",
-            remote_enabled=False,
             agent_bridge_enabled=False,
         )
     )
     executor = build_executor_runtime(
-        Settings(
-            workspace_root=executor_workspace,
-            state_dir=tmp_path / "executor-state",
-            remote_enabled=False,
-            agent_bridge_enabled=False,
+        resolve_executor_config(
+            Settings(
+                workspace_root=executor_workspace,
+                state_dir=tmp_path / "executor-state",
+                agent_bridge_enabled=False,
+            )
         ),
         enable_control_connection=False,
     )
@@ -189,10 +190,7 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
             executor_workspace / "copied-in-background.txt"
         ).read_text() == ("crossed executor protocol\n")
         assert not (control_workspace / "copied-in-background.txt").exists()
-        assert all(
-            row.session_id not in {session_id, dst_session_id}
-            for row in control.services.tool_session_store.list_sessions()
-        )
+        assert not hasattr(control.services, "tool_session_store")
 
         await connection.aclose()
         connection = None

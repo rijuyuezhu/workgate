@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from tests.browser import scenario_terminals_remote
+from tests.browser import scenario_terminals
 
 
 class _DelayedWebSocketHarness:
@@ -22,13 +22,11 @@ def test_wait_terminal_output_allows_websocket_event_after_poll_output(
     monkeypatch,
 ) -> None:
     harness = _DelayedWebSocketHarness()
-    monkeypatch.setattr(
-        scenario_terminals_remote.time, "sleep", lambda _value: None
-    )
+    monkeypatch.setattr(scenario_terminals.time, "sleep", lambda _value: None)
 
-    scenario_terminals_remote._wait_terminal_output(
+    scenario_terminals._wait_terminal_output(
         cast(Any, harness),
-        "local",
+        "executor",
         "shell",
         "terminal-marker",
     )

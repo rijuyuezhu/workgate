@@ -14,7 +14,7 @@ from workgate.ui.http.terminal_protocol import (
 
 def test_terminal_websocket_request_defaults_are_stable():
     request = parse_terminal_websocket_request(
-        machine=None,
+        executor_id="executor-a",
         shell_id="demo",
         mode=None,
         lines=None,
@@ -22,7 +22,7 @@ def test_terminal_websocket_request_defaults_are_stable():
         rows=None,
     )
 
-    assert request.machine == "local"
+    assert request.executor_id == "executor-a"
     assert request.shell_id == "demo"
     assert request.requested_mode == "snapshot"
     assert request.announce_mode is False
@@ -33,7 +33,7 @@ def test_terminal_websocket_request_defaults_are_stable():
 
 def test_terminal_websocket_request_preserves_explicit_mode_and_bounds():
     request = parse_terminal_websocket_request(
-        machine="edge",
+        executor_id="edge",
         shell_id="shared",
         mode="auto",
         lines="50",
@@ -41,14 +41,14 @@ def test_terminal_websocket_request_preserves_explicit_mode_and_bounds():
         rows="30",
     )
 
-    assert request.machine == "edge"
+    assert request.executor_id == "edge"
     assert request.requested_mode == "auto"
     assert request.announce_mode is True
     assert (request.lines, request.cols, request.rows) == (50, 100, 30)
 
     with pytest.raises(ValueError, match="mode must be one of"):
         parse_terminal_websocket_request(
-            machine="local",
+            executor_id="local",
             shell_id="demo",
             mode="raw",
             lines=None,

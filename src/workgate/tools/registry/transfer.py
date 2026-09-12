@@ -1,41 +1,8 @@
 """Internal transfer operation tool registry for remote-worker file moves."""
 
 import asyncio
-from typing import Any
+from typing import Any, NoReturn
 
-from ...ops.transfer import (
-    transfer_abort_write as transfer_abort_write_sync,
-)
-from ...ops.transfer import (
-    transfer_alloc_temp_path as transfer_alloc_temp_path_sync,
-)
-from ...ops.transfer import (
-    transfer_begin_write as transfer_begin_write_sync,
-)
-from ...ops.transfer import (
-    transfer_copy_file as transfer_copy_file_sync,
-)
-from ...ops.transfer import (
-    transfer_delete_temp_path as transfer_delete_temp_path_sync,
-)
-from ...ops.transfer import (
-    transfer_finish_write as transfer_finish_write_sync,
-)
-from ...ops.transfer import (
-    transfer_pack_dir as transfer_pack_dir_sync,
-)
-from ...ops.transfer import (
-    transfer_read_chunk as transfer_read_chunk_sync,
-)
-from ...ops.transfer import (
-    transfer_stat as transfer_stat_sync,
-)
-from ...ops.transfer import (
-    transfer_unpack_archive as transfer_unpack_archive_sync,
-)
-from ...ops.transfer import (
-    transfer_write_chunk as transfer_write_chunk_sync,
-)
 from ...schemas.input_models.session import OptionalSessionIdArg
 from ...schemas.input_models.transfer import (
     TransferArchivePathArg,
@@ -70,6 +37,11 @@ from ..contracts import HttpToolRoute
 from ..declarative import DeclarativeToolRegistry
 
 
+def _transfer_impl() -> NoReturn:
+    """Fail closed unless the final executor composition binds transfer handlers."""
+    raise RuntimeError("transfer operations require composed executor services")
+
+
 class TransferToolRegistry(DeclarativeToolRegistry):
     """Register worker-side transfer primitives without public routes."""
 
@@ -100,7 +72,7 @@ async def transfer_stat(
 ) -> TransferStatOutput:
     """Return transfer metadata for a file or directory."""
     return await asyncio.to_thread(
-        transfer_stat_sync, path, sha256, session_id=session_id
+        _transfer_impl().transfer_stat, path, sha256, session_id=session_id
     )
 
 
@@ -115,7 +87,7 @@ async def transfer_copy_file(
 ) -> TransferCopyFileOutput:
     """Stream a file between two paths on the same worker."""
     return await asyncio.to_thread(
-        transfer_copy_file_sync,
+        _transfer_impl().transfer_copy_file,
         source_path,
         destination_path,
         overwrite,
@@ -138,7 +110,7 @@ async def transfer_read_chunk(
 ) -> TransferReadChunkOutput:
     """Read one base64-encoded binary chunk from a file."""
     return await asyncio.to_thread(
-        transfer_read_chunk_sync,
+        _transfer_impl().transfer_read_chunk,
         path,
         offset,
         chunk_size,
@@ -155,7 +127,7 @@ async def transfer_begin_write(
 ) -> TransferBeginWriteOutput:
     """Start an atomic chunked file write and return a transfer id."""
     return await asyncio.to_thread(
-        transfer_begin_write_sync,
+        _transfer_impl().transfer_begin_write,
         path,
         overwrite,
         expected_bytes,
@@ -174,7 +146,7 @@ async def transfer_write_chunk(
 ) -> TransferWriteChunkOutput:
     """Write one base64-encoded chunk into an active transfer."""
     return await asyncio.to_thread(
-        transfer_write_chunk_sync,
+        _transfer_impl().transfer_write_chunk,
         path,
         transfer_id,
         offset,
@@ -194,7 +166,7 @@ async def transfer_finish_write(
 ) -> TransferFinishWriteOutput:
     """Validate and atomically finish an active transfer."""
     return await asyncio.to_thread(
-        transfer_finish_write_sync,
+        _transfer_impl().transfer_finish_write,
         path,
         transfer_id,
         expected_bytes,
@@ -211,7 +183,10 @@ async def transfer_abort_write(
 ) -> TransferAbortWriteOutput:
     """Abort an active transfer and remove its temporary file."""
     return await asyncio.to_thread(
-        transfer_abort_write_sync, path, transfer_id, session_id=session_id
+        _transfer_impl().transfer_abort_write,
+        path,
+        transfer_id,
+        session_id=session_id,
     )
 
 
@@ -222,7 +197,7 @@ async def transfer_alloc_temp_path(
 ) -> TransferAllocTempPathOutput:
     """Allocate a safe temporary path for transfer archives."""
     return await asyncio.to_thread(
-        transfer_alloc_temp_path_sync, suffix, session_id=session_id
+        _transfer_impl().transfer_alloc_temp_path, suffix, session_id=session_id
     )
 
 
@@ -234,7 +209,10 @@ async def transfer_pack_dir(
 ) -> TransferPackDirOutput:
     """Pack a directory into a temporary tar archive."""
     return await asyncio.to_thread(
-        transfer_pack_dir_sync, path, compression, session_id=session_id
+        _transfer_impl().transfer_pack_dir,
+        path,
+        compression,
+        session_id=session_id,
     )
 
 
@@ -248,7 +226,7 @@ async def transfer_unpack_archive(
 ) -> TransferUnpackArchiveOutput:
     """Safely unpack a transfer archive into a destination directory."""
     return await asyncio.to_thread(
-        transfer_unpack_archive_sync,
+        _transfer_impl().transfer_unpack_archive,
         archive_path,
         dst_path,
         overwrite,
@@ -262,89 +240,6 @@ async def transfer_delete_temp_path(
     path: TransferPathArg,
 ) -> TransferDeleteTempPathOutput:
     """Delete a transfer scratch file under the configured temp directory."""
-    return await asyncio.to_thread(transfer_delete_temp_path_sync, path)
-
-
-@transfer_tool(http_method="POST", http_path="/tools/transfer_http_upload")
-async def transfer_http_upload(
-    path: str,
-    session_id: str | None,
-    url: str,
-    controller_url: str,
-    authorization: str,
-    worker: str,
-    expected_bytes: int,
-    expected_sha256: str,
-    chunk_size: int,
-    timeout_s: float,
-) -> dict[str, Any]:
-    """Run the private worker HTTP upload client through a local handler."""
-    from ...remote_worker.http_transfer import upload_file
-
     return await asyncio.to_thread(
-        upload_file,
-        path=path,
-        session_id=session_id,
-        url=url,
-        controller_url=controller_url,
-        authorization=authorization,
-        worker=worker,
-        expected_bytes=expected_bytes,
-        expected_sha256=expected_sha256,
-        chunk_size=chunk_size,
-        timeout_s=timeout_s,
-    )
-
-
-@transfer_tool(http_method="POST", http_path="/tools/transfer_http_download")
-async def transfer_http_download(
-    path: str,
-    session_id: str | None,
-    url: str,
-    controller_url: str,
-    authorization: str,
-    worker: str,
-    transfer_id: str,
-    expected_bytes: int,
-    expected_sha256: str,
-    overwrite: bool,
-    chunk_size: int,
-    timeout_s: float,
-) -> dict[str, Any]:
-    """Run the private worker HTTP download client through a local handler."""
-    from ...remote_worker.http_transfer import download_file
-
-    return await asyncio.to_thread(
-        download_file,
-        path=path,
-        session_id=session_id,
-        url=url,
-        controller_url=controller_url,
-        authorization=authorization,
-        worker=worker,
-        transfer_id=transfer_id,
-        expected_bytes=expected_bytes,
-        expected_sha256=expected_sha256,
-        overwrite=overwrite,
-        chunk_size=chunk_size,
-        timeout_s=timeout_s,
-    )
-
-
-@transfer_tool(
-    http_method="POST", http_path="/tools/transfer_http_abort_download"
-)
-async def transfer_http_abort_download(
-    path: str,
-    session_id: str | None,
-    transfer_id: str,
-) -> dict[str, Any]:
-    """Abort one private worker HTTP download transaction locally."""
-    from ...remote_worker.http_transfer import abort_download
-
-    return await asyncio.to_thread(
-        abort_download,
-        path=path,
-        session_id=session_id,
-        transfer_id=transfer_id,
+        _transfer_impl().transfer_delete_temp_path, path
     )

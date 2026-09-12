@@ -26,9 +26,8 @@ NEW_CORE_MIN_PERCENT = 80.0
 NEW_ADAPTER_MIN_PERCENT = 60.0
 CRITICAL_PREFIXES = (
     f"{SOURCE_PREFIX}audit/",
+    f"{SOURCE_PREFIX}executor/",
     f"{SOURCE_PREFIX}oauth/",
-    f"{SOURCE_PREFIX}remote_worker/",
-    f"{SOURCE_PREFIX}terminal/",
 )
 CRITICAL_FILES = frozenset(
     {
@@ -36,15 +35,11 @@ CRITICAL_FILES = frozenset(
         f"{SOURCE_PREFIX}agent_bridge/auth_store.py",
         f"{SOURCE_PREFIX}agent_bridge/redaction.py",
         f"{SOURCE_PREFIX}config/settings.py",
-        f"{SOURCE_PREFIX}ops/files.py",
-        f"{SOURCE_PREFIX}jobs/runtime.py",
-        f"{SOURCE_PREFIX}ops/patch/envelope.py",
-        f"{SOURCE_PREFIX}ops/secret_scan.py",
-        f"{SOURCE_PREFIX}ops/shell.py",
-        f"{SOURCE_PREFIX}ops/transfer.py",
-        f"{SOURCE_PREFIX}remote/manager.py",
-        f"{SOURCE_PREFIX}remote/transfer_gateway.py",
-        f"{SOURCE_PREFIX}tool_session/store.py",
+        f"{SOURCE_PREFIX}control/executor_transport.py",
+        f"{SOURCE_PREFIX}control/pairing.py",
+        f"{SOURCE_PREFIX}control/state.py",
+        f"{SOURCE_PREFIX}protocol/credentials.py",
+        f"{SOURCE_PREFIX}executor/tool_session/store.py",
         f"{SOURCE_PREFIX}ui/security.py",
         f"{SOURCE_PREFIX}utils/path_locks.py",
         f"{SOURCE_PREFIX}utils/private_files.py",
@@ -59,9 +54,6 @@ ADAPTER_PREFIXES = (
 )
 ADAPTER_FILES = frozenset(
     {
-        f"{SOURCE_PREFIX}remote/http.py",
-        f"{SOURCE_PREFIX}remote/responses.py",
-        f"{SOURCE_PREFIX}remote/service.py",
         f"{SOURCE_PREFIX}tools/local_handlers.py",
     }
 )

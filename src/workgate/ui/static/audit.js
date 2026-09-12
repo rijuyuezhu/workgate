@@ -9,109 +9,41 @@ export function createAuditController({
   renderAuditDetailMessage,
 }) {
   const controllerState = {
-    auditMachine: "local",
     auditEntries: [],
     auditSelectedId: "",
     auditGeneration: 0,
     auditDetailGeneration: 0,
     auditLoading: false,
-    auditMachineStates: new Map([["local", "online"]]),
   };
 
-  function auditMachineOnline(machine = controllerState.auditMachine) {
-    return machine === "local" || controllerState.auditMachineStates.get(machine) === "online";
-  }
-
   function setAuditControls() {
-    const online = auditMachineOnline();
-    elements.auditRefresh.disabled = controllerState.auditLoading || !online;
-    elements.auditMachine.disabled = controllerState.auditLoading;
+    elements.auditRefresh.disabled = controllerState.auditLoading;
     for (const control of elements.auditFilterForm.querySelectorAll("input, select")) {
-      if (control !== elements.auditMachine) control.disabled = controllerState.auditLoading || !online;
+      control.disabled = controllerState.auditLoading;
     }
   }
 
   function clearAuditDetail(message = "Select a Global Audit record.") {
     controllerState.auditDetailGeneration += 1;
     elements.auditDetailTitle.textContent = "No record selected";
-    elements.auditDetailMeta.textContent = controllerState.auditMachine;
+    elements.auditDetailMeta.textContent = "Control Audit";
     renderAuditDetailMessage(elements.auditDetailBody, message);
   }
 
-  function resetAuditWorkspace(machine) {
-    controllerState.auditMachine = machine || "local";
+  function resetAuditWorkspace() {
     controllerState.auditLoading = false;
     controllerState.auditEntries = [];
     controllerState.auditSelectedId = "";
     controllerState.auditGeneration += 1;
-    elements.auditMachine.value = controllerState.auditMachine;
     elements.auditList.replaceChildren();
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = `Global Audit records for ${controllerState.auditMachine} are not loaded.`;
+    empty.textContent = "Global control Audit records are not loaded.";
     elements.auditList.append(empty);
     elements.auditSummary.textContent = "0 entries";
-    elements.auditState.textContent = `Not loaded · ${controllerState.auditMachine}`;
+    elements.auditState.textContent = "Not loaded · control";
     clearAuditDetail();
     setAuditControls();
-  }
-
-  async function refreshAuditContext() {
-    return refreshAudit();
-  }
-
-  function renderAuditMachines(machines) {
-    const available = Array.isArray(machines) ? machines : [];
-    controllerState.auditMachineStates = new Map([["local", "online"]]);
-    elements.auditMachine.replaceChildren();
-    let localPresent = false;
-    let currentPresent = false;
-    let currentOnline = controllerState.auditMachine === "local";
-    for (const machine of available) {
-      const name = text(machine.name, "");
-      if (!name) continue;
-      if (name === "local") localPresent = true;
-      const state = name === "local" ? "online" : text(machine.status, "offline");
-      const online = name === "local" || state === "online";
-      controllerState.auditMachineStates.set(name, state);
-      const option = document.createElement("option");
-      option.value = name;
-      option.textContent = online ? name : `${name} (${state})`;
-      option.disabled = !online;
-      option.selected = name === controllerState.auditMachine;
-      if (option.selected) {
-        currentPresent = true;
-        currentOnline = online;
-      }
-      elements.auditMachine.append(option);
-    }
-    if (!localPresent) {
-      const local = document.createElement("option");
-      local.value = "local";
-      local.textContent = "local";
-      local.selected = controllerState.auditMachine === "local";
-      elements.auditMachine.prepend(local);
-      if (local.selected) {
-        currentPresent = true;
-        currentOnline = true;
-      }
-    }
-    if (!currentPresent && controllerState.auditMachine !== "local") {
-      const stale = document.createElement("option");
-      stale.value = controllerState.auditMachine;
-      stale.textContent = `${controllerState.auditMachine} (unavailable)`;
-      stale.disabled = true;
-      stale.selected = true;
-      elements.auditMachine.append(stale);
-    }
-    if (!currentPresent || !currentOnline) {
-      const changed = controllerState.auditMachine !== "local";
-      resetAuditWorkspace("local");
-      if (changed) void refreshAudit();
-    } else {
-      elements.auditMachine.value = controllerState.auditMachine;
-      setAuditControls();
-    }
   }
 
   function renderAuditList() {
@@ -119,7 +51,7 @@ export function createAuditController({
     if (!controllerState.auditEntries.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = `No Global Audit records match on ${controllerState.auditMachine}.`;
+      empty.textContent = "No Global Audit records match.";
       elements.auditList.append(empty);
       clearAuditDetail("No matching Global Audit record is available.");
       return;
@@ -137,7 +69,6 @@ export function createAuditController({
 
   function auditQueryPath() {
     const params = new URLSearchParams({
-      machine: controllerState.auditMachine,
       scope: "global",
       limit: elements.auditLimit.value || "300",
       sort: elements.auditSort.value || "desc",
@@ -156,39 +87,32 @@ export function createAuditController({
   }
 
   async function loadAuditDetail(entryId) {
-    if (!entryId || !auditMachineOnline()) {
+    if (!entryId) {
       clearAuditDetail();
       return null;
     }
     const generation = ++controllerState.auditDetailGeneration;
-    const requestedMachine = controllerState.auditMachine;
     elements.auditDetailTitle.textContent = auditEntryTitle(
       controllerState.auditEntries.find((entry) => entry.id === entryId) || {},
     );
     elements.auditDetailMeta.textContent = "Loading details";
-    renderAuditDetailMessage(elements.auditDetailBody, `Loading ${requestedMachine}:${entryId}`);
+    renderAuditDetailMessage(elements.auditDetailBody, `Loading ${entryId}`);
     try {
-      const params = new URLSearchParams({
-        machine: requestedMachine,
-        scope: "global",
-        id: entryId,
-      });
+      const params = new URLSearchParams({ scope: "global", id: entryId });
       const payload = await request(`/audit/detail?${params.toString()}`);
       if (
         generation !== controllerState.auditDetailGeneration ||
-        requestedMachine !== controllerState.auditMachine ||
         entryId !== controllerState.auditSelectedId
       ) return null;
       const entry = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (!entry) throw new Error("Audit detail response was malformed");
       elements.auditDetailTitle.textContent = auditEntryTitle(entry);
-      elements.auditDetailMeta.textContent = `${requestedMachine} · Global · ${auditTimestamp(entry.ts)}`;
+      elements.auditDetailMeta.textContent = `Global · ${auditTimestamp(entry.ts)}`;
       renderAuditDetailInto(entry, elements.auditDetailBody);
       return entry;
     } catch (error) {
       if (
         generation !== controllerState.auditDetailGeneration ||
-        requestedMachine !== controllerState.auditMachine ||
         entryId !== controllerState.auditSelectedId
       ) return null;
       elements.auditDetailMeta.textContent = "Details unavailable";
@@ -201,29 +125,32 @@ export function createAuditController({
   }
 
   async function refreshAudit() {
-    if (controllerState.auditLoading || !auditMachineOnline()) return null;
+    if (controllerState.auditLoading) return null;
     const generation = ++controllerState.auditGeneration;
-    const requestedMachine = controllerState.auditMachine;
     const previousSelection = controllerState.auditSelectedId;
     controllerState.auditLoading = true;
     setAuditControls();
-    elements.auditState.textContent = `Loading Global Audit · ${requestedMachine}`;
+    elements.auditState.textContent = "Loading Global Audit";
     try {
       const payload = await request(auditQueryPath());
-      if (generation !== controllerState.auditGeneration || requestedMachine !== controllerState.auditMachine) return null;
+      if (generation !== controllerState.auditGeneration) return null;
       controllerState.auditDetailGeneration += 1;
-      controllerState.auditEntries = Array.isArray(payload.entries) ? payload.entries.map((entry) => ({ ...entry })) : [];
+      controllerState.auditEntries = Array.isArray(payload.entries)
+        ? payload.entries.map((entry) => ({ ...entry }))
+        : [];
       controllerState.auditSelectedId = controllerState.auditEntries.some((entry) => entry.id === previousSelection)
         ? previousSelection
         : text(controllerState.auditEntries[0] && controllerState.auditEntries[0].id, "");
-      const total = Number.isInteger(payload.total_matched) ? payload.total_matched : controllerState.auditEntries.length;
-      elements.auditSummary.textContent = `${controllerState.auditEntries.length} shown · ${total} matched · ${requestedMachine} · Global`;
-      elements.auditState.textContent = `${requestedMachine} · loaded ${controllerState.auditEntries.length} global records`;
+      const total = Number.isInteger(payload.total_matched)
+        ? payload.total_matched
+        : controllerState.auditEntries.length;
+      elements.auditSummary.textContent = `${controllerState.auditEntries.length} shown · ${total} matched · Global`;
+      elements.auditState.textContent = `Loaded ${controllerState.auditEntries.length} global records`;
       renderAuditList();
       const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (selected && selected.id === controllerState.auditSelectedId) {
         elements.auditDetailTitle.textContent = auditEntryTitle(selected);
-        elements.auditDetailMeta.textContent = `${requestedMachine} · Global · ${auditTimestamp(selected.ts)}`;
+        elements.auditDetailMeta.textContent = `Global · ${auditTimestamp(selected.ts)}`;
         renderAuditDetailInto(selected, elements.auditDetailBody);
       } else if (payload && payload.entry_error) {
         elements.auditDetailMeta.textContent = "Details unavailable";
@@ -233,7 +160,7 @@ export function createAuditController({
       }
       return payload;
     } catch (error) {
-      if (generation !== controllerState.auditGeneration || requestedMachine !== controllerState.auditMachine) return null;
+      if (generation !== controllerState.auditGeneration) return null;
       controllerState.auditEntries = [];
       controllerState.auditSelectedId = "";
       renderAuditList();
@@ -253,11 +180,6 @@ export function createAuditController({
   }
 
   function bind() {
-    elements.auditMachine.addEventListener("change", () => {
-      if (controllerState.auditLoading) return;
-      resetAuditWorkspace(elements.auditMachine.value || "local");
-      void refreshAudit();
-    });
     elements.auditFilterForm.addEventListener("submit", (event) => {
       event.preventDefault();
       void refreshAudit();
@@ -271,7 +193,6 @@ export function createAuditController({
     bind,
     invalidate,
     refresh: refreshAudit,
-    renderMachines: renderAuditMachines,
     reset: resetAuditWorkspace,
   };
 }

@@ -12,7 +12,7 @@ Use the built-in help for exact parser output:
 workgate --help
 workgate server --help
 workgate tui --help
-workgate worker --help
+workgate executor --help
 ```
 
 ## Server modes
@@ -50,13 +50,13 @@ Boolean CLI values are explicit:
 
 ```bash
 workgate server --allow-full-control false
-workgate server --remote-enabled true
+workgate server --agent-bridge-enabled true
 ```
 
 Every `WORKGATE_*` application setting has a matching CLI flag using lowercase dashed form. For example:
 
 ```text
-WORKGATE_REMOTE_ENABLED -> --remote-enabled true
+WORKGATE_AGENT_BRIDGE_ENABLED -> --agent-bridge-enabled true
 ```
 
 ## Executor commands
@@ -72,4 +72,4 @@ workgate executor run
 
 `run` uses only the saved executor profile. Normal network or control outages reconnect with the same long-lived credential; they do not require a fresh owner approval. Revocation or credential replacement requires owner action before that profile can authenticate again.
 
-The old remote invite/join enrollment flow is no longer a public tool, API, or browser workflow. The legacy `workgate worker` runtime remains an internal migration implementation for already-enrolled workers until machine execution is fully moved behind the executor boundary; do not use it to provision new machines.
+The old remote invite/join and `workgate worker` surfaces are removed. New and existing machines use the executor profile and pairing flow above.

@@ -1,17 +1,15 @@
-"""Authenticated Human UI API for local and remote Dashboard telemetry."""
+"""Authenticated Human UI API for executor Dashboard telemetry."""
 
-import asyncio
 import math
-from typing import Any, cast
+from typing import Any
 
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ...config.settings import get_settings
+from ...control.ui_executor import call_ui_executor
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
-from ...oauth.core.scopes import SCOPE_REMOTE_USE, SCOPE_SHELL_READ
-from ...remote.service import call_remote_worker_tool
+from ...oauth.core.scopes import SCOPE_SHELL_READ
 from ..dashboard import dashboard_snapshot
 from .common import (
     bounded_text as _bounded_text,
@@ -19,13 +17,9 @@ from .common import (
 from .common import (
     json_error as _json_error,
 )
-from .common import (
-    require_remote_machine as _require_remote_machine,
-)
 
-UI_DASHBOARD_MACHINE_MAX_BYTES = 255
+UI_DASHBOARD_EXECUTOR_MAX_BYTES = 255
 UI_DASHBOARD_TEXT_MAX_BYTES = 4_096
-UI_DASHBOARD_REMOTE_TIMEOUT_S = 60
 UI_DASHBOARD_MAX_ALERTS = 12
 UI_DASHBOARD_MAX_ACTIVITY = 12
 
@@ -57,57 +51,12 @@ def _require_scopes(*required: str) -> None:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-def _machine_arg(value: Any) -> str:
+def _executor_id_arg(value: Any) -> str:
     return _bounded_text(
         value,
-        field="machine",
-        max_bytes=UI_DASHBOARD_MACHINE_MAX_BYTES,
-        default="local",
+        field="executor_id",
+        max_bytes=UI_DASHBOARD_EXECUTOR_MAX_BYTES,
         allow_empty=False,
-    )
-
-
-def _remote_timeout_s() -> int:
-    return max(
-        1,
-        min(
-            int(get_settings().remote_job_timeout_s),
-            UI_DASHBOARD_REMOTE_TIMEOUT_S,
-        ),
-    )
-
-
-def _remote_result_data(
-    result: dict[str, Any], *, machine: str, tool: str
-) -> dict[str, Any]:
-    if not result.get("ok", False):
-        raise RuntimeError(
-            str(result.get("message") or f"remote {tool} failed on {machine}")
-        )
-    data = result.get("data")
-    if isinstance(data, dict) and data.get("status") == "error":
-        error_type = str(data.get("error_type") or "remote_error")
-        message = str(
-            data.get("message") or f"remote {tool} failed on {machine}"
-        )
-        raise RuntimeError(f"{error_type}: {message}")
-    if not isinstance(data, dict):
-        raise RuntimeError(
-            f"Remote machine {machine} returned malformed dashboard data"
-        )
-    return cast(dict[str, Any], data)
-
-
-async def _remote_dashboard_call(machine: str) -> dict[str, Any]:
-    _require_remote_machine(machine)
-    result = await call_remote_worker_tool(
-        machine,
-        "dashboard_snapshot",
-        {},
-        _remote_timeout_s(),
-    )
-    return _remote_result_data(
-        result, machine=machine, tool="dashboard_snapshot"
     )
 
 
@@ -156,7 +105,7 @@ def _snapshot_text(
 
 def _normalize_system(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise RuntimeError("Machine returned malformed dashboard system data")
+        raise RuntimeError("Executor returned malformed dashboard system data")
     percentage_fields = {"cpu_percent", "memory_percent", "disk_percent"}
     system: dict[str, Any] = {}
     for field in _SYSTEM_NUMBER_FIELDS:
@@ -171,7 +120,7 @@ def _normalize_system(value: Any) -> dict[str, Any]:
 
 def _normalize_version(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
-        raise RuntimeError("Machine returned malformed dashboard version data")
+        raise RuntimeError("Executor returned malformed dashboard version data")
     version: dict[str, str] = {}
     for field in ("version", "package_version", "python", "platform"):
         if field not in value:
@@ -184,9 +133,9 @@ def _normalize_version(value: Any) -> dict[str, str]:
     return version
 
 
-def _normalize_alert(machine: str, value: Any) -> dict[str, Any]:
+def _normalize_alert(executor_id: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise RuntimeError("Machine returned a malformed dashboard alert")
+        raise RuntimeError("Executor returned a malformed dashboard alert")
     severity = str(value.get("severity") or "info").casefold()
     if severity not in {"info", "warning", "critical"}:
         severity = "info"
@@ -203,7 +152,7 @@ def _normalize_alert(machine: str, value: Any) -> dict[str, Any]:
             field="alert detail",
             max_bytes=UI_DASHBOARD_TEXT_MAX_BYTES,
         ),
-        "node": machine,
+        "node": executor_id,
     }
     if value.get("age_s") is not None:
         alert["age_s"] = _finite_number(
@@ -212,9 +161,9 @@ def _normalize_alert(machine: str, value: Any) -> dict[str, Any]:
     return alert
 
 
-def _normalize_activity(machine: str, value: Any) -> dict[str, Any]:
+def _normalize_activity(executor_id: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise RuntimeError("Machine returned malformed dashboard activity")
+        raise RuntimeError("Executor returned malformed dashboard activity")
     kind = str(value.get("kind") or "success").casefold()
     if kind not in {"success", "running", "failed"}:
         kind = "success"
@@ -235,7 +184,7 @@ def _normalize_activity(machine: str, value: Any) -> dict[str, Any]:
             field="activity detail",
             max_bytes=1_024,
         ),
-        "node": machine,
+        "node": executor_id,
     }
     if value.get("duration_ms") is not None:
         activity["duration_ms"] = _finite_number(
@@ -246,19 +195,19 @@ def _normalize_activity(machine: str, value: Any) -> dict[str, Any]:
 
 def _bounded_nonnegative_int(value: Any, *, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise RuntimeError(f"Machine returned malformed dashboard {field}")
+        raise RuntimeError(f"Executor returned malformed dashboard {field}")
     return value
 
 
-def _normalize_snapshot(machine: str, value: Any) -> dict[str, Any]:
+def _normalize_snapshot(executor_id: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard data"
+            f"Executor {executor_id} returned malformed dashboard data"
         )
     health = str(value.get("health") or "healthy").casefold()
     if health not in {"healthy", "attention", "critical"}:
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard health"
+            f"Executor {executor_id} returned malformed dashboard health"
         )
     raw_alerts = value.get("alerts")
     raw_activity = value.get("activity")
@@ -267,19 +216,19 @@ def _normalize_snapshot(machine: str, value: Any) -> dict[str, Any]:
         or len(raw_alerts) > UI_DASHBOARD_MAX_ALERTS
     ):
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard alerts"
+            f"Executor {executor_id} returned malformed dashboard alerts"
         )
     if (
         not isinstance(raw_activity, list)
         or len(raw_activity) > UI_DASHBOARD_MAX_ACTIVITY
     ):
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard activity"
+            f"Executor {executor_id} returned malformed dashboard activity"
         )
     sources = value.get("sources")
     if not isinstance(sources, dict):
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard sources"
+            f"Executor {executor_id} returned malformed dashboard sources"
         )
     audit_total = _bounded_nonnegative_int(
         value.get("audit_total_24h"), field="audit_total_24h"
@@ -289,7 +238,7 @@ def _normalize_snapshot(machine: str, value: Any) -> dict[str, Any]:
     )
     if audit_failed > audit_total:
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard Audit counts"
+            f"Executor {executor_id} returned malformed dashboard Audit counts"
         )
     system_source = _snapshot_text(
         sources.get("system"),
@@ -308,11 +257,10 @@ def _normalize_snapshot(machine: str, value: Any) -> dict[str, Any]:
         "degraded",
     }:
         raise RuntimeError(
-            f"Machine {machine} returned malformed dashboard source states"
+            f"Executor {executor_id} returned malformed dashboard source states"
         )
     return {
-        "machine": machine,
-        "remote": machine != "local",
+        "executor_id": executor_id,
         "generated_at": _finite_number(
             value.get("generated_at"), field="generated_at", minimum=0.0
         )
@@ -320,9 +268,9 @@ def _normalize_snapshot(machine: str, value: Any) -> dict[str, Any]:
         "health": health,
         "version": _normalize_version(value.get("version")),
         "system": _normalize_system(value.get("system")),
-        "alerts": [_normalize_alert(machine, item) for item in raw_alerts],
+        "alerts": [_normalize_alert(executor_id, item) for item in raw_alerts],
         "activity": [
-            _normalize_activity(machine, item) for item in raw_activity
+            _normalize_activity(executor_id, item) for item in raw_activity
         ],
         "audit_total_24h": audit_total,
         "audit_failed_24h": audit_failed,
@@ -330,27 +278,32 @@ def _normalize_snapshot(machine: str, value: Any) -> dict[str, Any]:
     }
 
 
-async def _snapshot(machine: str) -> dict[str, Any]:
-    if machine == "local":
-        value = await asyncio.to_thread(dashboard_snapshot)
-    else:
-        value = await _remote_dashboard_call(machine)
-    return _normalize_snapshot(machine, value)
+async def _snapshot(request: Request, executor_id: str) -> dict[str, Any]:
+    runtime = getattr(request.app.state, "control_runtime", None)
+    if runtime is None:
+        raise RuntimeError("Human UI Dashboard requires the control runtime")
+    resolved_executor_id, value = await call_ui_executor(
+        runtime,
+        executor_id,
+        "ui.dashboard.snapshot",
+    )
+    if not isinstance(value, dict):
+        raise RuntimeError(
+            f"Executor {resolved_executor_id} returned malformed dashboard data"
+        )
+    return _normalize_snapshot(resolved_executor_id, dashboard_snapshot(value))
 
 
 async def api_dashboard(request: Request) -> Response:
-    """Return one process-scoped Dashboard snapshot for the selected machine."""
+    """Return one executor-scoped Dashboard snapshot."""
     try:
-        machine = _machine_arg(request.query_params.get("machine"))
-        required = [SCOPE_SHELL_READ]
-        if machine != "local":
-            required.append(SCOPE_REMOTE_USE)
-        _require_scopes(*required)
-        return _json_ok(await _snapshot(machine))
+        executor_id = _executor_id_arg(request.query_params.get("executor_id"))
+        _require_scopes(SCOPE_SHELL_READ)
+        return _json_ok(await _snapshot(request, executor_id))
     except HTTPException:
         raise
     except ValueError as exc:
-        return _json_error(exc, status_code=404)
+        return _json_error(exc, status_code=400)
     except ConnectionError as exc:
         return _json_error(exc, status_code=503)
     except RuntimeError as exc:

@@ -22,28 +22,24 @@ def test_http_missing_required_argument_returns_validation_error(
     }
 
 
-def test_http_exception_uses_consistent_error_envelope(tmp_path, monkeypatch):
+def test_http_argument_validation_uses_consistent_error_envelope(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    # This test exercises the legacy HTTP adapter's validation envelope only.
-    # Final runtime execution is covered separately through executor protocol.
+    # Validate an argument before entering the fail-closed session router.
     client = TestClient(build_http_app(tool_catalog=build_tool_catalog()))
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
     response = client.post(
-        "/tools/bash",
-        json={
-            "session_id": session["session_id"],
-            "command": "echo ok",
-            "timeout_s": 3600,
-        },
+        "/tools/session_start",
+        json={"workdir": ".", "label": ""},
     )
 
     assert response.status_code == 400
     assert response.json()["error"] == "validation_error"
-    assert "timeout_s must be <= 120 seconds" in response.json()["message"]
+    assert "at least 1 character" in response.json()["message"]
 
 
 def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):

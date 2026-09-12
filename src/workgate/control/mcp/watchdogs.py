@@ -16,9 +16,9 @@ from ...audit import (
     new_audit_call_id,
 )
 from ...errors import public_error_type
-from ...ops.shell import tool_timeout_s
 from ...tools.declarative import mcp_handler_error_handler
 from ...utils.serialization import to_jsonable
+from ..tool_timeouts import tool_timeout_s
 
 
 class AuditedMcpToolFn(Protocol):
@@ -138,6 +138,7 @@ def _mcp_tool_audit_watchdog_wrapper(
 
 def install_mcp_tool_watchdogs(mcp: FastMCP) -> None:
     """Wrap FastMCP execution paths so public tools are audited and return structured timeout errors."""
+    cast(Any, mcp)._workgate_install_tool_watchdogs = install_mcp_tool_watchdogs
     for tool in mcp._tool_manager._tools.values():
         if getattr(tool.fn, "__workgate_audit_watchdog__", False):
             continue

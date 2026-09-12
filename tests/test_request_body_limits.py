@@ -239,12 +239,10 @@ def _configure_http_limit(
     monkeypatch,
     *,
     auth_mode: str = "none",
-    remote_enabled: bool = True,
 ) -> None:
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
-    monkeypatch.setenv("WORKGATE_REMOTE_ENABLED", str(remote_enabled).lower())
     monkeypatch.setenv("WORKGATE_MAX_HTTP_REQUEST_BYTES", "64")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -284,17 +282,13 @@ def test_oauth_form_body_uses_shared_limit(tmp_path, monkeypatch):
     _assert_oversize(response)
 
 
-@pytest.mark.parametrize("path", ["/mcp", "/remote/register"])
-def test_mcp_and_remote_public_routes_use_shared_limit(
-    tmp_path, monkeypatch, path
-):
+def test_mcp_public_route_uses_shared_limit(tmp_path, monkeypatch):
     _configure_http_limit(tmp_path, monkeypatch)
     configure_settings(
         Settings(
             workspace_root=tmp_path,
             state_dir=tmp_path / ".state",
             auth_mode="none",
-            remote_enabled=True,
             max_http_request_bytes=64,
             agent_bridge_enabled=False,
         )
@@ -303,7 +297,7 @@ def test_mcp_and_remote_public_routes_use_shared_limit(
 
     with TestClient(app) as client:
         response = client.post(
-            path,
+            "/mcp",
             content=b"x" * 65,
             headers={"content-type": "application/json"},
         )
@@ -320,7 +314,6 @@ def test_protected_mcp_route_authenticates_before_reading_large_body(
             workspace_root=tmp_path,
             state_dir=tmp_path / ".state",
             auth_mode="oauth",
-            remote_enabled=False,
             max_http_request_bytes=64,
             base_url="https://workgate.example.com",
             agent_bridge_enabled=False,

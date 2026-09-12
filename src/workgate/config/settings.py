@@ -148,7 +148,7 @@ class Settings(BaseSettings):
     """Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP safety annotations remain conservative in this mode."""
     """Allow network-capable operations."""
     tool_timeout_s: float = 60
-    """Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded cleanup time beyond run_shell_max_timeout_s."""
+    """Base control-owned MCP/HTTP tool watchdog timeout in seconds."""
     run_shell_default_timeout_s: int = 10
     """Default timeout for bounded shell command calls in seconds."""
     run_shell_max_timeout_s: int = 120
@@ -282,30 +282,6 @@ class Settings(BaseSettings):
     executor_pairing_ttl_s: int = Field(default=600, ge=60, le=24 * 3600)
     """Lifetime in seconds for one process-local executor pairing attempt."""
 
-    # Remote workers.
-    remote_enabled: bool = True
-    """Enable remote worker routes and MCP tools."""
-    remote_invite_ttl_s: int = 600
-    """One-time remote worker invite lifetime in seconds."""
-    remote_poll_timeout_s: int = 25
-    """Remote worker long-poll heartbeat timeout in seconds."""
-    remote_job_timeout_s: int = 3600
-    """Control-side remote job result timeout in seconds."""
-    remote_max_pending_jobs: int = 64
-    """Maximum queued or in-flight remote jobs allowed per worker."""
-    remote_http_transfer_enabled: bool = True
-    """Use the private resumable HTTP gateway for capable large session copies."""
-    remote_http_transfer_threshold_bytes: int = 1024 * 1024
-    """Minimum payload size selected for private HTTP streaming."""
-    remote_http_transfer_chunk_bytes: int = 1024 * 1024
-    """Maximum request or response chunk size for private HTTP transfer routes."""
-    remote_http_transfer_ticket_ttl_s: int = 300
-    """Lifetime of a private transfer grant before it must be renewed."""
-    remote_http_transfer_max_active: int = 16
-    """Maximum non-terminal private transfer objects retained concurrently."""
-    remote_http_transfer_max_spool_bytes: int = 10 * 1024 * 1024 * 1024
-    """Maximum aggregate bytes reserved by private controller transfer spools."""
-
     # Agent capability bridge.
     agent_bridge_enabled: bool = True
     """Enable agent capability bridge tools."""
@@ -315,8 +291,6 @@ class Settings(BaseSettings):
     """Agent MCP tool-call timeout in seconds."""
     agent_dynamic_mcp_tools: bool = True
     """Register dynamic MCP bridge tools."""
-    agent_dynamic_skill_tools: bool = True
-    """Register dynamic skill bridge tools."""
 
     # Tool executables.
     shell_executable: str = "/bin/bash"
@@ -349,11 +323,6 @@ class Settings(BaseSettings):
     def agent_auth_dir(self) -> Path:
         """Private Agent Bridge credential directory, derived from state_dir."""
         return StateLayout(self.state_dir).agent_auth_dir
-
-    @property
-    def remote_transfer_dir(self) -> Path:
-        """Private durable ticket and spool directory for HTTP transfers."""
-        return StateLayout(self.state_dir).remote_transfers_dir
 
     @property
     def config_dir(self) -> Path:
@@ -427,33 +396,6 @@ class Settings(BaseSettings):
     def split_csv_fields(cls, value: str | list[str] | None) -> list[str]:
         """Normalize comma-delimited restriction lists supplied through environment variables."""
         return _split_csv(value)
-
-    @model_validator(mode="after")
-    def validate_remote_transfer_limits(self) -> Settings:
-        """Keep private HTTP transfer limits positive and internally consistent."""
-        positive = {
-            "remote_http_transfer_threshold_bytes": self.remote_http_transfer_threshold_bytes,
-            "remote_http_transfer_chunk_bytes": self.remote_http_transfer_chunk_bytes,
-            "remote_http_transfer_ticket_ttl_s": self.remote_http_transfer_ticket_ttl_s,
-            "remote_http_transfer_max_active": self.remote_http_transfer_max_active,
-            "remote_http_transfer_max_spool_bytes": self.remote_http_transfer_max_spool_bytes,
-        }
-        for name, value in positive.items():
-            if int(value) <= 0:
-                raise ValueError(f"{name} must be greater than zero")
-        if self.remote_http_transfer_chunk_bytes > 4 * 1024 * 1024:
-            raise ValueError(
-                "remote_http_transfer_chunk_bytes must not exceed 4194304"
-            )
-        if (
-            self.remote_http_transfer_threshold_bytes
-            > self.remote_http_transfer_max_spool_bytes
-        ):
-            raise ValueError(
-                "remote_http_transfer_threshold_bytes must not exceed "
-                "remote_http_transfer_max_spool_bytes"
-            )
-        return self
 
     @model_validator(mode="after")
     def validate_audit_payload_limits(self) -> Settings:

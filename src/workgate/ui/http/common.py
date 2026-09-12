@@ -5,9 +5,6 @@ from typing import Any
 
 from starlette.responses import JSONResponse
 
-from ...config.settings import get_settings
-from ...remote.manager import remote_manager
-
 
 def json_error(exc: Exception, status_code: int = 400) -> JSONResponse:
     """Return the common Human UI exception envelope."""
@@ -74,18 +71,3 @@ def sorted_entry_payloads(
         )
     )
     return rows
-
-
-def require_remote_machine(machine: str) -> None:
-    """Require one configured remote worker to exist and be online."""
-    settings = get_settings()
-    if not settings.remote_enabled:
-        raise ValueError("Remote workers are disabled")
-    inventory = remote_manager().list_machines()
-    row = next(
-        (item for item in inventory.machines if item.name == machine), None
-    )
-    if row is None:
-        raise ValueError(f"Unknown remote machine: {machine}")
-    if row.status != "online":
-        raise ConnectionError(f"Remote machine {machine} is {row.status}")

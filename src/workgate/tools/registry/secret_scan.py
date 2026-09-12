@@ -1,6 +1,5 @@
 """Secret scanning tool registry."""
 
-from ...ops.secret_scan import secret_scan_execute
 from ...schemas.input_models.secret_scan import (
     SecretScanCwdArg,
     SecretScanGlobArg,
@@ -23,8 +22,8 @@ secret_scan_tool = SecretScanToolRegistry.get_tool_decorator()
 
 
 def _secret_scan_description(context: McpToolContext) -> str:
-    settings = context.settings
-    return f"""Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. Current max findings: {settings.max_grep_results}."""
+    del context
+    return """Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit."""
 
 
 @secret_scan_tool(
@@ -41,4 +40,5 @@ async def secret_scan(
     max_results: SecretScanMaxResultsArg = 200,
 ) -> SecretScanOutput:
     """Scan session workdir text files for common secret-like strings."""
-    return await secret_scan_execute(cwd, glob, max_results, session_id)
+    del session_id, cwd, glob, max_results
+    raise RuntimeError("secret_scan requires control routing")

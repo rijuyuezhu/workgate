@@ -9,7 +9,7 @@ export function createSessionsController({
   renderAuditDetailMessage,
 }) {
   const controllerState = {
-    todoMachine: "local",
+    sessionExecutorId: "",
     todoSessionId: "",
     todoSessions: [],
     sessionIncludeInactive: false,
@@ -21,7 +21,7 @@ export function createSessionsController({
     todoMutationBusy: false,
     todoDirty: false,
     todoSequence: 0,
-    todoMachineStates: new Map([["local", "online"]]),
+    sessionExecutorStates: new Map(),
     todoLimits: {
       todos: 1000,
       bytes: 1000000,
@@ -35,10 +35,6 @@ export function createSessionsController({
     sessionAuditDetailGeneration: 0,
     sessionAuditLoading: false,
   };
-
-  function todoMachineOnline(machine = controllerState.todoMachine) {
-    return machine === "local" || controllerState.todoMachineStates.get(machine) === "online";
-  }
 
   function selectedSession() {
     return controllerState.todoSessions.find((session) => session.session_id === controllerState.todoSessionId) || null;
@@ -55,11 +51,6 @@ export function createSessionsController({
 
   function sessionAvailability(session = selectedSession()) {
     return text(session && session.availability, "");
-  }
-
-  function sessionResourcesAvailable(session = selectedSession()) {
-    const availability = sessionAvailability(session);
-    return Boolean(session && (!availability || availability === "available"));
   }
 
   function sessionUnavailableLabel(session = selectedSession()) {
@@ -82,28 +73,27 @@ export function createSessionsController({
   }
 
   function setTodoControls() {
-    const online = todoMachineOnline();
     const sessionReady = Boolean(controllerState.todoSessionId);
     const session = selectedSession();
-    const resourcesAvailable = sessionReady && sessionResourcesAvailable(session);
     const executorOffline = sessionAvailability(session) === "executor_offline";
-    elements.sessionMachine.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
+    const ended = text(session && session.status, "") === "ended";
+    elements.sessionExecutor.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionIncludeInactive.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
-    elements.sessionRefresh.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating || !online;
+    elements.sessionRefresh.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
-      controllerState.sessionLoading || controllerState.sessionTerminating || !online || !sessionReady || executorOffline || sessionTerminated(session);
-    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable;
-    elements.todoAdd.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
-    elements.todoSave.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable || !controllerState.todoDirty;
-    elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !online || !resourcesAvailable;
+      controllerState.sessionLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
+    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !sessionReady || ended;
+    elements.todoAdd.disabled = controllerState.todoMutationBusy || !sessionReady || ended || controllerState.todoItems.length >= controllerState.todoLimits.todos;
+    elements.todoSave.disabled = controllerState.todoMutationBusy || !sessionReady || ended || !controllerState.todoDirty;
+    elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !sessionReady;
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
-      control.disabled = controllerState.sessionAuditLoading || !online || !resourcesAvailable;
+      control.disabled = controllerState.sessionAuditLoading || !sessionReady;
     }
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
-      control.disabled = controllerState.todoMutationBusy || !online || !resourcesAvailable;
+      control.disabled = controllerState.todoMutationBusy || !sessionReady || ended;
     }
     for (const row of elements.todoList.querySelectorAll(".todo-row")) {
-      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !online || !resourcesAvailable ? "true" : "false");
+      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !sessionReady || ended ? "true" : "false");
     }
   }
 
@@ -128,13 +118,13 @@ export function createSessionsController({
     resetSessionAuditWorkspace(message);
   }
 
-  function resetTodoWorkspace(machine) {
-    controllerState.todoMachine = machine || "local";
+  function resetTodoWorkspace(executorId = "") {
+    controllerState.sessionExecutorId = executorId;
     controllerState.todoSessionId = "";
     controllerState.todoSessions = [];
     controllerState.sessionLoading = false;
     controllerState.sessionTerminating = false;
-    elements.sessionMachine.value = controllerState.todoMachine;
+    elements.sessionExecutor.value = controllerState.sessionExecutorId;
     elements.sessionIncludeInactive.checked = controllerState.sessionIncludeInactive;
     elements.sessionList.replaceChildren();
     const empty = document.createElement("div");
@@ -142,7 +132,9 @@ export function createSessionsController({
     empty.textContent = "Loading active sessions…";
     elements.sessionList.append(empty);
     clearSelectedSessionResources("Select a session");
-    elements.sessionState.textContent = `Not loaded · ${controllerState.todoMachine}`;
+    elements.sessionState.textContent = controllerState.sessionExecutorId
+      ? `Not loaded · ${controllerState.sessionExecutorId}`
+      : "Not loaded · all executors";
     renderSessionDetail();
     setTodoControls();
   }
@@ -160,8 +152,7 @@ export function createSessionsController({
       elements.sessionDetailTitle.textContent = "No session selected";
       elements.sessionDetailStatus.textContent = "Select a session to inspect its state";
       elements.sessionDetailId.textContent = "—";
-      elements.sessionDetailTarget.textContent = "—";
-      elements.sessionDetailMachine.textContent = "—";
+      elements.sessionDetailExecutor.textContent = "—";
       elements.sessionDetailWorkdir.textContent = "—";
       elements.sessionDetailCreated.textContent = "—";
       elements.sessionDetailUpdated.textContent = "—";
@@ -188,8 +179,7 @@ export function createSessionsController({
                   ? "Inactive · outside the recent 5 hour window"
                   : "Active · responded within the last 5 hours";
     elements.sessionDetailId.textContent = text(session.session_id);
-    elements.sessionDetailTarget.textContent = text(session.target);
-    elements.sessionDetailMachine.textContent = text(session.machine, session.target === "local" ? "local" : "—");
+    elements.sessionDetailExecutor.textContent = text(session.executor_id);
     elements.sessionDetailWorkdir.textContent = text(session.workdir);
     elements.sessionDetailCreated.textContent = sessionTimestamp(session.created_at);
     elements.sessionDetailUpdated.textContent = sessionTimestamp(session.updated_at);
@@ -206,9 +196,10 @@ export function createSessionsController({
     if (!controllerState.todoSessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
+      const suffix = controllerState.sessionExecutorId ? ` on ${controllerState.sessionExecutorId}` : "";
       empty.textContent = controllerState.sessionIncludeInactive
-        ? `No agent sessions on ${controllerState.todoMachine}.`
-        : `No sessions active in the last 5 hours on ${controllerState.todoMachine}.`;
+        ? `No agent sessions${suffix}.`
+        : `No sessions active in the last 5 hours${suffix}.`;
       elements.sessionList.append(empty);
     } else {
       for (const session of controllerState.todoSessions) {
@@ -242,7 +233,6 @@ export function createSessionsController({
 
   function sessionSnapshotPath() {
     const params = new URLSearchParams({
-      machine: controllerState.todoMachine,
       session_id: controllerState.todoSessionId,
       limit: elements.sessionAuditLimit.value || "300",
       sort: elements.sessionAuditSort.value || "desc",
@@ -265,17 +255,9 @@ export function createSessionsController({
   }
 
   async function refreshSelectedSessionResources() {
-    if (!controllerState.todoSessionId || !todoMachineOnline()) return null;
-    const session = selectedSession();
-    if (!sessionResourcesAvailable(session)) {
-      const unavailable = sessionUnavailableLabel(session) || "Session unavailable";
-      clearSelectedSessionResources(unavailable);
-      setTodoControls();
-      return null;
-    }
+    if (!controllerState.todoSessionId) return null;
     const todoRequestGeneration = ++controllerState.todoGeneration;
     const auditRequestGeneration = ++controllerState.sessionAuditGeneration;
-    const requestedMachine = controllerState.todoMachine;
     const requestedSession = controllerState.todoSessionId;
     const previousSelection = controllerState.sessionAuditSelectedId;
     controllerState.sessionAuditLoading = true;
@@ -287,7 +269,6 @@ export function createSessionsController({
       if (
         todoRequestGeneration !== controllerState.todoGeneration ||
         auditRequestGeneration !== controllerState.sessionAuditGeneration ||
-        requestedMachine !== controllerState.todoMachine ||
         requestedSession !== controllerState.todoSessionId
       ) return null;
       applyTodoPayload(payload, requestedSession);
@@ -300,7 +281,6 @@ export function createSessionsController({
       if (
         todoRequestGeneration !== controllerState.todoGeneration ||
         auditRequestGeneration !== controllerState.sessionAuditGeneration ||
-        requestedMachine !== controllerState.todoMachine ||
         requestedSession !== controllerState.todoSessionId
       ) return null;
       if (error?.status === 403) {
@@ -334,28 +314,33 @@ export function createSessionsController({
   }
 
   async function refreshTodoSessions() {
-    const requestedMachine = controllerState.todoMachine;
+    const requestedExecutor = controllerState.sessionExecutorId;
     const previousSession = controllerState.todoSessionId;
     controllerState.sessionLoading = true;
     setTodoControls();
-    elements.sessionState.textContent = `Loading sessions on ${requestedMachine}`;
+    elements.sessionState.textContent = requestedExecutor
+      ? `Loading sessions on ${requestedExecutor}`
+      : "Loading sessions";
     try {
-      const params = new URLSearchParams({ machine: requestedMachine });
+      const params = new URLSearchParams();
+      if (requestedExecutor) params.set("executor_id", requestedExecutor);
       if (controllerState.sessionIncludeInactive) params.set("include_inactive", "true");
       const payload = await request(`/sessions?${params.toString()}`);
-      if (requestedMachine !== controllerState.todoMachine) return null;
+      if (requestedExecutor !== controllerState.sessionExecutorId) return null;
       renderTodoSessions(payload.sessions);
-      elements.sessionState.textContent = `${payload.count || 0} ${controllerState.sessionIncludeInactive ? "total" : "active"} sessions · ${requestedMachine}`;
-      if (!controllerState.todoSessionId) clearSelectedSessionResources(`No agent sessions on ${requestedMachine}`);
+      elements.sessionState.textContent = `${payload.count || 0} ${controllerState.sessionIncludeInactive ? "total" : "active"} sessions${requestedExecutor ? ` · ${requestedExecutor}` : ""}`;
+      if (!controllerState.todoSessionId) {
+        clearSelectedSessionResources(requestedExecutor ? `No agent sessions on ${requestedExecutor}` : "No agent sessions");
+      }
       else if (controllerState.todoSessionId !== previousSession) clearSelectedSessionResources("Loading selected session");
       return payload;
     } catch (error) {
-      if (requestedMachine !== controllerState.todoMachine) return null;
+      if (requestedExecutor !== controllerState.sessionExecutorId) return null;
       renderTodoSessions([]);
       elements.sessionState.textContent = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
-      if (requestedMachine === controllerState.todoMachine) {
+      if (requestedExecutor === controllerState.sessionExecutorId) {
         controllerState.sessionLoading = false;
         setTodoControls();
       }
@@ -369,59 +354,36 @@ export function createSessionsController({
     return selectedSession();
   }
 
-  function renderTodoMachines(machines) {
-    const available = Array.isArray(machines) ? machines : [];
-    controllerState.todoMachineStates = new Map([["local", "online"]]);
-    elements.sessionMachine.replaceChildren();
-    let localPresent = false;
-    let currentPresent = false;
-    let currentOnline = controllerState.todoMachine === "local";
-    for (const machine of available) {
-      const name = text(machine.name, "");
-      if (!name) continue;
-      if (name === "local") localPresent = true;
-      const state = name === "local" ? "online" : text(machine.status, "offline");
-      const online = name === "local" || state === "online";
-      controllerState.todoMachineStates.set(name, state);
+  function renderSessionExecutors(targets) {
+    const available = Array.isArray(targets) ? targets : [];
+    controllerState.sessionExecutorStates = new Map();
+    elements.sessionExecutor.replaceChildren();
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All executors";
+    all.selected = controllerState.sessionExecutorId === "";
+    elements.sessionExecutor.append(all);
+    let currentPresent = controllerState.sessionExecutorId === "";
+    for (const executor of available) {
+      const executorId = text(executor.executor_id, "");
+      if (!executorId) continue;
+      const state = text(executor.status, "offline");
+      controllerState.sessionExecutorStates.set(executorId, state);
       const option = document.createElement("option");
-      option.value = name;
-      option.textContent = online ? name : `${name} (${state})`;
-      option.disabled = !online;
-      option.selected = name === controllerState.todoMachine;
-      if (option.selected) {
-        currentPresent = true;
-        currentOnline = online;
-      }
-      elements.sessionMachine.append(option);
+      option.value = executorId;
+      const label = text(executor.name, executorId);
+      option.textContent = state === "online" ? label : `${label} (${state})`;
+      option.selected = executorId === controllerState.sessionExecutorId;
+      if (option.selected) currentPresent = true;
+      elements.sessionExecutor.append(option);
     }
-    if (!localPresent) {
-      const local = document.createElement("option");
-      local.value = "local";
-      local.textContent = "local";
-      local.selected = controllerState.todoMachine === "local";
-      elements.sessionMachine.prepend(local);
-      if (local.selected) {
-        currentPresent = true;
-        currentOnline = true;
-      }
+    if (!currentPresent && !controllerState.todoDirty && !controllerState.todoMutationBusy) {
+      resetTodoWorkspace("");
+      void refreshTodoContext();
+      return;
     }
-    if (!currentPresent && controllerState.todoMachine !== "local") {
-      const stale = document.createElement("option");
-      stale.value = controllerState.todoMachine;
-      stale.textContent = `${controllerState.todoMachine} (unavailable)`;
-      stale.disabled = true;
-      stale.selected = true;
-      elements.sessionMachine.append(stale);
-    }
-    if ((!currentPresent || !currentOnline) && !controllerState.todoDirty && !controllerState.todoMutationBusy) {
-      const changed = controllerState.todoMachine !== "local";
-      resetTodoWorkspace("local");
-      if (changed) void refreshTodoContext();
-    } else {
-      elements.sessionMachine.value = controllerState.todoMachine;
-      if (!currentOnline) elements.sessionState.textContent = `${controllerState.todoMachine} is offline`;
-      setTodoControls();
-    }
+    elements.sessionExecutor.value = controllerState.sessionExecutorId;
+    setTodoControls();
   }
 
   async function terminateSelectedSession() {
@@ -436,7 +398,7 @@ export function createSessionsController({
       const payload = await request("/sessions/terminate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ machine: controllerState.todoMachine, session_id: session.session_id }),
+        body: JSON.stringify({ session_id: session.session_id }),
       });
       const updated = payload && payload.session ? payload.session : null;
       if (updated) {
@@ -511,7 +473,7 @@ export function createSessionsController({
     if (!visible.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = controllerState.todoItems.length ? "No todos match this filter." : "No todos in this machine session.";
+      empty.textContent = controllerState.todoItems.length ? "No todos match this filter." : "No todos in this session.";
       elements.todoList.append(empty);
       setTodoControls();
       return;
@@ -586,7 +548,7 @@ export function createSessionsController({
   }
 
   function addTodo() {
-    if (controllerState.todoMutationBusy || !todoMachineOnline() || !controllerState.todoSessionId || controllerState.todoItems.length >= controllerState.todoLimits.todos) return;
+    if (controllerState.todoMutationBusy || !controllerState.todoSessionId || controllerState.todoItems.length >= controllerState.todoLimits.todos) return;
     const item = { id: newTodoId(), content: "", status: "pending", priority: "medium" };
     controllerState.todoItems.push(item);
     elements.todoFilter.value = "all";
@@ -597,7 +559,7 @@ export function createSessionsController({
   }
 
   function todoQuery() {
-    return `/todos?${new URLSearchParams({ machine: controllerState.todoMachine, session_id: controllerState.todoSessionId }).toString()}`;
+    return `/todos?${new URLSearchParams({ session_id: controllerState.todoSessionId }).toString()}`;
   }
 
   function applyTodoPayload(payload, requestedSession) {
@@ -621,17 +583,16 @@ export function createSessionsController({
   async function refreshTodos({ force = false } = {}) {
     if (!controllerState.todoSessionId || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
     const generation = ++controllerState.todoGeneration;
-    const requestedMachine = controllerState.todoMachine;
     const requestedSession = controllerState.todoSessionId;
     elements.todoState.textContent = `Loading ${requestedSession}`;
     setTodoControls();
     try {
       const payload = await request(todoQuery());
-      if (generation !== controllerState.todoGeneration || requestedMachine !== controllerState.todoMachine || requestedSession !== controllerState.todoSessionId) return null;
+      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return null;
       applyTodoPayload(payload, requestedSession);
       return payload;
     } catch (error) {
-      if (generation !== controllerState.todoGeneration || requestedMachine !== controllerState.todoMachine || requestedSession !== controllerState.todoSessionId) return null;
+      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return null;
       elements.todoState.textContent = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
@@ -640,9 +601,8 @@ export function createSessionsController({
   }
 
   async function saveTodos() {
-    if (!controllerState.todoDirty || controllerState.todoMutationBusy || !todoMachineOnline() || !controllerState.todoSessionId) return;
+    if (!controllerState.todoDirty || controllerState.todoMutationBusy || !controllerState.todoSessionId) return;
     const generation = ++controllerState.todoGeneration;
-    const requestedMachine = controllerState.todoMachine;
     const requestedSession = controllerState.todoSessionId;
     const expectedRevision = controllerState.todoRevision;
     const todos = controllerState.todoItems.map((item) => ({ ...item }));
@@ -653,20 +613,19 @@ export function createSessionsController({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          machine: requestedMachine,
           session_id: requestedSession,
           expected_revision: expectedRevision,
           todos,
         }),
       });
-      if (generation !== controllerState.todoGeneration || requestedMachine !== controllerState.todoMachine || requestedSession !== controllerState.todoSessionId) return;
+      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return;
       controllerState.todoItems = Array.isArray(payload.todos) ? payload.todos.map((item) => ({ ...item })) : [];
       controllerState.todoRevision = Number(payload.revision) || expectedRevision + 1;
       controllerState.todoDirty = false;
       renderTodos();
       elements.todoState.textContent = `Saved ${requestedSession} · revision ${controllerState.todoRevision}`;
     } catch (error) {
-      if (generation !== controllerState.todoGeneration || requestedMachine !== controllerState.todoMachine || requestedSession !== controllerState.todoSessionId) return;
+      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return;
       if (error && error.status === 409) {
         controllerState.todoDirty = false;
         try {
@@ -679,14 +638,14 @@ export function createSessionsController({
         elements.todoState.textContent = error instanceof Error ? error.message : String(error);
       }
     } finally {
-      if (requestedMachine === controllerState.todoMachine && requestedSession === controllerState.todoSessionId) setTodoMutationBusy(false);
+      if (requestedSession === controllerState.todoSessionId) setTodoMutationBusy(false);
     }
   }
 
   function clearSessionAuditDetail(message = "Select a session Audit record.") {
     controllerState.sessionAuditDetailGeneration += 1;
     elements.sessionAuditDetailTitle.textContent = "No record selected";
-    elements.sessionAuditDetailMeta.textContent = controllerState.todoSessionId || controllerState.todoMachine;
+    elements.sessionAuditDetailMeta.textContent = controllerState.todoSessionId || "Control Audit";
     renderAuditDetailMessage(elements.sessionAuditDetailBody, message);
   }
 
@@ -712,7 +671,7 @@ export function createSessionsController({
       const empty = document.createElement("div");
       empty.className = "empty-state";
       empty.textContent = controllerState.todoSessionId
-        ? `No local Audit records match for ${controllerState.todoSessionId}.`
+        ? `No Audit records match for ${controllerState.todoSessionId}.`
         : "Select a session to load its Audit records.";
       elements.sessionAuditList.append(empty);
       clearSessionAuditDetail("No matching session Audit record is available.");
@@ -760,7 +719,6 @@ export function createSessionsController({
 
   function sessionAuditQueryPath() {
     const params = new URLSearchParams({
-      machine: controllerState.todoMachine,
       scope: "session",
       session: controllerState.todoSessionId,
       limit: elements.sessionAuditLimit.value || "300",
@@ -774,12 +732,11 @@ export function createSessionsController({
   }
 
   async function loadSessionAuditDetail(entryId) {
-    if (!entryId || !controllerState.todoSessionId || !todoMachineOnline()) {
+    if (!entryId || !controllerState.todoSessionId) {
       clearSessionAuditDetail();
       return null;
     }
     const generation = ++controllerState.sessionAuditDetailGeneration;
-    const requestedMachine = controllerState.todoMachine;
     const requestedSession = controllerState.todoSessionId;
     elements.sessionAuditDetailTitle.textContent = auditEntryTitle(
       controllerState.sessionAuditEntries.find((entry) => entry.id === entryId) || {},
@@ -788,7 +745,6 @@ export function createSessionsController({
     renderAuditDetailMessage(elements.sessionAuditDetailBody, `Loading ${requestedSession}:${entryId}`);
     try {
       const params = new URLSearchParams({
-        machine: requestedMachine,
         scope: "session",
         session: requestedSession,
         id: entryId,
@@ -796,7 +752,6 @@ export function createSessionsController({
       const payload = await request(`/audit/detail?${params.toString()}`);
       if (
         generation !== controllerState.sessionAuditDetailGeneration ||
-        requestedMachine !== controllerState.todoMachine ||
         requestedSession !== controllerState.todoSessionId ||
         entryId !== controllerState.sessionAuditSelectedId
       ) return null;
@@ -807,7 +762,6 @@ export function createSessionsController({
     } catch (error) {
       if (
         generation !== controllerState.sessionAuditDetailGeneration ||
-        requestedMachine !== controllerState.todoMachine ||
         requestedSession !== controllerState.todoSessionId ||
         entryId !== controllerState.sessionAuditSelectedId
       ) return null;
@@ -821,9 +775,8 @@ export function createSessionsController({
   }
 
   async function refreshSessionAudit() {
-    if (controllerState.sessionAuditLoading || !controllerState.todoSessionId || !todoMachineOnline()) return null;
+    if (controllerState.sessionAuditLoading || !controllerState.todoSessionId) return null;
     const generation = ++controllerState.sessionAuditGeneration;
-    const requestedMachine = controllerState.todoMachine;
     const requestedSession = controllerState.todoSessionId;
     const previousSelection = controllerState.sessionAuditSelectedId;
     controllerState.sessionAuditLoading = true;
@@ -833,7 +786,6 @@ export function createSessionsController({
       const payload = await request(sessionAuditQueryPath());
       if (
         generation !== controllerState.sessionAuditGeneration ||
-        requestedMachine !== controllerState.todoMachine ||
         requestedSession !== controllerState.todoSessionId
       ) return null;
       applySessionAuditPayload(payload, requestedSession, previousSelection);
@@ -841,7 +793,6 @@ export function createSessionsController({
     } catch (error) {
       if (
         generation !== controllerState.sessionAuditGeneration ||
-        requestedMachine !== controllerState.todoMachine ||
         requestedSession !== controllerState.todoSessionId
       ) return null;
       controllerState.sessionAuditEntries = [];
@@ -863,11 +814,11 @@ export function createSessionsController({
   }
 
   function bind() {
-    elements.sessionMachine.addEventListener("change", () => {
+    elements.sessionExecutor.addEventListener("change", () => {
       if (controllerState.todoMutationBusy || controllerState.sessionLoading || controllerState.sessionTerminating) return;
-      const next = elements.sessionMachine.value || "local";
+      const next = elements.sessionExecutor.value;
       if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) {
-        elements.sessionMachine.value = controllerState.todoMachine;
+        elements.sessionExecutor.value = controllerState.sessionExecutorId;
         return;
       }
       resetTodoWorkspace(next);
@@ -915,7 +866,7 @@ export function createSessionsController({
     bind,
     invalidate,
     refresh: refreshTodoContext,
-    renderMachines: renderTodoMachines,
+    renderExecutors: renderSessionExecutors,
     reset: resetTodoWorkspace,
   };
 }

@@ -81,8 +81,7 @@ oauth_registration_max_client_name_chars: 200
 # Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP
 # safety annotations remain conservative in this mode.
 allow_full_control: false
-# Base MCP/HTTP tool watchdog timeout in seconds. Shell execution tools receive additional bounded
-# cleanup time beyond run_shell_max_timeout_s.
+# Base control-owned MCP/HTTP tool watchdog timeout in seconds.
 tool_timeout_s: 60
 # Default timeout for bounded shell command calls in seconds.
 run_shell_default_timeout_s: 10
@@ -195,29 +194,7 @@ executor_pairing_max_pending: 32
 # Lifetime in seconds for one process-local executor pairing attempt.
 executor_pairing_ttl_s: 600
 
-# Remote workers.
-# Enable remote worker routes and MCP tools.
-remote_enabled: true
-# One-time remote worker invite lifetime in seconds.
-remote_invite_ttl_s: 600
-# Remote worker long-poll heartbeat timeout in seconds.
-remote_poll_timeout_s: 25
-# Control-side remote job result timeout in seconds.
-remote_job_timeout_s: 3600
-# Maximum queued or in-flight remote jobs allowed per worker.
-remote_max_pending_jobs: 64
-# Use the private resumable HTTP gateway for capable large session copies.
-remote_http_transfer_enabled: true
-# Minimum payload size selected for private HTTP streaming.
-remote_http_transfer_threshold_bytes: 1048576
-# Maximum request or response chunk size for private HTTP transfer routes.
-remote_http_transfer_chunk_bytes: 1048576
-# Lifetime of a private transfer grant before it must be renewed.
-remote_http_transfer_ticket_ttl_s: 300
-# Maximum non-terminal private transfer objects retained concurrently.
-remote_http_transfer_max_active: 16
-# Maximum aggregate bytes reserved by private controller transfer spools.
-remote_http_transfer_max_spool_bytes: 10737418240
+# Cross-executor transfer.
 
 # Agent capability bridge.
 # Enable agent capability bridge tools.
@@ -228,8 +205,6 @@ agent_mcp_probe_timeout_s: 5
 agent_mcp_call_timeout_s: 60
 # Register dynamic MCP bridge tools.
 agent_dynamic_mcp_tools: true
-# Register dynamic skill bridge tools.
-agent_dynamic_skill_tools: true
 
 # Tool executables.
 # Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows.

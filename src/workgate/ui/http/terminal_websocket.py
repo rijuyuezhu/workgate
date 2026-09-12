@@ -10,15 +10,14 @@ from typing import Any
 from starlette.types import Message
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ...terminal.bridge import (
+from ...protocol.terminal import (
     TerminalBridgeBusyError,
     TerminalBridgeNotFoundError,
     TerminalBridgeUnsupportedError,
 )
 from .terminal_protocol import (
+    UI_TERMINAL_EXECUTOR_POLL_INTERVAL_S,
     UI_TERMINAL_METADATA_MAX_BYTES,
-    UI_TERMINAL_POLL_INTERVAL_S,
-    UI_TERMINAL_REMOTE_POLL_INTERVAL_S,
     UI_TERMINAL_SUBPROTOCOL,
     TerminalCloseControl,
     TerminalInputControl,
@@ -36,10 +35,10 @@ AsyncCall = Callable[..., Awaitable[Any]]
 
 @dataclass(frozen=True)
 class TerminalWebSocketBackend:
-    """Machine adapter callbacks used by the transport lifecycle."""
+    """Executor adapter callbacks used by the transport lifecycle."""
 
     list_shells: AsyncCall
-    """List available persistent shells for the selected machine."""
+    """List available persistent shells for the selected executor_id."""
     read_shell: AsyncCall
     """Read a bounded snapshot from a persistent shell."""
     send_shell: AsyncCall
@@ -97,7 +96,7 @@ class _TerminalWebSocketConnection:
         self.release_connection(self.marker)
         self.audit_event(
             "ui_terminal_disconnected",
-            machine=self.request.machine,
+            executor_id=self.request.executor_id,
             shell_id=self.request.shell_id,
             mode=self.active_mode,
         )
@@ -118,7 +117,7 @@ class _TerminalWebSocketConnection:
     async def _send_exit(self, exc: Exception) -> None:
         payload: dict[str, Any] = {
             "type": "exit",
-            "machine": self.request.machine,
+            "executor_id": self.request.executor_id,
             "shell_id": self.request.shell_id,
             "message": str(exc)[:UI_TERMINAL_METADATA_MAX_BYTES],
         }
@@ -132,7 +131,7 @@ class _TerminalWebSocketConnection:
         await self._send_json(
             {
                 "type": "ready",
-                "machine": self.request.machine,
+                "executor_id": self.request.executor_id,
                 "shell_id": self.request.shell_id,
                 "mode": self.active_mode,
                 "backend": (
@@ -145,15 +144,11 @@ class _TerminalWebSocketConnection:
 
     async def _snapshot_sender(self) -> None:
         previous: str | None = None
-        interval = (
-            UI_TERMINAL_POLL_INTERVAL_S
-            if self.request.machine == "local"
-            else UI_TERMINAL_REMOTE_POLL_INTERVAL_S
-        )
+        interval = UI_TERMINAL_EXECUTOR_POLL_INTERVAL_S
         while True:
             try:
                 result = await self.backend.read_shell(
-                    self.request.machine,
+                    self.request.executor_id,
                     self.request.shell_id,
                     self.request.lines,
                 )
@@ -167,7 +162,7 @@ class _TerminalWebSocketConnection:
                 await self._send_json(
                     {
                         "type": "snapshot",
-                        "machine": self.request.machine,
+                        "executor_id": self.request.executor_id,
                         "shell_id": self.request.shell_id,
                         "output": output,
                     }
@@ -220,7 +215,7 @@ class _TerminalWebSocketConnection:
             await self.backend.write_bridge(self.bridge, raw)
         else:
             await self.backend.send_shell(
-                self.request.machine,
+                self.request.executor_id,
                 self.request.shell_id,
                 raw.decode("utf-8", errors="replace"),
                 False,
@@ -248,7 +243,7 @@ class _TerminalWebSocketConnection:
                 await self.backend.write_bridge(self.bridge, control.raw_input)
             else:
                 await self.backend.send_shell(
-                    self.request.machine,
+                    self.request.executor_id,
                     self.request.shell_id,
                     control.input_text,
                     control.enter,
@@ -270,7 +265,7 @@ class _TerminalWebSocketConnection:
                 )
             else:
                 await self.backend.resize_shell(
-                    self.request.machine,
+                    self.request.executor_id,
                     self.request.shell_id,
                     self.current_cols,
                     self.current_rows,
@@ -280,7 +275,7 @@ class _TerminalWebSocketConnection:
         if isinstance(control, TerminalPingControl):
             payload: dict[str, Any] = {
                 "type": "pong",
-                "machine": self.request.machine,
+                "executor_id": self.request.executor_id,
                 "shell_id": self.request.shell_id,
             }
             if self.request.announce_mode:
@@ -334,7 +329,7 @@ class _TerminalWebSocketConnection:
     async def run(self) -> None:
         self.audit_event(
             "ui_terminal_connected",
-            machine=self.request.machine,
+            executor_id=self.request.executor_id,
             shell_id=self.request.shell_id,
             requested_mode=self.request.requested_mode,
             mode=self.active_mode,
@@ -384,13 +379,13 @@ async def serve_terminal_websocket(
 ) -> None:
     """Authorize, negotiate, and serve one terminal WebSocket connection."""
 
-    authorized, close_code, reason = authorize(websocket, request.machine)
+    authorized, close_code, reason = authorize(websocket, request.executor_id)
     if not authorized:
         await websocket.close(code=close_code, reason=reason[:120])
         return
 
     try:
-        shells = await backend.list_shells(request.machine)
+        shells = await backend.list_shells(request.executor_id)
     except ConnectionError as exc:
         await websocket.close(code=1013, reason=str(exc)[:120])
         return
@@ -432,7 +427,7 @@ async def serve_terminal_websocket(
     if request.requested_mode in {"auto", "pty"}:
         try:
             bridge = await backend.open_bridge(
-                request.machine,
+                request.executor_id,
                 request.shell_id,
                 request.cols,
                 request.rows,

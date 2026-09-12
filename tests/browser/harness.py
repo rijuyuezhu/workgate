@@ -101,6 +101,7 @@ class BrowserHarness:
     control_workspace: Path
     executor_workspace: Path
     control_tmux_tmpdir: Path
+    executor_tmux_tmpdir: Path
     base_url: str
     admin_pin: str
     executor_id: str
@@ -132,13 +133,14 @@ class BrowserHarness:
         executor_workspace = root / "workspace-executor"
         executor_workspace.mkdir(parents=True)
         control_tmux_tmpdir = Path(tempfile.mkdtemp(prefix="workgate-b-ctl-"))
-        (control_workspace / "notes.txt").write_text(
-            "local browser fixture\n", encoding="utf-8"
+        executor_tmux_tmpdir = Path(tempfile.mkdtemp(prefix="workgate-b-exe-"))
+        (executor_workspace / "notes.txt").write_text(
+            "executor browser fixture\n", encoding="utf-8"
         )
-        (control_workspace / "stale-local.txt").write_text(
-            "stale local preview\n", encoding="utf-8"
+        (executor_workspace / "stale-executor.txt").write_text(
+            "stale executor preview\n", encoding="utf-8"
         )
-        (control_workspace / "copy-source.txt").write_text(
+        (executor_workspace / "copy-source.txt").write_text(
             "copy source\n", encoding="utf-8"
         )
         opentui_crash_marker = root / "opentui-crash-next"
@@ -184,9 +186,6 @@ class BrowserHarness:
                 "WORKGATE_AUTH_MODE": "oauth",
                 "WORKGATE_BASE_URL": base_url,
                 "WORKGATE_OAUTH_ADMIN_PIN": admin_pin,
-                "WORKGATE_REMOTE_ENABLED": "true",
-                "WORKGATE_REMOTE_POLL_TIMEOUT_S": "1",
-                "WORKGATE_REMOTE_JOB_TIMEOUT_S": "20",
                 "WORKGATE_AGENT_BRIDGE_ENABLED": "false",
                 "WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S": "120",
                 "WORKGATE_UI_TUI_COMMAND": str(opentui_wrapper),
@@ -210,12 +209,6 @@ class BrowserHarness:
                 str(control_workspace),
                 "--agent-bridge-enabled",
                 "false",
-                "--remote-enabled",
-                "true",
-                "--remote-poll-timeout-s",
-                "1",
-                "--remote-job-timeout-s",
-                "20",
             ],
             cwd=PROJECT_ROOT,
             env=env,
@@ -225,14 +218,16 @@ class BrowserHarness:
         executor: subprocess.Popen[Any] | None = None
         try:
             _wait_for_http_ready(base_url, server)
+            executor_env = server_env(
+                executor_workspace,
+                mode="http",
+                state_dir=executor_state_dir,
+            )
+            executor_env["TMUX_TMPDIR"] = str(executor_tmux_tmpdir)
             executor = _start_logged_process(
                 [sys.executable, "-m", "workgate.main", "executor", "run"],
                 cwd=PROJECT_ROOT,
-                env=server_env(
-                    executor_workspace,
-                    mode="http",
-                    state_dir=executor_state_dir,
-                ),
+                env=executor_env,
                 stdout_path=artifacts / "executor.stdout.log",
                 stderr_path=artifacts / "executor.stderr.log",
             )
@@ -252,6 +247,7 @@ class BrowserHarness:
                 control_workspace=control_workspace,
                 executor_workspace=executor_workspace,
                 control_tmux_tmpdir=control_tmux_tmpdir,
+                executor_tmux_tmpdir=executor_tmux_tmpdir,
                 base_url=base_url,
                 admin_pin=admin_pin,
                 executor_id=executor_id,
@@ -269,6 +265,7 @@ class BrowserHarness:
             _terminate_process(executor)
             _terminate_process(server)
             shutil.rmtree(control_tmux_tmpdir, ignore_errors=True)
+            shutil.rmtree(executor_tmux_tmpdir, ignore_errors=True)
             raise
 
     def _attach_diagnostics(self) -> None:
@@ -321,12 +318,15 @@ class BrowserHarness:
                     path=str(self.artifacts / "failure.png"), full_page=True
                 )
             if not self.page.is_closed():
-                for machine, shell_id in reversed(self.terminal_sessions):
+                for executor_id, shell_id in reversed(self.terminal_sessions):
                     with contextlib.suppress(Exception):
                         self.api(
                             "POST",
                             "/api/ui/terminals/kill",
-                            body={"machine": machine, "shell_id": shell_id},
+                            body={
+                                "executor_id": executor_id,
+                                "shell_id": shell_id,
+                            },
                         )
         finally:
             (self.artifacts / "browser-console.log").write_text(
@@ -352,6 +352,7 @@ class BrowserHarness:
             _terminate_process(self.executor)
             _terminate_process(self.server)
             shutil.rmtree(self.control_tmux_tmpdir, ignore_errors=True)
+            shutil.rmtree(self.executor_tmux_tmpdir, ignore_errors=True)
 
     def wait_executor_online(self) -> None:
         deadline = time.monotonic() + 10
@@ -376,8 +377,8 @@ class BrowserHarness:
             f"see {self.artifacts / 'executor.stderr.log'}"
         )
 
-    def track_terminal(self, machine: str, shell_id: str) -> None:
-        self.terminal_sessions.append((machine, shell_id))
+    def track_terminal(self, executor_id: str, shell_id: str) -> None:
+        self.terminal_sessions.append((executor_id, shell_id))
 
     def api(
         self,
@@ -641,9 +642,7 @@ class BrowserHarness:
         expect(self.page.locator("#page-title")).to_have_text(
             {
                 "overview": "Overview",
-                "machines": "Machines",
                 "executors": "Executors",
-                "remotes": "Remotes",
                 "sessions": "Sessions",
                 "terminals": "Terminals",
                 "files": "Files",

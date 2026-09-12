@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import clear_settings_cache
+from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.jobs import managed as jobs_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as jobs_recovery
-from workgate.jobs import runtime as jobs_ops
-from workgate.tool_session.store import get_tool_session_store
+from workgate.jobs import state as job_state
+from workgate.persistence import FileStateStore
+from workgate.protocol.ids import new_session_id
 from workgate.utils import private_files
 
 pytestmark = pytest.mark.usefixtures("managed_jobs_runtime_owner")
@@ -24,7 +26,9 @@ def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    return store.create_session(workdir=".").session_id
+    return store.create_session(
+        session_id=str(new_session_id()), workdir="."
+    ).session_id
 
 
 def _seed_managed_job(
@@ -39,7 +43,7 @@ def _seed_managed_job(
     now = time.time()
     job_persistence.save_store(
         {
-            "version": jobs_ops.JOB_STORE_VERSION,
+            "version": job_persistence.JOB_STORE_VERSION,
             "jobs": [
                 {
                     "job_id": job_id,
@@ -74,7 +78,63 @@ def _seed_managed_job(
 
 def _stored_job(session_id: str, job_id: str) -> dict[str, object]:
     store = job_persistence.load_store()
-    return jobs_ops._find_session_job(store, session_id, job_id)
+    return dict(job_state.find_session_job(store, session_id, job_id))
+
+
+def test_file_state_store_serializes_shared_transaction_lock_users(
+    tmp_path: Path,
+) -> None:
+    store = FileStateStore(lambda: tmp_path / "state")
+    identity = Path("shared.json")
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    failures: list[BaseException] = []
+
+    def run_first() -> None:
+        try:
+            with store.transaction(identity):
+                first_entered.set()
+                if not release_first.wait(timeout=2):
+                    raise TimeoutError("first transaction was not released")
+        except BaseException as exc:
+            failures.append(exc)
+
+    def run_second() -> None:
+        try:
+            if not first_entered.wait(timeout=2):
+                raise TimeoutError("first transaction never acquired")
+            with store.transaction(identity):
+                second_entered.set()
+        except BaseException as exc:
+            failures.append(exc)
+
+    first = threading.Thread(target=run_first)
+    second = threading.Thread(target=run_second)
+    first.start()
+    assert first_entered.wait(timeout=2)
+    second.start()
+
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with store._transaction_guard:
+            users = [entry[1] for entry in store._transaction_locks.values()]
+        if users == [2]:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("second transaction did not share the thread lock")
+
+    assert not second_entered.is_set()
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_entered.is_set()
+    assert failures == []
+    assert store._transaction_locks == {}
 
 
 def test_private_file_lock_retries_and_times_out(
@@ -308,7 +368,6 @@ def test_managed_updates_defer_in_order_and_replay_once(
             (path.stat().st_mode & 0o077) == 0 for path in deferred_paths
         )
 
-    monkeypatch.setattr(jobs_ops, "_store_transaction", original_transaction)
     original_remove = jobs_recovery.remove_managed_deferred_updates
     monkeypatch.setattr(
         jobs_recovery, "remove_managed_deferred_updates", lambda _paths: None
@@ -453,8 +512,8 @@ async def test_managed_stop_reconciles_deferred_cancellation_updates(
         started_handler.set()
         await __import__("asyncio").Event().wait()
 
-    jobs_ops.register_managed_job_handler("test-deferred-stop", handler)
-    started = await jobs_ops.start_managed_job(
+    jobs_managed.register_managed_job_handler("test-deferred-stop", handler)
+    started = await jobs_managed.start_managed_job(
         session_id,
         "test-deferred-stop",
         {},
@@ -477,7 +536,9 @@ async def test_managed_stop_reconciles_deferred_cancellation_updates(
         )
 
     monkeypatch.setattr(jobs_managed, "_managed_store_update", defer_update)
-    stopped = await jobs_ops.job_stop_execute(session_id, started.job_id)
+    stopped = await jobs_managed.stop_managed_job_without_session_admission(
+        session_id, started.job_id
+    )
 
     assert stopped.job.status == "stopped"
     assert stopped.job.error is None

@@ -3,21 +3,19 @@ import os
 import subprocess
 import sys
 import threading
-import time
-from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
 
-from workgate.config.settings import clear_settings_cache
-from workgate.jobs import persistence as job_persistence
-from workgate.tool_session import lifecycle
-from workgate.tool_session.store import (
-    SESSION_ACTIVE_WINDOW_S,
-    ExpiredAgentSessionError,
+from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.jobs import ExecutorJobService
+from workgate.executor.tool_session import lifecycle
+from workgate.executor.tool_session.store import (
     UnknownAgentSessionError,
     get_tool_session_store,
 )
+from workgate.jobs import persistence as job_persistence
 from workgate.utils.private_files import private_file_lock
 
 
@@ -27,7 +25,7 @@ def _start_cross_process_lifecycle_holder(
     script = f"""
 import asyncio
 from pathlib import Path
-from workgate.tool_session.lifecycle import session_lifecycle_locks
+from workgate.executor.tool_session.lifecycle import session_lifecycle_locks
 
 async def main():
     async with session_lifecycle_locks({session_ids!r}):
@@ -136,7 +134,7 @@ async def test_session_lifecycle_lock_serializes_across_processes(tmp_path):
     script = f"""
 import asyncio
 from pathlib import Path
-from workgate.tool_session.lifecycle import session_lifecycle_lock
+from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
 
 async def main():
     async with session_lifecycle_lock("SESSION1"):
@@ -220,25 +218,34 @@ async def test_cancelled_cross_process_waiter_releases_local_entry():
 async def test_job_admission_revalidates_after_cross_process_teardown(
     tmp_path, monkeypatch
 ):
-    from workgate.jobs import runtime as jobs_ops
-
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()
     store.clear()
-    session = store.create_session(workdir=".")
+    session = store.create_session(
+        session_id="sess_0000000000000000000001", workdir="."
+    )
+    jobs = ExecutorJobService(resolve_executor_config(get_settings()), store)
     marker = tmp_path / "teardown-complete"
     release = tmp_path / "release-teardown"
     script = f"""
 import asyncio
 from pathlib import Path
-from workgate.tool_session.lifecycle import session_lifecycle_lock
-from workgate.tool_session.store import get_tool_session_store
+from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.services import build_runtime_services
+from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
+from workgate.persistence import configure_state_store
+
+clear_settings_cache()
+services = build_runtime_services(resolve_executor_config(get_settings()))
+configure_state_store(services.state_store)
+store = services.tool_session_store
 
 async def main():
     async with session_lifecycle_lock({session.session_id!r}):
-        get_tool_session_store().end_session({session.session_id!r})
+        store.end_session({session.session_id!r})
         Path({str(marker)!r}).write_text("deleted", encoding="utf-8")
         while not Path({str(release)!r}).exists():
             await asyncio.sleep(0.01)
@@ -265,7 +272,7 @@ asyncio.run(main())
         assert marker.exists()
 
         admission = asyncio.create_task(
-            jobs_ops.job_start_execute(session.session_id, "echo too-late")
+            jobs.start(session.session_id, "echo too-late")
         )
         await asyncio.sleep(0.1)
         assert not admission.done()
@@ -298,152 +305,3 @@ async def test_try_lifecycle_lease_skips_local_users_and_lock_uncertainty(
     monkeypatch.setattr(lifecycle, "private_file_lock", fail_lock)
     with lifecycle.try_session_lifecycle_lease("SESSION1") as acquired:
         assert acquired is False
-
-
-@pytest.mark.asyncio
-async def test_expiry_pruning_skips_cross_process_foreground_lease(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    session = store.create_session(
-        workdir=tmp_path,
-        expires_at=time.time() - 1,
-    )
-    marker = tmp_path / "foreground-lease-held"
-    release = tmp_path / "release-foreground-lease"
-    process = _start_cross_process_lifecycle_holder(
-        (session.session_id,), marker, release
-    )
-
-    try:
-        await _wait_for_process_marker(process, marker)
-
-        listed_ids = {item.session_id for item in store.list_sessions()}
-        assert session.session_id in listed_ids
-
-        release.write_text("release", encoding="utf-8")
-        assert await asyncio.to_thread(process.wait, timeout=5) == 0
-
-        listed_ids = {item.session_id for item in store.list_sessions()}
-        assert session.session_id not in listed_ids
-    finally:
-        release.touch(exist_ok=True)
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        clear_settings_cache()
-
-
-@pytest.mark.asyncio
-async def test_overflow_pruning_skips_cross_process_copy_endpoint_leases(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    monkeypatch.setenv("WORKGATE_AGENT_SESSION_RETENTION_S", "86400")
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    source = store.create_session(workdir=tmp_path)
-    destination = store.create_session(workdir=tmp_path)
-    stale_updated_at = time.time() - SESSION_ACTIVE_WINDOW_S - 60
-    for session in (source, destination):
-        stale = replace(session, updated_at=stale_updated_at)
-        store._state_store.write_json(
-            store._metadata_path(session.session_id), asdict(stale)
-        )
-
-    marker = tmp_path / "copy-leases-held"
-    release = tmp_path / "release-copy-leases"
-    process = _start_cross_process_lifecycle_holder(
-        (source.session_id, destination.session_id), marker, release
-    )
-
-    try:
-        await _wait_for_process_marker(process, marker)
-        monkeypatch.setenv("WORKGATE_MAX_AGENT_SESSIONS", "1")
-        clear_settings_cache()
-
-        listed_ids = {item.session_id for item in store.list_sessions()}
-        assert listed_ids == {source.session_id, destination.session_id}
-
-        release.write_text("release", encoding="utf-8")
-        assert await asyncio.to_thread(process.wait, timeout=5) == 0
-
-        assert len(store.list_sessions()) == 1
-    finally:
-        release.touch(exist_ok=True)
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        clear_settings_cache()
-
-
-@pytest.mark.asyncio
-async def test_required_expiry_preserves_local_lifecycle_holder(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    session = store.create_session(
-        workdir=tmp_path,
-        expires_at=time.time() - 1,
-    )
-    metadata_path = store._metadata_path(session.session_id)
-
-    async with lifecycle.session_lifecycle_lock(session.session_id):
-        with pytest.raises(ExpiredAgentSessionError):
-            store.require_session(session.session_id)
-        assert metadata_path.exists()
-
-    with pytest.raises(ExpiredAgentSessionError):
-        store.require_session(session.session_id)
-    assert not metadata_path.exists()
-
-
-@pytest.mark.asyncio
-async def test_required_expiry_preserves_cross_process_lifecycle_holder(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    clear_settings_cache()
-    store = get_tool_session_store()
-    store.clear()
-    session = store.create_session(
-        workdir=tmp_path,
-        expires_at=time.time() - 1,
-    )
-    metadata_path = store._metadata_path(session.session_id)
-    marker = tmp_path / "required-expiry-lease-held"
-    release = tmp_path / "release-required-expiry-lease"
-    process = _start_cross_process_lifecycle_holder(
-        (session.session_id,), marker, release
-    )
-
-    try:
-        await _wait_for_process_marker(process, marker)
-
-        with pytest.raises(ExpiredAgentSessionError):
-            store.require_session(session.session_id)
-        assert metadata_path.exists()
-
-        release.write_text("release", encoding="utf-8")
-        assert await asyncio.to_thread(process.wait, timeout=5) == 0
-
-        with pytest.raises(ExpiredAgentSessionError):
-            store.require_session(session.session_id)
-        assert not metadata_path.exists()
-    finally:
-        release.touch(exist_ok=True)
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        clear_settings_cache()

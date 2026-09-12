@@ -30,7 +30,8 @@ from workgate.audit.core import (
 )
 from workgate.audit.payloads import AUDIT_PAYLOAD_KEY
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.tool_session import get_tool_session_store
+from workgate.executor.tool_session import get_tool_session_store
+from workgate.protocol.ids import new_session_id
 
 
 def _configure_audit(
@@ -134,7 +135,9 @@ def test_audit_dual_writes_session_log_but_keeps_global_extras(
     global_path = _configure_audit(tmp_path, monkeypatch)
     store = get_tool_session_store()
     store.clear()
-    session = store.create_session(workdir=tmp_path, label="audit owner")
+    session = store.create_session(
+        session_id=str(new_session_id()), workdir=tmp_path, label="audit owner"
+    )
 
     audit("global_extra", detail="not owned by a session")
     call_id = "dual-write-call"

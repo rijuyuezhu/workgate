@@ -18,7 +18,7 @@ repos:
         entry: uv run python scripts/generation/export-tools-json.py --wrapped --output docs/reference/generated/tools.json --instructions-output docs/reference/generated/server-instructions.json
         language: system
         pass_filenames: false
-        files: ^(src/workgate/(agent_bridge|config|ops|remote|schemas|server|tools|utils)/.*\.py|scripts/generation/export-tools-json\.py|docs/reference/generated/(tools|server-instructions)\.json)$
+        files: ^(src/workgate/.*\.py|scripts/generation/export-tools-json\.py|docs/reference/generated/(tools|server-instructions)\.json)$
       - id: terminal-ui-build
         name: terminal UI generated assets
         entry: bash -c 'cd ui-terminal && npm ci && npm run check'

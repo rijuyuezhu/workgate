@@ -1,4 +1,7 @@
 import ast
+import subprocess
+import sys
+import textwrap
 from collections import defaultdict
 from pathlib import Path
 
@@ -27,15 +30,28 @@ _ALLOWED_MCP_CONTROL_UI_IMPORTS = frozenset(
 _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
     {
         ("workgate.main", "workgate.control.cli"),
+        # These are presentation/download adapters that are part of the control
+        # deployment even though their historical package names are shared.
+        ("workgate.http.downloads", "workgate.control.download_store"),
+        ("workgate.http.downloads", "workgate.control.downloads"),
+        ("workgate.ui.http.dashboard", "workgate.control.ui_executor"),
+        ("workgate.ui.http.files", "workgate.control.ui_executor"),
+        ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
+        ("workgate.ui.http.todos", "workgate.control.todos"),
     }
 )
-_ALLOWED_EXECUTOR_TO_LEGACY_REMOTE_WORKER_IMPORTS = frozenset(
+_ALLOWED_HTTP_TO_CONTROL_IMPORTS = frozenset(
     {
-        ("workgate.executor.runtime", "workgate.remote_worker.dispatch"),
-        (
-            "workgate.executor.search_composition",
-            "workgate.remote_worker.dispatch",
-        ),
+        ("workgate.http.downloads", "workgate.control.download_store"),
+        ("workgate.http.downloads", "workgate.control.downloads"),
+    }
+)
+_ALLOWED_UI_HTTP_TO_CONTROL_IMPORTS = frozenset(
+    {
+        ("workgate.ui.http.dashboard", "workgate.control.ui_executor"),
+        ("workgate.ui.http.files", "workgate.control.ui_executor"),
+        ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
+        ("workgate.ui.http.todos", "workgate.control.todos"),
     }
 )
 _ALLOWED_RELEASE_IMPORTS = frozenset(
@@ -205,9 +221,7 @@ def test_control_does_not_depend_on_executor_composition() -> None:
     assert actual == frozenset()
 
 
-def test_executor_legacy_remote_worker_imports_are_explicit_migration_debt() -> (
-    None
-):
+def test_executor_has_no_legacy_remote_worker_dependency() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
@@ -215,7 +229,7 @@ def test_executor_legacy_remote_worker_imports_are_explicit_migration_debt() -> 
         and target.startswith(f"{_PACKAGE_NAME}.remote_worker")
     )
 
-    assert actual == _ALLOWED_EXECUTOR_TO_LEGACY_REMOTE_WORKER_IMPORTS
+    assert actual == frozenset()
 
 
 def test_mcp_control_has_only_the_explicit_ui_route_dependency() -> None:
@@ -246,20 +260,15 @@ def test_http_control_has_only_the_explicit_ui_route_dependency() -> None:
     assert actual == _ALLOWED_HTTP_CONTROL_UI_IMPORTS
 
 
-def test_http_infrastructure_does_not_depend_on_control_or_ui() -> None:
-    forbidden_prefixes = (
-        f"{_PACKAGE_NAME}.control.",
-        f"{_PACKAGE_NAME}.server.",
-        f"{_PACKAGE_NAME}.ui.",
-    )
+def test_http_has_only_explicit_control_owned_download_dependencies() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
         if importer.startswith(f"{_PACKAGE_NAME}.http")
-        and target.startswith(forbidden_prefixes)
+        and target.startswith(f"{_PACKAGE_NAME}.control.")
     )
 
-    assert actual == frozenset()
+    assert actual == _ALLOWED_HTTP_TO_CONTROL_IMPORTS
 
 
 def test_telemetry_does_not_depend_on_ui_or_transport_adapters() -> None:
@@ -295,7 +304,7 @@ def test_ui_core_does_not_depend_on_control_or_http_adapters() -> None:
     assert actual == frozenset()
 
 
-def test_ui_http_does_not_depend_on_control() -> None:
+def test_ui_http_has_only_explicit_control_adapter_dependencies() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
@@ -303,7 +312,7 @@ def test_ui_http_does_not_depend_on_control() -> None:
         and target.startswith(f"{_PACKAGE_NAME}.control.")
     )
 
-    assert actual == frozenset()
+    assert actual == _ALLOWED_UI_HTTP_TO_CONTROL_IMPORTS
 
 
 def test_terminal_does_not_depend_on_transports_or_ui() -> None:
@@ -316,7 +325,7 @@ def test_terminal_does_not_depend_on_transports_or_ui() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.terminal")
+        if importer.startswith(f"{_PACKAGE_NAME}.executor.terminal")
         and target.startswith(forbidden_prefixes)
     )
 
@@ -351,7 +360,7 @@ def test_patch_mechanics_stay_below_delivery_layers() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if importer == f"{_PACKAGE_NAME}.ops.patch.envelope"
+        if importer == f"{_PACKAGE_NAME}.executor.patch.envelope"
         and target.startswith(forbidden_prefixes)
     )
 
@@ -382,7 +391,7 @@ def test_terminal_uses_only_low_level_ops_helpers() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.terminal")
+        if importer.startswith(f"{_PACKAGE_NAME}.executor.terminal")
         and target.startswith(f"{_PACKAGE_NAME}.ops.")
     )
 
@@ -422,31 +431,156 @@ def test_agent_bridge_models_are_a_dependency_leaf() -> None:
     assert actual == frozenset()
 
 
-def test_remote_worker_process_dependencies_are_one_way() -> None:
-    layers = {
-        f"{_PACKAGE_NAME}.remote_worker.state": 0,
-        f"{_PACKAGE_NAME}.remote_worker.lifecycle": 1,
-        f"{_PACKAGE_NAME}.remote_worker.runtime": 2,
+_EXECUTOR_POLICY_FIELDS = frozenset(
+    {
+        "workspace_root",
+        "allow_full_control",
+        "command_denylist",
+        "path_denylist",
+        "run_shell_default_timeout_s",
+        "run_shell_max_timeout_s",
+        "max_output_bytes",
+        "max_job_log_bytes",
+        "max_jobs",
+        "max_file_read_bytes",
+        "max_session_snapshots",
+        "max_session_snapshot_bytes",
+        "max_transfer_archive_entries",
+        "max_transfer_unpacked_bytes",
+        "max_tmp_files",
+        "max_tmp_bytes",
+        "max_file_write_bytes",
+        "max_view_image_bytes",
+        "max_grep_results",
+        "max_glob_results",
+        "max_tree_entries",
+        "max_directory_entries",
+        "max_skills",
+        "max_skill_related_files",
+        "max_skill_scan_entries",
+        "max_skill_path_bytes",
+        "shell_executable",
+        "tmux_bin",
+        "rg_bin",
+        "git_bin",
+        "python_bin",
     }
-    violations = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer in layers
-        and target in layers
-        and layers[target] > layers[importer]
+)
+
+
+def test_machine_session_and_shell_job_implementations_are_executor_owned() -> (
+    None
+):
+    assert (_PACKAGE_ROOT / "executor" / "tool_session").is_dir()
+    assert not (_PACKAGE_ROOT / "tool_session").exists()
+
+    executor_jobs = _PACKAGE_ROOT / "executor" / "jobs"
+    shared_jobs = _PACKAGE_ROOT / "jobs"
+    for name in (
+        "shell.py",
+        "lifecycle.py",
+        "runner.py",
+        "runner_bootstrap.py",
+    ):
+        assert (executor_jobs / name).is_file()
+        assert not (shared_jobs / name).exists()
+
+
+def test_shared_mechanism_layers_do_not_depend_on_executor_implementation() -> (
+    None
+):
+    shared_prefixes = (
+        f"{_PACKAGE_NAME}.agent_bridge",
+        f"{_PACKAGE_NAME}.composition",
+        f"{_PACKAGE_NAME}.jobs",
+        f"{_PACKAGE_NAME}.tools",
     )
-
-    assert violations == frozenset()
-
-
-def test_remote_worker_state_contract_is_a_dependency_leaf() -> None:
     actual = frozenset(
         (importer, target)
         for importer, target in _local_imports()
-        if importer == f"{_PACKAGE_NAME}.remote_worker.state"
+        if importer.startswith(shared_prefixes)
+        and target.startswith(f"{_PACKAGE_NAME}.executor")
     )
 
     assert actual == frozenset()
+
+
+def test_control_shared_http_and_public_tools_do_not_read_executor_policy() -> (
+    None
+):
+    violations: list[tuple[str, int, str]] = []
+    roots = (
+        _PACKAGE_ROOT / "control",
+        _PACKAGE_ROOT / "http",
+        _PACKAGE_ROOT / "tools" / "registry",
+    )
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(
+                path.read_text(encoding="utf-8"), filename=str(path)
+            )
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in _EXECUTOR_POLICY_FIELDS
+                ):
+                    violations.append(
+                        (
+                            str(path.relative_to(_PROJECT_ROOT)),
+                            node.lineno,
+                            node.attr,
+                        )
+                    )
+
+    assert violations == []
+
+
+def test_legacy_execution_namespaces_are_physically_absent() -> None:
+    for name in ("ops", "remote", "remote_worker"):
+        assert not (_PACKAGE_ROOT / name).exists()
+
+
+def test_control_builds_without_executor_or_native_terminal_dependencies(
+    tmp_path: Path,
+) -> None:
+    script = textwrap.dedent(
+        f"""
+        import importlib.abc
+        from pathlib import Path
+
+        class BlockExecutorImports(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "winpty" or fullname.startswith("workgate.executor"):
+                    raise ModuleNotFoundError(f"blocked PR7 executor dependency: {{fullname}}")
+                return None
+
+        import sys
+        sys.meta_path.insert(0, BlockExecutorImports())
+
+        from workgate.config.settings import Settings
+        from workgate.control.runtime import build_control_runtime
+
+        root = Path({str(tmp_path)!r})
+        runtime = build_control_runtime(
+            Settings(
+                workspace_root=root / "executor-workspace-must-not-be-needed",
+                state_dir=root / "control-state",
+                auth_mode="none",
+                ui_enabled=False,
+            )
+        )
+        assert runtime.services.state_store.layout.root == root / "control-state"
+        assert not hasattr(runtime.services, "tool_session_store")
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_source_dependency_graph_has_no_cycles() -> None:

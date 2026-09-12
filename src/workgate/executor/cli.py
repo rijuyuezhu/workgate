@@ -100,7 +100,7 @@ async def _connect(args: argparse.Namespace) -> None:
 
 async def _run(args: argparse.Namespace) -> None:
     settings = settings_from_args(args, configure=True)
-    runtime = build_executor_runtime(settings)
+    runtime = build_executor_runtime(resolve_executor_config(settings))
     async with runtime.lifespan():
         connection = runtime.connection
         if connection is None:

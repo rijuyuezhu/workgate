@@ -7,7 +7,7 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from ..config.settings import Settings
+from ..config.control import ControlSettingsView
 
 type ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 
@@ -32,8 +32,8 @@ class HttpToolRoute:
 class McpToolContext:
     """Shared MCP registration context prepared by the app assembler."""
 
-    settings: Settings
-    """Runtime settings object shared by all tool registries."""
+    settings: ControlSettingsView
+    """Resolved control-owned settings exposed to public tool metadata."""
     read_only_tool_annotations: ToolAnnotations
     """MCP annotation applied to read-only tools."""
 

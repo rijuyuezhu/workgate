@@ -4,9 +4,14 @@ from typing import Any
 import pytest
 
 import workgate.agent_bridge.sources as source_module
-import workgate.ops.agent as agent_ops
 from workgate.agent_bridge.models import SkillSource as ModelSkillSource
 from workgate.agent_bridge.registry import build_agent_registry
+from workgate.agent_bridge.service import (
+    activate_agent_skill_payload,
+    list_agent_skills_payload,
+    read_agent_skill_file_payload,
+    tool_value,
+)
 from workgate.agent_bridge.sources import (
     SkillSource,
     scan_skill_sources,
@@ -16,9 +21,11 @@ from workgate.agent_bridge.state import (
     agent_config_fingerprint,
     agent_registry_fingerprint,
 )
-from workgate.config.settings import clear_settings_cache
-from workgate.remote_worker.dispatch import execute_worker_tool
-from workgate.tool_session.store import get_tool_session_store
+from workgate.agent_bridge.tools import AgentBridgeToolReloader
+from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.executor.config import resolve_executor_config
+from workgate.executor.runtime import build_executor_runtime
+from workgate.executor.tool_session.store import get_tool_session_store
 
 
 class _NoopClientManager:
@@ -50,7 +57,12 @@ def _configure(
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
     clear_settings_cache()
-    get_tool_session_store().clear()
+    try:
+        store = get_tool_session_store()
+    except RuntimeError:
+        pass
+    else:
+        store.clear()
 
 
 def test_sources_reexport_the_model_skill_source_contract() -> None:
@@ -191,6 +203,66 @@ def test_invalid_project_duplicate_falls_back_to_managed(
     )
 
 
+@pytest.mark.asyncio
+async def test_project_skill_payloads_and_dynamic_reloader_use_registry_snapshot(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    managed = tmp_path / "managed"
+    project.mkdir()
+    managed.mkdir()
+    _install_skill(project, ".agents/skills", "debugging", "find root causes")
+    registry = build_agent_registry(
+        managed,
+        _NoopClientManager(),
+        project_root=project,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=True,
+    )
+
+    listed = list_agent_skills_payload(registry)
+    assert [row["name"] for row in listed.skills] == ["debugging"]
+    assert listed.skills[0]["source"] == "project"
+    activated = activate_agent_skill_payload(
+        registry, "debugging", max_entry_bytes=1024
+    )
+    assert "find root causes" in activated.content
+    related = read_agent_skill_file_payload(
+        registry, "debugging", "guide.md", max_file_bytes=1024
+    )
+    assert related["content"] == "find root causes"
+    assert tool_value({"name": "mapping-tool"}, "name") == "mapping-tool"
+    with pytest.raises(ValueError, match="Unknown agent skill"):
+        activate_agent_skill_payload(registry, "missing")
+    with pytest.raises(ValueError, match="Unknown agent skill"):
+        read_agent_skill_file_payload(registry, "missing", "guide.md")
+
+    class FakeMcp:
+        def __init__(self) -> None:
+            self.handlers: dict[str, Any] = {}
+
+        def add_tool(self, handler, *, name, **_kwargs) -> None:
+            self.handlers[name] = handler
+
+        def remove_tool(self, name: str) -> None:
+            self.handlers.pop(name, None)
+
+    mcp = FakeMcp()
+    reloader = AgentBridgeToolReloader(
+        mcp,
+        registry,
+        {},
+        probe_timeout_s=1,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=True,
+    )
+    reloader.register_dynamic_tools()
+    handler = mcp.handlers["activate_skill__debugging"]
+    dynamic = await handler()
+    assert dynamic.name == "debugging"
+    assert "find root causes" in dynamic.content
+
+
 def test_multi_source_scan_shares_entry_and_skill_budgets(
     tmp_path: Path,
 ) -> None:
@@ -243,133 +315,7 @@ def test_multi_source_scan_shares_entry_and_skill_budgets(
 
 
 @pytest.mark.asyncio
-async def test_local_session_adds_its_workdir_project_source(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    workspace = tmp_path / "workspace"
-    default_project = workspace / "default"
-    session_project = workspace / "session"
-    managed = tmp_path / "managed"
-    xdg = tmp_path / "xdg"
-    default_project.mkdir(parents=True)
-    session_project.mkdir(parents=True)
-    managed.mkdir()
-    _install_skill(
-        default_project, ".agents/skills", "default-skill", "default"
-    )
-    _install_skill(
-        session_project, ".agents/skills", "session-skill", "session"
-    )
-    _configure(
-        monkeypatch,
-        workspace=workspace,
-        state_dir=tmp_path / "state",
-        config_dir=managed,
-        xdg_config_home=xdg,
-    )
-    session = get_tool_session_store().create_session(workdir=session_project)
-
-    default = await agent_ops.list_agent_skills_dispatch_execute()
-    scoped = await agent_ops.list_agent_skills_dispatch_execute(
-        session.session_id
-    )
-    activated = await agent_ops.activate_agent_skill_dispatch_execute(
-        "session-skill", session.session_id
-    )
-
-    assert [row["name"] for row in default.skills] == []
-    assert [row["name"] for row in scoped.skills] == ["session-skill"]
-    assert scoped.skills[0]["source"] == "project"
-    assert activated.source == "project"
-    assert "session" in activated.content
-
-
-@pytest.mark.asyncio
-async def test_remote_session_dispatches_skill_operations_to_worker(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    managed = tmp_path / "managed"
-    managed.mkdir()
-    _configure(
-        monkeypatch,
-        workspace=workspace,
-        state_dir=tmp_path / "state",
-        config_dir=managed,
-        xdg_config_home=tmp_path / "xdg",
-    )
-    session = get_tool_session_store().create_session(
-        target="remote",
-        workdir="/srv/project",
-        machine="edge",
-        worker_session_id="worker123",
-    )
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def fake_call(remote_session, tool: str, args: dict[str, Any]):
-        assert remote_session.session_id == session.session_id
-        calls.append((tool, args))
-        source_path = "/srv/project/.agents/skills"
-        if tool == "list_agent_skills":
-            return {
-                "sources": [{"source": "project", "path": source_path}],
-                "skills": [
-                    {
-                        "name": "remote-skill",
-                        "source": "project",
-                        "source_path": source_path,
-                        "entry_path": ".agents/skills/remote-skill/SKILL.md",
-                        "description": "Remote.",
-                        "related_files": ["guide.md"],
-                    }
-                ],
-                "warnings": [],
-            }
-        if tool == "activate_agent_skill":
-            return {
-                "name": "remote-skill",
-                "source": "project",
-                "source_path": source_path,
-                "entry_path": ".agents/skills/remote-skill/SKILL.md",
-                "description": "Remote.",
-                "content": "# Remote\n",
-                "bytes": 9,
-                "related_files": ["guide.md"],
-            }
-        return {
-            "name": "remote-skill",
-            "source": "project",
-            "source_path": source_path,
-            "path": "guide.md",
-            "content": "guide",
-            "bytes": 5,
-        }
-
-    monkeypatch.setattr(agent_ops, "call_remote_session_tool", fake_call)
-
-    listed = await agent_ops.list_agent_skills_dispatch_execute(
-        session.session_id
-    )
-    activated = await agent_ops.activate_agent_skill_dispatch_execute(
-        "remote-skill", session.session_id
-    )
-    related = await agent_ops.read_agent_skill_file_dispatch_execute(
-        "remote-skill", "guide.md", session.session_id
-    )
-
-    assert listed.skills[0]["source"] == "project"
-    assert activated.content == "# Remote\n"
-    assert related.content == "guide"
-    assert calls == [
-        ("list_agent_skills", {}),
-        ("activate_agent_skill", {"name": "remote-skill"}),
-        ("read_agent_skill_file", {"name": "remote-skill", "path": "guide.md"}),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_worker_executes_session_scoped_skill_registry(
+async def test_executor_session_scopes_skill_registry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -377,7 +323,7 @@ async def test_worker_executes_session_scoped_skill_registry(
     project.mkdir(parents=True)
     managed = tmp_path / "managed"
     managed.mkdir()
-    _install_skill(project, ".agents/skills", "worker-skill", "worker")
+    _install_skill(project, ".agents/skills", "executor-skill", "executor")
     _configure(
         monkeypatch,
         workspace=workspace,
@@ -385,19 +331,35 @@ async def test_worker_executes_session_scoped_skill_registry(
         config_dir=managed,
         xdg_config_home=tmp_path / "xdg",
     )
-    session = get_tool_session_store().create_session(workdir=project)
-
-    listed = await execute_worker_tool(
-        "list_agent_skills", {"session_id": session.session_id}
+    runtime = build_executor_runtime(
+        resolve_executor_config(get_settings()), enable_control_connection=False
     )
-    activated = await execute_worker_tool(
+    session_id = "sess_0000000000000000000001"
+    runtime.services.tool_session_store.create_session(
+        session_id=session_id, workdir=project
+    )
+
+    listed = await runtime.dispatcher.execute(
+        "list_agent_skills", {"session_id": session_id}
+    )
+    activated = await runtime.dispatcher.execute(
         "activate_agent_skill",
-        {"session_id": session.session_id, "name": "worker-skill"},
+        {"session_id": session_id, "name": "executor-skill"},
+    )
+    related = await runtime.dispatcher.execute(
+        "read_agent_skill_file",
+        {
+            "session_id": session_id,
+            "name": "executor-skill",
+            "path": "guide.md",
+        },
     )
 
-    assert listed.skills[0]["name"] == "worker-skill"
+    assert [row["name"] for row in listed.skills] == ["executor-skill"]
     assert listed.skills[0]["source"] == "project"
     assert activated.source == "project"
+    assert "executor" in activated.content
+    assert related.content == "executor"
 
 
 def test_registry_fingerprint_tracks_project_and_global_sources(

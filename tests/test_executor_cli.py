@@ -30,7 +30,6 @@ def _settings(tmp_path: Path) -> Settings:
         workspace_root=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
-        remote_enabled=False,
     )
 
 

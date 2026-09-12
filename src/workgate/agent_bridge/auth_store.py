@@ -20,6 +20,7 @@ from ..utils.private_files import atomic_write_private_text, private_file_lock
 _STORE_VERSION = 1
 _MAX_STORE_BYTES = 1_048_576
 _MAX_SECRET_BYTES = 65_536
+_MAX_REDACTION_HISTORY_ENTRIES = 256
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
@@ -35,6 +36,10 @@ class AgentSecretNotFoundError(AgentAuthStoreError):
     """A configured secret reference is missing from the private store."""
 
 
+class AgentAuthRedactionHistoryLostError(AgentAuthStoreError):
+    """Credential mutations cannot be reconstructed safely for redaction."""
+
+
 def _validate_name(value: str, label: str) -> str:
     value = str(value)
     if not _NAME_RE.fullmatch(value):
@@ -45,7 +50,12 @@ def _validate_name(value: str, label: str) -> str:
 
 
 def _empty_store() -> dict[str, Any]:
-    return {"version": _STORE_VERSION, "servers": {}}
+    return {
+        "version": _STORE_VERSION,
+        "servers": {},
+        "credential_revisions": {},
+        "credential_redaction_history": {},
+    }
 
 
 class AgentAuthStore:
@@ -57,6 +67,107 @@ class AgentAuthStore:
         self.lock_path = self.root / "credentials.lock"
         self._thread_lock = threading.RLock()
         self._ensure_private_dir()
+
+    @staticmethod
+    def _record_redaction_values_unlocked(
+        data: dict[str, Any],
+        server: str,
+        revision: int,
+        values: tuple[str, ...],
+    ) -> None:
+        values = tuple(dict.fromkeys(value for value in values if value))
+        histories = data.setdefault("credential_redaction_history", {})
+        history = histories.setdefault(server, [])
+        history.append({"revision": revision, "values": list(values)})
+        if len(history) > _MAX_REDACTION_HISTORY_ENTRIES:
+            del history[: len(history) - _MAX_REDACTION_HISTORY_ENTRIES]
+
+    @staticmethod
+    def _encoded_size_unlocked(data: dict[str, Any]) -> int:
+        encoded = json.dumps(
+            data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return len(encoded.encode("utf-8"))
+
+    @classmethod
+    def _trim_redaction_history_to_fit_unlocked(
+        cls, data: dict[str, Any]
+    ) -> None:
+        histories = data.get("credential_redaction_history", {})
+        while cls._encoded_size_unlocked(data) > _MAX_STORE_BYTES:
+            candidates = [
+                (len(history), server)
+                for server, history in histories.items()
+                if history
+            ]
+            if not candidates:
+                return
+            _, server = max(candidates)
+            del histories[server][0]
+            if not histories[server]:
+                del histories[server]
+
+    @staticmethod
+    def _credential_revision_unlocked(data: dict[str, Any], server: str) -> int:
+        revisions = data.get("credential_revisions") or {}
+        return int(revisions.get(server, 0))
+
+    @classmethod
+    def _bump_credential_revision_unlocked(
+        cls, data: dict[str, Any], server: str
+    ) -> int:
+        revisions = data.setdefault("credential_revisions", {})
+        revision = cls._credential_revision_unlocked(data, server) + 1
+        revisions[server] = revision
+        return revision
+
+    @classmethod
+    def _redaction_values_since_unlocked(
+        cls, data: dict[str, Any], server: str, cursor: int
+    ) -> tuple[str, ...]:
+        revision = cls._credential_revision_unlocked(data, server)
+        if cursor > revision:
+            raise ValueError(
+                "redaction cursor is newer than credential history"
+            )
+        history = data.get("credential_redaction_history", {}).get(server, [])
+        observed = {
+            int(item["revision"]): tuple(item["values"])
+            for item in history
+            if cursor < int(item["revision"]) <= revision
+        }
+        observed_revisions = sorted(observed)
+        if len(observed_revisions) != revision - cursor or any(
+            entry_revision != cursor + offset
+            for offset, entry_revision in enumerate(observed_revisions, start=1)
+        ):
+            raise AgentAuthRedactionHistoryLostError(
+                f"credential redaction history unavailable for server {server}"
+            )
+        return tuple(
+            dict.fromkeys(
+                value
+                for entry_revision in observed_revisions
+                for value in observed[entry_revision]
+            )
+        )
+
+    def _mutate_with_redaction(self, server: str, mutate) -> bool:
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            changed, values = mutate(data)
+            revision = (
+                self._bump_credential_revision_unlocked(data, server)
+                if changed
+                else None
+            )
+            if revision is not None:
+                self._record_redaction_values_unlocked(
+                    data, server, revision, tuple(values)
+                )
+            self._prune(data)
+            self._write_unlocked(data)
+            return changed
 
     def _ensure_private_dir(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -97,6 +208,80 @@ class AgentAuthStore:
             raise AgentAuthStoreCorruptError(
                 "Agent Bridge credential store servers must be an object"
             )
+        revisions = data.get("credential_revisions", {})
+        if not isinstance(revisions, dict):
+            raise AgentAuthStoreCorruptError(
+                "Agent Bridge credential revisions must be an object"
+            )
+        for server_name, revision in revisions.items():
+            try:
+                _validate_name(server_name, "server name")
+            except ValueError as exc:
+                raise AgentAuthStoreCorruptError(str(exc)) from exc
+            if (
+                isinstance(revision, bool)
+                or not isinstance(revision, int)
+                or revision < 0
+            ):
+                raise AgentAuthStoreCorruptError(
+                    f"Agent Bridge credential revision for {server_name} must be a non-negative integer"
+                )
+
+        histories = data.get("credential_redaction_history", {})
+        if not isinstance(histories, dict):
+            raise AgentAuthStoreCorruptError(
+                "Agent Bridge credential redaction history must be an object"
+            )
+        for server_name, history in histories.items():
+            try:
+                _validate_name(server_name, "server name")
+            except ValueError as exc:
+                raise AgentAuthStoreCorruptError(str(exc)) from exc
+            if not isinstance(history, list):
+                raise AgentAuthStoreCorruptError(
+                    f"Agent Bridge credential redaction history for {server_name} must be a list"
+                )
+            if len(history) > _MAX_REDACTION_HISTORY_ENTRIES:
+                raise AgentAuthStoreCorruptError(
+                    f"Agent Bridge credential redaction history for {server_name} exceeds retention limit"
+                )
+            previous_revision: int | None = None
+            for item in history:
+                if not isinstance(item, dict):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history for {server_name} is invalid"
+                    )
+                entry_revision = item.get("revision")
+                values = item.get("values")
+                if (
+                    isinstance(entry_revision, bool)
+                    or not isinstance(entry_revision, int)
+                    or entry_revision <= 0
+                ):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history revision for {server_name} must be a positive integer"
+                    )
+                if (
+                    previous_revision is not None
+                    and entry_revision <= previous_revision
+                ):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history for {server_name} must be strictly increasing"
+                    )
+                if entry_revision > revisions.get(server_name, 0):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction history revision for {server_name} exceeds the current revision"
+                    )
+                if not isinstance(values, list):
+                    raise AgentAuthStoreCorruptError(
+                        f"Agent Bridge credential redaction values for {server_name} must be a list"
+                    )
+                for value in values:
+                    if not isinstance(value, str) or not value:
+                        raise AgentAuthStoreCorruptError(
+                            f"Agent Bridge credential redaction value for {server_name} must be non-empty text"
+                        )
+                previous_revision = entry_revision
         for server_name, entry in servers.items():
             try:
                 _validate_name(server_name, "server name")
@@ -146,6 +331,7 @@ class AgentAuthStore:
                         )
 
     def _write_unlocked(self, data: dict[str, Any]) -> None:
+        self._trim_redaction_history_to_fit_unlocked(data)
         self._validate_store(data)
         encoded = json.dumps(
             data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -199,11 +385,16 @@ class AgentAuthStore:
         if len(value.encode("utf-8")) > _MAX_SECRET_BYTES:
             raise ValueError(f"secret value exceeds {_MAX_SECRET_BYTES} bytes")
 
-        def mutate(data: dict[str, Any]) -> None:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
-            entry.setdefault("secrets", {})[name] = value
+            secrets = entry.setdefault("secrets", {})
+            previous = secrets.get(name)
+            secrets[name] = value
+            return previous != value, tuple(
+                str(candidate) for candidate in (previous, value) if candidate
+            )
 
-        self._mutate(mutate)
+        self._mutate_with_redaction(server, mutate)
 
     def get_secret(self, server: str, name: str) -> str:
         """Return one private secret or raise a non-disclosing missing error."""
@@ -244,11 +435,14 @@ class AgentAuthStore:
         server = _validate_name(server, "server name")
         name = _validate_name(name, "secret name")
 
-        def mutate(data: dict[str, Any]) -> bool:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             secrets = data["servers"].get(server, {}).get("secrets", {})
-            return secrets.pop(name, None) is not None
+            removed = secrets.pop(name, None)
+            return removed is not None, (
+                (removed,) if removed is not None else ()
+            )
 
-        return bool(self._mutate(mutate))
+        return self._mutate_with_redaction(server, mutate)
 
     def get_tokens(self, server: str) -> OAuthToken | None:
         """Load persisted OAuth tokens for one server."""
@@ -264,12 +458,80 @@ class AgentAuthStore:
                 f"Agent Bridge OAuth tokens for {server} are invalid"
             ) from exc
 
+    def oauth_redaction_values(self, server: str) -> dict[str, str]:
+        """Return private OAuth credential values owned by this store for redaction only."""
+        values: dict[str, str] = {}
+        tokens = self.get_tokens(server)
+        if tokens is not None:
+            for field in ("access_token", "refresh_token"):
+                value = getattr(tokens, field, None)
+                if value:
+                    values[f"oauth_{field}"] = str(value)
+        client_info = self.get_client_info(server)
+        if client_info is not None:
+            client_secret = getattr(client_info, "client_secret", None)
+            if client_secret:
+                values["oauth_client_secret"] = str(client_secret)
+        return values
+
+    def redaction_cursor(self, server: str) -> int:
+        """Return the durable credential revision at operation start."""
+        server = _validate_name(server, "server name")
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            return self._credential_revision_unlocked(data, server)
+
+    def observe_redaction_values(
+        self, server: str, values: tuple[str, ...]
+    ) -> bool:
+        """Durably retain newly observed transport literals for future redaction."""
+        server = _validate_name(server, "server name")
+        values = tuple(dict.fromkeys(value for value in values if value))
+        if not values:
+            return False
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            retained = {
+                str(value)
+                for item in data.get("credential_redaction_history", {}).get(
+                    server, []
+                )
+                for value in item.get("values", [])
+            }
+            new_values = tuple(
+                value for value in values if value not in retained
+            )
+            if not new_values:
+                return False
+            revision = self._bump_credential_revision_unlocked(data, server)
+            self._record_redaction_values_unlocked(
+                data, server, revision, new_values
+            )
+            self._prune(data)
+            self._write_unlocked(data)
+            return True
+
+    def credential_redaction_values_since(
+        self, server: str, cursor: int
+    ) -> dict[str, str]:
+        """Return durable credential mutations, failing closed on history gaps."""
+        server = _validate_name(server, "server name")
+        if not isinstance(cursor, int) or cursor < 0:
+            raise ValueError("redaction cursor must be a non-negative integer")
+        with self._thread_lock, private_file_lock(self.lock_path):
+            data = self._read_unlocked()
+            values = self._redaction_values_since_unlocked(data, server, cursor)
+        return {
+            f"credential_observed_{index}": value
+            for index, value in enumerate(values)
+        }
+
     def set_tokens(self, server: str, tokens: OAuthToken) -> None:
         """Persist OAuth tokens and their absolute expiry timestamp."""
         server = _validate_name(server, "server name")
         now = time.time()
 
-        def mutate(data: dict[str, Any]) -> None:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
             previous = oauth.get("tokens") or {}
@@ -283,8 +545,24 @@ class AgentAuthStore:
                 if tokens.expires_in is not None
                 else None
             )
+            previous_material = (
+                previous.get("access_token"),
+                previous.get("refresh_token"),
+            )
+            current_material = (
+                payload.get("access_token"),
+                payload.get("refresh_token"),
+            )
+            return previous_material != current_material, tuple(
+                str(candidate)
+                for candidate in (
+                    *previous_material,
+                    *current_material,
+                )
+                if candidate
+            )
 
-        self._mutate(mutate)
+        self._mutate_with_redaction(server, mutate)
 
     def get_client_info(self, server: str) -> OAuthClientInformationFull | None:
         """Load persisted OAuth dynamic client information."""
@@ -306,14 +584,25 @@ class AgentAuthStore:
         """Persist OAuth dynamic client information."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> None:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = self._server_entry(data, server)
             oauth = entry.setdefault("oauth", {})
+            previous = oauth.get("client_info") or {}
             oauth["client_info"] = client_info.model_dump(
                 mode="json", exclude_none=True
             )
+            client_secret = getattr(client_info, "client_secret", None)
+            previous_secret = previous.get("client_secret")
+            return previous_secret != client_secret, tuple(
+                str(candidate)
+                for candidate in (
+                    previous_secret,
+                    client_secret,
+                )
+                if candidate
+            )
 
-        self._mutate(mutate)
+        self._mutate_with_redaction(server, mutate)
 
     def get_authorization_metadata(self, server: str) -> OAuthMetadata | None:
         """Load discovered public OAuth authorization-server metadata."""
@@ -344,6 +633,12 @@ class AgentAuthStore:
 
         self._mutate(mutate)
 
+    def has_oauth_state(self, server: str) -> bool:
+        """Return whether one credential identity still owns local OAuth state."""
+        server = _validate_name(server, "server name")
+        oauth = self._read()["servers"].get(server, {}).get("oauth")
+        return bool(oauth)
+
     def oauth_metadata(self, server: str) -> dict[str, Any]:
         """Return non-sensitive OAuth status metadata for one server."""
         server = _validate_name(server, "server name")
@@ -365,24 +660,42 @@ class AgentAuthStore:
         """Remove stale tokens while retaining client and discovery metadata."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> bool:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             oauth = data["servers"].get(server, {}).get("oauth", {})
+            tokens = oauth.get("tokens") or {}
+            values = tuple(
+                str(tokens[field])
+                for field in ("access_token", "refresh_token")
+                if tokens.get(field)
+            )
             removed = oauth.pop("tokens", None) is not None
             oauth.pop("stored_at", None)
             oauth.pop("expires_at", None)
-            return removed
+            return removed, values
 
-        return bool(self._mutate(mutate))
+        return self._mutate_with_redaction(server, mutate)
 
     def clear_oauth(self, server: str) -> bool:
         """Remove all local OAuth state for one server."""
         server = _validate_name(server, "server name")
 
-        def mutate(data: dict[str, Any]) -> bool:
+        def mutate(data: dict[str, Any]) -> tuple[bool, tuple[str, ...]]:
             entry = data["servers"].get(server, {})
-            return entry.pop("oauth", None) is not None
+            oauth = entry.get("oauth") or {}
+            tokens = oauth.get("tokens") or {}
+            client_info = oauth.get("client_info") or {}
+            values = tuple(
+                str(value)
+                for value in (
+                    tokens.get("access_token"),
+                    tokens.get("refresh_token"),
+                    client_info.get("client_secret"),
+                )
+                if value
+            )
+            return entry.pop("oauth", None) is not None, values
 
-        return bool(self._mutate(mutate))
+        return self._mutate_with_redaction(server, mutate)
 
     def fingerprint_paths(self) -> tuple[Path, ...]:
         """Return stable paths whose metadata/content changes trigger bridge reload."""

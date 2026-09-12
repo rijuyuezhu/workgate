@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import stat
+import subprocess
+import sys
 import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -10,6 +12,7 @@ from urllib.parse import urlsplit
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+import workgate.agent_bridge.auth_store as auth_store_module
 import workgate.agent_bridge.mcp as mcp_module
 from workgate.agent_bridge.auth import (
     PersistentOAuthClientProvider,
@@ -18,8 +21,10 @@ from workgate.agent_bridge.auth import (
     resolve_config_mapping,
 )
 from workgate.agent_bridge.auth_store import (
+    AgentAuthRedactionHistoryLostError,
     AgentAuthStore,
     AgentAuthStoreCorruptError,
+    AgentAuthStoreError,
     AgentOAuthTokenStorage,
     AgentSecretNotFoundError,
 )
@@ -28,6 +33,7 @@ from workgate.agent_bridge.cli import (
 )
 from workgate.agent_bridge.mcp import AgentMcpClientManager
 from workgate.agent_bridge.models import AgentMcpServerConfig
+from workgate.agent_bridge.redaction import redact_configured_value_tree
 from workgate.agent_bridge.state import agent_registry_fingerprint
 from workgate.agent_bridge.status import registry_config_status
 
@@ -130,6 +136,11 @@ def test_agent_oauth_storage_persists_expiry_client_and_refresh_token(tmp_path):
     assert tokens is not None
     assert tokens.access_token == "access-two"
     assert tokens.refresh_token == "refresh-one"
+    assert store.oauth_redaction_values("docs") == {
+        "oauth_access_token": "access-two",
+        "oauth_refresh_token": "refresh-one",
+        "oauth_client_secret": "client-secret",
+    }
     client_info = store.get_client_info("docs")
     expiry = store.oauth_expiry("docs")
     assert client_info is not None
@@ -141,6 +152,795 @@ def test_agent_oauth_storage_persists_expiry_client_and_refresh_token(tmp_path):
     assert metadata["has_access_token"] is True
     assert metadata["has_refresh_token"] is True
     assert metadata["client_registered"] is True
+
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        redaction_values, headers = manager.redaction_maps("docs", server)
+    finally:
+        manager.close()
+    assert headers == {}
+    assert set(redaction_values.values()) >= {
+        "access-two",
+        "refresh-one",
+        "client-secret",
+    }
+
+
+def test_oauth_redaction_values_ignore_absent_optional_credentials(tmp_path):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    assert store.oauth_redaction_values("missing") == {}
+
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "access-only", "token_type": "Bearer"}
+        ),
+    )
+    store.set_client_info(
+        "docs",
+        OAuthClientInformationFull.model_validate(
+            {
+                "client_id": "public-client",
+                "redirect_uris": ["http://127.0.0.1/callback"],
+                "token_endpoint_auth_method": "none",
+            }
+        ),
+    )
+
+    assert store.oauth_redaction_values("docs") == {
+        "oauth_access_token": "access-only"
+    }
+
+
+def test_credential_redaction_history_captures_intermediate_mutations_and_is_bounded(
+    tmp_path, monkeypatch
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "old-token", "token_type": "Bearer"}
+        ),
+    )
+    cursor = store.redaction_cursor("docs")
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "mid-token", "token_type": "Bearer"}
+        ),
+    )
+    store.set_client_info("docs", _client_info())
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "new-token", "token_type": "Bearer"}
+        ),
+    )
+
+    assert set(
+        store.credential_redaction_values_since("docs", cursor).values()
+    ) == {
+        "old-token",
+        "mid-token",
+        "client-secret",
+        "new-token",
+    }
+
+    store.set_secret("secret", "token", "old-secret")
+    secret_cursor = store.redaction_cursor("secret")
+    store.set_secret("secret", "token", "new-secret")
+    assert set(
+        store.credential_redaction_values_since(
+            "secret", secret_cursor
+        ).values()
+    ) == {"old-secret", "new-secret"}
+    with pytest.raises(ValueError, match="non-negative"):
+        store.credential_redaction_values_since("docs", -1)
+    with pytest.raises(ValueError, match="newer than credential history"):
+        store.credential_redaction_values_since(
+            "docs", store.redaction_cursor("docs") + 1
+        )
+
+    monkeypatch.setattr(auth_store_module, "_MAX_REDACTION_HISTORY_ENTRIES", 1)
+    bounded = AgentAuthStore(tmp_path / "bounded_auth")
+    bounded.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "old-bounded", "token_type": "Bearer"}
+        ),
+    )
+    stale_cursor = bounded.redaction_cursor("docs")
+    for token in ("mid-bounded", "new-bounded"):
+        bounded.set_tokens(
+            "docs",
+            OAuthToken.model_validate(
+                {"access_token": token, "token_type": "Bearer"}
+            ),
+        )
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        bounded.credential_redaction_values_since("docs", stale_cursor)
+
+
+def test_credential_redaction_history_size_eviction_keeps_mutation_available(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(auth_store_module, "_MAX_STORE_BYTES", 1_400)
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    old_secret = "A" * 400
+    new_secret = "B" * 400
+    store.set_secret("docs", "token", old_secret)
+    store.set_secret("docs", "token", new_secret)
+
+    assert store.get_secret("docs", "token") == new_secret
+    assert store.path.stat().st_size <= 1_400
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        store.credential_redaction_values_since("docs", 0)
+
+
+def test_credential_redaction_history_eviction_preserves_store_size_limit(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(auth_store_module, "_MAX_STORE_BYTES", 350)
+    store = AgentAuthStore(tmp_path / "agent_auth")
+
+    with pytest.raises(AgentAuthStoreError, match="would exceed"):
+        store.set_secret("docs", "token", "A" * 300)
+
+
+def test_credential_redaction_history_gap_allows_new_writes_but_fails_closed(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {"docs": {"secrets": {"token": "midMixedB2"}}},
+                "credential_revisions": {"docs": 2},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 1, "values": ["oldMixedA1"]}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store.set_secret("docs", "token", "newMixedC3")
+    assert store.get_secret("docs", "token") == "newMixedC3"
+    assert store.redaction_cursor("docs") == 3
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        store.credential_redaction_values_since("docs", 0)
+
+
+def test_credential_redaction_history_survives_cross_instance_writes(tmp_path):
+    root = tmp_path / "agent_auth"
+    service_store = AgentAuthStore(root)
+    cli_store = AgentAuthStore(root)
+
+    service_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "oldOpaqueA1", "token_type": "Bearer"}
+        ),
+    )
+    cursor = service_store.redaction_cursor("docs")
+    cli_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "midOpaqueB2", "token_type": "Bearer"}
+        ),
+    )
+    observed_tokens = service_store.get_tokens("docs")
+    assert observed_tokens is not None
+    assert observed_tokens.access_token == "midOpaqueB2"
+    cli_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "newOpaqueC3", "token_type": "Bearer"}
+        ),
+    )
+
+    assert set(
+        service_store.credential_redaction_values_since("docs", cursor).values()
+    ) == {"oldOpaqueA1", "midOpaqueB2", "newOpaqueC3"}
+
+    service_store.set_secret("secret", "token", "oldSecretA1")
+    secret_cursor = service_store.redaction_cursor("secret")
+    cli_store.set_secret("secret", "token", "midSecretB2")
+    assert service_store.get_secret("secret", "token") == "midSecretB2"
+    cli_store.set_secret("secret", "token", "newSecretC3")
+    assert set(
+        service_store.credential_redaction_values_since(
+            "secret", secret_cursor
+        ).values()
+    ) == {"oldSecretA1", "midSecretB2", "newSecretC3"}
+
+
+def test_manifest_literal_redaction_history_is_durable_and_deduplicated(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    first_store = AgentAuthStore(root)
+    second_store = AgentAuthStore(root)
+
+    assert (
+        first_store.observe_redaction_values("docs", ("oldLiteralA1",)) is True
+    )
+    assert first_store.redaction_cursor("docs") == 1
+    assert (
+        first_store.observe_redaction_values("docs", ("oldLiteralA1",)) is False
+    )
+    assert first_store.redaction_cursor("docs") == 1
+
+    assert (
+        second_store.observe_redaction_values(
+            "docs", ("oldLiteralA1", "newLiteralB2")
+        )
+        is True
+    )
+    assert second_store.redaction_cursor("docs") == 2
+    assert set(
+        AgentAuthStore(root)
+        .credential_redaction_values_since("docs", 0)
+        .values()
+    ) == {"oldLiteralA1", "newLiteralB2"}
+
+
+@pytest.mark.parametrize(
+    ("transport", "field", "old_value", "new_value"),
+    [
+        ("http", "headers", "oldHeaderA1", "newHeaderB2"),
+        ("stdio", "env", "oldEnvA1", "newEnvB2"),
+    ],
+)
+def test_mcp_manager_reconstructs_manifest_literal_history_after_restart(
+    tmp_path, transport, field, old_value, new_value
+):
+    root = tmp_path / "agent_auth"
+
+    def server(value: str) -> AgentMcpServerConfig:
+        payload = {
+            "type": transport,
+            field: {"Authorization" if field == "headers" else "TOKEN": value},
+        }
+        if transport == "http":
+            payload["url"] = "https://example.test/mcp"
+        else:
+            payload["command"] = "example-mcp"
+        return AgentMcpServerConfig.model_validate(payload)
+
+    first_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        assert first_manager.redaction_cursor("docs", server(old_value)) == 0
+    finally:
+        first_manager.close()
+
+    restarted_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        current = server(new_value)
+        baseline = restarted_manager.redaction_cursor("docs", current)
+        assert baseline == 0
+        env, headers = restarted_manager.redaction_maps_since(
+            "docs", current, baseline
+        )
+        assert {old_value, new_value} <= set((*env.values(), *headers.values()))
+    finally:
+        restarted_manager.close()
+
+
+def test_mcp_manager_redacts_manifest_literals_across_server_rename_and_restart(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+
+    def server(value: str) -> AgentMcpServerConfig:
+        return AgentMcpServerConfig.model_validate(
+            {
+                "integrationId": "docs-integration",
+                "type": "http",
+                "url": "https://same.example/mcp",
+                "headers": {"Authorization": value},
+            }
+        )
+
+    old_value = "oldBeforeRenameA1"
+    new_value = "newAfterRenameB2"
+    first_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        assert first_manager.redaction_cursor("docs", server(old_value)) == 0
+    finally:
+        first_manager.close()
+
+    restarted_manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        current = server(new_value)
+        baseline = restarted_manager.redaction_cursor("docs2", current)
+        assert baseline == 0
+        env, headers = restarted_manager.redaction_maps_since(
+            "docs2", current, baseline
+        )
+        assert {old_value, new_value} <= set((*env.values(), *headers.values()))
+    finally:
+        restarted_manager.close()
+
+
+def test_durable_redaction_values_do_not_replace_current_env_redaction(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {
+                    "docs": {
+                        "secrets": {"token": "activeLegacySecretA1"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert store.observe_redaction_values("docs", ("retiredLiteralB2",)) is True
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "stdio",
+            "command": "example-mcp",
+            "env": {"credential_observed_0": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        baseline = manager.redaction_cursor("docs", server)
+        env, _headers = manager.redaction_maps_since("docs", server, baseline)
+        assert {"activeLegacySecretA1", "retiredLiteralB2"} <= set(env.values())
+    finally:
+        manager.close()
+
+
+def test_redaction_history_gap_is_scoped_to_one_integration(tmp_path):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"integration-a": 2},
+                "credential_redaction_history": {
+                    "integration-a": [
+                        {"revision": 2, "values": ["retiredOldB2"]}
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    server_a = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "integration-a",
+            "type": "http",
+            "url": "https://a.example/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    server_b = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "integration-b",
+            "type": "http",
+            "url": "https://b.example/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        assert manager.redaction_cursor("server-b", server_b) == 0
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_cursor("server-a", server_a)
+    finally:
+        manager.close()
+
+
+def test_identical_credential_writes_do_not_consume_redaction_history(tmp_path):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    token = OAuthToken.model_validate(
+        {"access_token": "sameTokenA1", "token_type": "Bearer"}
+    )
+    for _ in range(300):
+        store.set_tokens("oauth-a", token)
+    assert store.redaction_cursor("oauth-a") == 1
+    assert set(
+        store.credential_redaction_values_since("oauth-a", 0).values()
+    ) == {"sameTokenA1"}
+
+    store.set_secret("secret-a", "token", "sameSecretB2")
+    store.set_secret("secret-a", "token", "sameSecretB2")
+    assert store.redaction_cursor("secret-a") == 1
+
+    client = _client_info()
+    store.set_client_info("client-a", client)
+    store.set_client_info("client-a", client)
+    assert store.redaction_cursor("client-a") == 1
+
+
+def test_non_sensitive_literal_is_not_a_cross_integration_redaction_filter(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    server_a = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://a.example/mcp",
+            "headers": {"X-Mode": "1"},
+        }
+    )
+    server_b = AgentMcpServerConfig.model_validate(
+        {"type": "http", "url": "https://b.example/mcp"}
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        manager.redaction_cursor("server-a", server_a)
+        cursor = manager.redaction_cursor("server-b", server_b)
+        env, headers = manager.redaction_maps_since(
+            "server-b", server_b, cursor
+        )
+        result = redact_configured_value_tree(
+            {"text": "server-b version 1 production ready"}, env, headers
+        )
+        assert result == {"text": "server-b version 1 production ready"}
+    finally:
+        manager.close()
+
+
+def test_explicit_integration_id_keeps_retired_history_after_decredentialization(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.set_secret("docs-integration", "token", "retiredPrivateA1")
+    assert store.delete_secret("docs-integration", "token") is True
+    plain = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "docs-integration",
+            "type": "http",
+            "url": "https://plain.example/mcp",
+            "headers": {"X-Mode": "1"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        cursor = manager.redaction_cursor("docs-renamed", plain)
+        assert cursor == 0
+        env, headers = manager.redaction_maps_since(
+            "docs-renamed", plain, cursor
+        )
+        result = redact_configured_value_tree(
+            {"text": "retiredPrivateA1 must stay private"}, env, headers
+        )
+        assert result == {"text": "<redacted> must stay private"}
+    finally:
+        manager.close()
+
+
+def test_plain_server_does_not_join_colliding_durable_integration_domain(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    plain = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://plain.example/mcp",
+            "headers": {"X-Mode": "1"},
+        }
+    )
+    oauth = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "shared",
+            "type": "http",
+            "url": "https://oauth.example/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    store.set_tokens(
+        "shared",
+        OAuthToken.model_validate(
+            {"access_token": "production", "token_type": "Bearer"}
+        ),
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        cursor = manager.redaction_cursor("shared", plain)
+        assert cursor is None
+        env, headers = manager.redaction_maps_since("shared", plain, cursor)
+        result = redact_configured_value_tree(
+            {"text": "plain server says production ready"}, env, headers
+        )
+        assert result == {"text": "plain server says production ready"}
+    finally:
+        manager.close()
+
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"shared": 2},
+                "credential_redaction_history": {
+                    "shared": [{"revision": 2, "values": ["retired"]}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        assert manager.redaction_cursor("shared", plain) is None
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_cursor("oauth", oauth)
+    finally:
+        manager.close()
+
+
+def test_stable_integration_id_preserves_structured_secret_across_server_rename(
+    tmp_path,
+):
+    store = AgentAuthStore(tmp_path / "agent_auth")
+    store.set_secret("docs-integration", "token", "privateTokenA1")
+    renamed = AgentMcpServerConfig.model_validate(
+        {
+            "integrationId": "docs-integration",
+            "type": "http",
+            "url": "https://same.example/mcp",
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manager = AgentMcpClientManager(1, store)
+    try:
+        _env, headers = manager.resolved_maps("docs2", renamed)
+        assert headers["Authorization"] == "privateTokenA1"
+        cursor = manager.redaction_cursor("docs2", renamed)
+        env, headers = manager.redaction_maps_since("docs2", renamed, cursor)
+        assert "privateTokenA1" in {*env.values(), *headers.values()}
+    finally:
+        manager.close()
+
+
+def test_credential_redaction_history_survives_child_process_writer(tmp_path):
+    root = tmp_path / "agent_auth"
+    old_token = "oldChildA1"
+    mid_token = "midChildB2"
+    new_token = "newChildC3"
+    AgentAuthStore(root).set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": old_token, "token_type": "Bearer"}
+        ),
+    )
+
+    child_code = """
+import sys
+from pathlib import Path
+from mcp.shared.auth import OAuthToken
+from workgate.agent_bridge.auth_store import AgentAuthStore
+
+store = AgentAuthStore(Path(sys.argv[1]))
+for value in sys.argv[2:]:
+    store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": value, "token_type": "Bearer"}
+        ),
+    )
+"""
+    subprocess.run(
+        [sys.executable, "-c", child_code, str(root), mid_token, new_token],
+        check=True,
+    )
+
+    restarted_store = AgentAuthStore(root)
+    restarted_tokens = restarted_store.get_tokens("docs")
+    assert restarted_tokens is not None
+    assert restarted_tokens.access_token == new_token
+    assert set(
+        restarted_store.credential_redaction_values_since("docs", 0).values()
+    ) == {old_token, mid_token, new_token}
+
+
+def test_mcp_manager_retains_credential_redaction_history_across_operations(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    external_store = AgentAuthStore(root)
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+
+    def token(value: str) -> OAuthToken:
+        return OAuthToken.model_validate(
+            {"access_token": value, "token_type": "Bearer"}
+        )
+
+    old_token = "oldRetiredA1"
+    mid_token = "midRetiredB2"
+    new_token = "newRetiredC3"
+    store.set_tokens("docs", token(old_token))
+    manager = AgentMcpClientManager(1, store)
+    try:
+        baseline = manager.redaction_cursor("docs", server)
+        assert baseline == 0
+
+        store.set_tokens("docs", token(mid_token))
+        first_values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert {old_token, mid_token} <= first_values
+
+        assert manager.redaction_cursor("docs", server) == baseline
+        store.set_tokens("docs", token(new_token))
+        second_values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert {old_token, mid_token, new_token} <= second_values
+
+        third_cursor = manager.redaction_cursor("docs", server)
+        assert third_cursor == baseline
+        third_values = set(
+            manager.redaction_maps_since("docs", server, third_cursor)[
+                0
+            ].values()
+        )
+        assert {old_token, mid_token, new_token} <= third_values
+
+        external_token = "externalRetiredD4"
+        external_store.set_tokens("docs", token(external_token))
+        assert manager.redaction_cursor("docs", server) == baseline
+        external_values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert {
+            old_token,
+            mid_token,
+            new_token,
+            external_token,
+        } <= external_values
+    finally:
+        manager.close()
+
+
+def test_mcp_manager_anchors_redaction_from_zero_before_initial_authorization(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    service_store = AgentAuthStore(root)
+    cli_store = AgentAuthStore(root)
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+    manager = AgentMcpClientManager(1, service_store)
+    try:
+        assert manager.redaction_cursor("docs", server) == 0
+        cli_store.set_tokens(
+            "docs",
+            OAuthToken.model_validate(
+                {"access_token": "firstAuthorizedA1", "token_type": "Bearer"}
+            ),
+        )
+
+        baseline = manager.redaction_cursor("docs", server)
+        assert baseline == 0
+        values = set(
+            manager.redaction_maps_since("docs", server, baseline)[0].values()
+        )
+        assert "firstAuthorizedA1" in values
+    finally:
+        manager.close()
+
+
+def test_mcp_manager_reconstructs_durable_redaction_history_after_restart(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "auth": {"mode": "oauth"},
+        }
+    )
+
+    def token(value: str) -> OAuthToken:
+        return OAuthToken.model_validate(
+            {"access_token": value, "token_type": "Bearer"}
+        )
+
+    old_token = "oldRestartA1"
+    mid_token = "midRestartB2"
+    new_token = "newRestartC3"
+    store = AgentAuthStore(root)
+    store.set_tokens("docs", token(old_token))
+    first_manager = AgentMcpClientManager(1, store)
+    try:
+        assert first_manager.redaction_cursor("docs", server) == 0
+        store.set_tokens("docs", token(mid_token))
+        store.set_tokens("docs", token(new_token))
+    finally:
+        first_manager.close()
+
+    restarted_store = AgentAuthStore(root)
+    restarted_manager = AgentMcpClientManager(1, restarted_store)
+    try:
+        baseline = restarted_manager.redaction_cursor("docs", server)
+        assert baseline == 0
+        values = set(
+            restarted_manager.redaction_maps_since("docs", server, baseline)[
+                0
+            ].values()
+        )
+        assert {old_token, mid_token, new_token} <= values
+    finally:
+        restarted_manager.close()
+
+
+def test_mcp_manager_fails_closed_when_durable_revision_history_is_missing(
+    tmp_path,
+):
+    root = tmp_path / "agent_auth"
+    store = AgentAuthStore(root)
+    store.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "servers": {"docs": {"secrets": {"token": "currentSecretC3"}}},
+                "credential_revisions": {"docs": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = AgentMcpServerConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://example.test/mcp",
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manager = AgentMcpClientManager(1, AgentAuthStore(root))
+    try:
+        with pytest.raises(
+            AgentAuthRedactionHistoryLostError, match="history unavailable"
+        ):
+            manager.redaction_cursor("docs", server)
+    finally:
+        manager.close()
 
 
 @pytest.mark.asyncio
@@ -346,6 +1146,7 @@ def test_public_registry_status_hides_secret_reference_names_and_values(
                 "version": 1,
                 "mcpServers": {
                     "docs": {
+                        "integrationId": "docs",
                         "type": "http",
                         "url": "https://example.test/mcp",
                         "enabled": False,
@@ -523,6 +1324,132 @@ def test_agent_auth_store_rejects_invalid_inputs_and_oversized_state(tmp_path):
     [
         ({"version": 2, "servers": {}}, "schema version"),
         ({"version": 1, "servers": []}, "servers must be an object"),
+        (
+            {"version": 1, "servers": {}, "credential_revisions": []},
+            "credential revisions",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": -1},
+            },
+            "non-negative integer",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"bad server": 1},
+            },
+            "server name",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_redaction_history": [],
+            },
+            "redaction history must be an object",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {"docs": {}},
+            },
+            "must be a list",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_redaction_history": {"bad server": []},
+            },
+            "server name",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 257},
+                "credential_redaction_history": {
+                    "docs": [
+                        {"revision": revision, "values": []}
+                        for revision in range(1, 258)
+                    ]
+                },
+            },
+            "retention limit",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {"docs": [None]},
+            },
+            "is invalid",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 0, "values": []}]
+                },
+            },
+            "positive integer",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 2},
+                "credential_redaction_history": {
+                    "docs": [
+                        {"revision": 2, "values": []},
+                        {"revision": 1, "values": []},
+                    ]
+                },
+            },
+            "strictly increasing",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 2, "values": []}]
+                },
+            },
+            "exceeds the current revision",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 1, "values": "secret"}]
+                },
+            },
+            "redaction values",
+        ),
+        (
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {"docs": 1},
+                "credential_redaction_history": {
+                    "docs": [{"revision": 1, "values": [""]}]
+                },
+            },
+            "non-empty text",
+        ),
         ({"version": 1, "servers": {"bad server": {}}}, "server name"),
         ({"version": 1, "servers": {"docs": []}}, "must be an object"),
         ({"version": 1, "servers": {"docs": {"secrets": []}}}, "secrets"),

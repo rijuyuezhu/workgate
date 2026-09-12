@@ -19,7 +19,7 @@ type SectionName = Literal[
     "Paths and state",
     "Authentication and OAuth",
     "Safety and resource limits",
-    "Remote workers",
+    "Cross-executor transfer",
     "Agent capability bridge",
     "Tool executables",
 ]
@@ -407,31 +407,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "Safety and resource limits",
         metavar="SECONDS",
     ),
-    SettingSpec("remote_enabled", "Remote workers"),
-    SettingSpec("remote_invite_ttl_s", "Remote workers", metavar="SECONDS"),
-    SettingSpec("remote_poll_timeout_s", "Remote workers", metavar="SECONDS"),
-    SettingSpec("remote_job_timeout_s", "Remote workers", metavar="SECONDS"),
-    SettingSpec("remote_max_pending_jobs", "Remote workers", metavar="COUNT"),
-    SettingSpec("remote_http_transfer_enabled", "Remote workers"),
-    SettingSpec(
-        "remote_http_transfer_threshold_bytes",
-        "Remote workers",
-        metavar="BYTES",
-    ),
-    SettingSpec(
-        "remote_http_transfer_chunk_bytes", "Remote workers", metavar="BYTES"
-    ),
-    SettingSpec(
-        "remote_http_transfer_ticket_ttl_s", "Remote workers", metavar="SECONDS"
-    ),
-    SettingSpec(
-        "remote_http_transfer_max_active", "Remote workers", metavar="COUNT"
-    ),
-    SettingSpec(
-        "remote_http_transfer_max_spool_bytes",
-        "Remote workers",
-        metavar="BYTES",
-    ),
     SettingSpec("agent_bridge_enabled", "Agent capability bridge"),
     SettingSpec(
         "agent_mcp_probe_timeout_s",
@@ -442,7 +417,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "agent_mcp_call_timeout_s", "Agent capability bridge", metavar="SECONDS"
     ),
     SettingSpec("agent_dynamic_mcp_tools", "Agent capability bridge"),
-    SettingSpec("agent_dynamic_skill_tools", "Agent capability bridge"),
     SettingSpec("shell_executable", "Tool executables", metavar="PATH"),
     SettingSpec("tmux_bin", "Tool executables", metavar="PATH"),
     SettingSpec("rg_bin", "Tool executables", metavar="PATH"),

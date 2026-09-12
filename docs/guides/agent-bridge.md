@@ -35,6 +35,7 @@ Example with one upstream MCP server and managed Skills:
   "version": 1,
   "mcpServers": {
     "docs": {
+      "integrationId": "docs",
       "type": "http",
       "url": "https://docs.example.com/mcp",
       "auth": {
@@ -56,6 +57,8 @@ Example with one upstream MCP server and managed Skills:
 ```
 
 Supported upstream types are `stdio`, `http`, and `sse`. Review every command, URL, tool description, and requested scope before enabling a server.
+
+Credential-bearing servers use `integrationId` as their stable private identity. Set it when using OAuth, structured secret references, or credential-like literal headers/environment values. It must be unique within the manifest and must stay unchanged if you later rename the `mcpServers` key. For an existing configuration, using the current server key as the initial `integrationId` preserves the natural credential-store identity. Servers with only ordinary non-sensitive literals do not require one.
 
 Enabled `stdio` servers are kept alive and reused by the Agent Bridge instead of being restarted for every probe or tool call. This is required for upstreams that hold process-local state or accept a secondary long-lived connection, such as browser-extension MCP servers. Changing, disabling, or removing the configured server tears down the retained process.
 
@@ -86,6 +89,7 @@ Secret references are valid only when the same server uses `auth.mode="secret"`.
   "version": 1,
   "mcpServers": {
     "github": {
+      "integrationId": "github",
       "type": "http",
       "url": "https://github.example.com/mcp",
       "headers": {
@@ -98,13 +102,19 @@ Secret references are valid only when the same server uses `auth.mode="secret"`.
 }
 ```
 
-Set the referenced value through standard input so it does not appear in the command arguments. The server name in the secret command must match the `mcpServers` key:
+Set the referenced value through standard input so it does not appear in the command arguments. For a configured integration, use its `mcpServers` display name:
 
 ```bash
 printf '%s\n' "$GITHUB_TOKEN" | workgate mcp secret set github github_token --stdin
 workgate mcp secret list github
 workgate mcp secret delete github github_token
 ```
+
+The CLI resolves that display name to the entry's stable `integrationId` before reading or changing private credentials. Therefore a later rename from `github` to another `mcpServers` key does not reset credential or redaction history as long as `integrationId` remains `github`. Keeping that explicit `integrationId` also preserves retired-value redaction history if the integration is later reconfigured without credentials.
+
+`secret set` always requires a currently configured server. `secret list` and `secret delete` also support cleanup after an integration has been removed: `workgate mcp secret list` shows stored integration identities, and a detached `integrationId` can be supplied in the normal server position to inspect or delete its stored secret names. If a live display name is present, it is resolved to its stable identity unless that exact argument already names a stored secret bucket.
+
+Literal `env` and `headers` are still accepted for compatibility. Credential-like literal keys such as `Authorization`, `Cookie`, `TOKEN`, `PASSWORD`, or API-key fields participate in durable retired-value redaction and therefore also require `integrationId`. Ordinary literal values such as `MODE=production`, `LOG_LEVEL=info`, or `X-Mode: 1` are redacted only for the current server snapshot and are not persisted as a global substring filter. Prefer structured secret references for credentials, especially when the application uses an unusual key name.
 
 ## Authorize an OAuth server
 
@@ -115,6 +125,8 @@ workgate mcp auth docs --logout
 ```
 
 Use `--no-open` when the CLI should print the authorization URL instead of opening a browser.
+
+`--logout` is also the local cleanup path for retired OAuth identities. If the argument names stored OAuth state that no currently configured OAuth server owns, Workgate clears that local state without attempting network revocation and reports `remote_revocation: "unavailable"`. If a renamed live OAuth server still owns the same stable `integrationId`, supplying that identity resolves back to the live server so remote revocation can still be attempted. An exact detached OAuth identity takes precedence over a reused display name, preventing stale cleanup from touching a different live integration.
 
 ## Use bridge capabilities
 

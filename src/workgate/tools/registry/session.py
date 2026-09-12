@@ -1,11 +1,5 @@
 """Explicit agent session tool registry."""
 
-from ...ops.session import (
-    session_change_cwd_execute,
-    session_copy_execute,
-    session_end_execute,
-    session_start_execute,
-)
 from ...schemas.input_models.session import (
     SessionCopyBackgroundArg,
     SessionCopyChunkSizeArg,
@@ -26,6 +20,12 @@ from ...schemas.result_models.session import (
 )
 from ..contracts import McpToolContext
 from ..declarative import DeclarativeToolRegistry
+
+
+def _unrouted_session_tool(name: str) -> RuntimeError:
+    return RuntimeError(
+        f"{name} requires the control-plane session router; direct local execution is disabled"
+    )
 
 
 class SessionToolRegistry(DeclarativeToolRegistry):
@@ -66,10 +66,7 @@ async def session_start(
     executor_id: SessionExecutorIdArg = None,
 ) -> SessionStartOutput:
     """Start an explicit agent/workspace session."""
-    # The control composition replaces this compatibility body with the final
-    # executor router. The direct implementation remains executor-local only
-    # until PR7 finishes physical ownership moves.
-    return await session_start_execute(workdir, "local", None, label)
+    raise _unrouted_session_tool("session_start")
 
 
 @session_tool(
@@ -83,7 +80,7 @@ async def session_change_cwd(
     workdir: SessionWorkdirArg,
 ) -> SessionStartOutput:
     """Change an explicit agent/workspace session workdir."""
-    return await session_change_cwd_execute(session_id, workdir)
+    raise _unrouted_session_tool("session_change_cwd")
 
 
 @session_tool(
@@ -96,7 +93,7 @@ async def session_end(
     session_id: SessionIdArg, force: SessionEndForceArg = False
 ) -> SessionEndOutput:
     """Stop owned work and end an explicit agent/workspace session."""
-    return await session_end_execute(session_id, force=force)
+    raise _unrouted_session_tool("session_end")
 
 
 @session_tool(
@@ -116,13 +113,4 @@ async def session_copy(
     background: SessionCopyBackgroundArg = False,
 ) -> SessionCopyOutput | JobStartOutput:
     """Copy a file or directory synchronously or as a managed job."""
-    return await session_copy_execute(
-        src_session_id,
-        src_path,
-        dst_session_id,
-        dst_path,
-        kind,
-        overwrite,
-        chunk_size,
-        background,
-    )
+    raise _unrouted_session_tool("session_copy")

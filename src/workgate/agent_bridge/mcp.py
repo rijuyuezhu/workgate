@@ -18,11 +18,27 @@ from ..utils.serialization import to_jsonable
 from .auth import (
     OAuthProviderFactory,
     build_stored_oauth_provider,
+    credential_store_key,
     oauth_status,
     resolve_config_mapping,
+    sensitive_literal_config_mapping,
 )
 from .auth_store import AgentAuthStore
 from .models import AgentMcpServerConfig
+
+
+def _extend_redaction_map(
+    mapping: Mapping[str, str], values: Mapping[str, str]
+) -> dict[str, str]:
+    """Append redaction-only values without clobbering real transport keys."""
+    extended = dict(mapping)
+    index = 0
+    for value in values.values():
+        while (key := f"credential_observed_{index}") in extended:
+            index += 1
+        extended[key] = value
+        index += 1
+    return extended
 
 
 @dataclass(frozen=True)
@@ -328,10 +344,13 @@ class AgentMcpClientManager:
         call_timeout_s: float = 60,
         auth_store: AgentAuthStore | None = None,
         oauth_provider_factory: OAuthProviderFactory | None = None,
+        *,
+        allow_stdio: bool = True,
     ) -> None:
         self.call_timeout_s = call_timeout_s
         self.auth_store = auth_store
         self.oauth_provider_factory = oauth_provider_factory
+        self.allow_stdio = allow_stdio
         self._stdio_workers: dict[
             str, tuple[_StdioWorkerConfig, _PersistentStdioWorker]
         ] = {}
@@ -343,16 +362,63 @@ class AgentMcpClientManager:
         self, name: str, server: AgentMcpServerConfig
     ) -> tuple[dict[str, str], dict[str, str]]:
         """Resolve transport env/headers immediately before opening a connection."""
+        credential_key = credential_store_key(name, server)
         return (
-            resolve_config_mapping(self.auth_store, name, server.env),
-            resolve_config_mapping(self.auth_store, name, server.headers),
+            resolve_config_mapping(self.auth_store, credential_key, server.env),
+            resolve_config_mapping(
+                self.auth_store, credential_key, server.headers
+            ),
         )
 
     def redaction_maps(
         self, name: str, server: AgentMcpServerConfig
     ) -> tuple[dict[str, str], dict[str, str]]:
-        """Resolve configured values solely for error/payload redaction."""
-        return self.resolved_maps(name, server)
+        """Resolve transport and owner-held credential values solely for redaction."""
+        env, headers = self.resolved_maps(name, server)
+        if self.auth_store is not None and server.auth.mode == "oauth":
+            credential_key = credential_store_key(name, server)
+            env = {
+                **env,
+                **self.auth_store.oauth_redaction_values(credential_key),
+            }
+        return env, headers
+
+    def redaction_cursor(
+        self, name: str, server: AgentMcpServerConfig
+    ) -> int | None:
+        """Validate this integration's durable private-value history before use."""
+        if self.auth_store is None:
+            return None
+        if (
+            server.integration_id is None
+            and not server.requires_stable_integration_id()
+        ):
+            return None
+        credential_key = credential_store_key(name, server)
+        literal_values = tuple(
+            sensitive_literal_config_mapping(server.env).values()
+        ) + tuple(sensitive_literal_config_mapping(server.headers).values())
+        self.auth_store.observe_redaction_values(credential_key, literal_values)
+        # The stable integration identity, rather than the mutable manifest label,
+        # is the confidentiality and fail-closed boundary.
+        self.auth_store.credential_redaction_values_since(credential_key, 0)
+        return 0
+
+    def redaction_maps_since(
+        self,
+        name: str,
+        server: AgentMcpServerConfig,
+        cursor: int | None,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Resolve current and durable retained credentials since the safe baseline."""
+        env, headers = self.redaction_maps(name, server)
+        if cursor is None or self.auth_store is None:
+            return env, headers
+        credential_key = credential_store_key(name, server)
+        observed = self.auth_store.credential_redaction_values_since(
+            credential_key, cursor
+        )
+        return _extend_redaction_map(env, observed), headers
 
     def auth_status(
         self, name: str, server: AgentMcpServerConfig
@@ -529,6 +595,8 @@ class AgentMcpClientManager:
         """Page through an upstream server's tool list within the configured call timeout."""
 
         if server.type == "stdio":
+            if not self.allow_stdio:
+                raise ValueError("stdio MCP servers are executor-owned")
             worker = self._stdio_worker(name, server)
             try:
                 return await asyncio.wait_for(
@@ -556,6 +624,8 @@ class AgentMcpClientManager:
         """Invoke an upstream MCP tool and normalize its protocol result for workgate responses."""
 
         if server.type == "stdio":
+            if not self.allow_stdio:
+                raise ValueError("stdio MCP servers are executor-owned")
             worker = self._stdio_worker(name, server)
             try:
                 return await asyncio.wait_for(

@@ -1,4 +1,4 @@
-"""Authenticated Human UI APIs for local and remote Audit records."""
+"""Authenticated Human UI APIs for control-owned Audit records."""
 
 import asyncio
 import base64
@@ -12,9 +12,7 @@ from starlette.responses import JSONResponse, Response
 from ...audit import (
     audit_query_snapshot,
     get_audit_entry,
-    get_session_audit_entry,
     query_audit,
-    query_session_audit,
     summarize_audit_entry,
 )
 from ...config.settings import get_settings
@@ -24,14 +22,11 @@ from ...oauth.core.scopes import (
     SCOPE_AUDIT_READ,
     SCOPE_FILE_SHARE,
     SCOPE_GIT_WRITE,
-    SCOPE_REMOTE_USE,
     SCOPE_SHELL_EXECUTE,
     SCOPE_SHELL_WRITE,
     SUPPORTED_OAUTH_SCOPES,
 )
-from ...ops.image import detect_image_type
-from ...remote.service import call_remote_worker_tool
-from ...tool_session.store import get_tool_session_store
+from ...utils.image_types import detect_image_type
 from .common import (
     bounded_int as _bounded_int,
 )
@@ -41,21 +36,16 @@ from .common import (
 from .common import (
     json_error as _json_error,
 )
-from .common import (
-    require_remote_machine as _require_remote_machine,
-)
 from .image_preview import (
     UiImagePreviewRequest,
     image_preview_request,
     terminal_image_fields,
 )
 
-UI_AUDIT_MACHINE_MAX_BYTES = 255
 UI_AUDIT_ENTRY_ID_MAX_BYTES = 512
 UI_AUDIT_FILTER_MAX_BYTES = 1_024
 UI_AUDIT_SEARCH_MAX_BYTES = 4_096
 UI_AUDIT_MAX_ENTRIES = 2_000
-UI_AUDIT_REMOTE_TIMEOUT_S = 60
 
 _AUDIT_FILE_WRITE_TOOLS = frozenset(
     {
@@ -88,16 +78,6 @@ def _require_scopes(*required: str) -> None:
         require_oauth_scopes(tuple(dict.fromkeys(required)))
     except MissingOAuthScopeError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-def _machine_arg(value: Any) -> str:
-    return _bounded_text(
-        value,
-        field="machine",
-        max_bytes=UI_AUDIT_MACHINE_MAX_BYTES,
-        default="local",
-        allow_empty=False,
-    )
 
 
 def _bounded_float(value: Any, *, field: str) -> float | None:
@@ -188,64 +168,7 @@ def _query_args(request: Request) -> dict[str, Any]:
     }
 
 
-def _remote_timeout_s() -> int:
-    return max(
-        1,
-        min(
-            int(get_settings().remote_job_timeout_s),
-            UI_AUDIT_REMOTE_TIMEOUT_S,
-        ),
-    )
-
-
-def _remote_result_data(
-    result: dict[str, Any], *, machine: str, tool: str
-) -> dict[str, Any]:
-    if not result.get("ok", False):
-        raise RuntimeError(
-            str(result.get("message") or f"remote {tool} failed on {machine}")
-        )
-    data = result.get("data")
-    if isinstance(data, dict) and data.get("status") == "error":
-        error_type = str(data.get("error_type") or "remote_error")
-        message = str(
-            data.get("message") or f"remote {tool} failed on {machine}"
-        )
-        raise RuntimeError(f"{error_type}: {message}")
-    if not isinstance(data, dict):
-        raise RuntimeError(
-            f"Remote machine {machine} returned malformed audit data"
-        )
-    return cast(dict[str, Any], data)
-
-
-async def _remote_audit_call(
-    machine: str, tool: str, args: dict[str, Any]
-) -> dict[str, Any]:
-    _require_remote_machine(machine)
-    result = await call_remote_worker_tool(
-        machine,
-        tool,
-        args,
-        _remote_timeout_s(),
-    )
-    return _remote_result_data(result, machine=machine, tool=tool)
-
-
-def _remote_session_projection(machine: str) -> dict[str, str]:
-    """Build one worker-to-public session map for a remote Audit response."""
-    return {
-        session.worker_session_id: session.session_id
-        for session in get_tool_session_store().list_sessions()
-        if session.target == "remote"
-        and session.machine == machine
-        and session.worker_session_id
-    }
-
-
-def _final_session_record(
-    request: Request, machine: str, session_id: str
-) -> Any | None:
+def _final_session_record(request: Request, session_id: str) -> Any | None:
     if not session_id:
         return None
     runtime = getattr(request.app.state, "control_runtime", None)
@@ -254,22 +177,13 @@ def _final_session_record(
     record = runtime.control_state.snapshot_sessions().get(session_id)
     if record is None:
         return None
-    if machine != "local" and str(record.executor_id) != machine:
-        raise ValueError(
-            f"session {session_id} does not belong to executor {machine}"
-        )
     return record
 
 
-def _normalize_entry(
-    machine: str,
-    value: Any,
-    *,
-    session_projection: dict[str, str] | None = None,
-) -> dict[str, Any]:
+def _normalize_entry(node: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(
-            f"Machine {machine} returned a malformed audit entry"
+            f"Audit node {node} returned a malformed audit entry"
         )
     entry = cast(dict[str, Any], dict(value))
     identifier = _bounded_text(
@@ -279,40 +193,18 @@ def _normalize_entry(
         allow_empty=False,
     )
     entry["id"] = identifier
-    entry["node"] = machine
+    entry["node"] = node
     try:
         entry["ts"] = float(entry.get("ts") or 0)
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
-            f"Machine {machine} returned a malformed audit timestamp"
+            f"Audit node {node} returned a malformed audit timestamp"
         ) from exc
     entry["event"] = str(entry.get("event") or "unknown")
     entry["operation"] = str(entry.get("operation") or "other")
     if "tool" in entry:
         entry["tool"] = str(entry.get("tool") or "unknown")
-    if session_projection is not None and entry.get("session"):
-        worker_session_id = str(entry["session"])
-        entry["session"] = session_projection.get(
-            worker_session_id, worker_session_id
-        )
     return entry
-
-
-def _remote_query_args(machine: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Translate a public control-session filter to its worker-side session id."""
-    public_session_id = str(args.get("session") or "")
-    if not public_session_id:
-        return args
-    session = get_tool_session_store().require_session(public_session_id)
-    if session.target != "remote" or session.machine != machine:
-        raise ValueError(
-            f"session {public_session_id} does not belong to machine {machine}"
-        )
-    if not session.worker_session_id:
-        raise RuntimeError(
-            f"remote session {public_session_id} is missing its worker binding"
-        )
-    return {**args, "session": session.worker_session_id}
 
 
 def _audit_view_image_detail(
@@ -386,29 +278,17 @@ def _summary_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return summarize_audit_entry(entry)
 
 
-def _normalize_query_result(
-    machine: str,
-    value: Any,
-    *,
-    session_projection: dict[str, str] | None = None,
-) -> dict[str, Any]:
+def _normalize_query_result(node: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise RuntimeError(f"Machine {machine} returned malformed audit data")
+        raise RuntimeError(f"Audit node {node} returned malformed audit data")
     rows = value.get("entries")
     if not isinstance(rows, list):
         raise RuntimeError(
-            f"Machine {machine} returned malformed audit entries"
+            f"Audit node {node} returned malformed audit entries"
         )
     if len(rows) > UI_AUDIT_MAX_ENTRIES:
-        raise RuntimeError(f"Machine {machine} returned too many audit entries")
-    entries = [
-        _normalize_entry(
-            machine,
-            item,
-            session_projection=session_projection,
-        )
-        for item in rows
-    ]
+        raise RuntimeError(f"Audit node {node} returned too many audit entries")
+    entries = [_normalize_entry(node, item) for item in rows]
     count = value.get("count", len(entries))
     total_matched = value.get("total_matched", count)
     if (
@@ -419,10 +299,10 @@ def _normalize_query_result(
         or count < 0
         or total_matched < count
     ):
-        raise RuntimeError(f"Machine {machine} returned malformed audit counts")
+        raise RuntimeError(f"Audit node {node} returned malformed audit counts")
     if count != len(entries):
         raise RuntimeError(
-            f"Machine {machine} returned inconsistent audit counts"
+            f"Audit node {node} returned inconsistent audit counts"
         )
     return {
         "entries": [_summary_entry(entry) for entry in entries],
@@ -432,62 +312,29 @@ def _normalize_query_result(
 
 
 async def _query(
-    machine: str,
+    node: str,
     args: dict[str, Any],
     *,
     log_session_id: str | None = None,
-    final_session: bool = False,
     include_selected: bool = False,
     selected_id: str = "",
 ) -> dict[str, Any]:
     query_args = dict(args)
     if log_session_id:
         query_args.pop("session", None)
-    if final_session:
-        assert log_session_id
-        value = await asyncio.to_thread(
-            query_audit, **{**query_args, "session": log_session_id}
-        )
-        if include_selected:
-            value = audit_query_snapshot(value, selected_id=selected_id)
-    elif machine == "local":
-        if log_session_id:
-            value = await asyncio.to_thread(
-                query_session_audit, log_session_id, **query_args
-            )
-        else:
-            value = await asyncio.to_thread(query_audit, **query_args)
-        if include_selected:
-            value = audit_query_snapshot(value, selected_id=selected_id)
-    else:
-        remote_args = dict(query_args)
-        if log_session_id:
-            translated = _remote_query_args(
-                machine, {"session": log_session_id}
-            )
-            worker_session_id = str(translated.get("session") or "")
-            if not worker_session_id:
-                raise RuntimeError(
-                    f"remote session {log_session_id} is missing its worker binding"
-                )
-            remote_args["log_session_id"] = worker_session_id
-        else:
-            remote_args = _remote_query_args(machine, remote_args)
-        if include_selected:
-            remote_args["snapshot"] = True
-            remote_args["selected_id"] = selected_id
-        else:
-            remote_args["summary_only"] = True
-        value = await _remote_audit_call(machine, "query_audit", remote_args)
-    projection = (
-        _remote_session_projection(machine)
-        if machine != "local" and not log_session_id
-        else None
+    value = await asyncio.to_thread(
+        query_audit,
+        **(
+            {**query_args, "session": log_session_id}
+            if log_session_id
+            else query_args
+        ),
     )
+    if include_selected:
+        value = audit_query_snapshot(value, selected_id=selected_id)
     result = _normalize_query_result(
-        machine,
+        node,
         value,
-        session_projection=projection,
     )
     if log_session_id:
         for entry in result["entries"]:
@@ -495,9 +342,8 @@ async def _query(
     selected = value.get("entry") if isinstance(value, dict) else None
     if selected is not None:
         detail = _normalize_entry(
-            machine,
+            node,
             selected,
-            session_projection=projection,
         )
         if log_session_id:
             detail["session"] = log_session_id
@@ -506,67 +352,29 @@ async def _query(
 
 
 async def _detail(
-    machine: str,
+    node: str,
     entry_id: str,
     *,
     include_full_payloads: bool = False,
     log_session_id: str | None = None,
-    final_session: bool = False,
 ) -> dict[str, Any]:
-    if final_session:
-        assert log_session_id
-        value = await asyncio.to_thread(
-            get_audit_entry,
-            entry_id,
-            include_full_payloads=include_full_payloads,
-        )
-        if str(value.get("session") or "") != log_session_id:
-            raise ValueError(f"Unknown audit entry: {entry_id}")
-    elif machine == "local":
-        if log_session_id:
-            value = await asyncio.to_thread(
-                get_session_audit_entry,
-                log_session_id,
-                entry_id,
-                include_full_payloads=include_full_payloads,
-            )
-        else:
-            value = await asyncio.to_thread(
-                get_audit_entry,
-                entry_id,
-                include_full_payloads=include_full_payloads,
-            )
-    else:
-        args: dict[str, Any] = {
-            "id": entry_id,
-            "include_full_payloads": include_full_payloads,
-        }
-        if log_session_id:
-            translated = _remote_query_args(
-                machine, {"session": log_session_id}
-            )
-            args["log_session_id"] = translated["session"]
-        value = await _remote_audit_call(
-            machine,
-            "get_audit_entry",
-            args,
-        )
-    projection = (
-        _remote_session_projection(machine)
-        if machine != "local" and not log_session_id
-        else None
+    value = await asyncio.to_thread(
+        get_audit_entry,
+        entry_id,
+        include_full_payloads=include_full_payloads,
     )
+    if log_session_id and str(value.get("session") or "") != log_session_id:
+        raise ValueError(f"Unknown audit entry: {entry_id}")
     detail = _normalize_entry(
-        machine,
+        node,
         value,
-        session_projection=projection,
     )
     if log_session_id:
         detail["session"] = log_session_id
     return detail
 
 
-def _detail_scopes(machine: str, entry: dict[str, Any]) -> tuple[str, ...]:
+def _detail_scopes(entry: dict[str, Any]) -> tuple[str, ...]:
     required = {SCOPE_AUDIT_READ}
     tool = str(entry.get("tool") or "")
     operation = str(entry.get("operation") or "").casefold()
@@ -578,8 +386,6 @@ def _detail_scopes(machine: str, entry: dict[str, Any]) -> tuple[str, ...]:
         required.add(SCOPE_GIT_WRITE)
     if operation == "transfer":
         required.add(SCOPE_FILE_SHARE)
-    if machine != "local" or operation == "remote":
-        required.add(SCOPE_REMOTE_USE)
     if operation == "other":
         required.update(
             scope
@@ -589,12 +395,8 @@ def _detail_scopes(machine: str, entry: dict[str, Any]) -> tuple[str, ...]:
     return tuple(scope for scope in SUPPORTED_OAUTH_SCOPES if scope in required)
 
 
-def _payload(
-    machine: str, data: dict[str, Any], *, scope: str = "global"
-) -> dict[str, Any]:
+def _payload(data: dict[str, Any], *, scope: str = "global") -> dict[str, Any]:
     return {
-        "machine": machine,
-        "remote": machine != "local",
         "scope": scope,
         **data,
         "limits": {
@@ -606,23 +408,19 @@ def _payload(
 
 
 async def api_audit(request: Request) -> Response:
-    """Return a bounded filtered list from one machine's private Audit log."""
+    """Return a bounded filtered list from control-owned Audit history."""
     try:
-        machine = _machine_arg(request.query_params.get("machine"))
-        required = [SCOPE_AUDIT_READ]
-        if machine != "local":
-            required.append(SCOPE_REMOTE_USE)
-        _require_scopes(*required)
+        _require_scopes(SCOPE_AUDIT_READ)
         scope = _scope_arg(request.query_params.get("scope"))
         args = _query_args(request)
         log_session_id = str(args.get("session") or "")
-        if scope == "session" and not log_session_id:
-            raise ValueError("session is required when scope=session")
-        final_session = bool(
-            scope == "session"
-            and _final_session_record(request, machine, log_session_id)
-            is not None
-        )
+        if scope == "session":
+            if not log_session_id:
+                raise ValueError("session is required when scope=session")
+            if _final_session_record(request, log_session_id) is None:
+                raise LookupError(
+                    f"unknown shared session_id {log_session_id!r}"
+                )
         include_selected = _bool_arg(
             request.query_params.get("include_selected")
         )
@@ -632,17 +430,16 @@ async def api_audit(request: Request) -> Response:
             max_bytes=UI_AUDIT_ENTRY_ID_MAX_BYTES,
         )
         result = await _query(
-            machine,
+            "control",
             args,
             log_session_id=(log_session_id if scope == "session" else None),
-            final_session=final_session,
             include_selected=include_selected,
             selected_id=selected_id,
         )
         entry = result.get("entry")
         if isinstance(entry, dict):
             try:
-                _require_scopes(*_detail_scopes(machine, entry))
+                _require_scopes(*_detail_scopes(entry))
             except HTTPException as exc:
                 result.pop("entry", None)
                 result["entry_error"] = str(exc.detail)
@@ -652,17 +449,13 @@ async def api_audit(request: Request) -> Response:
                     entry,
                     image_preview_request(request.query_params),
                 )
-        return _json_ok(
-            _payload(
-                machine,
-                result,
-                scope=scope,
-            )
-        )
+        return _json_ok(_payload(result, scope=scope))
     except HTTPException:
         raise
-    except ConnectionError as exc:
-        return _json_error(exc, status_code=503)
+    except LookupError as exc:
+        return _json_error(exc, status_code=404)
+    except ValueError as exc:
+        return _json_error(exc, status_code=400)
     except RuntimeError as exc:
         return _json_error(exc, status_code=502)
     except Exception as exc:
@@ -670,62 +463,57 @@ async def api_audit(request: Request) -> Response:
 
 
 async def api_audit_detail(request: Request) -> Response:
-    """Return one audit entry after enforcing operation-sensitive scopes."""
+    """Return one control audit entry after operation-sensitive scope checks."""
     try:
-        machine = _machine_arg(request.query_params.get("machine"))
+        _require_scopes(SCOPE_AUDIT_READ)
         entry_id = _bounded_text(
             request.query_params.get("id"),
             field="id",
             max_bytes=UI_AUDIT_ENTRY_ID_MAX_BYTES,
             allow_empty=False,
         )
-        base_scopes = [SCOPE_AUDIT_READ]
-        if machine != "local":
-            base_scopes.append(SCOPE_REMOTE_USE)
-        _require_scopes(*base_scopes)
         scope = _scope_arg(request.query_params.get("scope"))
         log_session_id = _bounded_text(
             request.query_params.get("session"),
             field="session",
             max_bytes=UI_AUDIT_FILTER_MAX_BYTES,
         )
-        if scope == "session" and not log_session_id:
-            raise ValueError("session is required when scope=session")
-        final_session = bool(
-            scope == "session"
-            and _final_session_record(request, machine, log_session_id)
-            is not None
-        )
+        if scope == "session":
+            if not log_session_id:
+                raise ValueError("session is required when scope=session")
+            if _final_session_record(request, log_session_id) is None:
+                raise LookupError(
+                    f"unknown shared session_id {log_session_id!r}"
+                )
+        scoped_session_id = log_session_id if scope == "session" else None
         entry = await _detail(
-            machine,
+            "control",
             entry_id,
-            log_session_id=(log_session_id if scope == "session" else None),
-            final_session=final_session,
+            log_session_id=scoped_session_id,
         )
-        _require_scopes(*_detail_scopes(machine, entry))
+        _require_scopes(*_detail_scopes(entry))
         include_full_payloads = str(
             request.query_params.get("include_full_payloads") or ""
         ).casefold() in {"1", "true", "yes"}
         if include_full_payloads:
             _require_scopes(SCOPE_AUDIT_READ, SCOPE_AUDIT_FULL)
             entry = await _detail(
-                machine,
+                "control",
                 entry_id,
                 include_full_payloads=True,
-                log_session_id=(log_session_id if scope == "session" else None),
-                final_session=final_session,
+                log_session_id=scoped_session_id,
             )
         preview_request = image_preview_request(request.query_params)
         entry = await asyncio.to_thread(
             _audit_view_image_detail, entry, preview_request
         )
-        return _json_ok(_payload(machine, {"entry": entry}, scope=scope))
+        return _json_ok(_payload({"entry": entry}, scope=scope))
     except HTTPException:
         raise
+    except LookupError as exc:
+        return _json_error(exc, status_code=404)
     except ValueError as exc:
         return _json_error(exc, status_code=404)
-    except ConnectionError as exc:
-        return _json_error(exc, status_code=503)
     except RuntimeError as exc:
         return _json_error(exc, status_code=502)
     except Exception as exc:

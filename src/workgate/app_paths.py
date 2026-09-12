@@ -66,16 +66,6 @@ class AppPaths:
         """Return the safely disposable Workgate scratch directory."""
         return self.runtime_dir / "tmp"
 
-    @property
-    def worker_state_dir(self) -> Path:
-        """Return the durable remote-worker state namespace."""
-        return self.state_dir / "worker"
-
-    @property
-    def worker_data_dir(self) -> Path:
-        """Return the installed remote-worker data namespace."""
-        return self.data_dir / "worker"
-
 
 def _xdg_base(env: Mapping[str, str], name: str, fallback: Path) -> Path:
     """Return an absolute XDG base or the documented fallback."""

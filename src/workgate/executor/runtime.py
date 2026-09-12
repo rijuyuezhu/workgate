@@ -5,25 +5,31 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..composition.services import (
-    RuntimeServiceInstallation,
-    RuntimeServices,
-    build_runtime_services,
-    install_runtime_services,
-)
-from ..config.settings import Settings
 from ..protocol.executor import (
     SESSION_CHANGE_CWD_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
 )
-from ..remote_worker.dispatch import WorkerDispatcher as LegacyWorkerDispatcher
-from ..terminal.runtime import TerminalRuntime, build_terminal_runtime
-from .config import ExecutorConfig, resolve_executor_config
+from ..utils.path_policy import resolve_path_with_policy
+from .agent import ExecutorAgentBridgeService
+from .config import ExecutorConfig
+from .dispatch import ExecutorDispatcher
+from .files import files_config_from_executor_config
 from .search_composition import build_executor_dispatcher_with_search
+from .services import (
+    RuntimeServiceInstallation,
+    RuntimeServices,
+    build_runtime_services,
+    install_runtime_services,
+)
+from .shell_service import ShellService
+from .terminal.runtime import TerminalRuntime, build_terminal_runtime
+from .ui_files import UiFilesService
+from .ui_terminals import UiTerminalsService
 
 if TYPE_CHECKING:
     from ..protocol.executor import ExecutorCommand
@@ -38,16 +44,20 @@ class ExecutorRuntime:
 
     config: ExecutorConfig
     """Resolved executor-owned machine authority for new composition code."""
-    legacy_settings: Settings
-    """Temporary monolithic settings bridge for unmigrated components."""
     services: RuntimeServices
     """Explicit shared state services owned by this executor."""
+    agent_bridge: ExecutorAgentBridgeService
+    """Executor-owned stdio Agent Bridge integration and credential boundary."""
     terminal_runtime: TerminalRuntime
     """Executor-owned terminal bridge and ConPTY live state."""
-    dispatcher: LegacyWorkerDispatcher
-    """Legacy dispatcher with the migrated Search service already bound."""
+    dispatcher: ExecutorDispatcher
+    """Executor-local machine operation dispatcher."""
     sessions: ExecutorSessionService
     """Executor-authoritative final shared-session resource service."""
+    ui_files: UiFilesService
+    """Executor-owned internal Human UI file operations."""
+    ui_terminals: UiTerminalsService
+    """Executor-owned internal Human UI terminal operations."""
     profile_store: ExecutorProfileStore | None
     """Final v1 profile store, absent for the temporary legacy worker runtime."""
     connection: ExecutorConnection | None = field(default=None, init=False)
@@ -110,7 +120,31 @@ class ExecutorRuntime:
         self._installation = installation
 
     async def _execute_protocol_command(self, command: ExecutorCommand):
-        """Adapt final v1 envelopes to the temporary executor-local dispatcher seam."""
+        """Adapt final v1 envelopes to executor-owned operation services."""
+        ui_legacy_aliases = {
+            "ui.dashboard.snapshot": "dashboard_snapshot",
+        }
+        legacy_ui_tool = ui_legacy_aliases.get(command.op)
+        if legacy_ui_tool is not None:
+            if command.session_id is not None:
+                raise ValueError(f"{command.op} must not carry session_id")
+            return await self.dispatcher.execute(
+                legacy_ui_tool, dict(command.args)
+            )
+        if command.op.startswith("ui.files."):
+            if command.session_id is not None:
+                raise ValueError(
+                    "internal UI file operations must not carry session_id"
+                )
+            return await self.ui_files.execute(command.op, dict(command.args))
+        if command.op.startswith("ui.terminals."):
+            if command.session_id is not None:
+                raise ValueError(
+                    "internal UI terminal operations must not carry session_id"
+                )
+            return await self.ui_terminals.execute(
+                command.op, dict(command.args)
+            )
         if command.op in {
             SESSION_CREATE_OP,
             SESSION_LOOKUP_OP,
@@ -168,8 +202,11 @@ class ExecutorRuntime:
                 try:
                     await self.terminal_runtime.aclose()
                 finally:
-                    if installation is not None:
-                        installation.close()
+                    try:
+                        self.agent_bridge.close()
+                    finally:
+                        if installation is not None:
+                            installation.close()
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[ExecutorRuntime]:
@@ -182,10 +219,30 @@ class ExecutorRuntime:
 
 
 def build_executor_runtime(
-    settings: Settings, *, enable_control_connection: bool = True
+    config: ExecutorConfig, *, enable_control_connection: bool = True
 ) -> ExecutorRuntime:
     """Construct one executor graph without installing process globals yet."""
-    services = build_runtime_services(settings)
+
+    def executor_path_resolver(
+        path: str | Path,
+        *,
+        must_exist: bool = False,
+        allow_missing_parent: bool = True,
+        follow_final_symlink: bool = True,
+    ) -> Path:
+        return resolve_path_with_policy(
+            path,
+            workspace_root=config.workspace_root,
+            allow_full_control=config.allow_full_control,
+            path_denylist=config.path_denylist,
+            must_exist=must_exist,
+            allow_missing_parent=allow_missing_parent,
+            follow_final_symlink=follow_final_symlink,
+        )
+
+    services = build_runtime_services(
+        config, path_resolver=executor_path_resolver
+    )
     profile_store = None
     if enable_control_connection:
         from .profile import ExecutorProfileStore
@@ -193,15 +250,31 @@ def build_executor_runtime(
         profile_store = ExecutorProfileStore(services.state_store)
     from .sessions import ExecutorSessionService
 
-    config = resolve_executor_config(settings)
+    shell_service = ShellService(config, services.tool_session_store)
+    agent_bridge = ExecutorAgentBridgeService(config)
     return ExecutorRuntime(
         config=config,
-        legacy_settings=settings,
         services=services,
-        terminal_runtime=build_terminal_runtime(),
-        dispatcher=build_executor_dispatcher_with_search(
-            settings, services.tool_session_store
+        agent_bridge=agent_bridge,
+        terminal_runtime=build_terminal_runtime(
+            services.state_store,
+            workspace_root=config.workspace_root,
+            idle_timeout_s=config.ui_terminal_idle_timeout_s,
+            max_connections=config.ui_terminal_max_connections,
         ),
-        sessions=ExecutorSessionService(config, services.tool_session_store),
+        dispatcher=build_executor_dispatcher_with_search(
+            config,
+            services.tool_session_store,
+            shell_service=shell_service,
+            agent_bridge_service=agent_bridge,
+        ),
+        sessions=ExecutorSessionService(
+            config, services.tool_session_store, shell_service
+        ),
+        ui_files=UiFilesService(
+            files_config_from_executor_config(config),
+            services.tool_session_store,
+        ),
+        ui_terminals=UiTerminalsService(shell_service),
         profile_store=profile_store,
     )

@@ -3,8 +3,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from ...errors import public_error_type
-from ...tool_session import SessionTerminationRequestedError
+from ...errors import SessionTerminationRequestedError, public_error_type
 from ...tools.local_handlers import UnknownLocalToolError
 
 

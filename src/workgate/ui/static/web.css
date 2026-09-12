@@ -199,9 +199,7 @@ textarea:focus-visible {
 .masthead,
 .section-heading,
 .actions,
-.token-row,
-.machine-header,
-.machine-meta {
+.token-row {
   display: flex;
   align-items: center;
 }
@@ -234,8 +232,7 @@ h2 {
 }
 
 .subtitle,
-.muted,
-.machine-detail {
+.muted {
   color: #98aabb;
 }
 
@@ -254,8 +251,7 @@ h2 {
 }
 
 .actions,
-.token-row,
-.machine-meta {
+.token-row {
   gap: 0.65rem;
 }
 
@@ -382,46 +378,6 @@ h2 {
   flex: 1;
 }
 
-.machine-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.8rem;
-  margin-top: 1rem;
-}
-
-.machine {
-  border: 1px solid rgba(151, 184, 202, 0.12);
-  border-radius: 0.8rem;
-  background: rgba(5, 15, 23, 0.58);
-  padding: 0.95rem;
-}
-
-.machine-header {
-  justify-content: space-between;
-  gap: 0.8rem;
-  margin-bottom: 0.7rem;
-}
-
-.machine-name {
-  overflow: hidden;
-  font-weight: 750;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.machine-detail {
-  margin-bottom: 0.7rem;
-  overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.78rem;
-}
-
-.machine-meta {
-  flex-wrap: wrap;
-  color: #8196a8;
-  font-size: 0.75rem;
-}
-
 .empty-state {
   grid-column: 1 / -1;
   border: 1px dashed rgba(151, 184, 202, 0.18);
@@ -456,13 +412,13 @@ h2 {
   justify-content: flex-end;
 }
 
-.machine-select {
+.executor-select {
   display: grid;
   gap: 0.3rem;
   min-width: 9rem;
 }
 
-.machine-select span {
+.executor-select span {
   color: #91a4b7;
   font-size: 0.7rem;
   font-weight: 700;
@@ -470,7 +426,7 @@ h2 {
   text-transform: uppercase;
 }
 
-.machine-select select {
+.executor-select select {
   min-width: 0;
   min-height: 2.55rem;
   border: 1px solid rgba(137, 186, 207, 0.28);
@@ -688,7 +644,7 @@ h2 {
   flex-wrap: wrap;
 }
 
-.file-machine-control {
+.file-executor-control {
   display: grid;
   flex: 0 1 14rem;
   gap: 0.3rem;
@@ -696,7 +652,7 @@ h2 {
   font-size: 0.72rem;
 }
 
-.file-machine-control select,
+.file-executor-control select,
 .file-path-form input,
 .file-editor textarea {
   min-width: 0;
@@ -707,7 +663,7 @@ h2 {
   padding: 0.7rem 0.8rem;
 }
 
-.file-machine-control select {
+.file-executor-control select {
   min-height: 2.55rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
@@ -1413,7 +1369,7 @@ h2 {
   gap: 0.65rem;
 }
 
-.dashboard-machine-control {
+.dashboard-executor-control {
   display: flex;
   align-items: center;
   gap: 0.45rem;
@@ -1422,7 +1378,7 @@ h2 {
   font-weight: 700;
 }
 
-.dashboard-machine-control select {
+.dashboard-executor-control select {
   min-width: 9rem;
 }
 
@@ -1680,14 +1636,14 @@ h2 {
   line-height: 1.45;
 }
 
-.remotes-panel {
+.executors-panel {
   overflow: hidden;
 }
 
-.remotes-heading,
-.remotes-actions,
-.remote-details-header,
-.remote-detail-actions,
+.executors-heading,
+.executors-actions,
+.executor-details-header,
+.executor-detail-actions,
 .dialog-heading,
 .dialog-actions {
   display: flex;
@@ -1696,35 +1652,35 @@ h2 {
   gap: 0.75rem;
 }
 
-.remotes-actions {
+.executors-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
-.remote-summary {
+.executor-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
   margin-bottom: 0.9rem;
 }
 
-.remote-metric,
-.remote-details,
-.remote-list {
+.executor-metric,
+.executor-details,
+.executor-list {
   border: 1px solid rgba(151, 184, 202, 0.12);
   border-radius: 0.8rem;
   background: rgba(3, 13, 20, 0.62);
 }
 
-.remote-metric {
+.executor-metric {
   display: grid;
   gap: 0.25rem;
   padding: 0.8rem 0.9rem;
 }
 
-.remote-metric span,
-.remote-capabilities > span,
-.remote-reconnect > span {
+.executor-metric span,
+.executor-capabilities > span,
+.executor-reconnect > span {
   color: #7f94a6;
   font-size: 0.66rem;
   font-weight: 700;
@@ -1732,19 +1688,19 @@ h2 {
   text-transform: uppercase;
 }
 
-.remote-metric strong {
+.executor-metric strong {
   color: #dce9f2;
   font-size: 1.25rem;
 }
 
-.remotes-layout {
+.executors-layout {
   display: grid;
   grid-template-columns: minmax(18rem, 0.9fr) minmax(0, 1.35fr);
   gap: 0.9rem;
   min-height: 20rem;
 }
 
-.remote-list {
+.executor-list {
   display: grid;
   align-content: start;
   gap: 0.4rem;
@@ -1753,7 +1709,7 @@ h2 {
   padding: 0.6rem;
 }
 
-.remote-row {
+.executor-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.65rem;
@@ -1767,14 +1723,14 @@ h2 {
   text-align: left;
 }
 
-.remote-row:hover,
-.remote-row:focus-visible,
-.remote-row-selected {
+.executor-row:hover,
+.executor-row:focus-visible,
+.executor-row-selected {
   border-color: rgba(93, 181, 213, 0.5);
   background: rgba(25, 67, 88, 0.44);
 }
 
-.remote-row-status {
+.executor-row-status {
   width: 0.7rem;
   height: 0.7rem;
   border-radius: 999px;
@@ -1782,75 +1738,75 @@ h2 {
   box-shadow: 0 0 0 0.22rem rgba(94, 112, 128, 0.12);
 }
 
-.remote-row-status-online {
+.executor-row-status-online {
   background: #61d0a6;
   box-shadow: 0 0 0 0.22rem rgba(97, 208, 166, 0.12);
 }
 
-.remote-row-main {
+.executor-row-main {
   min-width: 0;
 }
 
-.remote-row-name,
-.remote-row-meta,
-.remote-row-version {
+.executor-row-name,
+.executor-row-meta,
+.executor-row-version {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.remote-row-name {
+.executor-row-name {
   color: #dce9f2;
   font-weight: 700;
 }
 
-.remote-row-meta,
-.remote-row-version {
+.executor-row-meta,
+.executor-row-version {
   color: #7f94a6;
   font-size: 0.7rem;
 }
 
-.remote-row-version {
+.executor-row-version {
   max-width: 8rem;
   color: #78bfe0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.remote-details {
+.executor-details {
   min-width: 0;
   padding: 1rem;
 }
 
-.remote-details-header {
+.executor-details-header {
   align-items: flex-start;
   border-bottom: 1px solid rgba(151, 184, 202, 0.1);
   padding-bottom: 0.85rem;
 }
 
-.remote-details-header > div:first-child {
+.executor-details-header > div:first-child {
   display: grid;
   min-width: 0;
   gap: 0.3rem;
 }
 
-.remote-details-header strong,
-.remote-details-header span {
+.executor-details-header strong,
+.executor-details-header span {
   overflow-wrap: anywhere;
 }
 
-.remote-detail-grid {
+.executor-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
   margin: 1rem 0;
 }
 
-.remote-detail-grid div {
+.executor-detail-grid div {
   min-width: 0;
 }
 
-.remote-detail-grid dt {
+.executor-detail-grid dt {
   color: #7f94a6;
   font-size: 0.66rem;
   font-weight: 700;
@@ -1858,7 +1814,7 @@ h2 {
   text-transform: uppercase;
 }
 
-.remote-detail-grid dd {
+.executor-detail-grid dd {
   margin: 0.25rem 0 0;
   overflow-wrap: anywhere;
   color: #d9e7f2;
@@ -1867,14 +1823,14 @@ h2 {
   line-height: 1.45;
 }
 
-.remote-capabilities {
+.executor-capabilities {
   display: grid;
   gap: 0.55rem;
   border-top: 1px solid rgba(151, 184, 202, 0.1);
   padding-top: 0.9rem;
 }
 
-.remote-reconnect {
+.executor-reconnect {
   display: grid;
   gap: 0.55rem;
   border-top: 1px solid rgba(151, 184, 202, 0.1);
@@ -1882,7 +1838,7 @@ h2 {
   padding-top: 0.9rem;
 }
 
-.remote-reconnect pre {
+.executor-reconnect pre {
   max-height: 8rem;
   overflow: auto;
   margin: 0;
@@ -1897,13 +1853,13 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.remote-capability-list {
+.executor-capability-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
 }
 
-.remote-capability {
+.executor-capability {
   border: 1px solid rgba(93, 181, 213, 0.24);
   border-radius: 999px;
   background: rgba(25, 67, 88, 0.32);
@@ -1923,7 +1879,7 @@ h2 {
   background: rgba(115, 38, 49, 0.38);
 }
 
-.remote-dialog {
+.executor-dialog {
   width: min(36rem, calc(100% - 2rem));
   border: 1px solid rgba(93, 181, 213, 0.42);
   border-radius: 0.9rem;
@@ -1933,29 +1889,29 @@ h2 {
   box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, 0.58);
 }
 
-.remote-dialog::backdrop {
+.executor-dialog::backdrop {
   background: rgba(0, 5, 9, 0.78);
   backdrop-filter: blur(0.15rem);
 }
 
-.remote-dialog:not([open]) {
+.executor-dialog:not([open]) {
   display: none;
 }
 
-.remote-dialog form {
+.executor-dialog form {
   display: grid;
   gap: 0.9rem;
 }
 
-.remote-dialog label {
+.executor-dialog label {
   display: grid;
   gap: 0.35rem;
   color: #91a4b7;
   font-size: 0.75rem;
 }
 
-.remote-dialog input,
-.remote-dialog select {
+.executor-dialog input,
+.executor-dialog select {
   width: 100%;
 }
 
@@ -2056,7 +2012,7 @@ h2 {
   .actions,
   .dashboard-actions,
   .terminal-actions,
-  .remotes-actions,
+  .executors-actions,
   .session-toolbar {
     margin-top: 1rem;
   }
@@ -2092,7 +2048,7 @@ h2 {
   .dashboard-layout,
   .file-layout,
   .audit-layout,
-  .remotes-layout,
+  .executors-layout,
   .session-layout {
     grid-template-columns: 1fr;
   }
@@ -2108,7 +2064,7 @@ h2 {
   .dashboard-list,
   .file-list,
   .audit-list,
-  .remote-list,
+  .executor-list,
   .session-list {
     max-height: 18rem;
   }
@@ -2128,8 +2084,7 @@ h2 {
 
   .dashboard-summary,
   .metric-grid,
-  .machine-list,
-  .remote-summary {
+  .executor-summary {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -2141,9 +2096,8 @@ h2 {
 @media (max-width: 480px) {
   .dashboard-summary,
   .metric-grid,
-  .machine-list,
-  .remote-summary,
-  .remote-detail-grid {
+  .executor-summary,
+  .executor-detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2160,8 +2114,8 @@ h2 {
   .session-toolbar,
   .session-detail-header,
   .session-resource-heading,
-  .remote-details-header,
-  .remote-detail-actions,
+  .executor-details-header,
+  .executor-detail-actions,
   .dialog-actions {
     align-items: stretch;
     flex-direction: column;
@@ -2183,8 +2137,8 @@ h2 {
     width: 100%;
   }
 
-  .dashboard-machine-control,
-  .machine-select,
+  .dashboard-executor-control,
+  .executor-select,
   .session-control,
   .todo-field-content,
   .todo-field-status,
@@ -2192,10 +2146,10 @@ h2 {
     flex-basis: auto;
   }
 
-  .dashboard-machine-control,
-  .dashboard-machine-control select,
-  .machine-select,
-  .machine-select select,
+  .dashboard-executor-control,
+  .dashboard-executor-control select,
+  .executor-select,
+  .executor-select select,
   .session-control,
   .session-control select {
     width: 100%;

@@ -4,7 +4,8 @@ from urllib.parse import urlparse
 
 from mcp.server.transport_security import TransportSecuritySettings
 
-from ...config.settings import Settings, get_settings
+from ...config.control import ControlSettingsView
+from ...config.settings import get_settings
 
 
 def _host_header_name(hostname: str) -> str:
@@ -52,7 +53,7 @@ def _add_base_url_transport_allowlist(
 
 
 def transport_security_settings(
-    settings: Settings | None = None,
+    settings: ControlSettingsView | None = None,
 ) -> TransportSecuritySettings:
     """Derive MCP transport security settings from the active server settings."""
     active_settings = settings if settings is not None else get_settings()

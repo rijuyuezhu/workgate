@@ -54,30 +54,18 @@ WORKGATE_RUN_SHELL_MAX_TIMEOUT_S=120
 
 Use persistent shells for long-running dev servers, REPLs, or interactive commands.
 
-## Remote worker does not connect
+## Executor does not connect
 
 Check:
 
-- The invite has not expired.
-- The remote machine can reach the public control server over outbound HTTPS.
-- `WORKGATE_REMOTE_ENABLED=true` on the control server.
-- The pasted command or `worker connect` invocation includes the correct `--server`, invite, `--name`, and `--workdir` values.
+- The control URL is reachable from the executor over outbound HTTPS, or loopback HTTP for a same-machine deployment.
+- `workgate executor connect CONTROL_URL` completed owner-approved pairing and persisted the executor profile.
+- The executor has not been revoked or had its credential replaced.
+- `workgate executor run` is running from the same private state/config context that contains the paired profile.
 
+The executor reconnects after temporary network or control outages using its saved long-lived credential; ordinary downtime does not require a new pairing. If authentication is rejected because trust was revoked or replaced, run `workgate executor connect CONTROL_URL` and explicitly approve the replacement from the **Executors** page.
 
-For an installed worker, inspect the native service without exposing identity credentials:
-
-```bash
-workgate worker status
-workgate worker logs --lines 100
-```
-
-A `not_installed` status means enrollment may exist but no user service is installed. `unavailable` means systemd/launchd is supported on the platform but not reachable for the current user session. Windows returns `unsupported`. Use `worker run` to diagnose the stored identity in the foreground; use `worker install-service` only after foreground connection succeeds.
-
-Then ask the MCP client to run:
-
-```text
-Use workgate `remote_admin(action="list", args={})`.
-```
+If the executor process exits or fails before connecting, run `workgate executor run` in the foreground and inspect its local output. Workgate no longer provides the legacy `workgate worker` status/log/service commands, so unattended lifecycle diagnostics belong to the service manager used to launch `executor run`.
 
 ## Audit log is missing expected calls
 

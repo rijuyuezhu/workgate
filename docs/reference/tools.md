@@ -4,7 +4,7 @@ This page is rendered from [`generated/tools.json`](generated/tools.json), which
 
 Tool descriptions come from the tool definitions/docstrings exposed by the MCP server. Input parameters are rendered from each tool's JSON schema.
 
-Tool availability still depends on client capability and server settings. Regular connector-style clients may only expose `search` and `fetch`; ChatGPT Developer Mode and full MCP clients can expose the complete MCP surface. Remote tools require remote workers to be enabled and connected. Agent bridge tools require agent bridge configuration.
+Tool availability still depends on client capability, server settings, and executor availability. Regular connector-style clients may only expose `search` and `fetch`; ChatGPT Developer Mode and full MCP clients can expose the complete MCP surface. Machine-facing tools require a shared session bound to an eligible executor. Agent Bridge tools require the corresponding control-owned network or executor-owned local integration configuration.
 
 <div class="generated-reference" data-reference-json="../generated/tools.json">
 Loading generated tools reference...

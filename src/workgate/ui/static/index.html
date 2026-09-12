@@ -22,14 +22,8 @@
         <button class="nav-item active" type="button" data-view="overview" aria-current="page">
           <span class="nav-index" aria-hidden="true">01</span><span>Overview</span>
         </button>
-        <button class="nav-item" type="button" data-view="machines">
-          <span class="nav-index" aria-hidden="true">02</span><span>Machines</span>
-        </button>
         <button class="nav-item" type="button" data-view="executors">
           <span class="nav-index" aria-hidden="true">03</span><span>Executors</span>
-        </button>
-        <button class="nav-item" type="button" data-view="remotes">
-          <span class="nav-index" aria-hidden="true">04</span><span>Remotes</span>
         </button>
         <button class="nav-item" type="button" data-view="sessions">
           <span class="nav-index" aria-hidden="true">05</span><span>Sessions</span>
@@ -48,14 +42,14 @@
         </button>
       </nav>
       <div class="sidebar-spacer"></div>
-      <p class="sidebar-note">One control surface for local sessions, remote workers, files, and terminals.</p>
+      <p class="sidebar-note">One control surface for shared sessions, executors, files, and terminals.</p>
     </aside>
   <main id="app-main" class="shell app-main">
     <header class="masthead">
       <div>
         <p class="eyebrow">Control plane</p>
         <h1 id="page-title">Overview</h1>
-        <p id="page-description" class="subtitle">System health across local and remote coding environments.</p>
+        <p id="page-description" class="subtitle">System health across connected executor environments.</p>
       </div>
       <div class="actions">
         <span id="connection-state" class="status status-idle">Connecting</span>
@@ -91,11 +85,9 @@
           <h2>Dashboard</h2>
         </div>
         <div class="dashboard-actions">
-          <label class="dashboard-machine-control" for="dashboard-machine">
-            <span>Machine</span>
-            <select id="dashboard-machine" name="dashboard-machine">
-              <option value="local">local</option>
-            </select>
+          <label class="dashboard-executor-control" for="dashboard-executor">
+            <span>Executor</span>
+            <select id="dashboard-executor" name="dashboard-executor"></select>
           </label>
           <button id="dashboard-refresh" type="button">Refresh telemetry</button>
           <span id="dashboard-state" class="muted">Not loaded</span>
@@ -196,12 +188,12 @@
         <strong id="version">—</strong>
       </article>
       <article class="metric">
-        <span>Machines</span>
-        <strong id="machine-total">—</strong>
+        <span>Executors</span>
+        <strong id="executor-target-total">—</strong>
       </article>
       <article class="metric">
         <span>Online</span>
-        <strong id="machine-online">—</strong>
+        <strong id="executor-target-online">—</strong>
       </article>
       <article class="metric">
         <span>Authentication</span>
@@ -209,52 +201,39 @@
       </article>
     </section>
 
-    <section id="machines-panel" class="panel app-view" data-app-view="machines" hidden>
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Targets</p>
-          <h2>Machines</h2>
-        </div>
-        <p id="last-updated" class="muted">Not loaded</p>
-      </div>
-      <div id="machine-list" class="machine-list" aria-live="polite">
-        <div class="empty-state">Loading machine inventory…</div>
-      </div>
-    </section>
-
-    <section id="executors-panel" class="panel remotes-panel app-view" data-app-view="executors" hidden>
-      <div class="section-heading remotes-heading">
+    <section id="executors-panel" class="panel executors-panel app-view" data-app-view="executors" hidden>
+      <div class="section-heading executors-heading">
         <div>
           <p class="eyebrow">Final executor identity</p>
           <h2>Executors</h2>
         </div>
-        <div class="remotes-actions">
+        <div class="executors-actions">
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
           <button id="executor-refresh" type="button">Refresh</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
-      <div class="remote-summary" aria-live="polite">
-        <article class="remote-metric"><span>Online</span><strong id="executor-online">—</strong></article>
-        <article class="remote-metric"><span>Total</span><strong id="executor-total">—</strong></article>
-        <article class="remote-metric"><span>Revoked</span><strong id="executor-revoked">—</strong></article>
+      <div class="executor-summary" aria-live="polite">
+        <article class="executor-metric"><span>Online</span><strong id="executor-online">—</strong></article>
+        <article class="executor-metric"><span>Total</span><strong id="executor-total">—</strong></article>
+        <article class="executor-metric"><span>Revoked</span><strong id="executor-revoked">—</strong></article>
       </div>
-      <div class="remotes-layout">
-        <nav id="executor-list" class="remote-list" aria-label="Paired executors" aria-live="polite">
+      <div class="executors-layout">
+        <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
           <div class="empty-state">Loading executors…</div>
         </nav>
-        <article class="remote-details">
-          <div class="remote-details-header">
+        <article class="executor-details">
+          <div class="executor-details-header">
             <div>
               <strong id="executor-detail-name">No executor selected</strong>
               <span id="executor-detail-status" class="muted">Select an executor to inspect it</span>
             </div>
-            <div class="remote-detail-actions">
+            <div class="executor-detail-actions">
               <button id="executor-rename-open" type="button" disabled>Rename</button>
               <button id="executor-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
             </div>
           </div>
-          <dl class="remote-detail-grid">
+          <dl class="executor-detail-grid">
             <div><dt>Executor ID</dt><dd id="executor-detail-id">—</dd></div>
             <div><dt>Workgate version</dt><dd id="executor-detail-version">—</dd></div>
             <div><dt>Platform</dt><dd id="executor-detail-platform">—</dd></div>
@@ -265,14 +244,14 @@
       </div>
     </section>
 
-    <dialog id="executor-pair-dialog" class="remote-dialog">
+    <dialog id="executor-pair-dialog" class="executor-dialog">
       <form id="executor-pair-form">
         <div class="dialog-heading"><div><p class="eyebrow">Owner approval</p><h2>Pair executor</h2></div><button class="dialog-close" type="button" data-close-executor-dialog="executor-pair-dialog" aria-label="Close">×</button></div>
         <label>Pairing code <input id="executor-pair-code" name="code" maxlength="32" required autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH"></label>
         <div class="dialog-actions"><button type="button" data-close-executor-dialog="executor-pair-dialog">Cancel</button><button class="primary-action" type="submit">Inspect request</button></div>
       </form>
       <div id="executor-pair-review" hidden>
-        <dl class="remote-detail-grid">
+        <dl class="executor-detail-grid">
           <div><dt>Requested name</dt><dd id="executor-pair-requested-name">—</dd></div>
           <div><dt>Hostname</dt><dd id="executor-pair-hostname">—</dd></div>
           <div><dt>Platform</dt><dd id="executor-pair-platform">—</dd></div>
@@ -282,12 +261,12 @@
         </dl>
         <label>Executor name <input id="executor-pair-name" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Optional"></label>
         <label id="executor-pair-replace-wrap" hidden><input id="executor-pair-replace" type="checkbox"> Replace the existing executor credential shown above</label>
-        <p class="muted">Approve only a request whose machine identity you recognize. The bearer credential is delivered only to the executor and is never shown here.</p>
+        <p class="muted">Approve only a request whose executor identity you recognize. The bearer credential is delivered only to the executor and is never shown here.</p>
         <div class="dialog-actions"><button id="executor-pair-deny" class="danger-action" type="button">Deny</button><button id="executor-pair-approve" class="primary-action" type="button">Approve</button></div>
       </div>
     </dialog>
 
-    <dialog id="executor-rename-dialog" class="remote-dialog">
+    <dialog id="executor-rename-dialog" class="executor-dialog">
       <form id="executor-rename-form">
         <div class="dialog-heading"><div><p class="eyebrow">Stable identity</p><h2>Rename executor</h2></div><button class="dialog-close" type="button" data-close-executor-dialog="executor-rename-dialog" aria-label="Close">×</button></div>
         <label>New name <input id="executor-rename-name" maxlength="80" required autocomplete="off" spellcheck="false"></label>
@@ -295,7 +274,7 @@
       </form>
     </dialog>
 
-    <dialog id="executor-revoke-dialog" class="remote-dialog">
+    <dialog id="executor-revoke-dialog" class="executor-dialog">
       <form id="executor-revoke-form">
         <div class="dialog-heading"><div><p class="eyebrow">Destructive action</p><h2>Revoke executor</h2></div><button class="dialog-close" type="button" data-close-executor-dialog="executor-revoke-dialog" aria-label="Close">×</button></div>
         <p>Revoke <strong id="executor-revoke-name">this executor</strong>?</p>
@@ -304,92 +283,17 @@
       </form>
     </dialog>
 
-    <section id="remotes-panel" class="panel remotes-panel app-view" data-app-view="remotes" hidden>
-      <div class="section-heading remotes-heading">
-        <div>
-          <p class="eyebrow">Legacy runtime bridge</p>
-          <h2>Remotes</h2>
-        </div>
-        <div class="remotes-actions">
-          <button id="remote-refresh" type="button">Refresh</button>
-          <span id="remote-state" class="muted">Not loaded</span>
-        </div>
-      </div>
-      <div class="remote-summary" aria-live="polite">
-        <article class="remote-metric"><span>Online</span><strong id="remote-online">—</strong></article>
-        <article class="remote-metric"><span>Offline</span><strong id="remote-offline">—</strong></article>
-        <article class="remote-metric"><span>Total</span><strong id="remote-total">—</strong></article>
-        <article class="remote-metric"><span>Controller</span><strong id="remote-controller">—</strong></article>
-      </div>
-      <div class="remotes-layout">
-        <nav id="remote-list" class="remote-list" aria-label="Registered remote workers" aria-live="polite">
-          <div class="empty-state">Loading remote workers…</div>
-        </nav>
-        <article class="remote-details">
-          <div class="remote-details-header">
-            <div>
-              <strong id="remote-detail-name">No remote selected</strong>
-              <span id="remote-detail-status" class="muted">Select a worker to inspect it</span>
-            </div>
-            <div class="remote-detail-actions">
-              <button id="remote-reconnect-copy" type="button" disabled>Copy reconnect</button>
-              <button id="remote-rename-open" type="button" disabled>Rename</button>
-              <button id="remote-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
-            </div>
-          </div>
-          <dl id="remote-detail-grid" class="remote-detail-grid">
-            <div><dt>Workgate version</dt><dd id="remote-detail-version">—</dd></div>
-            <div><dt>Last seen</dt><dd id="remote-detail-last-seen">—</dd></div>
-            <div><dt>Workdir</dt><dd id="remote-detail-workdir">—</dd></div>
-            <div><dt>Queue</dt><dd id="remote-detail-queue">—</dd></div>
-            <div><dt>Hostname</dt><dd id="remote-detail-hostname">—</dd></div>
-            <div><dt>User</dt><dd id="remote-detail-user">—</dd></div>
-            <div><dt>Platform</dt><dd id="remote-detail-platform">—</dd></div>
-            <div><dt>Python</dt><dd id="remote-detail-python">—</dd></div>
-            <div><dt>Profile</dt><dd id="remote-detail-profile">—</dd></div>
-          </dl>
-          <div class="remote-capabilities">
-            <span>Capabilities</span>
-            <div id="remote-detail-capabilities" class="remote-capability-list"><span class="muted">—</span></div>
-          </div>
-          <div class="remote-reconnect">
-            <span>Reconnect command</span>
-            <pre id="remote-detail-reconnect" tabindex="0">Unavailable for this worker</pre>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <dialog id="remote-rename-dialog" class="remote-dialog">
-      <form id="remote-rename-form">
-        <div class="dialog-heading"><div><p class="eyebrow">Persistent identity</p><h2>Rename remote</h2></div><button class="dialog-close" type="button" data-close-dialog="remote-rename-dialog" aria-label="Close">×</button></div>
-        <label>New machine name <input id="remote-rename-name" name="new-name" maxlength="128" required autocomplete="off" spellcheck="false"></label>
-        <p class="muted">Pending jobs and future connections will follow the new name.</p>
-        <div class="dialog-actions"><button type="button" data-close-dialog="remote-rename-dialog">Cancel</button><button class="primary-action" type="submit">Rename</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="remote-revoke-dialog" class="remote-dialog">
-      <form id="remote-revoke-form">
-        <div class="dialog-heading"><div><p class="eyebrow">Destructive action</p><h2>Revoke remote</h2></div><button class="dialog-close" type="button" data-close-dialog="remote-revoke-dialog" aria-label="Close">×</button></div>
-        <p>Revoke <strong id="remote-revoke-name">this worker</strong>?</p>
-        <p class="muted">Its persisted worker credential will no longer reconnect, and outstanding jobs for this machine are cancelled.</p>
-        <div class="dialog-actions"><button type="button" data-close-dialog="remote-revoke-dialog">Cancel</button><button class="danger-action" type="submit">Revoke worker</button></div>
-      </form>
-    </dialog>
 
     <section id="terminal-panel" class="panel terminal-panel app-view" data-app-view="terminals" hidden>
       <div class="section-heading terminal-heading">
         <div>
-          <p class="eyebrow">Machine-isolated tmux</p>
+          <p class="eyebrow">Executor-owned persistent terminals</p>
           <h2>Terminals</h2>
         </div>
         <div class="terminal-actions">
-          <label class="machine-select" for="terminal-machine">
-            <span>Machine</span>
-            <select id="terminal-machine" name="terminal-machine" aria-label="Terminal machine">
-              <option value="local">local</option>
-            </select>
+          <label class="executor-select" for="terminal-executor">
+            <span>Executor</span>
+            <select id="terminal-executor" name="terminal-executor" aria-label="Terminal executor"></select>
           </label>
           <form id="terminal-start-form" class="terminal-start-form">
             <input id="terminal-name" name="terminal-name" type="text" maxlength="64" placeholder="Optional shell name" autocomplete="off" spellcheck="false">
@@ -433,17 +337,15 @@
     <section id="file-panel" class="panel file-panel app-view" data-app-view="files" hidden>
       <div class="section-heading file-heading">
         <div>
-          <p class="eyebrow">Machine workspace</p>
+          <p class="eyebrow">Executor workspace</p>
           <h2>Files</h2>
         </div>
         <span id="file-state" class="muted">Not loaded</span>
       </div>
       <div class="file-toolbar">
-        <label class="file-machine-control" for="file-machine">
-          <span>Machine</span>
-          <select id="file-machine" name="file-machine">
-            <option value="local">local</option>
-          </select>
+        <label class="file-executor-control" for="file-executor">
+          <span>Executor</span>
+          <select id="file-executor" name="file-executor"></select>
         </label>
         <form id="file-path-form" class="file-path-form">
           <label class="visually-hidden" for="file-path">Workspace path</label>
@@ -493,11 +395,9 @@
           <h2>Sessions</h2>
         </div>
         <div class="session-toolbar">
-          <label class="session-control" for="session-machine">
-            <span>Machine</span>
-            <select id="session-machine" name="session-machine">
-              <option value="local">local</option>
-            </select>
+          <label class="session-control" for="session-executor">
+            <span>Executor</span>
+            <select id="session-executor" name="session-executor"></select>
           </label>
           <label class="session-active-toggle"><input id="session-include-inactive" type="checkbox"> Show all sessions</label>
           <button id="session-refresh" type="button">Refresh</button>
@@ -518,8 +418,7 @@
           </div>
           <dl class="session-detail-grid">
             <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
-            <div><dt>Target</dt><dd id="session-detail-target">—</dd></div>
-            <div><dt>Machine</dt><dd id="session-detail-machine">—</dd></div>
+            <div><dt>Executor ID</dt><dd id="session-detail-executor">—</dd></div>
             <div><dt>Workdir</dt><dd id="session-detail-workdir">—</dd></div>
             <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
             <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
@@ -555,7 +454,7 @@
 
           <section class="session-resource session-audit">
             <div class="session-resource-heading">
-              <div><p class="eyebrow">Session-local activity</p><h3>Audit</h3></div>
+              <div><p class="eyebrow">Session-scoped activity</p><h3>Audit</h3></div>
               <span id="session-audit-state" class="muted">Select a session</span>
             </div>
             <form id="session-audit-filter-form" class="audit-toolbar session-audit-toolbar">
@@ -567,7 +466,6 @@
                   <option value="shell">Shell</option>
                   <option value="jobs">Jobs</option>
                   <option value="transfer">Transfer</option>
-                  <option value="remote">Remote</option>
                   <option value="agent">Agent</option>
                   <option value="security">Security</option>
                   <option value="other">Other</option>
@@ -608,18 +506,12 @@
     <section id="audit-panel" class="panel audit-panel app-view" data-app-view="audit" hidden>
       <div class="section-heading audit-heading">
         <div>
-          <p class="eyebrow">Machine-wide activity and control events</p>
+          <p class="eyebrow">Control-owned activity and product events</p>
           <h2>Global Audit</h2>
         </div>
         <span id="audit-state" class="muted">Not loaded</span>
       </div>
       <form id="audit-filter-form" class="audit-toolbar">
-        <label class="audit-control" for="audit-machine">
-          <span>Machine</span>
-          <select id="audit-machine" name="audit-machine">
-            <option value="local">local</option>
-          </select>
-        </label>
         <label class="audit-control" for="audit-operation">
           <span>Operation</span>
           <select id="audit-operation" name="audit-operation">
@@ -628,7 +520,6 @@
             <option value="shell">Shell</option>
             <option value="jobs">Jobs</option>
             <option value="transfer">Transfer</option>
-            <option value="remote">Remote</option>
             <option value="agent">Agent</option>
             <option value="security">Security</option>
             <option value="other">Other</option>

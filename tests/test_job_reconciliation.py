@@ -2,7 +2,7 @@ from typing import Any, cast
 
 import pytest
 
-from workgate.jobs import lifecycle as job_lifecycle
+from workgate.executor.jobs import lifecycle as job_lifecycle
 from workgate.jobs.reconciliation import (
     JobObservation,
     JobTransition,

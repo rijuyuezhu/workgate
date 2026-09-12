@@ -6,9 +6,14 @@ import queue
 import re
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from .auth import manager_redaction_maps
+from .auth import (
+    manager_redaction_cursor,
+    manager_redaction_maps,
+    manager_redaction_maps_since,
+)
+from .mcp import AgentMcpTool, normalize_mcp_tool
 from .models import (
     AgentCapabilityRegistry,
     AgentMcpServerRecord,
@@ -86,6 +91,38 @@ def _probe_timeout_seconds(probe_timeout_s: float) -> float:
     return max(0.001, probe_timeout_s)
 
 
+def _redaction_values(*maps: dict[str, str]) -> tuple[str, ...]:
+    """Freeze unique private credential values used during one MCP probe."""
+    return tuple(
+        dict.fromkeys(
+            value for mapping in maps for value in mapping.values() if value
+        )
+    )
+
+
+def _sanitize_probe_tool(
+    tool: Any, *redaction_maps: dict[str, str]
+) -> AgentMcpTool:
+    """Create public capability metadata without retaining probe-time credentials."""
+    normalized = normalize_mcp_tool(tool)
+    return AgentMcpTool(
+        name=str(
+            redact_configured_value_tree(normalized.name, *redaction_maps)
+        ),
+        description=str(
+            redact_configured_value_tree(
+                normalized.description, *redaction_maps
+            )
+        ),
+        input_schema=cast(
+            dict[str, Any],
+            redact_configured_value_tree(
+                normalized.input_schema, *redaction_maps
+            ),
+        ),
+    )
+
+
 def build_agent_registry(
     config_dir: Path,
     client_manager: Any | None = None,
@@ -99,6 +136,9 @@ def build_agent_registry(
     max_skill_scan_entries: int = DEFAULT_MAX_SCAN_ENTRIES,
     max_skill_path_bytes: int = DEFAULT_MAX_PATH_BYTES,
     max_skill_entry_bytes: int = DEFAULT_MAX_ENTRY_BYTES,
+    include_project_skills: bool = True,
+    mcp_server_types: frozenset[str] | None = None,
+    scan_skills: bool = True,
 ) -> AgentCapabilityRegistry:
     """Build one manifest-backed registry with ordered project, managed, and global Skills."""
     config_root = Path(config_dir).expanduser().resolve()
@@ -108,10 +148,15 @@ def build_agent_registry(
         else Path(project_root).expanduser().resolve()
     )
     manifest = load_agent_manifest(config_root)
-    sources = skill_sources(
-        project_root=active_project_root,
-        managed_config_dir=config_root,
-        managed_directory=manifest.data.skills.directory,
+    sources = (
+        skill_sources(
+            project_root=active_project_root,
+            managed_config_dir=config_root,
+            managed_directory=manifest.data.skills.directory,
+            include_project=include_project_skills,
+        )
+        if scan_skills
+        else ()
     )
     probe_timeout = _probe_timeout_seconds(probe_timeout_s)
     if client_manager is None:
@@ -121,12 +166,23 @@ def build_agent_registry(
 
     retain_stdio_servers = getattr(client_manager, "retain_stdio_servers", None)
     if callable(retain_stdio_servers):
-        retain_stdio_servers(
-            manifest.data.mcp_servers if manifest.status == "loaded" else {}
+        retained_servers = (
+            {
+                name: server
+                for name, server in manifest.data.mcp_servers.items()
+                if mcp_server_types is None or server.type in mcp_server_types
+            }
+            if manifest.status == "loaded"
+            else {}
         )
+        retain_stdio_servers(retained_servers)
 
     skill_scan = SkillScanResult()
-    if manifest.status != "invalid_config" and manifest.data.skills.enabled:
+    if (
+        scan_skills
+        and manifest.status != "invalid_config"
+        and manifest.data.skills.enabled
+    ):
         skill_scan = scan_skill_sources(
             sources,
             max_skills=max_skills,
@@ -139,6 +195,11 @@ def build_agent_registry(
     mcp_servers: dict[str, AgentMcpServerRecord] = {}
     if manifest.status == "loaded":
         for name, server in manifest.data.mcp_servers.items():
+            if (
+                mcp_server_types is not None
+                and server.type not in mcp_server_types
+            ):
+                continue
             if not server.enabled:
                 mcp_servers[name] = AgentMcpServerRecord(
                     name=name,
@@ -149,6 +210,21 @@ def build_agent_registry(
                 continue
 
             try:
+                redaction_cursor = manager_redaction_cursor(
+                    client_manager, name, server
+                )
+            except Exception:
+                mcp_servers[name] = AgentMcpServerRecord(
+                    name=name,
+                    config=server,
+                    available=False,
+                    error="credential redaction history unavailable",
+                )
+                continue
+            before_env, before_headers = manager_redaction_maps(
+                client_manager, name, server
+            )
+            try:
                 tools = _run_async_blocking(
                     asyncio.wait_for(
                         client_manager.list_tools(name, server),
@@ -157,19 +233,72 @@ def build_agent_registry(
                     timeout_s=probe_timeout,
                 )
             except Exception as exc:
+                try:
+                    operation_env, operation_headers = (
+                        manager_redaction_maps_since(
+                            client_manager, name, server, redaction_cursor
+                        )
+                    )
+                except Exception:
+                    mcp_servers[name] = AgentMcpServerRecord(
+                        name=name,
+                        config=server,
+                        available=False,
+                        error="credential redaction history unavailable",
+                    )
+                    continue
+                error = redact_configured_value_tree(
+                    f"{type(exc).__name__}: {exc}",
+                    before_env,
+                    before_headers,
+                    operation_env,
+                    operation_headers,
+                )
                 mcp_servers[name] = AgentMcpServerRecord(
                     name=name,
                     config=server,
                     available=False,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=str(error),
                 )
                 continue
 
+            try:
+                operation_env, operation_headers = manager_redaction_maps_since(
+                    client_manager, name, server, redaction_cursor
+                )
+            except Exception:
+                mcp_servers[name] = AgentMcpServerRecord(
+                    name=name,
+                    config=server,
+                    available=False,
+                    error="credential redaction history unavailable",
+                )
+                continue
+            raw_tool_names = tuple(
+                normalize_mcp_tool(tool).name for tool in tools
+            )
+            sanitized_tools = [
+                _sanitize_probe_tool(
+                    tool,
+                    before_env,
+                    before_headers,
+                    operation_env,
+                    operation_headers,
+                )
+                for tool in tools
+            ]
             mcp_servers[name] = AgentMcpServerRecord(
                 name=name,
                 config=server,
                 available=True,
-                tools=tools,
+                tools=sanitized_tools,
+                raw_tool_names=raw_tool_names,
+                probe_redaction_values=_redaction_values(
+                    before_env,
+                    before_headers,
+                    operation_env,
+                    operation_headers,
+                ),
             )
 
     effective_dynamic_skills = (
@@ -202,20 +331,19 @@ def build_agent_registry(
             env, headers = manager_redaction_maps(
                 client_manager, server_name, record.config
             )
-            for tool in record.tools:
-                display_server_name = str(
-                    redact_configured_value_tree(server_name, env, headers)
-                )
-                display_tool_name = str(
-                    redact_configured_value_tree(tool.name, env, headers)
-                )
+            display_server_name = str(
+                redact_configured_value_tree(server_name, env, headers)
+            )
+            for raw_tool_name, tool in zip(
+                record.raw_tool_names, record.tools, strict=True
+            ):
                 dynamic_name = make_unique_tool_name(
                     f"agent_mcp__{display_server_name}",
-                    display_tool_name,
+                    tool.name,
                     seen_names,
                 )
                 mcp_tool_map[dynamic_name] = DynamicMcpToolRecord(
-                    dynamic_name, server_name, tool.name
+                    dynamic_name, server_name, raw_tool_name
                 )
 
     return AgentCapabilityRegistry(
@@ -233,4 +361,7 @@ def build_agent_registry(
         dynamic_skill_tool_map=skill_tool_map,
         dynamic_mcp_tool_map=mcp_tool_map,
         client_manager=client_manager,
+        include_project_skills=include_project_skills,
+        mcp_server_types=mcp_server_types,
+        scan_skills=scan_skills,
     )

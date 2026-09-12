@@ -194,6 +194,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     session_meta = tools["session_start"].meta
     assert "environment_info" not in tools
     assert "remote" not in tools
+    assert "remote_admin" not in tools
     assert search_meta is not None
     assert session_meta is not None
     assert search_meta["securitySchemes"][0]["type"] == "noauth"
@@ -218,7 +219,6 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
         "shell:read",
         "file:share",
     ]
-    assert tool_oauth_scopes("remote_admin") == ["remote:use"]
     assert tool_oauth_scopes("audit_tail") == ["audit:read"]
     assert all(tool.outputSchema is not None for tool in tools.values())
     bash_schema = tools["bash"].outputSchema
@@ -261,7 +261,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     )
     assert re.fullmatch(r"sess_[A-Za-z0-9_-]{22,}", structured["session_id"])
     assert structured["executor_id"] == harness.executor_id
-    assert structured["target"] == "local"
+    assert "target" not in structured
     assert structured["workdir"] == str(tmp_path)
     assert structured["workspace_root"] == str(tmp_path)
     assert "session_id" in structured["message"]
@@ -495,7 +495,9 @@ async def test_job_tool_schema_exposes_durable_companion_contract(
 
 
 @pytest.mark.asyncio
-async def test_tool_descriptions_include_runtime_limits(tmp_path, monkeypatch):
+async def test_machine_tool_descriptions_do_not_publish_control_limits(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_OUTPUT_BYTES", "12345")
     monkeypatch.setenv("WORKGATE_MAX_GREP_RESULTS", "678")
@@ -506,9 +508,11 @@ async def test_tool_descriptions_include_runtime_limits(tmp_path, monkeypatch):
     bash_description = tools["bash"].description or ""
     search_description = tools["search"].description or ""
     settings = get_settings()
-    assert str(settings.run_shell_default_timeout_s) in bash_description
-    assert str(settings.run_shell_max_timeout_s) in bash_description
-    assert str(settings.max_grep_results) in search_description
+    assert str(settings.run_shell_default_timeout_s) not in bash_description
+    assert str(settings.run_shell_max_timeout_s) not in bash_description
+    assert str(settings.max_grep_results) not in search_description
+    assert "bound executor" in bash_description
+    assert "bound executor" in search_description
 
 
 def test_transport_security_uses_exact_base_url_host(tmp_path, monkeypatch):
