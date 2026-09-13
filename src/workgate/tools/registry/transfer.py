@@ -123,6 +123,7 @@ async def transfer_begin_write(
     path: TransferPathArg,
     overwrite: TransferOverwriteArg = True,
     expected_bytes: TransferExpectedBytesArg = None,
+    transfer_id: TransferIdArg | None = None,
     session_id: OptionalSessionIdArg = None,
 ) -> TransferBeginWriteOutput:
     """Start an atomic chunked file write and return a transfer id."""
@@ -131,6 +132,7 @@ async def transfer_begin_write(
         path,
         overwrite,
         expected_bytes,
+        transfer_id,
         session_id=session_id,
     )
 
@@ -222,6 +224,7 @@ async def transfer_unpack_archive(
     dst_path: TransferDestinationPathArg,
     overwrite: TransferOverwriteArg = True,
     cleanup_archive: TransferCleanupArchiveArg = True,
+    transfer_id: TransferIdArg | None = None,
     session_id: OptionalSessionIdArg = None,
 ) -> TransferUnpackArchiveOutput:
     """Safely unpack a transfer archive into a destination directory."""
@@ -231,6 +234,7 @@ async def transfer_unpack_archive(
         dst_path,
         overwrite,
         cleanup_archive,
+        transfer_id,
         session_id=session_id,
     )
 

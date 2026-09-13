@@ -256,7 +256,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
 
     executor_transport.set_authenticated_hello_callback(authenticated_hello)
     session_copy_service = ControlSessionCopyService(
-        session_coordinator, executor_transport
+        session_coordinator,
+        executor_transport,
+        services.state_store,
+        config.data_dir,
     )
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config

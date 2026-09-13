@@ -16,6 +16,7 @@ from .transfer import (
     transfer_finish_write,
     transfer_pack_dir,
     transfer_read_chunk,
+    transfer_release_receipts,
     transfer_stat,
     transfer_unpack_archive,
     transfer_write_chunk,
@@ -116,6 +117,7 @@ def build_transfer_handlers(
             str(args["path"]),
             bool(args.get("overwrite", True)),
             args.get("expected_bytes"),
+            args.get("transfer_id"),
             session_id=session_id,
             workdir=args.get("workdir"),
             context=context,
@@ -197,8 +199,17 @@ def build_transfer_handlers(
             str(args["dst_path"]),
             bool(args.get("overwrite", True)),
             bool(args.get("cleanup_archive", True)),
+            args.get("transfer_id"),
             session_id=session_id,
             workdir=args.get("workdir"),
+            context=context,
+        )
+
+    async def release_receipts(args: dict[str, Any]) -> Any:
+        _admit_unbound_activity(store, args)
+        return await asyncio.to_thread(
+            transfer_release_receipts,
+            str(args["transfer_id"]),
             context=context,
         )
 
@@ -219,6 +230,7 @@ def build_transfer_handlers(
         "transfer_finish_write": finish_write,
         "transfer_pack_dir": pack_dir,
         "transfer_read_chunk": read_chunk,
+        "transfer_release_receipts": release_receipts,
         "transfer_stat": stat,
         "transfer_unpack_archive": unpack_archive,
         "transfer_write_chunk": write_chunk,

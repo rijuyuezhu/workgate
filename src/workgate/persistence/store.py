@@ -173,6 +173,11 @@ class StateLayout:
         return self.executor_dir / "profile.lock"
 
     @property
+    def executor_transfers_dir(self) -> Path:
+        """Return feature-specific durable executor transfer state."""
+        return self.executor_dir / "transfers"
+
+    @property
     def oauth_signing_secret_path(self) -> Path:
         """Return the persisted OAuth JWT signing secret path."""
         return self.root / "oauth-jwt-secret"

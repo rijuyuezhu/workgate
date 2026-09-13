@@ -1075,7 +1075,7 @@
               }
             ]
           },
-          "Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies use control-coordinated transfer between the two bound executors without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor."
+          "Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies export an immutable verified payload owned by control and import it into the existing destination session without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor."
         ],
         [
           {
@@ -7037,7 +7037,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies use control-coordinated transfer between the two bound executors without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor.",
+      "description": "Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies export an immutable verified payload owned by control and import it into the existing destination session without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor.",
       "inputSchema": {
         "properties": {
           "background": {
@@ -7450,7 +7450,7 @@
               },
               "resumed_bytes": {
                 "default": 0,
-                "description": "Bytes reused from a validated resumable HTTP transfer.",
+                "description": "Bytes reused from a validated transfer-specific import checkpoint.",
                 "title": "Resumed Bytes",
                 "type": "integer"
               },
@@ -7475,7 +7475,7 @@
                 "description": "Actual executor-level data transport used by the copy operation.",
                 "enum": [
                   "same_executor",
-                  "executor_rpc"
+                  "control_payload"
                 ],
                 "title": "Transport",
                 "type": "string"

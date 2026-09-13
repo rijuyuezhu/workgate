@@ -77,6 +77,14 @@ class TransferBeginWriteOutput(BaseModel):
         default=False,
         description="Whether an existing transaction was resumed.",
     )
+    completed: bool = Field(
+        default=False,
+        description="Whether this transfer id already committed the destination.",
+    )
+    sha256: str | None = Field(
+        default=None,
+        description="Committed destination SHA-256 when completion was recovered.",
+    )
 
 
 class TransferWriteChunkOutput(BaseModel):
@@ -166,4 +174,8 @@ class TransferUnpackArchiveOutput(BaseModel):
     cleanup_errors: list[str] = Field(
         default_factory=list,
         description="Non-fatal cleanup errors after the destination was committed.",
+    )
+    resumed: bool = Field(
+        default=False,
+        description="Whether a prior commit was recovered by transfer identity.",
     )

@@ -1,0 +1,255 @@
+"""Feature-specific durable checkpoints for cross-executor session copy."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Annotated, Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
+
+from ..persistence import StateStore
+from ..protocol.ids import ExecutorId, PayloadId, SessionId
+from .payload_store import PayloadStore
+
+CHECKPOINT_STORE_VERSION = 1
+UNMANAGED_CHECKPOINT_STALE_S = 24 * 60 * 60
+_CopyTransferId = Annotated[
+    str,
+    StringConstraints(pattern=r"^copy_[A-Za-z0-9_-]{22,}$", max_length=128),
+]
+_JobId = Annotated[
+    str,
+    StringConstraints(pattern=r"^job_[A-Za-z0-9_-]{12,}$", max_length=128),
+]
+_Sha256 = Annotated[
+    str,
+    StringConstraints(pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64),
+]
+
+
+class SessionCopyCheckpoint(BaseModel):
+    """Restart-critical facts for one cross-executor transfer only."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    transfer_id: _CopyTransferId
+    owner_job_id: _JobId | None = None
+    source_session_id: SessionId
+    source_executor_id: ExecutorId
+    destination_session_id: SessionId
+    destination_executor_id: ExecutorId
+    source_path: str
+    destination_path: str
+    kind: Literal["file", "dir"]
+    overwrite: bool
+    chunk_size: Annotated[int, Field(gt=0)]
+    payload_id: PayloadId
+    payload_size: Annotated[int, Field(ge=0)]
+    payload_sha256: _Sha256
+    source_resolved_path: str
+    import_path: str | None = None
+    import_resource_id: str | None = None
+    destination_resolved_path: str | None = None
+    entries: Annotated[int, Field(ge=0)] | None = None
+    chunks: Annotated[int, Field(ge=0)] = 0
+    resumed_bytes: Annotated[int, Field(ge=0)] = 0
+    cleanup_errors: list[str] = Field(default_factory=list)
+    last_known_step: Literal["exported", "importing", "imported"] = "exported"
+    created_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    updated_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+    @model_validator(mode="after")
+    def validate_step(self) -> SessionCopyCheckpoint:
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        if self.last_known_step in {"importing", "imported"} and (
+            self.import_path is None or self.import_resource_id is None
+        ):
+            raise ValueError("import checkpoint is missing import identity")
+        if self.last_known_step == "imported":
+            if self.destination_resolved_path is None:
+                raise ValueError(
+                    "imported checkpoint is missing destination path"
+                )
+            if self.kind == "dir" and self.entries is None:
+                raise ValueError(
+                    "imported directory checkpoint is missing entry count"
+                )
+        return self
+
+
+class _CheckpointRegistry(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    version: Literal[1]
+    transfers: dict[_CopyTransferId, SessionCopyCheckpoint]
+
+    @model_validator(mode="after")
+    def validate_transfer_keys(self) -> _CheckpointRegistry:
+        if any(
+            transfer_id != checkpoint.transfer_id
+            for transfer_id, checkpoint in self.transfers.items()
+        ):
+            raise ValueError(
+                "session-copy transfer identity does not match its key"
+            )
+        return self
+
+
+class SessionCopyCheckpointStore:
+    """Small synchronous repository for session-copy transfer checkpoints."""
+
+    def __init__(self, state_store: StateStore, payloads: PayloadStore) -> None:
+        self._state_store = state_store
+        self._payloads = payloads
+
+    @property
+    def path(self) -> Path:
+        return (
+            self._state_store.layout.control_dir / "session-copy-transfers.json"
+        )
+
+    def _load_unlocked(self) -> dict[str, SessionCopyCheckpoint]:
+        raw = self._state_store.read_json(self.path, max_bytes=2 * 1024 * 1024)
+        if raw is None:
+            return {}
+        try:
+            registry = _CheckpointRegistry.model_validate(raw)
+        except ValidationError:
+            raise RuntimeError(
+                "session-copy checkpoint store is invalid"
+            ) from None
+        return dict(registry.transfers)
+
+    def _save_unlocked(
+        self, transfers: dict[str, SessionCopyCheckpoint]
+    ) -> None:
+        registry = _CheckpointRegistry(
+            version=CHECKPOINT_STORE_VERSION,
+            transfers=transfers,
+        )
+        self._state_store.write_json(
+            self.path, registry.model_dump(mode="json")
+        )
+
+    def load(self, transfer_id: str) -> SessionCopyCheckpoint | None:
+        with self._state_store.transaction(self.path):
+            return self._load_unlocked().get(transfer_id)
+
+    def commit_export(
+        self,
+        *,
+        checkpoint: dict[str, Any],
+        staging_path: Path,
+        payload_size: int,
+        payload_sha256: str,
+    ) -> SessionCopyCheckpoint:
+        """Commit payload bytes and their first durable checkpoint under one feature lock."""
+        transfer_id = str(checkpoint["transfer_id"])
+        with self._state_store.transaction(self.path):
+            transfers = self._load_unlocked()
+            existing = transfers.get(transfer_id)
+            if existing is not None:
+                return existing
+            payload = self._payloads.commit_staging(
+                staging_path,
+                namespace="transfer",
+                size=payload_size,
+                sha256=payload_sha256,
+            )
+            now = time.time()
+            record = SessionCopyCheckpoint.model_validate(
+                {
+                    **checkpoint,
+                    "payload_id": payload.payload_id,
+                    "payload_size": payload.size,
+                    "payload_sha256": payload.sha256,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            transfers[transfer_id] = record
+            self._save_unlocked(transfers)
+            return record
+
+    def update(self, transfer_id: str, **changes: Any) -> SessionCopyCheckpoint:
+        with self._state_store.transaction(self.path):
+            transfers = self._load_unlocked()
+            current = transfers.get(transfer_id)
+            if current is None:
+                raise RuntimeError(
+                    f"session-copy checkpoint is missing: {transfer_id}"
+                )
+            updated = current.model_copy(
+                update={**changes, "updated_at": time.time()}
+            )
+            updated = SessionCopyCheckpoint.model_validate(updated.model_dump())
+            transfers[transfer_id] = updated
+            self._save_unlocked(transfers)
+            return updated
+
+    def remove(self, transfer_id: str) -> None:
+        """Persist checkpoint removal before deleting its immutable payload."""
+        payload_id: str | None = None
+        with self._state_store.transaction(self.path):
+            transfers = self._load_unlocked()
+            removed = transfers.pop(transfer_id, None)
+            if removed is None:
+                return
+            payload_id = str(removed.payload_id)
+            self._save_unlocked(transfers)
+        if payload_id is not None:
+            self._payloads.remove_payload(payload_id, namespace="transfer")
+
+    def prune(self) -> None:
+        """Drop stale sync transfers and checkpoints whose successful job no longer needs retry."""
+        now = time.time()
+        jobs_raw = self._state_store.read_json(
+            self._state_store.layout.jobs_store_path,
+            max_bytes=8 * 1024 * 1024,
+        )
+        jobs: dict[str, str] = {}
+        if isinstance(jobs_raw, dict):
+            raw_rows = jobs_raw.get("jobs")
+            if isinstance(raw_rows, list):
+                for row in raw_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    job_id = row.get("job_id")
+                    status = row.get("status")
+                    if isinstance(job_id, str) and isinstance(status, str):
+                        jobs[job_id] = status
+
+        with self._state_store.transaction(self.path):
+            transfers = self._load_unlocked()
+            kept: dict[str, SessionCopyCheckpoint] = {}
+            for transfer_id, checkpoint in transfers.items():
+                owner = checkpoint.owner_job_id
+                should_remove = False
+                if owner is None:
+                    should_remove = (
+                        now - checkpoint.updated_at
+                        >= UNMANAGED_CHECKPOINT_STALE_S
+                    )
+                else:
+                    status = jobs.get(owner)
+                    should_remove = status == "succeeded"
+                if not should_remove:
+                    kept[transfer_id] = checkpoint
+            if len(kept) != len(transfers):
+                self._save_unlocked(kept)
+            referenced = {
+                str(checkpoint.payload_id) for checkpoint in kept.values()
+            }
+            # Keep payload GC under the same feature lock as checkpoint mutation.
+            # That prevents a concurrently committed transfer payload from being
+            # mistaken for an orphan between registry snapshot and cleanup.
+            self._payloads.prune_unreferenced_payloads("transfer", referenced)
