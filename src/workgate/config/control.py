@@ -20,6 +20,9 @@ class ControlSettingsView(Protocol):
     def state_dir(self) -> Path: ...
 
     @property
+    def data_dir(self) -> Path: ...
+
+    @property
     def base_url(self) -> str | None: ...
 
     @property

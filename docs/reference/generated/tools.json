@@ -340,7 +340,7 @@
               }
             ]
           },
-          "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the snapshot succeeds, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap."
+          "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the payload is committed, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes the sensitive bearer token and URL exactly once plus a non-secret link_id for later management. list_file_links cannot recover the bearer; revoke_file_link uses link_id. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap."
         ],
         [
           {
@@ -364,7 +364,7 @@
               }
             ]
           },
-          "List tokenized file download links created by this session."
+          "List non-secret management metadata for links created by this session."
         ],
         [
           {
@@ -373,22 +373,22 @@
           {
             "items": [
               {
+                "description": "Non-secret link_id returned by create_file_link or list_file_links.",
+                "head": {
+                  "code": "link_id"
+                },
+                "note": "(string, required)"
+              },
+              {
                 "description": "Opaque shared agent/workspace session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
                 "note": "(string, required)"
-              },
-              {
-                "description": "Sensitive download token returned by create_file_link or list_file_links.",
-                "head": {
-                  "code": "token"
-                },
-                "note": "(string, required)"
               }
             ]
           },
-          "Revoke a tokenized file download link created by this session."
+          "Revoke a public file link by its non-secret management id."
         ]
       ]
     },
@@ -2402,7 +2402,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the snapshot succeeds, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap.",
+      "description": "Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the payload is committed, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes the sensitive bearer token and URL exactly once plus a non-secret link_id for later management. list_file_links cannot recover the bearer; revoke_file_link uses link_id. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap.",
       "inputSchema": {
         "properties": {
           "filename": {
@@ -2484,7 +2484,7 @@
       },
       "name": "create_file_link",
       "outputSchema": {
-        "description": "Created tokenized download-link summary.",
+        "description": "Created file link; bearer credentials are returned only at creation.",
         "properties": {
           "bytes": {
             "anyOf": [
@@ -2495,7 +2495,7 @@
                 "type": "null"
               }
             ],
-            "description": "Creation-time snapshot size in bytes.",
+            "default": null,
             "title": "Bytes"
           },
           "created_at": {
@@ -2507,11 +2507,11 @@
                 "type": "null"
               }
             ],
-            "description": "Unix timestamp when the link was created.",
+            "default": null,
             "title": "Created At"
           },
           "downloads": {
-            "description": "Number of completed downloads recorded so far.",
+            "default": 0,
             "title": "Downloads",
             "type": "integer"
           },
@@ -2524,7 +2524,7 @@
                 "type": "null"
               }
             ],
-            "description": "Unix timestamp when the link expires.",
+            "default": null,
             "title": "Expires At"
           },
           "filename": {
@@ -2536,16 +2536,21 @@
                 "type": "null"
               }
             ],
-            "description": "Browser response filename.",
+            "default": null,
             "title": "Filename"
           },
           "inline": {
-            "description": "Whether the browser response uses inline disposition.",
+            "default": false,
             "title": "Inline",
             "type": "boolean"
           },
+          "link_id": {
+            "description": "Opaque non-secret management identifier.",
+            "title": "Link Id",
+            "type": "string"
+          },
           "max_downloads": {
-            "description": "Maximum allowed downloads, or 0 for unlimited.",
+            "default": 0,
             "title": "Max Downloads",
             "type": "integer"
           },
@@ -2558,7 +2563,7 @@
                 "type": "null"
               }
             ],
-            "description": "Stored MIME type for the browser response.",
+            "default": null,
             "title": "Media Type"
           },
           "path": {
@@ -2570,38 +2575,35 @@
                 "type": "null"
               }
             ],
-            "description": "Workspace-relative source file path.",
+            "default": null,
             "title": "Path"
           },
           "token": {
-            "description": "Sensitive token identifying the download link.",
+            "description": "Sensitive bearer token returned only once.",
             "title": "Token",
             "type": "string"
           },
+          "token_fingerprint": {
+            "description": "Short non-secret fingerprint of the unrecoverable bearer token.",
+            "title": "Token Fingerprint",
+            "type": "string"
+          },
           "ttl_remaining_s": {
-            "description": "Approximate remaining lifetime in seconds.",
+            "default": 0,
             "title": "Ttl Remaining S",
             "type": "integer"
           },
           "url": {
-            "description": "Browser-accessible download URL containing the token.",
+            "description": "Browser-accessible URL containing the bearer token.",
             "title": "Url",
             "type": "string"
           }
         },
         "required": [
+          "link_id",
+          "token_fingerprint",
           "token",
-          "url",
-          "path",
-          "filename",
-          "inline",
-          "media_type",
-          "bytes",
-          "created_at",
-          "expires_at",
-          "ttl_remaining_s",
-          "downloads",
-          "max_downloads"
+          "url"
         ],
         "title": "CreateFileLinkOutput",
         "type": "object"
@@ -4423,7 +4425,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "List tokenized file download links created by this session.",
+      "description": "List non-secret management metadata for links created by this session.",
       "inputSchema": {
         "properties": {
           "include_expired": {
@@ -4462,7 +4464,7 @@
       "outputSchema": {
         "$defs": {
           "FileLinkSummary": {
-            "description": "Public summary of a tokenized download link.",
+            "description": "Non-secret management summary of one public file link.",
             "properties": {
               "bytes": {
                 "anyOf": [
@@ -4473,7 +4475,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Creation-time snapshot size in bytes.",
+                "default": null,
                 "title": "Bytes"
               },
               "created_at": {
@@ -4485,11 +4487,11 @@
                     "type": "null"
                   }
                 ],
-                "description": "Unix timestamp when the link was created.",
+                "default": null,
                 "title": "Created At"
               },
               "downloads": {
-                "description": "Number of completed downloads recorded so far.",
+                "default": 0,
                 "title": "Downloads",
                 "type": "integer"
               },
@@ -4502,7 +4504,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Unix timestamp when the link expires.",
+                "default": null,
                 "title": "Expires At"
               },
               "filename": {
@@ -4514,16 +4516,21 @@
                     "type": "null"
                   }
                 ],
-                "description": "Browser response filename.",
+                "default": null,
                 "title": "Filename"
               },
               "inline": {
-                "description": "Whether the browser response uses inline disposition.",
+                "default": false,
                 "title": "Inline",
                 "type": "boolean"
               },
+              "link_id": {
+                "description": "Opaque non-secret management identifier.",
+                "title": "Link Id",
+                "type": "string"
+              },
               "max_downloads": {
-                "description": "Maximum allowed downloads, or 0 for unlimited.",
+                "default": 0,
                 "title": "Max Downloads",
                 "type": "integer"
               },
@@ -4536,7 +4543,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Stored MIME type for the browser response.",
+                "default": null,
                 "title": "Media Type"
               },
               "path": {
@@ -4548,47 +4555,31 @@
                     "type": "null"
                   }
                 ],
-                "description": "Workspace-relative source file path.",
+                "default": null,
                 "title": "Path"
               },
-              "token": {
-                "description": "Sensitive token identifying the download link.",
-                "title": "Token",
+              "token_fingerprint": {
+                "description": "Short non-secret fingerprint of the unrecoverable bearer token.",
+                "title": "Token Fingerprint",
                 "type": "string"
               },
               "ttl_remaining_s": {
-                "description": "Approximate remaining lifetime in seconds.",
+                "default": 0,
                 "title": "Ttl Remaining S",
                 "type": "integer"
-              },
-              "url": {
-                "description": "Browser-accessible download URL containing the token.",
-                "title": "Url",
-                "type": "string"
               }
             },
             "required": [
-              "token",
-              "url",
-              "path",
-              "filename",
-              "inline",
-              "media_type",
-              "bytes",
-              "created_at",
-              "expires_at",
-              "ttl_remaining_s",
-              "downloads",
-              "max_downloads"
+              "link_id",
+              "token_fingerprint"
             ],
             "title": "FileLinkSummary",
             "type": "object"
           }
         },
-        "description": "Tokenized download-link listing.",
+        "description": "Non-secret public-link management listing.",
         "properties": {
           "links": {
-            "description": "Download-link summaries sorted newest first.",
             "items": {
               "$ref": "#/$defs/FileLinkSummary"
             },
@@ -5647,9 +5638,14 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Revoke a tokenized file download link created by this session.",
+      "description": "Revoke a public file link by its non-secret management id.",
       "inputSchema": {
         "properties": {
+          "link_id": {
+            "description": "Non-secret link_id returned by create_file_link or list_file_links.",
+            "title": "Link Id",
+            "type": "string"
+          },
           "session_id": {
             "description": "Opaque shared agent/workspace session_id returned by session_start.",
             "maxLength": 128,
@@ -5657,16 +5653,11 @@
             "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
-          },
-          "token": {
-            "description": "Sensitive download token returned by create_file_link or list_file_links.",
-            "title": "Token",
-            "type": "string"
           }
         },
         "required": [
           "session_id",
-          "token"
+          "link_id"
         ],
         "title": "revoke_file_linkArguments",
         "type": "object"
@@ -5684,22 +5675,20 @@
       },
       "name": "revoke_file_link",
       "outputSchema": {
-        "description": "Download-link revocation result.",
+        "description": "Result of revoking a public link by management id.",
         "properties": {
+          "link_id": {
+            "title": "Link Id",
+            "type": "string"
+          },
           "revoked": {
-            "description": "Whether a stored link was found and removed.",
             "title": "Revoked",
             "type": "boolean"
-          },
-          "token": {
-            "description": "Token that was requested for revocation.",
-            "title": "Token",
-            "type": "string"
           }
         },
         "required": [
           "revoked",
-          "token"
+          "link_id"
         ],
         "title": "RevokeFileLinkOutput",
         "type": "object"

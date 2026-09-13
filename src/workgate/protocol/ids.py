@@ -23,6 +23,14 @@ CommandId = Annotated[
     str,
     StringConstraints(pattern=r"^cmd_[A-Za-z0-9_-]{22,}$", max_length=128),
 ]
+PayloadId = Annotated[
+    str,
+    StringConstraints(pattern=r"^payload_[A-Za-z0-9_-]{22,}$", max_length=128),
+]
+LinkId = Annotated[
+    str,
+    StringConstraints(pattern=r"^link_[A-Za-z0-9_-]{22,}$", max_length=128),
+]
 DeviceCode = Annotated[
     str,
     StringConstraints(pattern=r"^pair_[A-Za-z0-9_-]{43,}$", max_length=160),
@@ -51,6 +59,16 @@ def new_session_id() -> str:
 def new_command_id() -> str:
     """Return a new ordinary-command correlation identifier."""
     return _new_opaque_id("cmd_")
+
+
+def new_payload_id() -> str:
+    """Return a new control-owned immutable payload identifier."""
+    return _new_opaque_id("payload_")
+
+
+def new_link_id() -> str:
+    """Return a new non-secret management identifier for one public link."""
+    return _new_opaque_id("link_")
 
 
 def new_device_code() -> str:

@@ -15,6 +15,7 @@ class ControlConfig:
     host: str
     port: int
     state_dir: Path
+    data_dir: Path
     base_url: str | None
     resolved_base_url: str
 
@@ -62,6 +63,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         host=settings.host,
         port=settings.port,
         state_dir=settings.state_dir.resolve(strict=False),
+        data_dir=settings.data_dir.resolve(strict=False),
         base_url=settings.base_url,
         resolved_base_url=settings.resolved_base_url,
         auth_mode=settings.auth_mode,

@@ -146,7 +146,7 @@ class ControlToolRouter:
             )
         if tool_name == "revoke_file_link":
             return await self._downloads.revoke(
-                session_id=str(args["session_id"]), token=str(args["token"])
+                session_id=str(args["session_id"]), link_id=str(args["link_id"])
             )
         result = await self._sessions.call_session_tool(tool_name, args)
         if tool_name == "view_image":

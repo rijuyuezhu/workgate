@@ -278,6 +278,26 @@
             "code": "platform user-state directory"
           },
           "Directory for durable Workgate runtime state."
+        ],
+        [
+          {
+            "code": "data_dir"
+          },
+          {
+            "lines": [
+              {
+                "code": "--data-dir"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_DATA_DIR"
+          },
+          "path",
+          {
+            "code": "platform persistent-data directory"
+          },
+          "Directory for durable Workgate application data such as immutable control payloads."
         ]
       ]
     },
@@ -2001,6 +2021,19 @@
       "description": "Directory for durable Workgate runtime state.",
       "env": "WORKGATE_STATE_DIR",
       "name": "state_dir",
+      "nullable": false,
+      "section": "Paths and state",
+      "type": "path",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--data-dir",
+      "default": "platform persistent-data directory",
+      "default_display": "platform persistent-data directory",
+      "description": "Directory for durable Workgate application data such as immutable control payloads.",
+      "env": "WORKGATE_DATA_DIR",
+      "name": "data_dir",
       "nullable": false,
       "section": "Paths and state",
       "type": "path",

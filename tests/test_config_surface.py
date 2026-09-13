@@ -148,6 +148,23 @@ def test_settings_expose_platform_owned_namespaces() -> None:
     assert settings.cache_dir == paths.cache_dir
 
 
+def test_data_dir_can_be_overridden_without_platform_specific_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "persistent-data"
+    monkeypatch.setenv("WORKGATE_DATA_DIR", str(configured))
+
+    assert load_settings().data_dir == configured.resolve()
+
+
+def test_configured_data_dir_must_be_absolute(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text('data_dir: "./relative-data"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="data_dir must be an absolute path"):
+        load_settings(config)
+
+
 def test_workspace_defaults_to_invocation_cwd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

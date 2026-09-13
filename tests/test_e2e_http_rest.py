@@ -78,9 +78,9 @@ async def test_http_rest_process_exercises_file_download_links(tmp_path):
         )
         revoked = await client.call_tool(
             "revoke_file_link",
-            {"session_id": session_id, "token": second["token"]},
+            {"session_id": session_id, "link_id": second["link_id"]},
         )
-        assert revoked == {"revoked": True, "token": second["token"]}
+        assert revoked == {"revoked": True, "link_id": second["link_id"]}
 
         async with httpx.AsyncClient(
             timeout=10, trust_env=False

@@ -40,9 +40,9 @@ IncludeExpiredArg = Annotated[
         description="Whether to include expired or exhausted links in the listing."
     ),
 ]
-DownloadTokenArg = Annotated[
+DownloadLinkIdArg = Annotated[
     str,
     Field(
-        description="Sensitive download token returned by create_file_link or list_file_links."
+        description="Non-secret link_id returned by create_file_link or list_file_links."
     ),
 ]

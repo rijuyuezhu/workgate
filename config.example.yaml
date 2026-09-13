@@ -32,6 +32,9 @@ ui_wallpaper: "aurora"
 # Directory for durable Workgate runtime state.
 # Default when omitted: platform user-state directory.
 # state_dir: "/absolute/path/to/workgate-state"
+# Directory for durable Workgate application data such as immutable control payloads.
+# Default when omitted: platform persistent-data directory.
+# data_dir: "/absolute/path/to/workgate-data"
 
 # Authentication and OAuth.
 # Authentication mode. Do not expose public services with none.

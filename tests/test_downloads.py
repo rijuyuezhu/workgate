@@ -11,9 +11,14 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tests.helpers import build_paired_http_app
-from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.config.settings import (
+    Settings,
+    clear_settings_cache,
+    get_settings,
+)
 from workgate.control.download_snapshot import (
     DownloadSnapshot,
+    assert_shareable_size,
     new_staging_path,
     open_private_staging,
     snapshot_directory,
@@ -32,6 +37,7 @@ from workgate.http.downloads import _token_fingerprint, download_routes
 def _reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_DATA_DIR", str(tmp_path / ".data"))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://files.example.test")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
@@ -46,10 +52,12 @@ def _register_file(
     max_downloads: int | None = None,
     inline: bool = False,
     session_id: str | None = None,
+    settings: Settings | None = None,
 ):
     data = source.read_bytes()
-    staging = new_staging_path()
-    with open_private_staging(staging) as handle:
+    data_dir = None if settings is None else settings.data_dir
+    staging = new_staging_path(data_dir=data_dir)
+    with open_private_staging(staging, data_dir=data_dir) as handle:
         handle.write(data)
     return _register_snapshot(
         DownloadSnapshot(
@@ -64,6 +72,7 @@ def _register_file(
         max_downloads=max_downloads,
         inline=inline,
         session_id=session_id,
+        settings=settings,
     )
 
 
@@ -71,6 +80,13 @@ def _public_session(client: FastAPITestClient) -> str:
     response = client.post("/tools/session_start", json={"workdir": "."})
     assert response.status_code == 200
     return str(response.json()["session_id"])
+
+
+def test_shareable_size_rejects_invalid_and_over_limit_values() -> None:
+    with pytest.raises(ValueError, match="File size is invalid"):
+        assert_shareable_size(-1, maximum=10)
+    with pytest.raises(ValueError, match="File is too large: 11"):
+        assert_shareable_size(11, maximum=10)
 
 
 def test_public_create_share_link_serves_executor_snapshot(
@@ -95,11 +111,46 @@ def test_public_create_share_link_serves_executor_snapshot(
     assert created.status_code == 200
     link = created.json()
     assert link["url"].startswith("https://files.example.test/download/")
+    assert link["link_id"].startswith("link_")
+    assert "payload_id" not in link
+    listed = client.get(
+        "/tools/file_link/list", params={"session_id": session_id}
+    ).json()["links"]
+    assert listed[0]["link_id"] == link["link_id"]
+    assert listed[0]["token_fingerprint"] == download_token_fingerprint(
+        link["token"]
+    )
+    assert "token" not in listed[0]
+    assert "url" not in listed[0]
 
     response = client.get(link["url"])
     assert response.status_code == 200
     assert response.text == "hello"
     assert "result.txt" in response.headers["content-disposition"]
+
+
+def test_explicit_control_data_dir_overrides_ambient_payload_location(
+    tmp_path, monkeypatch
+):
+    _reset(tmp_path, monkeypatch)
+    source = tmp_path / "hello.txt"
+    source.write_text("hello", encoding="utf-8")
+    ambient = get_settings()
+    explicit = ambient.model_copy(
+        update={"data_dir": tmp_path / "explicit-control-data"}
+    )
+
+    created = _register_file(source, settings=explicit)
+
+    explicit_payloads = explicit.data_dir / "control" / "payloads" / "download"
+    ambient_payloads = ambient.data_dir / "control" / "payloads" / "download"
+    assert len(list(explicit_payloads.glob("*.bin"))) == 1
+    assert not ambient_payloads.exists()
+
+    client = TestClient(Starlette(routes=download_routes(explicit)))
+    response = client.get(created.url)
+    assert response.status_code == 200
+    assert response.content == b"hello"
 
 
 def test_share_link_expiry_revocation_and_download_limit(tmp_path, monkeypatch):
@@ -109,7 +160,7 @@ def test_share_link_expiry_revocation_and_download_limit(tmp_path, monkeypatch):
     client = TestClient(Starlette(routes=download_routes()))
 
     revoked = _register_file(source, ttl_s=60)
-    assert _revoke_file_link_owned(revoked.token).revoked is True
+    assert _revoke_file_link_owned(revoked.link_id).revoked is True
     assert client.get(revoked.url).status_code == 404
 
     expired = _register_file(source, ttl_s=1)
@@ -140,18 +191,20 @@ def test_file_links_are_shared_session_owned(tmp_path, monkeypatch):
     second_links = client.get(
         "/tools/file_link/list", params={"session_id": second}
     ).json()["links"]
-    assert [item["token"] for item in first_links] == [link["token"]]
+    assert [item["link_id"] for item in first_links] == [link["link_id"]]
+    assert "token" not in first_links[0]
+    assert "url" not in first_links[0]
     assert second_links == []
 
     wrong_owner = client.post(
         "/tools/file_link/revoke",
-        json={"session_id": second, "token": link["token"]},
+        json={"session_id": second, "link_id": link["link_id"]},
     )
     assert wrong_owner.status_code == 200
     assert wrong_owner.json()["revoked"] is False
     owner = client.post(
         "/tools/file_link/revoke",
-        json={"session_id": first, "token": link["token"]},
+        json={"session_id": first, "link_id": link["link_id"]},
     )
     assert owner.status_code == 200
     assert owner.json()["revoked"] is True
@@ -179,6 +232,9 @@ async def test_file_link_tools_are_registered(tmp_path, monkeypatch):
     assert create_tool.inputSchema["properties"]["inline"]["default"] is False
     assert "url" in create_tool.outputSchema["properties"]
     assert "target" not in create_tool.outputSchema["properties"]
+    revoke_tool = tools["revoke_file_link"]
+    assert "link_id" in revoke_tool.inputSchema["properties"]
+    assert "token" not in revoke_tool.inputSchema["properties"]
 
 
 @pytest.mark.asyncio
@@ -202,6 +258,34 @@ def test_download_token_fingerprint_does_not_expose_token():
     assert fingerprint == download_token_fingerprint(token)
 
 
+def test_download_store_never_persists_bearer_token_or_url(
+    tmp_path, monkeypatch
+):
+    _reset(tmp_path, monkeypatch)
+    source = tmp_path / "private.txt"
+    source.write_text("payload", encoding="utf-8")
+
+    created = _register_file(source)
+    persisted = (get_settings().state_dir / "downloads.json").read_text(
+        encoding="utf-8"
+    )
+    parsed = json.loads(persisted)
+    record = parsed["links"][created.link_id]
+
+    assert created.token not in persisted
+    assert created.url not in persisted
+    assert parsed["version"] == 3
+    assert record["link_id"] == created.link_id
+    assert (
+        record["token_sha256"]
+        == hashlib.sha256(created.token.encode("utf-8")).hexdigest()
+    )
+    assert record["token_fingerprint"] == created.token_fingerprint
+    assert record["payload_id"].startswith("payload_")
+    assert "token" not in record
+    assert "url" not in record
+
+
 def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
     (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
@@ -216,7 +300,7 @@ def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
     assert (
         client.post(
             "/tools/file_link/revoke",
-            json={"session_id": session_id, "token": token},
+            json={"session_id": session_id, "link_id": link["link_id"]},
         ).status_code
         == 200
     )
@@ -230,12 +314,12 @@ def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
     assert fingerprint in log_text
     assert any(
         record.get("event") == "download_link_created"
-        and record.get("token_sha256") == fingerprint
+        and record.get("token_fingerprint") == fingerprint
         for record in records
     )
     assert any(
         record.get("event") == "download_link_revoked"
-        and record.get("token_sha256") == fingerprint
+        and record.get("token_fingerprint") == fingerprint
         for record in records
     )
 
@@ -342,8 +426,8 @@ def test_download_store_recovers_from_backup(tmp_path, monkeypatch):
     download_store_path.write_text("{broken", encoding="utf-8")
 
     recovered = _list_file_links_owned()
-    assert [item.token for item in recovered.links] == [link.token]
-    assert json.loads(download_store_path.read_text())["version"] == 2
+    assert [item.link_id for item in recovered.links] == [link.link_id]
+    assert json.loads(download_store_path.read_text())["version"] == 3
     assert backup_path().exists()
     if os.name != "nt":
         assert download_store_path.stat().st_mode & 0o777 == 0o600

@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
-import os
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
 from ..config.settings import get_settings
-from ..persistence import get_state_store
+from .payload_store import PAYLOAD_SUFFIX, PayloadStore
 
-SNAPSHOT_SUFFIX = ".bin"
-STAGING_SUFFIX = ".tmp"
+SNAPSHOT_SUFFIX = PAYLOAD_SUFFIX
 
 
 @dataclass(frozen=True)
@@ -27,35 +23,39 @@ class DownloadSnapshot:
     sha256: str
 
 
-def snapshot_directory() -> Path:
-    """Return the private control snapshot directory."""
-    path = get_state_store().layout.download_snapshots_dir
-    path.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        path.chmod(0o700)
-    return path
+def _payload_store(data_dir: Path | None = None) -> PayloadStore:
+    """Return the download payload store, with ambient settings only as compatibility fallback."""
+    root = get_settings().data_dir if data_dir is None else data_dir
+    return PayloadStore(root)
 
 
-def new_staging_path() -> Path:
-    """Allocate a private staging path in the snapshot directory."""
-    return snapshot_directory() / f".{uuid.uuid4().hex}{STAGING_SUFFIX}"
+def snapshot_directory(*, data_dir: Path | None = None) -> Path:
+    """Return the feature-owned immutable download payload directory."""
+    return _payload_store(data_dir).directory("download")
 
 
-def new_snapshot_path() -> Path:
-    """Allocate an opaque final snapshot path."""
-    return snapshot_directory() / f"{uuid.uuid4().hex}{SNAPSHOT_SUFFIX}"
+def new_staging_path(*, data_dir: Path | None = None) -> Path:
+    """Allocate a private staging path in the download payload directory."""
+    return _payload_store(data_dir).new_staging_path("download")
 
 
-def open_private_staging(path: Path) -> BinaryIO:
+def open_private_staging(
+    path: Path, *, data_dir: Path | None = None
+) -> BinaryIO:
     """Create and open one exclusive private staging file."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    return os.fdopen(descriptor, "wb")
+    return _payload_store(data_dir).open_private_staging(
+        path, namespace="download"
+    )
 
 
-def assert_shareable_size(size: int) -> None:
+def assert_shareable_size(size: int, *, maximum: int | None = None) -> None:
     """Reject invalid or over-limit public snapshot sizes."""
-    maximum = get_settings().file_download_max_file_bytes
+    limit = (
+        get_settings().file_download_max_file_bytes
+        if maximum is None
+        else int(maximum)
+    )
     if size < 0:
         raise ValueError("File size is invalid")
-    if maximum > 0 and size > maximum:
+    if limit > 0 and size > limit:
         raise ValueError(f"File is too large: {size}")

@@ -1,61 +1,44 @@
-"""Typed structured outputs for tokenized download-link tools."""
+"""Typed structured outputs for control-owned public file links."""
 
 from pydantic import BaseModel, Field
 
 
 class FileLinkSummary(BaseModel):
-    """Public summary of a tokenized download link."""
+    """Non-secret management summary of one public file link."""
 
-    token: str = Field(
-        description="Sensitive token identifying the download link."
+    link_id: str = Field(description="Opaque non-secret management identifier.")
+    token_fingerprint: str = Field(
+        description="Short non-secret fingerprint of the unrecoverable bearer token."
     )
-    url: str = Field(
-        description="Browser-accessible download URL containing the token."
-    )
-    path: str | None = Field(description="Workspace-relative source file path.")
-    filename: str | None = Field(description="Browser response filename.")
-    inline: bool = Field(
-        description="Whether the browser response uses inline disposition."
-    )
-    media_type: str | None = Field(
-        description="Stored MIME type for the browser response."
-    )
-    bytes: int | None = Field(
-        description="Creation-time snapshot size in bytes."
-    )
-    created_at: float | None = Field(
-        description="Unix timestamp when the link was created."
-    )
-    expires_at: float | None = Field(
-        description="Unix timestamp when the link expires."
-    )
-    ttl_remaining_s: int = Field(
-        description="Approximate remaining lifetime in seconds."
-    )
-    downloads: int = Field(
-        description="Number of completed downloads recorded so far."
-    )
-    max_downloads: int = Field(
-        description="Maximum allowed downloads, or 0 for unlimited."
-    )
+    path: str | None = None
+    filename: str | None = None
+    inline: bool = False
+    media_type: str | None = None
+    bytes: int | None = None
+    created_at: float | None = None
+    expires_at: float | None = None
+    ttl_remaining_s: int = 0
+    downloads: int = 0
+    max_downloads: int = 0
 
 
 class CreateFileLinkOutput(FileLinkSummary):
-    """Created tokenized download-link summary."""
+    """Created file link; bearer credentials are returned only at creation."""
+
+    token: str = Field(description="Sensitive bearer token returned only once.")
+    url: str = Field(
+        description="Browser-accessible URL containing the bearer token."
+    )
 
 
 class ListFileLinksOutput(BaseModel):
-    """Tokenized download-link listing."""
+    """Non-secret public-link management listing."""
 
-    links: list[FileLinkSummary] = Field(
-        description="Download-link summaries sorted newest first."
-    )
+    links: list[FileLinkSummary]
 
 
 class RevokeFileLinkOutput(BaseModel):
-    """Download-link revocation result."""
+    """Result of revoking a public link by management id."""
 
-    revoked: bool = Field(
-        description="Whether a stored link was found and removed."
-    )
-    token: str = Field(description="Token that was requested for revocation.")
+    revoked: bool
+    link_id: str

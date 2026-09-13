@@ -3,8 +3,8 @@
 from ...config.control import ControlSettingsView
 from ...schemas.input_models.downloads import (
     DownloadFilenameArg,
+    DownloadLinkIdArg,
     DownloadPathArg,
-    DownloadTokenArg,
     DownloadTtlArg,
     IncludeExpiredArg,
     InlineDownloadArg,
@@ -36,7 +36,7 @@ def _download_tools_enabled(settings: ControlSettingsView) -> bool:
 
 def _create_file_link_description(context: McpToolContext) -> str:
     settings = context.settings
-    return f"""Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the snapshot succeeds, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes a sensitive token and URL. Current TTL default/cap: {settings.file_download_default_ttl_s}/{settings.file_download_max_ttl_s} seconds. Current file-size cap: {settings.file_download_max_file_bytes} bytes, with 0 meaning no configured cap."""
+    return f"""Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the payload is committed, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes the sensitive bearer token and URL exactly once plus a non-secret link_id for later management. list_file_links cannot recover the bearer; revoke_file_link uses link_id. Current TTL default/cap: {settings.file_download_default_ttl_s}/{settings.file_download_max_ttl_s} seconds. Current file-size cap: {settings.file_download_max_file_bytes} bytes, with 0 meaning no configured cap."""
 
 
 @download_tool(
@@ -70,7 +70,7 @@ async def list_file_links(
     session_id: SessionIdArg,
     include_expired: IncludeExpiredArg = False,
 ) -> ListFileLinksOutput:
-    """List tokenized file download links created by this session."""
+    """List non-secret management metadata for links created by this session."""
     del session_id, include_expired
     raise RuntimeError("list_file_links requires control routing")
 
@@ -82,8 +82,8 @@ async def list_file_links(
     enabled=_download_tools_enabled,
 )
 async def revoke_file_link(
-    session_id: SessionIdArg, token: DownloadTokenArg
+    session_id: SessionIdArg, link_id: DownloadLinkIdArg
 ) -> RevokeFileLinkOutput:
-    """Revoke a tokenized file download link created by this session."""
-    del session_id, token
+    """Revoke a public file link by its non-secret management id."""
+    del session_id, link_id
     raise RuntimeError("revoke_file_link requires control routing")

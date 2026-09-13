@@ -120,7 +120,7 @@ def _add_public_routes_to_mcp_http_app(
             yield
 
     public_routes: list[BaseRoute] = [
-        *public_http_routes(),
+        *public_http_routes(settings),
         *(
             executor_routes(
                 runtime.executor_transport,
