@@ -51,6 +51,7 @@ from .tool_session.store import ToolSessionStore
 _TRANSFER_TMP_MARKER = "workgate-transfer"
 _TRANSFER_STALE_GRACE_S = 24 * 60 * 60
 _TRANSFER_TMP_PRUNE_MINIMUM_AGE_S = 24 * 60 * 60
+_TRANSFER_COMPLETED_RECEIPT_RETENTION_S = 30 * 24 * 60 * 60
 
 _ReceiptPath = Annotated[str, Field(min_length=1, max_length=8192)]
 _ReceiptSha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -368,6 +369,33 @@ def _write_write_receipt(
     context: TransferContext, path: Path, receipt: dict[str, Any]
 ) -> None:
     context.store.state_store.write_json(path, receipt)
+
+
+def _prune_completed_transfer_receipts(context: TransferContext) -> None:
+    """Bound old completed receipts without touching recovery-in-progress state."""
+    root = context.store.state_store.layout.executor_transfers_dir
+    if not root.exists():
+        return
+    cutoff = time.time() - _TRANSFER_COMPLETED_RECEIPT_RETENTION_S
+    for pattern, model in (
+        ("write-*.json", _WriteTransferReceipt),
+        ("unpack-*.json", _UnpackTransferReceipt),
+    ):
+        for path in root.glob(pattern):
+            with path_lock(path):
+                try:
+                    raw = context.store.state_store.read_json(
+                        path, max_bytes=64 * 1024
+                    )
+                    receipt = model.model_validate(raw)
+                except OSError, ValueError, ValidationError:
+                    continue
+                if receipt.status != "completed":
+                    continue
+                committed_at = receipt.committed_at
+                if committed_at is None or committed_at > cutoff:
+                    continue
+                context.store.state_store.remove(path)
 
 
 def _read_unpack_receipt(
@@ -836,6 +864,7 @@ def transfer_begin_write(
         raise ValueError("expected_bytes must be >= 0")
     destination.parent.mkdir(parents=True, exist_ok=True)
     _prune_transfer_scratch(context)
+    _prune_completed_transfer_receipts(context)
     requested_id = transfer_id or uuid.uuid4().hex
     temporary = _transfer_temp_path(destination, requested_id)
     receipt_path = _write_receipt_path(context, requested_id)
@@ -1537,6 +1566,7 @@ def transfer_unpack_archive(
     context: TransferContext,
 ) -> TransferUnpackArchiveOutput:
     """Validate in staging and transactionally replace a directory destination."""
+    _prune_completed_transfer_receipts(context)
     destination = _resolve_transfer_destination(
         dst_path,
         session_id=session_id,

@@ -249,6 +249,7 @@ class _CheckpointSessions:
     def __init__(self, records: tuple[ControlSessionRecord, ...]) -> None:
         self.records = {str(record.session_id): record for record in records}
         self.require_available: tuple[str, ...] | None = None
+        self.availability = "missing_on_executor"
 
     @asynccontextmanager
     async def session_admission(
@@ -267,6 +268,10 @@ class _CheckpointSessions:
         self, record: ControlSessionRecord
     ) -> None:
         _ = record
+
+    async def session_availability(self, session_id: str) -> str:
+        assert session_id in self.records
+        return self.availability
 
 
 class _DestinationOnlyTransport:
@@ -326,6 +331,11 @@ class _DestinationOnlyTransport:
                 "sha256": hashlib.sha256(self.data).hexdigest(),
                 "completed": True,
             }
+        elif op == "transfer_release_receipts":
+            result = {
+                "write_receipt_deleted": True,
+                "unpack_receipt_deleted": True,
+            }
         else:
             raise AssertionError(f"unexpected destination operation: {op}")
         return ExecutorResult(id=new_command_id(), ok=True, result=result)
@@ -364,7 +374,10 @@ def _checkpoint_service(
     if owner_job_id is not None:
         state_store.write_json(
             state_store.layout.jobs_store_path,
-            {"jobs": [{"job_id": owner_job_id, "status": "retrying"}]},
+            {
+                "version": 2,
+                "jobs": [{"job_id": owner_job_id, "status": "retrying"}],
+            },
         )
     service = ControlSessionCopyService(
         sessions,  # type: ignore[arg-type]
@@ -440,7 +453,10 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
 
     state_store.write_json(
         state_store.layout.jobs_store_path,
-        {"jobs": [{"job_id": owner_job_id, "status": "succeeded"}]},
+        {
+            "version": 2,
+            "jobs": [{"job_id": owner_job_id, "status": "succeeded"}],
+        },
     )
     service._checkpoints.prune()
     assert service._checkpoints.load(checkpoint.transfer_id) is None
@@ -997,3 +1013,75 @@ async def test_cross_executor_imported_checkpoint_returns_without_executor_conta
     assert transport.calls == []
     assert result.bytes == len(payload)
     assert result.resumed_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_imported_checkpoint_releases_receipts_when_destination_is_available(
+    tmp_path,
+):
+    payload = b"already-imported-online"
+    service, sessions, transport, checkpoint, _state_store = (
+        _checkpoint_service(tmp_path, payload)
+    )
+    checkpoint = service._checkpoints.update(
+        checkpoint.transfer_id,
+        import_path=checkpoint.destination_path,
+        import_resource_id=checkpoint.transfer_id,
+        destination_resolved_path=checkpoint.destination_path,
+        chunks=1,
+        last_known_step="imported",
+    )
+    sessions.availability = "available"
+
+    result = await service.copy(
+        src_session_id=str(checkpoint.source_session_id),
+        src_path=checkpoint.source_path,
+        dst_session_id=str(checkpoint.destination_session_id),
+        dst_path=checkpoint.destination_path,
+        kind="file",
+        chunk_size=checkpoint.chunk_size,
+        transfer_id=checkpoint.transfer_id,
+    )
+
+    assert result.bytes == len(payload)
+    assert transport.calls == ["transfer_release_receipts"]
+
+
+def test_managed_retry_availability_follows_feature_checkpoint(tmp_path):
+    owner_job_id = "job_" + "e" * 12
+    service, _sessions, _transport, checkpoint, _state_store = (
+        _checkpoint_service(
+            tmp_path,
+            b"retry-availability",
+            owner_job_id=owner_job_id,
+        )
+    )
+    references = (
+        str(checkpoint.source_session_id),
+        str(checkpoint.destination_session_id),
+    )
+
+    assert service.retry_require_available(owner_job_id, references) == (
+        str(checkpoint.destination_session_id),
+    )
+    assert (
+        service.retry_require_available("job_" + "f" * 12, references)
+        == references
+    )
+
+    service._checkpoints.update(
+        checkpoint.transfer_id,
+        import_path=checkpoint.destination_path,
+        import_resource_id=checkpoint.transfer_id,
+        destination_resolved_path=checkpoint.destination_path,
+        last_known_step="imported",
+    )
+    assert service.retry_require_available(owner_job_id, references) == ()
+
+    with pytest.raises(
+        RuntimeError, match="does not match managed job references"
+    ):
+        service.retry_require_available(
+            owner_job_id,
+            (str(checkpoint.source_session_id),),
+        )

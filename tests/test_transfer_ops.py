@@ -1350,3 +1350,77 @@ def test_unpack_receipt_inconsistent_durable_states_fail_closed(
             cleanup_archive=True,
             transfer_id=transfer_id,
         )
+
+
+def test_completed_receipt_gc_is_bounded_and_preserves_recovery_states(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    old = (
+        time.time() - transfer_ops._TRANSFER_COMPLETED_RECEIPT_RETENTION_S - 60
+    )
+    recent = time.time()
+
+    old_write = transfer_ops._write_receipt_path(context, "old-write")
+    active_write = transfer_ops._write_receipt_path(context, "active-write")
+    recent_write = transfer_ops._write_receipt_path(context, "recent-write")
+    for path, status, committed_at in (
+        (old_write, "completed", old),
+        (active_write, "committing", None),
+        (recent_write, "completed", recent),
+    ):
+        transfer_ops._write_write_receipt(
+            context,
+            path,
+            {
+                "destination": str(root / f"{path.stem}.bin"),
+                "overwrite": True,
+                "expected_bytes": 4,
+                "destination_existed": False,
+                "status": status,
+                "final_bytes": 4,
+                "final_sha256": hashlib.sha256(b"data").hexdigest(),
+                "updated_at": old,
+                **(
+                    {"committed_at": committed_at}
+                    if committed_at is not None
+                    else {}
+                ),
+            },
+        )
+
+    old_unpack = transfer_ops._unpack_receipt_path(context, "old-unpack")
+    active_unpack = transfer_ops._unpack_receipt_path(context, "active-unpack")
+    for path, status, committed_at in (
+        (old_unpack, "completed", old),
+        (active_unpack, "publishing", None),
+    ):
+        transfer_ops._write_unpack_receipt(
+            context,
+            path,
+            {
+                "destination": str(root / f"{path.stem}-dest"),
+                "archive": str(root / f"{path.stem}.tar.gz"),
+                "archive_display": f"{path.stem}.tar.gz",
+                "overwrite": True,
+                "cleanup_archive": True,
+                "entries": 1,
+                "destination_existed": False,
+                "status": status,
+                "created_at": old,
+                **(
+                    {"committed_at": committed_at}
+                    if committed_at is not None
+                    else {}
+                ),
+            },
+        )
+
+    transfer_ops._prune_completed_transfer_receipts(context)
+
+    assert not old_write.exists()
+    assert not old_unpack.exists()
+    assert active_write.exists()
+    assert active_unpack.exists()
+    assert recent_write.exists()

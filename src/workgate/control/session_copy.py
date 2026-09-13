@@ -243,6 +243,25 @@ class ControlSessionCopyService:
         """Return this runtime's shared-session-aware managed-copy handler."""
         return SESSION_COPY_MANAGED_KIND, self._run_managed_job
 
+    def retry_require_available(
+        self, job_id: str, session_ids: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """Return executor availability required by one managed-copy retry."""
+        checkpoint = self._checkpoints.load_for_owner_job(job_id)
+        if checkpoint is None:
+            return session_ids
+        expected = {
+            str(checkpoint.source_session_id),
+            str(checkpoint.destination_session_id),
+        }
+        if not expected.issubset(set(session_ids)):
+            raise RuntimeError(
+                "session-copy checkpoint does not match managed job references"
+            )
+        if checkpoint.last_known_step == "imported":
+            return ()
+        return (str(checkpoint.destination_session_id),)
+
     async def _run_managed_job(
         self, context: ManagedJobContext, payload: dict[str, Any]
     ) -> dict[str, Any]:
@@ -543,6 +562,11 @@ class ControlSessionCopyService:
     ) -> dict[str, Any]:
         current = checkpoint
         if current.last_known_step == "imported":
+            if (
+                await self._sessions.session_availability(str(dst.session_id))
+                == "available"
+            ):
+                current = await self._release_import_receipts(current, dst=dst)
             return self._checkpoint_metrics(current)
 
         import_path = current.import_path

@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from ..jobs.persistence import JOB_STORE_LEGACY_VERSIONS, JOB_STORE_VERSION
 from ..persistence import StateStore
 from ..protocol.ids import ExecutorId, PayloadId, SessionId
 from .payload_store import PayloadStore
@@ -144,6 +145,58 @@ class SessionCopyCheckpointStore:
         with self._state_store.transaction(self.path):
             return self._load_unlocked().get(transfer_id)
 
+    def load_for_owner_job(
+        self, owner_job_id: str
+    ) -> SessionCopyCheckpoint | None:
+        """Return the sole transfer checkpoint owned by one managed job."""
+        with self._state_store.transaction(self.path):
+            matches = [
+                checkpoint
+                for checkpoint in self._load_unlocked().values()
+                if checkpoint.owner_job_id == owner_job_id
+            ]
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"managed session-copy job owns multiple checkpoints: {owner_job_id}"
+            )
+        return matches[0] if matches else None
+
+    def _authoritative_job_statuses(self) -> dict[str, str] | None:
+        """Return validated primary job authority, or None when it is uncertain."""
+        try:
+            raw = self._state_store.read_json(
+                self._state_store.layout.jobs_store_path,
+                max_bytes=8 * 1024 * 1024,
+            )
+        except OSError, ValueError:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        version = raw.get("version")
+        if (
+            version != JOB_STORE_VERSION
+            and version not in JOB_STORE_LEGACY_VERSIONS
+        ):
+            return None
+        rows = raw.get("jobs")
+        if not isinstance(rows, list):
+            return None
+        statuses: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                return None
+            job_id = row.get("job_id")
+            status = row.get("status")
+            if (
+                not isinstance(job_id, str)
+                or not job_id
+                or not isinstance(status, str)
+                or not status
+            ):
+                return None
+            statuses[job_id] = status
+        return statuses
+
     def commit_export(
         self,
         *,
@@ -210,23 +263,9 @@ class SessionCopyCheckpointStore:
             self._payloads.remove_payload(payload_id, namespace="transfer")
 
     def prune(self) -> None:
-        """Drop stale sync transfers and checkpoints whose successful job no longer needs retry."""
+        """Drop transfer state that no longer has a public retry identity."""
         now = time.time()
-        jobs_raw = self._state_store.read_json(
-            self._state_store.layout.jobs_store_path,
-            max_bytes=8 * 1024 * 1024,
-        )
-        jobs: dict[str, str] = {}
-        if isinstance(jobs_raw, dict):
-            raw_rows = jobs_raw.get("jobs")
-            if isinstance(raw_rows, list):
-                for row in raw_rows:
-                    if not isinstance(row, dict):
-                        continue
-                    job_id = row.get("job_id")
-                    status = row.get("status")
-                    if isinstance(job_id, str) and isinstance(status, str):
-                        jobs[job_id] = status
+        jobs = self._authoritative_job_statuses()
 
         with self._state_store.transaction(self.path):
             transfers = self._load_unlocked()
@@ -239,9 +278,12 @@ class SessionCopyCheckpointStore:
                         now - checkpoint.updated_at
                         >= UNMANAGED_CHECKPOINT_STALE_S
                     )
-                else:
+                elif jobs is not None:
                     status = jobs.get(owner)
-                    should_remove = status == "succeeded"
+                    # Once a validated primary job store no longer contains
+                    # the owner, retention has removed the only public retry
+                    # identity and the transfer payload is unreachable.
+                    should_remove = status is None or status == "succeeded"
                 if not should_remove:
                     kept[transfer_id] = checkpoint
             if len(kept) != len(transfers):

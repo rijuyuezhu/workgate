@@ -137,15 +137,17 @@ def test_failed_export_checkpoint_write_leaves_collectable_orphan(
     assert list(payloads.directory("transfer").glob("payload_*.bin")) == []
 
 
-def test_missing_or_malformed_owner_job_never_prunes_managed_checkpoint(
-    tmp_path,
-):
+def test_malformed_job_authority_never_prunes_managed_checkpoint(tmp_path):
     owner_job_id = "job_" + "a" * 12
     state, payloads, checkpoints, checkpoint = _commit_checkpoint(tmp_path)
     checkpoint = checkpoints.update(
         checkpoint.transfer_id, owner_job_id=owner_job_id
     )
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
+
+    checkpoints.prune()
+    assert checkpoints.load(checkpoint.transfer_id) is not None
+    assert payload_path.exists()
 
     state.write_json(
         state.layout.jobs_store_path,
@@ -155,10 +157,22 @@ def test_missing_or_malformed_owner_job_never_prunes_managed_checkpoint(
     assert checkpoints.load(checkpoint.transfer_id) is not None
     assert payload_path.exists()
 
+
+def test_authoritative_missing_owner_prunes_unreachable_managed_checkpoint(
+    tmp_path,
+):
+    owner_job_id = "job_" + "c" * 12
+    state, payloads, checkpoints, checkpoint = _commit_checkpoint(tmp_path)
+    checkpoint = checkpoints.update(
+        checkpoint.transfer_id, owner_job_id=owner_job_id
+    )
+    payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     state.write_json(state.layout.jobs_store_path, {"version": 2, "jobs": []})
+
     checkpoints.prune()
-    assert checkpoints.load(checkpoint.transfer_id) is not None
-    assert payload_path.exists()
+
+    assert checkpoints.load(checkpoint.transfer_id) is None
+    assert not payload_path.exists()
 
 
 def test_confirmed_succeeded_owner_prunes_managed_checkpoint(tmp_path):

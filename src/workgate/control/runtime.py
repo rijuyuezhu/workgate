@@ -264,7 +264,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )
-    job_service = ControlJobService(session_coordinator)
+    job_service = ControlJobService(
+        session_coordinator,
+        managed_retry_availability=session_copy_service.retry_require_available,
+    )
     todo_service = ControlTodoService(
         control_state, services.state_store, config
     )

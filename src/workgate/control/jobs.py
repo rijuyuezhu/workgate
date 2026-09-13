@@ -20,6 +20,10 @@ from ..schemas.result_models.jobs import JobOutput
 from .session_copy import SESSION_COPY_MANAGED_KIND
 from .sessions import ControlSessionCoordinator
 
+ManagedRetryAvailabilityResolver = Callable[
+    [str, tuple[str, ...]], tuple[str, ...]
+]
+
 
 def _merge_counts(*counts: dict[str, int]) -> dict[str, int]:
     merged: dict[str, int] = {}
@@ -44,8 +48,15 @@ def _ordered_rows(
 class ControlJobService:
     """Merge control-managed jobs with executor-owned background resources."""
 
-    def __init__(self, sessions: ControlSessionCoordinator) -> None:
+    def __init__(
+        self,
+        sessions: ControlSessionCoordinator,
+        *,
+        managed_retry_availability: ManagedRetryAvailabilityResolver
+        | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._managed_retry_availability = managed_retry_availability
 
     async def execute(
         self,
@@ -144,7 +155,15 @@ class ControlJobService:
         local_rows = []
         for item in local_ids:
             session_ids = managed_job_referenced_session_ids(session_id, item)
-            async with self._sessions.session_admission(session_ids):
+            require_available = (
+                self._managed_retry_availability(item, session_ids)
+                if self._managed_retry_availability is not None
+                else session_ids
+            )
+            async with self._sessions.session_admission(
+                session_ids,
+                require_available=require_available,
+            ):
                 local_rows.append(
                     await retry_managed_job_without_session_admission(
                         session_id, item
