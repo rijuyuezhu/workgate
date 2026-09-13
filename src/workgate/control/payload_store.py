@@ -86,7 +86,6 @@ class PayloadStore:
         namespace: str,
         size: int,
         sha256: str,
-        payload_id: str | None = None,
     ) -> PayloadDescriptor:
         """Atomically publish already-verified staging bytes under an opaque id."""
         directory = self.directory(namespace)
@@ -96,7 +95,7 @@ class PayloadStore:
             raise ValueError(
                 "payload staging path is outside the payload directory"
             )
-        requested_id = payload_id or str(new_payload_id())
+        requested_id = str(new_payload_id())
         destination = self.path(requested_id, namespace=namespace)
         if destination.exists():
             raise FileExistsError(f"payload already exists: {requested_id}")

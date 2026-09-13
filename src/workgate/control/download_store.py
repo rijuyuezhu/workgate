@@ -9,10 +9,20 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Annotated, Any, BinaryIO, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from ..audit import audit
 from ..persistence import get_state_store
+from ..protocol.ids import LinkId, PayloadId, SessionId
 from ..utils.private_files import atomic_write_private_text, private_file_lock
 from .payload_store import PayloadStore
 
@@ -23,6 +33,65 @@ BACKUP_FILE_NAME = "downloads.json.bak"
 LOCK_FILE_NAME = "downloads.lock"
 STORE_LOCK = threading.RLock()
 _LEGACY_SNAPSHOT_SUFFIX = ".bin"
+_Sha256 = Annotated[
+    str,
+    StringConstraints(pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64),
+]
+_TokenFingerprint = Annotated[
+    str,
+    StringConstraints(pattern=r"^[0-9a-f]{16}$", min_length=16, max_length=16),
+]
+_NonEmptyString = Annotated[str, StringConstraints(min_length=1)]
+_NonNegativeInt = Annotated[int, Field(ge=0)]
+_NonNegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class _DurableFileLink(BaseModel):
+    """Strict current-version durable metadata for one public file link."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    link_id: LinkId
+    token_sha256: _Sha256
+    token_fingerprint: _TokenFingerprint
+    payload_id: PayloadId
+    display_path: str | None
+    filename: _NonEmptyString
+    inline: bool
+    media_type: _NonEmptyString
+    bytes: _NonNegativeInt
+    sha256: _Sha256
+    created_at: _NonNegativeFloat
+    expires_at: _NonNegativeFloat
+    downloads: _NonNegativeInt
+    max_downloads: _NonNegativeInt
+    session_id: SessionId | None
+    last_download_at: _NonNegativeFloat | None = None
+
+    @model_validator(mode="after")
+    def validate_relationships(self) -> _DurableFileLink:
+        if self.token_fingerprint != self.token_sha256[:16]:
+            raise ValueError("token_fingerprint does not match token_sha256")
+        if self.expires_at <= self.created_at:
+            raise ValueError("expires_at must be after created_at")
+        if self.max_downloads > 0 and self.downloads > self.max_downloads:
+            raise ValueError("downloads exceeds max_downloads")
+        return self
+
+
+class _DurableDownloadStore(BaseModel):
+    """Strict current-version durable public-link registry."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    version: Literal[3]
+    links: dict[LinkId, _DurableFileLink]
+
+    @model_validator(mode="after")
+    def validate_link_keys(self) -> _DurableDownloadStore:
+        if any(link_id != link.link_id for link_id, link in self.links.items()):
+            raise ValueError("link management identity does not match its key")
+        return self
 
 
 @dataclass(frozen=True)
@@ -68,38 +137,59 @@ def empty_store() -> dict[str, Any]:
     return {"version": STORE_VERSION, "links": {}}
 
 
-def _load_file(path: Path) -> _LoadedStore:
+def _invalid_store(path: Path, detail: str) -> ValueError:
+    return ValueError(f"invalid download store {path}: {detail}")
+
+
+def _validate_current_store(data: object, path: Path) -> dict[str, Any]:
+    try:
+        _DurableDownloadStore.model_validate(data)
+    except ValidationError:
+        raise _invalid_store(
+            path, "current-version structure is invalid"
+        ) from None
+    assert isinstance(data, dict)
+    links = data["links"]
+    assert isinstance(links, dict)
+    return {"version": STORE_VERSION, "links": dict(links)}
+
+
+def _serialize_current_store(store: dict[str, Any]) -> str:
+    store["version"] = STORE_VERSION
+    validated = _validate_current_store(store, store_path())
+    return json.dumps(validated, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _load_file(path: Path, *, audit_legacy: bool = True) -> _LoadedStore:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"unsupported or invalid download store: {path}")
     version = data.get("version")
-    if version not in {STORE_VERSION, *LEGACY_STORE_VERSIONS}:
+    if type(version) is not int or version not in {
+        STORE_VERSION,
+        *LEGACY_STORE_VERSIONS,
+    }:
         raise ValueError(f"unsupported or invalid download store: {path}")
     links = data.get("links")
     if not isinstance(links, dict):
         raise ValueError(f"download store links field is invalid: {path}")
     if version in LEGACY_STORE_VERSIONS:
-        audit(
-            "download_store_migrated",
-            path=str(path),
-            from_version=version,
-            to_version=STORE_VERSION,
-            migrated_links=0,
-            dropped_links=len(links),
-        )
+        if audit_legacy:
+            audit(
+                "download_store_migrated",
+                path=str(path),
+                from_version=version,
+                to_version=STORE_VERSION,
+                migrated_links=0,
+                dropped_links=len(links),
+            )
         return _LoadedStore(empty_store(), migrated=True)
-    normalized = {
-        str(link_id): link
-        for link_id, link in links.items()
-        if isinstance(link_id, str) and isinstance(link, dict)
-    }
-    return _LoadedStore({"version": STORE_VERSION, "links": normalized})
+    return _LoadedStore(_validate_current_store(data, path))
 
 
 def save_locked(store: dict[str, Any]) -> None:
     """Atomically persist primary state without retaining a stale recovery copy."""
-    store["version"] = STORE_VERSION
-    payload = json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True)
+    payload = _serialize_current_store(store)
     try:
         _remove_stale_backup()
     except OSError as exc:
@@ -129,8 +219,7 @@ def _restore_primary_from_backup(store: dict[str, Any]) -> None:
     succeeds.  If restoring the primary fails, the sole known-good backup must
     remain available for a later retry.
     """
-    store["version"] = STORE_VERSION
-    payload = json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True)
+    payload = _serialize_current_store(store)
     atomic_write_private_text(store_path(), payload)
 
 
@@ -139,18 +228,40 @@ def _remove_stale_backup() -> None:
     backup_path().unlink(missing_ok=True)
 
 
-def _backup_contains_legacy_bearers() -> bool:
-    """Return whether the recovery copy is still a plaintext-token store."""
+def _backup_matches_current_store(store: dict[str, Any]) -> bool:
+    """Return whether an existing recovery copy is a validated exact v3 copy."""
     backup = backup_path()
     if not backup.exists():
-        return False
+        return True
     try:
-        data = json.loads(backup.read_text(encoding="utf-8"))
+        loaded = _load_file(backup, audit_legacy=False)
     except OSError, ValueError, json.JSONDecodeError:
         return False
-    return (
-        isinstance(data, dict) and data.get("version") in LEGACY_STORE_VERSIONS
-    )
+    return not loaded.migrated and loaded.store == store
+
+
+def _refresh_unsafe_backup(store: dict[str, Any]) -> None:
+    """Scrub one stale/invalid backup and best-effort replace it from healthy v3 state."""
+    payload = _serialize_current_store(store)
+    try:
+        _remove_stale_backup()
+    except OSError as exc:
+        audit(
+            "download_store_backup_invalidation_failed",
+            path=str(backup_path()),
+            error=repr(exc),
+        )
+        raise RuntimeError(
+            "Download store backup could not be invalidated before refresh"
+        ) from exc
+    try:
+        atomic_write_private_text(backup_path(), payload)
+    except OSError as exc:
+        audit(
+            "download_store_backup_write_failed",
+            path=str(backup_path()),
+            error=repr(exc),
+        )
 
 
 def _prune_legacy_snapshot_directory() -> None:
@@ -190,12 +301,13 @@ def load_locked() -> dict[str, Any]:
             )
         else:
             current = _finish_migration(loaded)
-            if not loaded.migrated and _backup_contains_legacy_bearers():
-                # A previous migration may have committed v3 primary metadata
-                # before failing to scrub a plaintext-token backup.  Refuse to
-                # continue until the stale bearer-bearing recovery copy is
-                # refreshed or removed.
-                save_locked(current)
+            if not loaded.migrated and not _backup_matches_current_store(
+                current
+            ):
+                # A healthy current primary must never coexist with an unsafe
+                # recovery copy.  Legacy, malformed, unsupported, or merely
+                # stale-but-valid v3 backups are scrubbed before continuing.
+                _refresh_unsafe_backup(current)
                 _prune_legacy_snapshot_directory()
             return current
 

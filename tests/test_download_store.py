@@ -167,6 +167,91 @@ def test_failed_primary_recovery_preserves_valid_backup(tmp_path, monkeypatch):
     assert [link.link_id for link in recovered] == [created.link_id]
 
 
+def test_structurally_invalid_v3_primary_recovers_before_payload_cleanup(
+    tmp_path, monkeypatch
+):
+    _configure(tmp_path, monkeypatch)
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    primary = json.loads(store_path().read_text(encoding="utf-8"))
+    payload_id = primary["links"][created.link_id]["payload_id"]
+    payload_path = _payloads().path(payload_id, namespace="download")
+    assert payload_path.exists()
+
+    primary["links"][created.link_id] = "corrupt-record"
+    store_path().write_text(json.dumps(primary), encoding="utf-8")
+
+    recovered = _list_file_links_owned().links
+
+    assert [link.link_id for link in recovered] == [created.link_id]
+    assert payload_path.read_bytes() == b"payload"
+    assert json.loads(store_path().read_text(encoding="utf-8")) == json.loads(
+        backup_path().read_text(encoding="utf-8")
+    )
+
+
+def test_invalid_v3_scalar_field_recovers_from_valid_backup(
+    tmp_path, monkeypatch
+):
+    _configure(tmp_path, monkeypatch)
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    primary = json.loads(store_path().read_text(encoding="utf-8"))
+    primary["links"][created.link_id]["downloads"] = "not-an-integer"
+    store_path().write_text(json.dumps(primary), encoding="utf-8")
+
+    recovered = _list_file_links_owned().links
+
+    assert [link.link_id for link in recovered] == [created.link_id]
+
+
+def test_structurally_invalid_v3_primary_and_backup_fail_closed(
+    tmp_path, monkeypatch
+):
+    _configure(tmp_path, monkeypatch)
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    persisted = json.loads(store_path().read_text(encoding="utf-8"))
+    payload_id = persisted["links"][created.link_id]["payload_id"]
+    payload_path = _payloads().path(payload_id, namespace="download")
+    persisted["links"][created.link_id] = "corrupt-record"
+    broken = json.dumps(persisted)
+    store_path().write_text(broken, encoding="utf-8")
+    backup_path().write_text(broken, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="no valid backup"):
+        _list_file_links_owned()
+
+    assert payload_path.read_bytes() == b"payload"
+    assert store_path().read_text(encoding="utf-8") == broken
+    assert backup_path().read_text(encoding="utf-8") == broken
+
+
+def test_structural_validation_does_not_echo_corrupt_secret_to_audit(
+    tmp_path, monkeypatch
+):
+    _configure(tmp_path, monkeypatch)
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    persisted = json.loads(store_path().read_text(encoding="utf-8"))
+    secret = "should-never-reach-audit"
+    persisted["links"][created.link_id]["unexpected_secret"] = secret
+    broken = json.dumps(persisted)
+    store_path().write_text(broken, encoding="utf-8")
+    backup_path().write_text(broken, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="no valid backup"):
+        _list_file_links_owned()
+
+    assert secret not in get_settings().audit_log_path.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_legacy_live_path_links_are_dropped_on_migration(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
     state_dir = get_settings().state_dir
@@ -251,6 +336,52 @@ def test_v3_primary_scrubs_stale_legacy_backup(tmp_path, monkeypatch):
     refreshed = backup_path().read_text(encoding="utf-8")
     assert stale_token not in refreshed
     assert json.loads(refreshed)["version"] == 3
+
+
+def test_v3_primary_scrubs_malformed_backup_that_contains_legacy_bearer(
+    tmp_path, monkeypatch
+):
+    _configure(tmp_path, monkeypatch)
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    stale_token = "stale-plaintext-bearer"
+    malformed_backup = (
+        json.dumps({"version": 2, "links": {stale_token: {}}})
+        + " trailing-junk"
+    )
+    backup_path().write_text(malformed_backup, encoding="utf-8")
+
+    links = _list_file_links_owned().links
+
+    assert [link.link_id for link in links] == [created.link_id]
+    refreshed = backup_path().read_text(encoding="utf-8")
+    assert stale_token not in refreshed
+    assert json.loads(refreshed) == json.loads(
+        store_path().read_text(encoding="utf-8")
+    )
+
+
+def test_v3_primary_refreshes_stale_but_valid_v3_backup(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+    first_link = _create_file_link(str(first))
+    stale_backup = backup_path().read_text(encoding="utf-8")
+    second_link = _create_file_link(str(second))
+    backup_path().write_text(stale_backup, encoding="utf-8")
+
+    links = _list_file_links_owned().links
+
+    assert {link.link_id for link in links} == {
+        first_link.link_id,
+        second_link.link_id,
+    }
+    assert json.loads(backup_path().read_text(encoding="utf-8")) == json.loads(
+        store_path().read_text(encoding="utf-8")
+    )
 
 
 def test_revoke_persists_metadata_before_payload_cleanup(tmp_path, monkeypatch):
