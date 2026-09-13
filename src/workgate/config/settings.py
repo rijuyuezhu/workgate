@@ -17,7 +17,7 @@ AUDIT_PAYLOAD_STATE_DIR_NAME = "payloads"
 AGENT_AUTH_STATE_DIR_NAME = "agent_auth"
 REMOTE_TRANSFER_STATE_DIR_NAME = "remote_transfers"
 ENV_PREFIX = "WORKGATE_"
-_CONFIG_PATH_FIELDS = frozenset({"workspace_root", "state_dir"})
+_CONFIG_PATH_FIELDS = frozenset({"workspace_root", "state_dir", "data_dir"})
 _RESERVED_UI_PATHS = (
     "/api",
     "/downloads",
@@ -106,6 +106,8 @@ class Settings(BaseSettings):
     """Workspace filesystem boundary; defaults to the directory Workgate was started from."""
     state_dir: Path = Field(default_factory=lambda: app_paths().state_dir)
     """Directory for durable Workgate runtime state."""
+    data_dir: Path = Field(default_factory=lambda: app_paths().data_dir)
+    """Directory for durable Workgate application data such as immutable control payloads."""
 
     # Authentication and OAuth.
     auth_mode: Literal["none", "oauth"] = "oauth"
@@ -330,11 +332,6 @@ class Settings(BaseSettings):
         return app_paths().config_dir
 
     @property
-    def data_dir(self) -> Path:
-        """Platform-native Workgate persistent-data namespace."""
-        return app_paths().data_dir
-
-    @property
     def cache_dir(self) -> Path:
         """Platform-native Workgate regenerable-cache namespace."""
         return app_paths().cache_dir
@@ -359,6 +356,7 @@ class Settings(BaseSettings):
     @field_validator(
         "workspace_root",
         "state_dir",
+        "data_dir",
         mode="before",
     )
     @classmethod

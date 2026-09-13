@@ -172,6 +172,13 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         example_default="/absolute/path/to/workgate-state",
         dynamic_default_label="platform user-state directory",
     ),
+    SettingSpec(
+        "data_dir",
+        "Paths and state",
+        metavar="PATH",
+        example_default="/absolute/path/to/workgate-data",
+        dynamic_default_label="platform persistent-data directory",
+    ),
     SettingSpec("auth_mode", "Authentication and OAuth"),
     SettingSpec("auth_bypass_localhost", "Authentication and OAuth"),
     SettingSpec(

@@ -2,6 +2,7 @@
 
 import hashlib
 from collections.abc import Iterator
+from functools import partial
 from typing import Any
 from urllib.parse import quote
 
@@ -10,6 +11,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ..audit import audit
+from ..config.control import ControlSettingsView
 from ..control.download_store import ClaimedDownload, release_claim
 from ..control.downloads import DOWNLOAD_PREFIX, claim_download
 
@@ -56,11 +58,13 @@ def _stream_claim(claim: ClaimedDownload) -> Iterator[bytes]:
         release_claim(claim)
 
 
-async def download_endpoint(request: Request) -> Response:
+async def download_endpoint(
+    request: Request, *, settings: ControlSettingsView | None = None
+) -> Response:
     """Serve a tokenized immutable snapshot without requiring bearer auth."""
     token = request.path_params.get("token", "")
     is_get = request.method.upper() == "GET"
-    claimed = claim_download(token, consume=is_get)
+    claimed = claim_download(token, consume=is_get, settings=settings)
     if isinstance(claimed, dict):
         return download_error_response(claimed)
 
@@ -95,12 +99,19 @@ async def download_endpoint(request: Request) -> Response:
     )
 
 
-def download_routes() -> list[Route]:
+def download_routes(
+    settings: ControlSettingsView | None = None,
+) -> list[Route]:
     """Return public Starlette routes for generated download links."""
+    endpoint = (
+        download_endpoint
+        if settings is None
+        else partial(download_endpoint, settings=settings)
+    )
     return [
         Route(
             f"{DOWNLOAD_PREFIX}/{{token}}",
-            download_endpoint,
+            endpoint,
             methods=["GET", "HEAD"],
         )
     ]

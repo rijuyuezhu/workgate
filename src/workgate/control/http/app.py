@@ -56,7 +56,7 @@ def _install_public_routes(
     """Install public non-tool routes for the REST app. It returns public routes for oauth usage."""
     documentation_routes = _fastapi_documentation_routes(app)
     installed_routes = [
-        *public_http_routes(),
+        *public_http_routes(settings),
         *(
             executor_routes(
                 runtime.executor_transport, runtime.executor_pairing

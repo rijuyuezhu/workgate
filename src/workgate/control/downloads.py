@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import base64
 import binascii
-import contextlib
 import hashlib
 import mimetypes
-import os
 import secrets
 import time
 from pathlib import Path
@@ -16,8 +14,10 @@ from typing import Any
 from pydantic import JsonValue
 
 from ..audit import audit
+from ..config.control import ControlSettingsView
 from ..config.settings import get_settings
 from ..errors import exception_from_tool_error
+from ..protocol.ids import new_link_id
 from ..protocol.transfer import DEFAULT_TRANSFER_CHUNK_BYTES
 from ..schemas.result_models.downloads import (
     CreateFileLinkOutput,
@@ -32,19 +32,19 @@ from ..schemas.result_models.transfer import (
 from .download_snapshot import (
     DownloadSnapshot,
     assert_shareable_size,
-    new_snapshot_path,
     new_staging_path,
     open_private_staging,
 )
 from .download_store import (
     ClaimedDownload,
+    cleanup_unreferenced_payloads_locked,
     open_snapshot,
     prune_locked,
-    remove_snapshot,
     save_locked,
     transaction,
 )
 from .executor_transport import ExecutorTransport
+from .payload_store import PayloadStore
 from .sessions import ControlSessionCoordinator
 from .state import ControlSessionRecord
 
@@ -53,27 +53,47 @@ DOWNLOAD_PREFIX = "/download"
 
 def download_token_fingerprint(token: str) -> str:
     """Return a short non-secret fingerprint for a download token."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+    return download_token_sha256(token)[:16]
+
+
+def download_token_sha256(token: str) -> str:
+    """Return the full private lookup digest for a bearer token."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _now_s() -> float:
     return time.time()
 
 
-def _coerce_download_ttl(ttl_s: int | None) -> int:
-    settings = get_settings()
+def _active_settings(
+    settings: ControlSettingsView | None,
+) -> ControlSettingsView:
+    """Use explicit control authority, with ambient settings only for compatibility callers."""
+    return get_settings() if settings is None else settings
+
+
+def _payload_store(settings: ControlSettingsView | None) -> PayloadStore:
+    return PayloadStore(_active_settings(settings).data_dir)
+
+
+def _coerce_download_ttl(
+    ttl_s: int | None, settings: ControlSettingsView | None = None
+) -> int:
+    active = _active_settings(settings)
     requested = (
-        settings.file_download_default_ttl_s if ttl_s is None else int(ttl_s)
+        active.file_download_default_ttl_s if ttl_s is None else int(ttl_s)
     )
     if requested <= 0:
         raise ValueError("ttl_s must be positive")
-    return min(requested, settings.file_download_max_ttl_s)
+    return min(requested, active.file_download_max_ttl_s)
 
 
-def _coerce_max_downloads(max_downloads: int | None) -> int:
-    settings = get_settings()
+def _coerce_max_downloads(
+    max_downloads: int | None, settings: ControlSettingsView | None = None
+) -> int:
+    active = _active_settings(settings)
     requested = (
-        settings.file_download_default_max_downloads
+        active.file_download_default_max_downloads
         if max_downloads is None
         else int(max_downloads)
     )
@@ -102,10 +122,12 @@ def _infer_download_media_type(source_name: str, filename: str) -> str:
     )
 
 
-def _download_link_summary(token: str, link: dict[str, Any]) -> FileLinkSummary:
+def _download_link_summary(
+    link_id: str, link: dict[str, Any]
+) -> FileLinkSummary:
     return FileLinkSummary(
-        token=token,
-        url=f"{get_settings().resolved_base_url}{DOWNLOAD_PREFIX}/{token}",
+        link_id=link_id,
+        token_fingerprint=str(link.get("token_fingerprint") or ""),
         path=link.get("display_path"),
         filename=link.get("filename"),
         inline=bool(link.get("inline", False)),
@@ -127,104 +149,152 @@ def _register_snapshot(
     max_downloads: int | None,
     inline: bool,
     session_id: str | None,
+    settings: ControlSettingsView | None = None,
 ) -> CreateFileLinkOutput:
+    active = _active_settings(settings)
+    payloads = PayloadStore(active.data_dir)
     token = secrets.token_urlsafe(32)
+    token_sha256 = download_token_sha256(token)
+    link_id = str(new_link_id())
     created_at = _now_s()
     browser_filename = _safe_download_filename(filename, snapshot.source_name)
     media_type = _infer_download_media_type(
         snapshot.source_name, browser_filename
     )
-    final_path = new_snapshot_path()
+    payload_id: str | None = None
     link: dict[str, Any] | None = None
     try:
         with transaction() as store:
-            prune_locked(store, created_at)
-            os.replace(snapshot.staging_path, final_path)
-            with contextlib.suppress(OSError):
-                final_path.chmod(0o600)
-            snapshot_stat = final_path.stat()
+            cleanup_unreferenced_payloads_locked(store, payloads=payloads)
+            prune_locked(store, created_at, payloads=payloads)
+            payload = payloads.commit_staging(
+                snapshot.staging_path,
+                namespace="download",
+                size=snapshot.size,
+                sha256=snapshot.sha256,
+            )
+            payload_id = payload.payload_id
             link = {
+                "link_id": link_id,
+                "token_sha256": token_sha256,
+                "token_fingerprint": token_sha256[:16],
+                "payload_id": payload.payload_id,
                 "display_path": snapshot.display_path,
                 "filename": browser_filename,
                 "inline": bool(inline),
                 "media_type": media_type,
                 "bytes": snapshot.size,
                 "sha256": snapshot.sha256,
-                "snapshot_name": final_path.name,
-                "snapshot_device": int(snapshot_stat.st_dev),
-                "snapshot_inode": int(snapshot_stat.st_ino),
                 "created_at": created_at,
-                "expires_at": created_at + _coerce_download_ttl(ttl_s),
+                "expires_at": created_at + _coerce_download_ttl(ttl_s, active),
                 "downloads": 0,
-                "max_downloads": _coerce_max_downloads(max_downloads),
+                "max_downloads": _coerce_max_downloads(max_downloads, active),
                 "session_id": session_id,
             }
-            store["links"][token] = link
+            store["links"][link_id] = link
             save_locked(store)
+            cleanup_unreferenced_payloads_locked(store, payloads=payloads)
     except Exception:
-        final_path.unlink(missing_ok=True)
+        if payload_id is not None:
+            payloads.remove_payload(payload_id, namespace="download")
         raise
     finally:
         snapshot.staging_path.unlink(missing_ok=True)
     assert link is not None
     audit(
         "download_link_created",
+        link_id=link_id,
+        payload_id=payload_id,
         path=link["display_path"],
-        token_sha256=download_token_fingerprint(token),
+        token_fingerprint=token_sha256[:16],
         expires_at=link["expires_at"],
         inline=link["inline"],
     )
     return CreateFileLinkOutput(
-        **_download_link_summary(token, link).model_dump()
+        **_download_link_summary(link_id, link).model_dump(),
+        token=token,
+        url=f"{active.resolved_base_url}{DOWNLOAD_PREFIX}/{token}",
     )
 
 
 def _list_file_links_owned(
-    include_expired: bool = False, session_id: str | None = None
+    include_expired: bool = False,
+    session_id: str | None = None,
+    *,
+    settings: ControlSettingsView | None = None,
 ) -> ListFileLinksOutput:
+    payloads = _payload_store(settings)
     with transaction() as store:
+        cleanup_unreferenced_payloads_locked(store, payloads=payloads)
         changed = False
         if not include_expired:
-            changed = prune_locked(store, _now_s())
+            changed = prune_locked(store, _now_s(), payloads=payloads)
         links = [
-            _download_link_summary(token, link)
-            for token, link in store.get("links", {}).items()
+            _download_link_summary(link_id, link)
+            for link_id, link in store.get("links", {}).items()
             if session_id is None or link.get("session_id") == session_id
         ]
         if changed:
             save_locked(store)
+            cleanup_unreferenced_payloads_locked(store, payloads=payloads)
     links.sort(key=lambda item: item.created_at or 0, reverse=True)
     return ListFileLinksOutput(links=links)
 
 
 def _revoke_file_link_owned(
-    token: str, session_id: str | None = None
+    link_id: str,
+    session_id: str | None = None,
+    *,
+    settings: ControlSettingsView | None = None,
 ) -> RevokeFileLinkOutput:
+    payloads = _payload_store(settings)
     removed: dict[str, Any] | None = None
     with transaction() as store:
-        link = store.get("links", {}).get(token)
+        cleanup_unreferenced_payloads_locked(store, payloads=payloads)
+        link = store.get("links", {}).get(link_id)
         if link is not None and (
             session_id is None or link.get("session_id") == session_id
         ):
-            removed = store["links"].pop(token, None)
+            removed = store["links"].pop(link_id, None)
         if removed is not None:
-            remove_snapshot(removed)
             save_locked(store)
+            cleanup_unreferenced_payloads_locked(store, payloads=payloads)
     if removed is not None:
         audit(
             "download_link_revoked",
+            link_id=link_id,
+            payload_id=removed.get("payload_id"),
             path=removed.get("display_path"),
-            token_sha256=download_token_fingerprint(token),
+            token_fingerprint=removed.get("token_fingerprint"),
         )
-    return RevokeFileLinkOutput(revoked=removed is not None, token=token)
+    return RevokeFileLinkOutput(revoked=removed is not None, link_id=link_id)
+
+
+def _link_for_token(
+    links: dict[str, Any], token: str
+) -> tuple[str, dict[str, Any]] | None:
+    candidate = download_token_sha256(token)
+    for link_id, raw_link in links.items():
+        if not isinstance(raw_link, dict):
+            continue
+        stored = str(raw_link.get("token_sha256") or "")
+        if len(stored) == len(candidate) and secrets.compare_digest(
+            stored, candidate
+        ):
+            return str(link_id), raw_link
+    return None
 
 
 def claim_download(
-    token: str, *, consume: bool
+    token: str,
+    *,
+    consume: bool,
+    settings: ControlSettingsView | None = None,
 ) -> ClaimedDownload | dict[str, Any]:
     """Claim one validated control-owned snapshot for HTTP serving."""
-    settings = get_settings()
-    if not settings.file_download_enabled:
+    active = _active_settings(settings)
+    payloads = PayloadStore(active.data_dir)
+    if not active.file_download_enabled:
         return {
             "status_code": 404,
             "error": "download_disabled",
@@ -233,21 +303,26 @@ def claim_download(
     handle = None
     try:
         with transaction() as store:
+            cleanup_unreferenced_payloads_locked(store, payloads=payloads)
             links = store.get("links", {})
-            link = links.get(token)
-            if not link:
-                if prune_locked(store, _now_s()):
+            resolved = _link_for_token(links, token)
+            if resolved is None:
+                if prune_locked(store, _now_s(), payloads=payloads):
                     save_locked(store)
+                    cleanup_unreferenced_payloads_locked(
+                        store, payloads=payloads
+                    )
                 return {
                     "status_code": 404,
                     "error": "download_not_found",
                     "message": "Link not found",
                 }
+            link_id, link = resolved
             current = _now_s()
             if float(link.get("expires_at", 0)) <= current:
-                remove_snapshot(link)
-                links.pop(token, None)
+                links.pop(link_id, None)
                 save_locked(store)
+                cleanup_unreferenced_payloads_locked(store, payloads=payloads)
                 return {
                     "status_code": 410,
                     "error": "download_expired",
@@ -256,18 +331,18 @@ def claim_download(
             maximum = int(link.get("max_downloads", 0))
             downloads = int(link.get("downloads", 0))
             if maximum > 0 and downloads >= maximum:
-                remove_snapshot(link)
-                links.pop(token, None)
+                links.pop(link_id, None)
                 save_locked(store)
+                cleanup_unreferenced_payloads_locked(store, payloads=payloads)
                 return {
                     "status_code": 410,
                     "error": "download_exhausted",
                     "message": "Link has reached its use limit",
                 }
             if (
-                settings.file_download_max_file_bytes > 0
+                active.file_download_max_file_bytes > 0
                 and int(link.get("bytes", 0))
-                > settings.file_download_max_file_bytes
+                > active.file_download_max_file_bytes
             ):
                 return {
                     "status_code": 403,
@@ -275,25 +350,34 @@ def claim_download(
                     "message": "The snapshot exceeds the configured size limit",
                 }
             try:
-                handle, path = open_snapshot(link)
+                handle, path = open_snapshot(link, payloads=payloads)
             except FileNotFoundError, OSError, PermissionError, ValueError:
-                remove_snapshot(link)
-                links.pop(token, None)
+                links.pop(link_id, None)
                 save_locked(store)
+                cleanup_unreferenced_payloads_locked(store, payloads=payloads)
                 return {
                     "status_code": 404,
                     "error": "download_missing",
                     "message": "The shared file snapshot is unavailable",
                 }
             remove_after = False
+            changed = False
             if consume:
                 next_downloads = downloads + 1
                 link["downloads"] = next_downloads
                 link["last_download_at"] = current
                 remove_after = maximum > 0 and next_downloads >= maximum
+                changed = True
+            if prune_locked(
+                store,
+                current,
+                payloads=payloads,
+                exclude_link_id=link_id,
+            ):
+                changed = True
+            if changed:
                 save_locked(store)
-            if prune_locked(store, current, exclude_token=token):
-                save_locked(store)
+                cleanup_unreferenced_payloads_locked(store, payloads=payloads)
             return ClaimedDownload(
                 handle=handle,
                 path=path,
@@ -318,9 +402,11 @@ class ControlDownloadService:
         self,
         sessions: ControlSessionCoordinator,
         transport: ExecutorTransport,
+        settings: ControlSettingsView,
     ) -> None:
         self._sessions = sessions
         self._transport = transport
+        self._settings = settings
 
     async def create(
         self,
@@ -343,6 +429,7 @@ class ControlDownloadService:
                 max_downloads=max_downloads,
                 inline=inline,
                 session_id=session_id,
+                settings=self._settings,
             )
 
     async def list(
@@ -350,14 +437,18 @@ class ControlDownloadService:
     ) -> ListFileLinksOutput:
         """List control-owned links for one still-active shared session."""
         async with self._sessions.session_admission((session_id,)):
-            return _list_file_links_owned(include_expired, session_id)
+            return _list_file_links_owned(
+                include_expired, session_id, settings=self._settings
+            )
 
     async def revoke(
-        self, *, session_id: str, token: str
+        self, *, session_id: str, link_id: str
     ) -> RevokeFileLinkOutput:
         """Revoke one control-owned bearer link for an active shared session."""
         async with self._sessions.session_admission((session_id,)):
-            return _revoke_file_link_owned(token, session_id)
+            return _revoke_file_link_owned(
+                link_id, session_id, settings=self._settings
+            )
 
     async def _export_snapshot(
         self, record: ControlSessionRecord, path: str
@@ -370,13 +461,18 @@ class ControlDownloadService:
         if stat.type != "file" or stat.size is None or stat.sha256 is None:
             raise ValueError(f"Not a regular file: {path}")
         expected_size = int(stat.size)
-        assert_shareable_size(expected_size)
+        assert_shareable_size(
+            expected_size,
+            maximum=self._settings.file_download_max_file_bytes,
+        )
 
-        staging = new_staging_path()
+        staging = new_staging_path(data_dir=self._settings.data_dir)
         digest = hashlib.sha256()
         offset = 0
         try:
-            with open_private_staging(staging) as destination:
+            with open_private_staging(
+                staging, data_dir=self._settings.data_dir
+            ) as destination:
                 while offset < expected_size:
                     chunk = TransferReadChunkOutput.model_validate(
                         await self._call(

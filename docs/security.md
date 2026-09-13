@@ -148,9 +148,11 @@ The browser Human UI loads scripts only from the configured origin. Its Content 
 
 ## Tokenized file download links
 
-`create_file_link` creates a public `/download/{token}` URL for an immutable creation-time snapshot of one regular file in an explicit executor-backed session. Creating, listing, and revoking links remain protected tool operations; only the generated URL is public. Snapshot creation reads through the executor bound to `session_id`; once the private snapshot is registered, later executor availability or changes to the original file do not retarget the link.
+`create_file_link` creates a public `/download/{token}` URL for an immutable creation-time snapshot of one regular file in an explicit executor-backed session. Creating, listing, and revoking links remain protected tool operations; only the generated URL is public. Snapshot creation reads through the executor bound to `session_id`; once the immutable control payload is committed, later executor availability or changes to the original file do not retarget the link.
 
-Snapshots, primary/backup metadata, and the cross-process lock are stored privately under `state_dir`. Snapshot identity, size, and SHA-256 are checked before serving. Expired, revoked, exhausted, malformed, orphaned, and stale interrupted-transfer artifacts are removed. A corrupt primary store is recovered from its backup; if both copies are invalid, the service refuses to silently reset link state.
+The bearer token and bearer URL are returned only by `create_file_link`; Workgate never persists the plaintext bearer. Durable link metadata stores a non-secret `link_id`, the token SHA-256 and short fingerprint, the immutable `payload_id`, expiry/counter metadata, and file metadata. `list_file_links` exposes only the management identity/fingerprint and metadata, so it cannot reconstruct a lost bearer URL; `revoke_file_link` revokes by `link_id`. Incoming `/download/{token}` requests are matched against the stored SHA-256 digest.
+
+Immutable payload bytes are stored privately under feature-owned subdirectories of the XDG data namespace, for example `data_dir/control/payloads/download`; primary/backup link metadata and the cross-process lock remain under `state_dir`. Payload size and SHA-256 are checked before serving. Each feature cleans only its own staging and unreferenced committed payloads, so download cleanup cannot delete transfer payloads. Expired, revoked, exhausted, malformed, and stale interrupted-transfer resources are removed by the owning feature. A corrupt primary store is recovered from its backup; if both copies are invalid, the service refuses to silently reset current-version link state. This architecture migration is intentionally breaking: legacy version-1/version-2 registries that persisted plaintext bearer tokens are invalidated on upgrade and their old snapshot artifacts are pruned rather than carrying those bearer secrets forward.
 
 Browser responses use `attachment` disposition by default. Set `inline=true` only when browser rendering is needed. Inline responses add `Content-Security-Policy: sandbox`; all responses add `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Cache-Control: private, no-store`. MIME type is inferred from the original source filename first and the optional display filename second. These controls reduce browser risk but do not make untrusted active content harmless outside the sandboxed response.
 
@@ -162,7 +164,7 @@ Operational guidance:
 - Use short TTLs for sensitive artifacts and prefer `max_downloads=1` for one-time handoff.
 - Keep `inline=false` unless the user explicitly needs in-browser rendering.
 - Set `WORKGATE_FILE_DOWNLOAD_MAX_FILE_BYTES` to bound executor-to-control snapshot transfer size.
-- Keep `state_dir` private because it contains the snapshot bytes as well as link metadata.
+- Keep both `state_dir` and `data_dir` private: link-management metadata lives in state while immutable payload bytes live in data.
 - Disable the feature with `WORKGATE_FILE_DOWNLOAD_ENABLED=false` when public artifact URLs are not needed.
 - Remember that audit logs record link creation, revocation, and serving events, but the tokenized URL itself should still be treated as sensitive until expiry.
 

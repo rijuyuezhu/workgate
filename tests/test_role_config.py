@@ -11,6 +11,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     settings = Settings(
         workspace_root=tmp_path / "workspace",
         state_dir=tmp_path / "state",
+        data_dir=tmp_path / "data",
         host="127.0.0.2",
         port=9876,
         command_denylist=["shutdown"],
@@ -24,6 +25,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     assert control.host == "127.0.0.2"
     assert control.port == 9876
     assert control.state_dir == settings.state_dir.resolve(strict=False)
+    assert control.data_dir == settings.data_dir.resolve(strict=False)
     assert control.executor_max_pending_commands == 17
     assert not hasattr(control, "workspace_root")
     assert not hasattr(control, "command_denylist")
@@ -58,6 +60,7 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
     control_settings = Settings(
         workspace_root=tmp_path / "control-workspace",
         state_dir=tmp_path / "control-state",
+        data_dir=tmp_path / "control-data",
         mode="http",
     )
     executor_settings = Settings(
@@ -73,6 +76,9 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
     assert control.config.mode == "http"
     assert not hasattr(control, "legacy_settings")
     assert control.config.state_dir == control_settings.state_dir.resolve(
+        strict=False
+    )
+    assert control.config.data_dir == control_settings.data_dir.resolve(
         strict=False
     )
     assert (
