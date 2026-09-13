@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import hashlib
@@ -65,6 +66,42 @@ class ControlSessionCopyService:
         self._checkpoints = SessionCopyCheckpointStore(
             state_store, self._payloads
         )
+        self._abandonment_tasks: dict[str, asyncio.Task[None]] = {}
+        self._closed = False
+
+    async def aclose(self) -> None:
+        """Cancel process-local abandonment reconciliation tasks."""
+        self._closed = True
+        tasks = tuple(self._abandonment_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._abandonment_tasks.clear()
+
+    def schedule_reconcile_abandonments(self, *, executor_id: str) -> None:
+        """Run post-hello cleanup without blocking the hello response/poll startup."""
+        if self._closed:
+            return
+        existing = self._abandonment_tasks.get(executor_id)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(
+            self._run_scheduled_abandonments(executor_id),
+            name=f"workgate-session-copy-abandon-{executor_id}",
+        )
+        self._abandonment_tasks[executor_id] = task
+
+        def discard(completed: asyncio.Task[None]) -> None:
+            if self._abandonment_tasks.get(executor_id) is completed:
+                self._abandonment_tasks.pop(executor_id, None)
+
+        task.add_done_callback(discard)
+
+    async def _run_scheduled_abandonments(self, executor_id: str) -> None:
+        await asyncio.sleep(0)
+        with contextlib.suppress(Exception):
+            await self.reconcile_abandonments(executor_id=executor_id)
 
     async def copy(
         self,
@@ -275,12 +312,17 @@ class ControlSessionCopyService:
         ):
             self._checkpoints.remove(checkpoint.transfer_id)
             return
+        if checkpoint.import_path is None:
+            raise RuntimeError(
+                "abandoning import checkpoint is missing import path"
+            )
         result = await self._transport.call(
             str(checkpoint.destination_executor_id),
             "transfer_abandon_import",
             {
                 "transfer_id": checkpoint.transfer_id,
                 "kind": checkpoint.kind,
+                "import_path": checkpoint.import_path,
             },
         )
         if not result.ok:
@@ -288,6 +330,13 @@ class ControlSessionCopyService:
             raise RuntimeError(
                 "executor transfer_abandon_import failed: "
                 f"{result.error.code}: {result.error.message}"
+            )
+        if (
+            not isinstance(result.result, dict)
+            or result.result.get("safe_to_forget") is not True
+        ):
+            raise RuntimeError(
+                "executor transfer_abandon_import did not confirm safe cleanup"
             )
         self._checkpoints.remove(checkpoint.transfer_id)
 

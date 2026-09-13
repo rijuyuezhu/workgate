@@ -183,6 +183,7 @@ async def test_transfer_composition_preserves_unbound_command_admission(
                 "session_id": "sess-command",
                 "transfer_id": "transfer-1",
                 "kind": "dir",
+                "import_path": str(tmp_path / "scratch.tar.gz"),
             }
         )
         == "transfer_abandon_import"
@@ -199,7 +200,11 @@ async def test_transfer_composition_preserves_unbound_command_admission(
         "transfer_delete_temp_path",
         "transfer_abandon_import",
     ]
-    assert calls[-1][1] == ("transfer-1", "dir")
+    assert calls[-1][1] == (
+        "transfer-1",
+        "dir",
+        str(tmp_path / "scratch.tar.gz"),
+    )
     assert calls[-1][2]["context"].config == runtime.config
     assert (
         transfer_composition._transfer_session_id(

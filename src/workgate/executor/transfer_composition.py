@@ -220,6 +220,7 @@ def build_transfer_handlers(
             transfer_abandon_import,
             str(args["transfer_id"]),
             str(args["kind"]),
+            str(args["import_path"]),
             context=context,
         )
 

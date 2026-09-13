@@ -519,11 +519,11 @@ def _abandon_unpack_receipt(
             must_exist=False,
             follow_final_symlink=False,
         )
-        archive = _policy_path(
-            context,
+        archive = _resolve_transfer_path(
             receipt.archive,
             must_exist=False,
-            follow_final_symlink=False,
+            allow_temp=True,
+            context=context,
         )
     except OSError, ValueError, ValidationError:
         raise ValueError(
@@ -616,7 +616,11 @@ def _abandon_unpack_receipt(
 
 
 def transfer_abandon_import(
-    transfer_id: str, kind: str, *, context: TransferContext
+    transfer_id: str,
+    kind: str,
+    import_path: str | None = None,
+    *,
+    context: TransferContext,
 ) -> dict[str, bool]:
     """Make executor transfer state safe to forget after control abandonment."""
     if kind not in {"file", "dir"}:
@@ -651,7 +655,14 @@ def transfer_abandon_import(
                 discard_committed_destination=kind == "dir",
                 context=context,
             )
+    elif import_path is not None:
+        # Before finish_write there is no durable receipt yet.  The control
+        # checkpoint carries the exact import destination, so reuse the
+        # ordinary abort primitive to remove its deterministic temp+metadata.
+        transfer_abort_write(import_path, transfer_id, context=context)
+        write_reconciled = True
     return {
+        "safe_to_forget": write_reconciled or unpack_reconciled,
         "write_reconciled": write_reconciled,
         "unpack_reconciled": unpack_reconciled,
     }

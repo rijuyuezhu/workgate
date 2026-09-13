@@ -1603,7 +1603,11 @@ def test_abandon_import_without_receipts_is_idempotent(tmp_path, monkeypatch):
         "already-clean", "file", context=_context()
     )
 
-    assert result == {"write_reconciled": False, "unpack_reconciled": False}
+    assert result == {
+        "safe_to_forget": False,
+        "write_reconciled": False,
+        "unpack_reconciled": False,
+    }
 
 
 def test_abandon_directory_before_unpack_removes_committed_scratch_archive(
@@ -1637,9 +1641,103 @@ def test_abandon_directory_before_unpack_removes_committed_scratch_archive(
         transfer_id, "dir", context=context
     )
 
-    assert result == {"write_reconciled": True, "unpack_reconciled": False}
+    assert result == {
+        "safe_to_forget": True,
+        "write_reconciled": True,
+        "unpack_reconciled": False,
+    }
     assert not archive_path.exists()
     assert not transfer_ops._write_receipt_path(context, transfer_id).exists()
+
+
+def test_abandon_import_cleans_receiving_write_without_receipt(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-receiving-file"
+    begin = transfer_begin_write(
+        "receiving.bin",
+        overwrite=True,
+        expected_bytes=8,
+        transfer_id=transfer_id,
+    )
+    transfer_ops.transfer_write_bytes(
+        "receiving.bin", begin.transfer_id, 0, b"part", context=context
+    )
+    destination = root / "receiving.bin"
+    temporary = transfer_ops._transfer_temp_path(destination, transfer_id)
+    metadata_path = transfer_ops._transfer_metadata_path(temporary)
+    assert temporary.exists()
+    assert metadata_path.exists()
+    assert not transfer_ops._write_receipt_path(context, transfer_id).exists()
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "file", "receiving.bin", context=context
+    )
+
+    assert result == {
+        "safe_to_forget": True,
+        "write_reconciled": True,
+        "unpack_reconciled": False,
+    }
+    assert not temporary.exists()
+    assert not metadata_path.exists()
+    assert not destination.exists()
+
+
+def test_abandon_directory_receipt_allows_restricted_internal_scratch_archive(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_root))
+    root = _workspace(workspace, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-restricted-dir"
+    scratch = transfer_alloc_temp_path(".tar.gz")
+    archive = transfer_ops._resolve_temp_path(scratch.path, context=context)
+    assert root not in archive.parents
+    archive.write_bytes(b"archive")
+
+    destination = root / "restricted-dest"
+    destination.mkdir()
+    (destination / "old.txt").write_text("old", encoding="utf-8")
+    staging = root / f".restricted-dest.unpack-{transfer_id}"
+    staging.mkdir()
+    (staging / "new.txt").write_text("new", encoding="utf-8")
+    backup = root / f".restricted-dest.backup-{transfer_id}"
+    os.replace(destination, backup)
+    receipt_path = transfer_ops._unpack_receipt_path(context, transfer_id)
+    transfer_ops._write_unpack_receipt(
+        context,
+        receipt_path,
+        {
+            "destination": str(destination),
+            "archive": str(archive),
+            "archive_display": scratch.path,
+            "overwrite": True,
+            "cleanup_archive": True,
+            "entries": 1,
+            "destination_existed": True,
+            "status": "prepared",
+            "created_at": time.time(),
+        },
+    )
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", scratch.path, context=context
+    )
+
+    assert result["safe_to_forget"] is True
+    assert result["unpack_reconciled"] is True
+    assert (destination / "old.txt").read_text(encoding="utf-8") == "old"
+    assert not staging.exists()
+    assert not backup.exists()
+    assert not archive.exists()
+    assert not receipt_path.exists()
 
 
 @pytest.mark.parametrize(

@@ -284,6 +284,7 @@ class _DestinationOnlyTransport:
         self.data = bytearray()
         self.fail_release_receipts = False
         self.fail_abandon_import = False
+        self.abandon_safe_to_forget = True
 
     async def call(
         self,
@@ -343,7 +344,9 @@ class _DestinationOnlyTransport:
         elif op == "transfer_abandon_import":
             if self.fail_abandon_import:
                 raise RuntimeError("simulated abandon failure")
+            assert values["import_path"]
             result = {
+                "safe_to_forget": self.abandon_safe_to_forget,
                 "write_reconciled": True,
                 "unpack_reconciled": False,
             }
@@ -520,6 +523,41 @@ async def test_retention_abandonment_keeps_tombstone_until_executor_reconciles(
         "transfer_abandon_import",
         "transfer_abandon_import",
     ]
+
+
+@pytest.mark.asyncio
+async def test_abandonment_keeps_tombstone_until_executor_confirms_safe_cleanup(
+    tmp_path,
+):
+    payload = b"retain-authority-until-safe"
+    owner_job_id = "job_" + "e" * 12
+    service, _sessions, transport, checkpoint, state_store = (
+        _checkpoint_service(tmp_path, payload, owner_job_id=owner_job_id)
+    )
+    checkpoint = service._checkpoints.update(
+        checkpoint.transfer_id,
+        import_path=checkpoint.destination_path,
+        import_resource_id=checkpoint.transfer_id,
+        last_known_step="importing",
+    )
+    state_store.write_json(
+        state_store.layout.jobs_store_path,
+        {"version": 2, "jobs": []},
+    )
+    transport.abandon_safe_to_forget = False
+
+    await service.reconcile_abandonments()
+
+    retained = service._checkpoints.load(checkpoint.transfer_id)
+    assert retained is not None
+    assert retained.abandoning is True
+    assert retained.payload_retained is False
+
+    transport.abandon_safe_to_forget = True
+    await service.reconcile_abandonments(
+        executor_id=str(checkpoint.destination_executor_id)
+    )
+    assert service._checkpoints.load(checkpoint.transfer_id) is None
 
 
 @pytest.mark.asyncio

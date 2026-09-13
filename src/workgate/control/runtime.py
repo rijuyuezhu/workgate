@@ -1,7 +1,7 @@
 """Control composition owner for long-lived server processes."""
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from ..composition.services import (
@@ -141,20 +141,23 @@ class ControlRuntime:
                                     await self.managed_jobs_runtime.aclose()
                             finally:
                                 try:
-                                    await self.executor_pairing.aclose()
+                                    await self.session_copy_service.aclose()
                                 finally:
                                     try:
-                                        await self.session_coordinator.aclose()
+                                        await self.executor_pairing.aclose()
                                     finally:
                                         try:
-                                            if executor_transport_started:
-                                                await self.executor_transport.aclose()
+                                            await self.session_coordinator.aclose()
                                         finally:
                                             try:
-                                                self.control_state.close()
+                                                if executor_transport_started:
+                                                    await self.executor_transport.aclose()
                                             finally:
-                                                installation.close()
-                                                self._closed = True
+                                                try:
+                                                    self.control_state.close()
+                                                finally:
+                                                    installation.close()
+                                                    self._closed = True
             raise
         self._installation = installation
         self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
@@ -195,19 +198,22 @@ class ControlRuntime:
                 self._oauth_binding_installed = False
                 self._previous_oauth_state = None
             try:
-                await self.executor_pairing.aclose()
+                await self.session_copy_service.aclose()
             finally:
                 try:
-                    await self.session_coordinator.aclose()
+                    await self.executor_pairing.aclose()
                 finally:
                     try:
-                        await self.executor_transport.aclose()
+                        await self.session_coordinator.aclose()
                     finally:
                         try:
-                            self.control_state.close()
+                            await self.executor_transport.aclose()
                         finally:
-                            if installation is not None:
-                                installation.close()
+                            try:
+                                self.control_state.close()
+                            finally:
+                                if installation is not None:
+                                    installation.close()
         if managed_jobs_error is not None:
             raise managed_jobs_error
         if human_ui_error is not None:
@@ -259,10 +265,9 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
             executor_id, credential
         )
         await session_coordinator.reconcile_hello(executor_id)
-        with suppress(Exception):
-            await session_copy_service.reconcile_abandonments(
-                executor_id=executor_id
-            )
+        session_copy_service.schedule_reconcile_abandonments(
+            executor_id=executor_id
+        )
 
     executor_transport.set_authenticated_hello_callback(authenticated_hello)
     download_service = ControlDownloadService(
