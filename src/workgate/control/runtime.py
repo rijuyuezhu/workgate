@@ -1,7 +1,7 @@
 """Control composition owner for long-lived server processes."""
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
 from ..composition.services import (
@@ -247,20 +247,24 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_agent_sessions=config.max_agent_sessions,
         agent_session_retention_s=config.agent_session_retention_s,
     )
-
-    async def authenticated_hello(executor_id: str, credential: str) -> None:
-        await executor_pairing.complete_authenticated_hello(
-            executor_id, credential
-        )
-        await session_coordinator.reconcile_hello(executor_id)
-
-    executor_transport.set_authenticated_hello_callback(authenticated_hello)
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
         executor_transport,
         services.state_store,
         config.data_dir,
     )
+
+    async def authenticated_hello(executor_id: str, credential: str) -> None:
+        await executor_pairing.complete_authenticated_hello(
+            executor_id, credential
+        )
+        await session_coordinator.reconcile_hello(executor_id)
+        with suppress(Exception):
+            await session_copy_service.reconcile_abandonments(
+                executor_id=executor_id
+            )
+
+    executor_transport.set_authenticated_hello_callback(authenticated_hello)
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )

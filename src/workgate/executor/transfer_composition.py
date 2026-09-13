@@ -8,6 +8,7 @@ from .dispatch import ExecutorHandler
 from .tool_session.store import ToolSessionStore
 from .transfer import (
     TransferContext,
+    transfer_abandon_import,
     transfer_abort_write,
     transfer_alloc_temp_path,
     transfer_begin_write,
@@ -213,6 +214,15 @@ def build_transfer_handlers(
             context=context,
         )
 
+    async def abandon_import(args: dict[str, Any]) -> Any:
+        _admit_unbound_activity(store, args)
+        return await asyncio.to_thread(
+            transfer_abandon_import,
+            str(args["transfer_id"]),
+            str(args["kind"]),
+            context=context,
+        )
+
     async def delete_temp_path(args: dict[str, Any]) -> Any:
         _admit_unbound_activity(store, args)
         return await asyncio.to_thread(
@@ -222,6 +232,7 @@ def build_transfer_handlers(
         )
 
     return {
+        "transfer_abandon_import": abandon_import,
         "transfer_abort_write": abort_write,
         "transfer_alloc_temp_path": alloc_temp_path,
         "transfer_begin_write": begin_write,

@@ -282,6 +282,8 @@ class _DestinationOnlyTransport:
         self.destination_executor_id = destination_executor_id
         self.calls: list[str] = []
         self.data = bytearray()
+        self.fail_release_receipts = False
+        self.fail_abandon_import = False
 
     async def call(
         self,
@@ -332,9 +334,18 @@ class _DestinationOnlyTransport:
                 "completed": True,
             }
         elif op == "transfer_release_receipts":
+            if self.fail_release_receipts:
+                raise RuntimeError("simulated receipt release failure")
             result = {
                 "write_receipt_deleted": True,
                 "unpack_receipt_deleted": True,
+            }
+        elif op == "transfer_abandon_import":
+            if self.fail_abandon_import:
+                raise RuntimeError("simulated abandon failure")
+            result = {
+                "write_reconciled": True,
+                "unpack_reconciled": False,
             }
         else:
             raise AssertionError(f"unexpected destination operation: {op}")
@@ -423,6 +434,7 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
     service, sessions, transport, checkpoint, state_store = _checkpoint_service(
         tmp_path, payload, owner_job_id=owner_job_id
     )
+    transport.fail_release_receipts = True
 
     result = await service.copy(
         src_session_id=str(checkpoint.source_session_id),
@@ -446,6 +458,7 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
     imported = service._checkpoints.load(checkpoint.transfer_id)
     assert imported is not None
     assert imported.last_known_step == "imported"
+    assert imported.receipts_released is False
     payload_path = service._payloads.path(
         checkpoint.payload_id, namespace="transfer"
     )
@@ -458,9 +471,55 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
             "jobs": [{"job_id": owner_job_id, "status": "succeeded"}],
         },
     )
-    service._checkpoints.prune()
+    await service.reconcile_abandonments()
     assert service._checkpoints.load(checkpoint.transfer_id) is None
     assert not payload_path.exists()
+    assert "transfer_abandon_import" in transport.calls
+
+
+@pytest.mark.asyncio
+async def test_retention_abandonment_keeps_tombstone_until_executor_reconciles(
+    tmp_path,
+):
+    payload = b"retained-until-safe-abandon"
+    owner_job_id = "job_" + "d" * 12
+    service, _sessions, transport, checkpoint, state_store = (
+        _checkpoint_service(tmp_path, payload, owner_job_id=owner_job_id)
+    )
+    checkpoint = service._checkpoints.update(
+        checkpoint.transfer_id,
+        import_path=checkpoint.destination_path,
+        import_resource_id=checkpoint.transfer_id,
+        last_known_step="importing",
+    )
+    payload_path = service._payloads.path(
+        checkpoint.payload_id, namespace="transfer"
+    )
+    state_store.write_json(
+        state_store.layout.jobs_store_path,
+        {"version": 2, "jobs": []},
+    )
+    transport.fail_abandon_import = True
+
+    await service.reconcile_abandonments()
+
+    retained = service._checkpoints.load(checkpoint.transfer_id)
+    assert retained is not None
+    assert retained.abandoning is True
+    assert retained.payload_retained is False
+    assert not payload_path.exists()
+    assert transport.calls == ["transfer_abandon_import"]
+
+    transport.fail_abandon_import = False
+    await service.reconcile_abandonments(
+        executor_id=str(checkpoint.destination_executor_id)
+    )
+
+    assert service._checkpoints.load(checkpoint.transfer_id) is None
+    assert transport.calls == [
+        "transfer_abandon_import",
+        "transfer_abandon_import",
+    ]
 
 
 @pytest.mark.asyncio

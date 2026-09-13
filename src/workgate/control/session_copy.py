@@ -82,7 +82,7 @@ class ControlSessionCopyService:
         owner_job_id: str | None = None,
     ) -> SessionCopyOutput:
         chunk_bytes = normalize_chunk_size(chunk_size)
-        self._checkpoints.prune()
+        await self.reconcile_abandonments()
         active_transfer_id = transfer_id or (
             "copy_" + secrets.token_urlsafe(16)
         )
@@ -146,7 +146,19 @@ class ControlSessionCopyService:
                     )
                 finally:
                     if owner_job_id is None:
-                        self._checkpoints.remove(active_transfer_id)
+                        with contextlib.suppress(Exception):
+                            abandoned = self._checkpoints.prepare_abandonment(
+                                active_transfer_id
+                            )
+                            if abandoned is not None and (
+                                abandoned.last_known_step == "exported"
+                                or abandoned.receipts_released
+                                or await self._sessions.session_availability(
+                                    str(dst.session_id)
+                                )
+                                == "available"
+                            ):
+                                await self._reconcile_abandonment(abandoned)
             await self._report(
                 progress,
                 phase="stat",
@@ -243,6 +255,42 @@ class ControlSessionCopyService:
         """Return this runtime's shared-session-aware managed-copy handler."""
         return SESSION_COPY_MANAGED_KIND, self._run_managed_job
 
+    async def reconcile_abandonments(
+        self, *, executor_id: str | None = None
+    ) -> None:
+        """Finish feature-local cleanup before dropping transfer authority."""
+        checkpoints = self._checkpoints.prepare_abandonments(
+            executor_id=executor_id
+        )
+        for checkpoint in checkpoints:
+            with contextlib.suppress(Exception):
+                await self._reconcile_abandonment(checkpoint)
+
+    async def _reconcile_abandonment(
+        self, checkpoint: SessionCopyCheckpoint
+    ) -> None:
+        if (
+            checkpoint.last_known_step == "exported"
+            or checkpoint.receipts_released
+        ):
+            self._checkpoints.remove(checkpoint.transfer_id)
+            return
+        result = await self._transport.call(
+            str(checkpoint.destination_executor_id),
+            "transfer_abandon_import",
+            {
+                "transfer_id": checkpoint.transfer_id,
+                "kind": checkpoint.kind,
+            },
+        )
+        if not result.ok:
+            assert result.error is not None
+            raise RuntimeError(
+                "executor transfer_abandon_import failed: "
+                f"{result.error.code}: {result.error.message}"
+            )
+        self._checkpoints.remove(checkpoint.transfer_id)
+
     def retry_require_available(
         self, job_id: str, session_ids: tuple[str, ...]
     ) -> tuple[str, ...]:
@@ -250,6 +298,8 @@ class ControlSessionCopyService:
         checkpoint = self._checkpoints.load_for_owner_job(job_id)
         if checkpoint is None:
             return session_ids
+        if checkpoint.abandoning:
+            raise RuntimeError("session-copy checkpoint is being abandoned")
         expected = {
             str(checkpoint.source_session_id),
             str(checkpoint.destination_session_id),
@@ -674,6 +724,11 @@ class ControlSessionCopyService:
                 checkpoint = self._checkpoints.update(
                     checkpoint.transfer_id, cleanup_errors=cleanup_errors
                 )
+        else:
+            checkpoint = self._checkpoints.update(
+                checkpoint.transfer_id,
+                receipts_released=True,
+            )
         return checkpoint
 
     async def _write_payload_to_executor(
@@ -824,6 +879,8 @@ class ControlSessionCopyService:
         chunk_size: int,
         owner_job_id: str | None,
     ) -> None:
+        if checkpoint.abandoning:
+            raise RuntimeError("session-copy checkpoint is being abandoned")
         expected = {
             "source_session_id": str(src.session_id),
             "source_executor_id": str(src.executor_id),

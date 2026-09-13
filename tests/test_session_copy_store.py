@@ -66,7 +66,7 @@ def test_corrupt_checkpoint_store_fails_closed_without_payload_cleanup(
     with pytest.raises(RuntimeError, match="checkpoint store is invalid"):
         checkpoints.load(checkpoint.transfer_id)
     with pytest.raises(RuntimeError, match="checkpoint store is invalid"):
-        checkpoints.prune()
+        checkpoints.prepare_abandonments()
 
     assert payload_path.read_bytes() == b"payload"
 
@@ -133,7 +133,7 @@ def test_failed_export_checkpoint_write_leaves_collectable_orphan(
     orphan_files = list(payloads.directory("transfer").glob("payload_*.bin"))
     assert len(orphan_files) == 1
     monkeypatch.setattr(state, "write_json", real_write_json)
-    checkpoints.prune()
+    checkpoints.prepare_abandonments()
     assert list(payloads.directory("transfer").glob("payload_*.bin")) == []
 
 
@@ -145,7 +145,7 @@ def test_malformed_job_authority_never_prunes_managed_checkpoint(tmp_path):
     )
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
 
-    checkpoints.prune()
+    assert checkpoints.prepare_abandonments() == ()
     assert checkpoints.load(checkpoint.transfer_id) is not None
     assert payload_path.exists()
 
@@ -153,7 +153,7 @@ def test_malformed_job_authority_never_prunes_managed_checkpoint(tmp_path):
         state.layout.jobs_store_path,
         {"version": 2, "jobs": [{"job_id": 17, "status": "succeeded"}]},
     )
-    checkpoints.prune()
+    assert checkpoints.prepare_abandonments() == ()
     assert checkpoints.load(checkpoint.transfer_id) is not None
     assert payload_path.exists()
 
@@ -169,9 +169,13 @@ def test_authoritative_missing_owner_prunes_unreachable_managed_checkpoint(
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     state.write_json(state.layout.jobs_store_path, {"version": 2, "jobs": []})
 
-    checkpoints.prune()
+    candidates = checkpoints.prepare_abandonments()
 
-    assert checkpoints.load(checkpoint.transfer_id) is None
+    assert [item.transfer_id for item in candidates] == [checkpoint.transfer_id]
+    retained = checkpoints.load(checkpoint.transfer_id)
+    assert retained is not None
+    assert retained.abandoning is True
+    assert retained.payload_retained is False
     assert not payload_path.exists()
 
 
@@ -190,7 +194,11 @@ def test_confirmed_succeeded_owner_prunes_managed_checkpoint(tmp_path):
         },
     )
 
-    checkpoints.prune()
+    candidates = checkpoints.prepare_abandonments()
 
-    assert checkpoints.load(checkpoint.transfer_id) is None
+    assert [item.transfer_id for item in candidates] == [checkpoint.transfer_id]
+    retained = checkpoints.load(checkpoint.transfer_id)
+    assert retained is not None
+    assert retained.abandoning is True
+    assert retained.payload_retained is False
     assert not payload_path.exists()

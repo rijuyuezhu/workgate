@@ -63,6 +63,9 @@ class SessionCopyCheckpoint(BaseModel):
     chunks: Annotated[int, Field(ge=0)] = 0
     resumed_bytes: Annotated[int, Field(ge=0)] = 0
     cleanup_errors: list[str] = Field(default_factory=list)
+    receipts_released: bool = False
+    abandoning: bool = False
+    payload_retained: bool = True
     last_known_step: Literal["exported", "importing", "imported"] = "exported"
     created_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
     updated_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
@@ -71,6 +74,10 @@ class SessionCopyCheckpoint(BaseModel):
     def validate_step(self) -> SessionCopyCheckpoint:
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
+        if self.abandoning != (not self.payload_retained):
+            raise ValueError(
+                "abandoning checkpoint must release its control payload"
+            )
         if self.last_known_step in {"importing", "imported"} and (
             self.import_path is None or self.import_resource_id is None
         ):
@@ -84,6 +91,8 @@ class SessionCopyCheckpoint(BaseModel):
                 raise ValueError(
                     "imported directory checkpoint is missing entry count"
                 )
+        elif self.receipts_released:
+            raise ValueError("receipt cleanup can only complete after import")
         return self
 
 
@@ -262,36 +271,88 @@ class SessionCopyCheckpointStore:
         if payload_id is not None:
             self._payloads.remove_payload(payload_id, namespace="transfer")
 
-    def prune(self) -> None:
-        """Drop transfer state that no longer has a public retry identity."""
-        now = time.time()
-        jobs = self._authoritative_job_statuses()
-
+    def prepare_abandonment(
+        self, transfer_id: str
+    ) -> SessionCopyCheckpoint | None:
+        """Durably retain a small tombstone before releasing the large payload."""
         with self._state_store.transaction(self.path):
             transfers = self._load_unlocked()
-            kept: dict[str, SessionCopyCheckpoint] = {}
+            checkpoint = transfers.get(transfer_id)
+            if checkpoint is None:
+                return None
+            if not checkpoint.abandoning or checkpoint.payload_retained:
+                checkpoint = SessionCopyCheckpoint.model_validate(
+                    checkpoint.model_copy(
+                        update={
+                            "abandoning": True,
+                            "payload_retained": False,
+                            "updated_at": time.time(),
+                        }
+                    ).model_dump()
+                )
+                transfers[transfer_id] = checkpoint
+                self._save_unlocked(transfers)
+            referenced = {
+                str(item.payload_id)
+                for item in transfers.values()
+                if item.payload_retained
+            }
+            self._payloads.prune_unreferenced_payloads("transfer", referenced)
+            return checkpoint
+
+    def prepare_abandonments(
+        self, *, executor_id: str | None = None
+    ) -> tuple[SessionCopyCheckpoint, ...]:
+        """Release payloads only after durably retaining cleanup authority."""
+        now = time.time()
+        jobs = self._authoritative_job_statuses()
+        with self._state_store.transaction(self.path):
+            transfers = self._load_unlocked()
+            changed = False
+            candidates: list[SessionCopyCheckpoint] = []
             for transfer_id, checkpoint in transfers.items():
                 owner = checkpoint.owner_job_id
-                should_remove = False
-                if owner is None:
-                    should_remove = (
+                should_abandon = checkpoint.abandoning
+                if not should_abandon and owner is None:
+                    should_abandon = (
                         now - checkpoint.updated_at
                         >= UNMANAGED_CHECKPOINT_STALE_S
                     )
-                elif jobs is not None:
+                elif (
+                    not should_abandon
+                    and owner is not None
+                    and jobs is not None
+                ):
                     status = jobs.get(owner)
-                    # Once a validated primary job store no longer contains
-                    # the owner, retention has removed the only public retry
-                    # identity and the transfer payload is unreachable.
-                    should_remove = status is None or status == "succeeded"
-                if not should_remove:
-                    kept[transfer_id] = checkpoint
-            if len(kept) != len(transfers):
-                self._save_unlocked(kept)
+                    should_abandon = status is None or status == "succeeded"
+                if not should_abandon:
+                    continue
+                if not checkpoint.abandoning or checkpoint.payload_retained:
+                    checkpoint = SessionCopyCheckpoint.model_validate(
+                        checkpoint.model_copy(
+                            update={
+                                "abandoning": True,
+                                "payload_retained": False,
+                                "updated_at": now,
+                            }
+                        ).model_dump()
+                    )
+                    transfers[transfer_id] = checkpoint
+                    changed = True
+                if (
+                    executor_id is None
+                    or str(checkpoint.destination_executor_id) == executor_id
+                ):
+                    candidates.append(checkpoint)
+            if changed:
+                self._save_unlocked(transfers)
             referenced = {
-                str(checkpoint.payload_id) for checkpoint in kept.values()
+                str(checkpoint.payload_id)
+                for checkpoint in transfers.values()
+                if checkpoint.payload_retained
             }
             # Keep payload GC under the same feature lock as checkpoint mutation.
-            # That prevents a concurrently committed transfer payload from being
-            # mistaken for an orphan between registry snapshot and cleanup.
+            # Persisting abandoning=true first means a crash cannot delete the
+            # last recovery authority before dropping a large control payload.
             self._payloads.prune_unreferenced_payloads("transfer", referenced)
+            return tuple(candidates)

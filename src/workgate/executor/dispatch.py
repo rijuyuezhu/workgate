@@ -9,7 +9,9 @@ from ..tools.machine import (
     MACHINE_TOOL_NAMES,
 )
 
-EXECUTOR_INTERNAL_OPERATION_NAMES = frozenset({"transfer_release_receipts"})
+EXECUTOR_INTERNAL_OPERATION_NAMES = frozenset(
+    {"transfer_abandon_import", "transfer_release_receipts"}
+)
 EXECUTOR_OPERATION_NAMES = (
     MACHINE_TOOL_NAMES
     | EXECUTOR_AGENT_MCP_OPERATION_NAMES

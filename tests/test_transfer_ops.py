@@ -1352,75 +1352,433 @@ def test_unpack_receipt_inconsistent_durable_states_fail_closed(
         )
 
 
-def test_completed_receipt_gc_is_bounded_and_preserves_recovery_states(
+def test_completed_receipt_keeps_commit_proof_without_independent_ttl(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    transfer_id = "old-completed-proof"
+    begin = transfer_begin_write(
+        "dest.bin",
+        overwrite=False,
+        expected_bytes=4,
+        transfer_id=transfer_id,
+    )
+    transfer_ops.transfer_write_bytes(
+        "dest.bin", begin.transfer_id, 0, b"data", context=_context()
+    )
+    transfer_finish_write(
+        "dest.bin",
+        begin.transfer_id,
+        expected_bytes=4,
+        expected_sha256=hashlib.sha256(b"data").hexdigest(),
+    )
+    receipt_path = transfer_ops._write_receipt_path(_context(), transfer_id)
+    receipt = _context().store.state_store.read_json(receipt_path)
+    assert isinstance(receipt, dict)
+    receipt["committed_at"] = time.time() - 365 * 24 * 60 * 60
+    _context().store.state_store.write_json(receipt_path, receipt)
+
+    unrelated = transfer_begin_write(
+        "other.bin", expected_bytes=0, transfer_id="unrelated-transfer"
+    )
+    transfer_abort_write("other.bin", unrelated.transfer_id)
+
+    assert receipt_path.exists()
+    recovered = transfer_begin_write(
+        "dest.bin",
+        overwrite=False,
+        expected_bytes=4,
+        transfer_id=transfer_id,
+    )
+    assert recovered.completed is True
+    assert recovered.resumed is True
+    assert recovered.sha256 == hashlib.sha256(b"data").hexdigest()
+    assert (root / "dest.bin").read_bytes() == b"data"
+
+
+def test_abandon_import_rolls_back_prepared_directory_after_backup_move(
     tmp_path, monkeypatch
 ):
     root = _workspace(tmp_path, monkeypatch)
     context = _context()
-    old = (
-        time.time() - transfer_ops._TRANSFER_COMPLETED_RECEIPT_RETENTION_S - 60
+    transfer_id = "abandon-prepared-dir"
+    destination = root / "dest-abandon"
+    destination.mkdir()
+    (destination / "old.txt").write_text("old", encoding="utf-8")
+    staging = root / f".dest-abandon.unpack-{transfer_id}"
+    staging.mkdir()
+    (staging / "new.txt").write_text("new", encoding="utf-8")
+    backup = root / f".dest-abandon.backup-{transfer_id}"
+    archive = root / "abandon-archive.tar.gz"
+    archive.write_bytes(b"archive")
+    os.replace(destination, backup)
+    receipt_path = transfer_ops._unpack_receipt_path(context, transfer_id)
+    transfer_ops._write_unpack_receipt(
+        context,
+        receipt_path,
+        {
+            "destination": str(destination),
+            "archive": str(archive),
+            "archive_display": "abandon-archive.tar.gz",
+            "overwrite": True,
+            "cleanup_archive": True,
+            "entries": 1,
+            "destination_existed": True,
+            "status": "prepared",
+            "created_at": time.time(),
+        },
     )
-    recent = time.time()
 
-    old_write = transfer_ops._write_receipt_path(context, "old-write")
-    active_write = transfer_ops._write_receipt_path(context, "active-write")
-    recent_write = transfer_ops._write_receipt_path(context, "recent-write")
-    for path, status, committed_at in (
-        (old_write, "completed", old),
-        (active_write, "committing", None),
-        (recent_write, "completed", recent),
-    ):
-        transfer_ops._write_write_receipt(
-            context,
-            path,
-            {
-                "destination": str(root / f"{path.stem}.bin"),
-                "overwrite": True,
-                "expected_bytes": 4,
-                "destination_existed": False,
-                "status": status,
-                "final_bytes": 4,
-                "final_sha256": hashlib.sha256(b"data").hexdigest(),
-                "updated_at": old,
-                **(
-                    {"committed_at": committed_at}
-                    if committed_at is not None
-                    else {}
-                ),
-            },
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+
+    assert result["unpack_reconciled"] is True
+    assert (destination / "old.txt").read_text(encoding="utf-8") == "old"
+    assert not staging.exists()
+    assert not backup.exists()
+    assert not archive.exists()
+    assert not receipt_path.exists()
+
+
+def test_abandon_import_discards_uncommitted_final_file_write(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-committing-file"
+    destination = root / "dest.bin"
+    destination.write_bytes(b"old!")
+    begin = transfer_begin_write(
+        "dest.bin",
+        overwrite=True,
+        expected_bytes=4,
+        transfer_id=transfer_id,
+    )
+    transfer_ops.transfer_write_bytes(
+        "dest.bin", begin.transfer_id, 0, b"data", context=context
+    )
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+    transfer_ops._write_write_receipt(
+        context,
+        receipt_path,
+        {
+            "destination": str(destination),
+            "overwrite": True,
+            "expected_bytes": 4,
+            "destination_existed": True,
+            "status": "committing",
+            "final_bytes": 4,
+            "final_sha256": hashlib.sha256(b"data").hexdigest(),
+            "updated_at": time.time(),
+        },
+    )
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "file", context=context
+    )
+
+    assert result["write_reconciled"] is True
+    assert destination.read_bytes() == b"old!"
+    assert not receipt_path.exists()
+    temporary = transfer_ops._transfer_temp_path(destination, transfer_id)
+    assert not temporary.exists()
+    assert not transfer_ops._transfer_metadata_path(temporary).exists()
+
+
+def test_abandon_import_confirms_completed_final_file_write(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-completed-file"
+    begin = transfer_begin_write(
+        "committed.bin",
+        overwrite=False,
+        expected_bytes=4,
+        transfer_id=transfer_id,
+    )
+    transfer_ops.transfer_write_bytes(
+        "committed.bin", begin.transfer_id, 0, b"data", context=context
+    )
+    transfer_finish_write(
+        "committed.bin",
+        begin.transfer_id,
+        expected_bytes=4,
+        expected_sha256=hashlib.sha256(b"data").hexdigest(),
+    )
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "file", context=context
+    )
+
+    assert result["write_reconciled"] is True
+    assert (root / "committed.bin").read_bytes() == b"data"
+    assert not receipt_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("status", "publish_committed"),
+    [
+        ("backup_moved", False),
+        ("publishing", False),
+        ("publishing", True),
+        ("completed", True),
+    ],
+)
+def test_abandon_import_reconciles_directory_durable_states(
+    tmp_path, monkeypatch, status, publish_committed
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = (
+        f"abandon-{status}-{'commit' if publish_committed else 'rollback'}"
+    )
+    destination, archive, staging, backup = _write_unpack_state(
+        root,
+        transfer_id=transfer_id,
+        status=status,
+        destination_existed=True,
+    )
+    archive.write_bytes(b"archive")
+    backup.mkdir()
+    (backup / "old.txt").write_text("old", encoding="utf-8")
+    if publish_committed:
+        destination.mkdir()
+        (destination / "new.txt").write_text("new", encoding="utf-8")
+        if status == "completed":
+            staging.mkdir()
+            (staging / "leftover.txt").write_text("leftover", encoding="utf-8")
+    else:
+        staging.mkdir()
+        (staging / "new.txt").write_text("new", encoding="utf-8")
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+
+    assert result["unpack_reconciled"] is True
+    if publish_committed:
+        assert (destination / "new.txt").read_text(encoding="utf-8") == "new"
+        assert not (destination / "old.txt").exists()
+    else:
+        assert (destination / "old.txt").read_text(encoding="utf-8") == "old"
+        assert not (destination / "new.txt").exists()
+    assert not staging.exists()
+    assert not backup.exists()
+    assert not archive.exists()
+    assert not transfer_ops._unpack_receipt_path(context, transfer_id).exists()
+
+
+def test_abandon_import_discards_prepared_new_directory(tmp_path, monkeypatch):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-prepared-new-dir"
+    destination, archive, staging, backup = _write_unpack_state(
+        root,
+        transfer_id=transfer_id,
+        status="prepared",
+        destination_existed=False,
+    )
+    archive.write_bytes(b"archive")
+    staging.mkdir()
+    (staging / "new.txt").write_text("new", encoding="utf-8")
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+
+    assert result["unpack_reconciled"] is True
+    assert not destination.exists()
+    assert not staging.exists()
+    assert not backup.exists()
+    assert not archive.exists()
+
+
+def test_abandon_import_without_receipts_is_idempotent(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+
+    result = transfer_ops.transfer_abandon_import(
+        "already-clean", "file", context=_context()
+    )
+
+    assert result == {"write_reconciled": False, "unpack_reconciled": False}
+
+
+def test_abandon_directory_before_unpack_removes_committed_scratch_archive(
+    tmp_path, monkeypatch
+):
+    _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-dir-before-unpack"
+    scratch = transfer_alloc_temp_path(".tar.gz")
+    begin = transfer_begin_write(
+        scratch.path,
+        overwrite=True,
+        expected_bytes=7,
+        transfer_id=transfer_id,
+    )
+    transfer_ops.transfer_write_bytes(
+        scratch.path, begin.transfer_id, 0, b"archive", context=context
+    )
+    transfer_finish_write(
+        scratch.path,
+        begin.transfer_id,
+        expected_bytes=7,
+        expected_sha256=hashlib.sha256(b"archive").hexdigest(),
+    )
+    archive_path = transfer_ops._resolve_temp_path(
+        scratch.path, context=context
+    )
+    assert archive_path.exists()
+
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+
+    assert result == {"write_reconciled": True, "unpack_reconciled": False}
+    assert not archive_path.exists()
+    assert not transfer_ops._write_receipt_path(context, transfer_id).exists()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("size", "size changed"),
+        ("digest", "digest changed"),
+        ("temporary", "unexpectedly retains"),
+    ],
+)
+def test_abandon_completed_file_fails_closed_when_commit_proof_changes(
+    tmp_path, monkeypatch, mutation, message
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = f"abandon-file-{mutation}"
+    begin = transfer_begin_write(
+        "committed.bin",
+        overwrite=True,
+        expected_bytes=4,
+        transfer_id=transfer_id,
+    )
+    transfer_ops.transfer_write_bytes(
+        "committed.bin", begin.transfer_id, 0, b"data", context=context
+    )
+    transfer_finish_write(
+        "committed.bin",
+        begin.transfer_id,
+        expected_bytes=4,
+        expected_sha256=hashlib.sha256(b"data").hexdigest(),
+    )
+    destination = root / "committed.bin"
+    if mutation == "size":
+        destination.write_bytes(b"longer")
+    elif mutation == "digest":
+        destination.write_bytes(b"nope")
+    else:
+        transfer_ops._transfer_temp_path(destination, transfer_id).write_bytes(
+            b"temp"
+        )
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+
+    with pytest.raises(RuntimeError, match=message):
+        transfer_ops.transfer_abandon_import(
+            transfer_id, "file", context=context
         )
 
-    old_unpack = transfer_ops._unpack_receipt_path(context, "old-unpack")
-    active_unpack = transfer_ops._unpack_receipt_path(context, "active-unpack")
-    for path, status, committed_at in (
-        (old_unpack, "completed", old),
-        (active_unpack, "publishing", None),
-    ):
-        transfer_ops._write_unpack_receipt(
-            context,
-            path,
-            {
-                "destination": str(root / f"{path.stem}-dest"),
-                "archive": str(root / f"{path.stem}.tar.gz"),
-                "archive_display": f"{path.stem}.tar.gz",
-                "overwrite": True,
-                "cleanup_archive": True,
-                "entries": 1,
-                "destination_existed": False,
-                "status": status,
-                "created_at": old,
-                **(
-                    {"committed_at": committed_at}
-                    if committed_at is not None
-                    else {}
-                ),
-            },
+    assert receipt_path.exists()
+
+
+def test_abandon_invalid_write_receipt_fails_closed(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-invalid-write"
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+    context.store.state_store.write_json(receipt_path, {"status": "completed"})
+
+    with pytest.raises(ValueError, match="write receipt is invalid"):
+        transfer_ops.transfer_abandon_import(
+            transfer_id, "file", context=context
         )
 
-    transfer_ops._prune_completed_transfer_receipts(context)
+    assert receipt_path.exists()
 
-    assert not old_write.exists()
-    assert not old_unpack.exists()
-    assert active_write.exists()
-    assert active_unpack.exists()
-    assert recent_write.exists()
+
+@pytest.mark.parametrize(
+    (
+        "status",
+        "destination_existed",
+        "make_staging",
+        "make_destination",
+        "make_backup",
+        "message",
+    ),
+    [
+        ("prepared", True, True, True, True, "cannot be safely abandoned"),
+        ("prepared", False, True, False, True, "unexpected backup"),
+        (
+            "backup_moved",
+            False,
+            True,
+            False,
+            True,
+            "cannot be safely abandoned",
+        ),
+        ("publishing", True, True, False, False, "cannot be rolled back"),
+        ("publishing", False, True, False, True, "unexpected backup"),
+        ("publishing", False, False, False, False, "cannot confirm commit"),
+        ("publishing", True, False, True, False, "lost its backup"),
+        ("publishing", False, False, True, True, "unexpected backup"),
+        ("completed", True, False, False, False, "directory is missing"),
+    ],
+)
+def test_abandon_directory_inconsistent_states_fail_closed(
+    tmp_path,
+    monkeypatch,
+    status,
+    destination_existed,
+    make_staging,
+    make_destination,
+    make_backup,
+    message,
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-inconsistent"
+    destination, archive, staging, backup = _write_unpack_state(
+        root,
+        transfer_id=transfer_id,
+        status=status,
+        destination_existed=destination_existed,
+    )
+    archive.write_bytes(b"archive")
+    if make_staging:
+        staging.mkdir()
+    if make_destination:
+        destination.mkdir()
+    if make_backup:
+        backup.mkdir()
+    receipt_path = transfer_ops._unpack_receipt_path(context, transfer_id)
+
+    with pytest.raises(RuntimeError, match=message):
+        transfer_ops.transfer_abandon_import(
+            transfer_id, "dir", context=context
+        )
+
+    assert receipt_path.exists()
+
+
+def test_abandon_invalid_unpack_receipt_fails_closed(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "abandon-invalid-unpack"
+    receipt_path = transfer_ops._unpack_receipt_path(context, transfer_id)
+    context.store.state_store.write_json(receipt_path, {"status": "prepared"})
+
+    with pytest.raises(ValueError, match="unpack receipt is invalid"):
+        transfer_ops.transfer_abandon_import(
+            transfer_id, "dir", context=context
+        )
+
+    assert receipt_path.exists()
