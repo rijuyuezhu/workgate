@@ -1,12 +1,10 @@
-"""Durable private state for tokenized file-link snapshots."""
+"""Durable private management state for public file links."""
+
+from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
-import os
-import stat
 import threading
-import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,40 +13,39 @@ from typing import Any, BinaryIO
 
 from ..audit import audit
 from ..persistence import get_state_store
-from ..utils.private_files import (
-    atomic_write_private_text,
-    private_file_lock,
-)
-from .download_snapshot import (
-    SNAPSHOT_SUFFIX,
-    STAGING_SUFFIX,
-    snapshot_directory,
-)
+from ..utils.private_files import atomic_write_private_text, private_file_lock
+from .payload_store import PayloadStore
 
-STORE_VERSION = 2
-LEGACY_STORE_VERSIONS = {1}
+STORE_VERSION = 3
+LEGACY_STORE_VERSIONS = frozenset({1, 2})
 STORE_FILE_NAME = "downloads.json"
 BACKUP_FILE_NAME = "downloads.json.bak"
 LOCK_FILE_NAME = "downloads.lock"
 STORE_LOCK = threading.RLock()
-STAGING_PRUNE_GRACE_S = 3600
+_LEGACY_SNAPSHOT_SUFFIX = ".bin"
 
 
 @dataclass(frozen=True)
 class ClaimedDownload:
-    """One validated open snapshot claimed for an HTTP response."""
+    """One validated open immutable payload claimed for an HTTP response."""
 
     handle: BinaryIO
-    """Already-open private snapshot handle used for streaming."""
+    """Already-open private payload handle used for streaming."""
 
     path: Path
-    """Opaque private snapshot path used for final cleanup."""
+    """Opaque private payload path used for final cleanup."""
 
     link: dict[str, Any]
     """Validated metadata copied from the durable link store."""
 
     remove_snapshot_after: bool
-    """Whether response completion should delete the snapshot bytes."""
+    """Whether response completion should delete the payload bytes."""
+
+
+@dataclass(frozen=True)
+class _LoadedStore:
+    store: dict[str, Any]
+    migrated: bool = False
 
 
 def store_path() -> Path:
@@ -71,7 +68,7 @@ def empty_store() -> dict[str, Any]:
     return {"version": STORE_VERSION, "links": {}}
 
 
-def _load_file(path: Path) -> tuple[dict[str, Any], bool]:
+def _load_file(path: Path) -> _LoadedStore:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"unsupported or invalid download store: {path}")
@@ -81,27 +78,39 @@ def _load_file(path: Path) -> tuple[dict[str, Any], bool]:
     links = data.get("links")
     if not isinstance(links, dict):
         raise ValueError(f"download store links field is invalid: {path}")
-    normalized = {
-        str(token): link
-        for token, link in links.items()
-        if isinstance(token, str) and isinstance(link, dict)
-    }
     if version in LEGACY_STORE_VERSIONS:
         audit(
             "download_store_migrated",
             path=str(path),
             from_version=version,
             to_version=STORE_VERSION,
-            dropped_links=len(normalized),
+            migrated_links=0,
+            dropped_links=len(links),
         )
-        return empty_store(), True
-    return {"version": STORE_VERSION, "links": normalized}, False
+        return _LoadedStore(empty_store(), migrated=True)
+    normalized = {
+        str(link_id): link
+        for link_id, link in links.items()
+        if isinstance(link_id, str) and isinstance(link, dict)
+    }
+    return _LoadedStore({"version": STORE_VERSION, "links": normalized})
 
 
 def save_locked(store: dict[str, Any]) -> None:
-    """Atomically persist the primary store and a recovery copy."""
+    """Atomically persist primary state without retaining a stale recovery copy."""
     store["version"] = STORE_VERSION
     payload = json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True)
+    try:
+        _remove_stale_backup()
+    except OSError as exc:
+        audit(
+            "download_store_backup_invalidation_failed",
+            path=str(backup_path()),
+            error=repr(exc),
+        )
+        raise RuntimeError(
+            "Download store backup could not be invalidated before save"
+        ) from exc
     atomic_write_private_text(store_path(), payload)
     try:
         atomic_write_private_text(backup_path(), payload)
@@ -111,6 +120,56 @@ def save_locked(store: dict[str, Any]) -> None:
             path=str(backup_path()),
             error=repr(exc),
         )
+
+
+def _restore_primary_from_backup(store: dict[str, Any]) -> None:
+    """Restore the primary from an already-validated current backup.
+
+    The recovery copy is intentionally left untouched until the primary write
+    succeeds.  If restoring the primary fails, the sole known-good backup must
+    remain available for a later retry.
+    """
+    store["version"] = STORE_VERSION
+    payload = json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True)
+    atomic_write_private_text(store_path(), payload)
+
+
+def _remove_stale_backup() -> None:
+    """Remove a stale backup after a failed refresh."""
+    backup_path().unlink(missing_ok=True)
+
+
+def _backup_contains_legacy_bearers() -> bool:
+    """Return whether the recovery copy is still a plaintext-token store."""
+    backup = backup_path()
+    if not backup.exists():
+        return False
+    try:
+        data = json.loads(backup.read_text(encoding="utf-8"))
+    except OSError, ValueError, json.JSONDecodeError:
+        return False
+    return (
+        isinstance(data, dict) and data.get("version") in LEGACY_STORE_VERSIONS
+    )
+
+
+def _prune_legacy_snapshot_directory() -> None:
+    """Remove v2 snapshot artifacts after no durable store can reference them."""
+    directory = get_state_store().layout.download_snapshots_dir
+    if not directory.exists():
+        return
+    for pattern in (f"*{_LEGACY_SNAPSHOT_SUFFIX}", ".*.tmp"):
+        for path in directory.glob(pattern):
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+
+
+def _finish_migration(loaded: _LoadedStore) -> dict[str, Any]:
+    if not loaded.migrated:
+        return loaded.store
+    save_locked(loaded.store)
+    _prune_legacy_snapshot_directory()
+    return loaded.store
 
 
 def load_locked() -> dict[str, Any]:
@@ -123,20 +182,26 @@ def load_locked() -> dict[str, Any]:
     primary_error: Exception | None = None
     if primary.exists():
         try:
-            store, migrated = _load_file(primary)
+            loaded = _load_file(primary)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             primary_error = exc
             audit(
                 "download_store_unreadable", path=str(primary), error=repr(exc)
             )
         else:
-            if migrated:
-                save_locked(store)
-            return store
+            current = _finish_migration(loaded)
+            if not loaded.migrated and _backup_contains_legacy_bearers():
+                # A previous migration may have committed v3 primary metadata
+                # before failing to scrub a plaintext-token backup.  Refuse to
+                # continue until the stale bearer-bearing recovery copy is
+                # refreshed or removed.
+                save_locked(current)
+                _prune_legacy_snapshot_directory()
+            return current
 
     if backup.exists():
         try:
-            store, _migrated = _load_file(backup)
+            loaded = _load_file(backup)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             audit(
                 "download_store_backup_unreadable",
@@ -149,8 +214,10 @@ def load_locked() -> dict[str, Any]:
                 path=str(primary),
                 backup_path=str(backup),
             )
-            save_locked(store)
-            return store
+            if loaded.migrated:
+                return _finish_migration(loaded)
+            _restore_primary_from_backup(loaded.store)
+            return loaded.store
 
     raise RuntimeError(
         "Download store is unreadable and no valid backup is available; refusing to reset it"
@@ -164,117 +231,79 @@ def transaction() -> Generator[dict[str, Any]]:
         yield load_locked()
 
 
-def snapshot_path(link: dict[str, Any]) -> Path | None:
-    """Resolve a validated opaque snapshot name inside the private directory."""
-    name = str(link.get("snapshot_name") or "")
-    if (
-        not name
-        or Path(name).name != name
-        or not name.endswith(SNAPSHOT_SUFFIX)
-    ):
-        return None
-    return snapshot_directory() / name
-
-
-def remove_snapshot(link: dict[str, Any]) -> None:
-    """Delete one registered snapshot when it is no longer reachable."""
-    path = snapshot_path(link)
-    if path is not None:
-        with contextlib.suppress(OSError):
-            path.unlink(missing_ok=True)
-
-
 def prune_locked(
     store: dict[str, Any],
     now: float,
     *,
-    exclude_token: str | None = None,
+    payloads: PayloadStore,
+    exclude_link_id: str | None = None,
 ) -> bool:
-    """Remove expired, exhausted, malformed, and orphaned snapshots."""
+    """Remove expired, exhausted, and malformed file-link resources."""
     links = store.get("links", {})
     changed = False
-    for token, link in list(links.items()):
-        if token == exclude_token:
+    for link_id, link in list(links.items()):
+        if link_id == exclude_link_id:
             continue
-        snapshot = snapshot_path(link)
+        payload_id = str(link.get("payload_id") or "")
+        try:
+            payloads.path(payload_id, namespace="download")
+            valid_payload_id = True
+        except ValueError:
+            valid_payload_id = False
         expires_at = float(link.get("expires_at", 0))
         maximum = int(link.get("max_downloads", 0))
         downloads = int(link.get("downloads", 0))
         if (
-            snapshot is None
+            not valid_payload_id
             or expires_at <= now
             or (maximum > 0 and downloads >= maximum)
         ):
-            remove_snapshot(link)
-            links.pop(token, None)
+            links.pop(link_id, None)
             changed = True
-
-    referenced = {
-        str(link.get("snapshot_name") or "")
-        for link in links.values()
-        if isinstance(link, dict)
-    }
-    directory = snapshot_directory()
-    for path in directory.glob(f"*{SNAPSHOT_SUFFIX}"):
-        if path.name in referenced:
-            continue
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            continue
-        changed = True
-
-    prune_before = time.time() - STAGING_PRUNE_GRACE_S
-    for path in directory.glob(f".*{STAGING_SUFFIX}"):
-        try:
-            if path.stat().st_mtime > prune_before:
-                continue
-            path.unlink(missing_ok=True)
-        except OSError:
-            continue
+    if payloads.prune_staging_files("download"):
         changed = True
     return changed
 
 
-def open_snapshot(link: dict[str, Any]) -> tuple[BinaryIO, Path]:
-    """Open a registered snapshot and verify its stored file identity."""
-    path = snapshot_path(link)
-    if path is None:
-        raise FileNotFoundError("download snapshot metadata is invalid")
-    flags = os.O_RDONLY
-    flags |= int(getattr(os, "O_BINARY", 0))
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
-    handle: BinaryIO | None = None
+def cleanup_unreferenced_payloads_locked(
+    store: dict[str, Any], *, payloads: PayloadStore
+) -> bool:
+    """Remove committed download payloads not referenced by durable metadata.
+
+    Callers must invoke this only against metadata that is already durable.  In
+    particular, metadata removals are persisted before this cleanup runs so a
+    failed state write can never turn a valid durable link into a missing
+    payload.
+    """
+    links = store.get("links", {})
+    referenced_payload_ids = {
+        str(link.get("payload_id") or "")
+        for link in links.values()
+        if isinstance(link, dict)
+    }
     try:
-        file_stat = os.fstat(descriptor)
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise ValueError("download snapshot is not a regular file")
-        if (
-            int(link.get("snapshot_device", -1)) != int(file_stat.st_dev)
-            or int(link.get("snapshot_inode", -1)) != int(file_stat.st_ino)
-            or int(link.get("bytes", -1)) != int(file_stat.st_size)
-        ):
-            raise ValueError("download snapshot identity changed")
-        handle = os.fdopen(descriptor, "rb")
-        digest = hashlib.sha256()
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-        if digest.hexdigest() != str(link.get("sha256") or ""):
-            raise ValueError("download snapshot digest changed")
-        handle.seek(0)
-        return handle, path
-    except Exception:
-        if handle is not None:
-            handle.close()
-        else:
-            os.close(descriptor)
-        raise
+        return payloads.prune_unreferenced_payloads(
+            "download", referenced_payload_ids
+        )
+    except OSError as exc:
+        audit("download_payload_cleanup_failed", error=repr(exc))
+        return False
+
+
+def open_snapshot(
+    link: dict[str, Any], *, payloads: PayloadStore
+) -> tuple[BinaryIO, Path]:
+    """Open and verify the immutable payload referenced by one link."""
+    return payloads.open_payload(
+        str(link.get("payload_id") or ""),
+        namespace="download",
+        size=int(link.get("bytes", -1)),
+        sha256=str(link.get("sha256") or ""),
+    )
 
 
 def release_claim(claim: ClaimedDownload) -> None:
-    """Close a claim and remove its snapshot after the final allowed GET."""
+    """Close a claim and remove its payload after the final allowed GET."""
     with contextlib.suppress(OSError):
         claim.handle.close()
     if claim.remove_snapshot_after:

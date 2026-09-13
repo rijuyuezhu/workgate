@@ -259,7 +259,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         session_coordinator, executor_transport
     )
     download_service = ControlDownloadService(
-        session_coordinator, executor_transport
+        session_coordinator, executor_transport, config
     )
     job_service = ControlJobService(session_coordinator)
     todo_service = ControlTodoService(
