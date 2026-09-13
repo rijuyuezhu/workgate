@@ -15,6 +15,7 @@ from workgate.protocol.credentials import (
 )
 from workgate.protocol.executor import (
     ExecutorHelloRequest,
+    ExecutorResult,
     ExecutorRuntimeSummary,
 )
 from workgate.protocol.ids import new_executor_id, new_session_id
@@ -159,3 +160,77 @@ async def test_control_runtime_start_failure_discards_control_projection(
     assert runtime.control_state.snapshot_executors() == {}
     with pytest.raises(RuntimeError, match="not running"):
         runtime.control_state.put_executor(record)
+
+
+@pytest.mark.asyncio
+async def test_authenticated_hello_does_not_wait_for_post_hello_executor_rpc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = build_control_runtime(
+        Settings(workspace_root=tmp_path, state_dir=tmp_path / "state")
+    )
+    await runtime.start()
+    executor_id = new_executor_id()
+    credential = new_executor_credential()
+    runtime.control_state.put_executor(
+        ExecutorTrustRecord(
+            executor_id=executor_id,
+            name="executor",
+            credential_verifier=executor_credential_verifier(credential),
+            created_at=1,
+        )
+    )
+    cleanup_started = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def reconcile_abandonments(*, executor_id: str | None = None) -> None:
+        assert executor_id is not None
+        cleanup_started.set()
+        result = await runtime.executor_transport.call(
+            executor_id,
+            "transfer_abandon_import",
+            {
+                "transfer_id": "copy_" + "a" * 22,
+                "kind": "file",
+                "import_path": "dst.bin",
+            },
+        )
+        assert result.ok is True
+        cleanup_finished.set()
+
+    monkeypatch.setattr(
+        runtime.session_copy_service,
+        "reconcile_abandonments",
+        reconcile_abandonments,
+    )
+    hello = ExecutorHelloRequest(
+        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        sessions=(),
+        shells=(),
+        jobs=(),
+    )
+    try:
+        response = await asyncio.wait_for(
+            runtime.executor_transport.hello(credential, hello), timeout=0.5
+        )
+        assert response.poll_timeout_s > 0
+        await asyncio.wait_for(cleanup_started.wait(), timeout=0.5)
+        assert not cleanup_finished.is_set()
+        assert await runtime.executor_transport.pending_count(executor_id) == 1
+
+        command = await asyncio.wait_for(
+            runtime.executor_transport.poll(credential), timeout=0.5
+        )
+        assert command is not None
+        assert command.op == "transfer_abandon_import"
+        await runtime.executor_transport.submit_result(
+            credential,
+            ExecutorResult(
+                id=command.id,
+                ok=True,
+                result={"safe_to_forget": True},
+            ),
+        )
+        await asyncio.wait_for(cleanup_finished.wait(), timeout=0.5)
+    finally:
+        await runtime.aclose()

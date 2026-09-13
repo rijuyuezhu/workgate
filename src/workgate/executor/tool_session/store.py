@@ -128,6 +128,11 @@ class ToolSessionStore:
             max_bytes=max_session_snapshot_bytes,
         )
 
+    @property
+    def state_store(self) -> StateStore:
+        """Return the executor-owned durable state store."""
+        return self._state_store
+
     _session_from_payload = staticmethod(session_from_payload)
     _snapshot_from_payload = staticmethod(snapshot_from_payload)
     _encoded_snapshot_payload_bytes = staticmethod(
