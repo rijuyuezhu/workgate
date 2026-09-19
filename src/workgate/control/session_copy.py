@@ -48,6 +48,7 @@ from .state import ControlSessionRecord
 CopyKind = Literal["auto", "file", "dir"]
 ProgressCallback = Callable[[dict[str, Any]], Awaitable[None]]
 SESSION_COPY_MANAGED_KIND = "session-copy"
+_ABANDONMENT_RPC_TIMEOUT_S = 30.0
 
 
 class ControlSessionCopyService:
@@ -67,6 +68,7 @@ class ControlSessionCopyService:
             state_store, self._payloads
         )
         self._abandonment_tasks: dict[str, asyncio.Task[None]] = {}
+        self._abandonment_rerun: set[str] = set()
         self._closed = False
 
     async def aclose(self) -> None:
@@ -78,6 +80,7 @@ class ControlSessionCopyService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._abandonment_tasks.clear()
+        self._abandonment_rerun.clear()
 
     def schedule_reconcile_abandonments(self, *, executor_id: str) -> None:
         """Run post-hello cleanup without blocking the hello response/poll startup."""
@@ -85,6 +88,7 @@ class ControlSessionCopyService:
             return
         existing = self._abandonment_tasks.get(executor_id)
         if existing is not None and not existing.done():
+            self._abandonment_rerun.add(executor_id)
             return
         task = asyncio.create_task(
             self._run_scheduled_abandonments(executor_id),
@@ -93,8 +97,13 @@ class ControlSessionCopyService:
         self._abandonment_tasks[executor_id] = task
 
         def discard(completed: asyncio.Task[None]) -> None:
-            if self._abandonment_tasks.get(executor_id) is completed:
-                self._abandonment_tasks.pop(executor_id, None)
+            if self._abandonment_tasks.get(executor_id) is not completed:
+                return
+            self._abandonment_tasks.pop(executor_id, None)
+            rerun = executor_id in self._abandonment_rerun
+            self._abandonment_rerun.discard(executor_id)
+            if rerun and not self._closed:
+                self.schedule_reconcile_abandonments(executor_id=executor_id)
 
         task.add_done_callback(discard)
 
@@ -316,14 +325,16 @@ class ControlSessionCopyService:
             raise RuntimeError(
                 "abandoning import checkpoint is missing import path"
             )
+        abandon_args: dict[str, JsonValue] = {
+            "transfer_id": checkpoint.transfer_id,
+            "kind": checkpoint.kind,
+            "import_path": checkpoint.import_path,
+        }
         result = await self._transport.call(
             str(checkpoint.destination_executor_id),
             "transfer_abandon_import",
-            {
-                "transfer_id": checkpoint.transfer_id,
-                "kind": checkpoint.kind,
-                "import_path": checkpoint.import_path,
-            },
+            abandon_args,
+            timeout_s=_ABANDONMENT_RPC_TIMEOUT_S,
         )
         if not result.ok:
             assert result.error is not None

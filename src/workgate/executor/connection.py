@@ -26,6 +26,17 @@ from .errors import ExecutorOperationFailure
 _JSON_VALUE = TypeAdapter(JsonValue)
 _INITIAL_RETRY_DELAY_S = 0.5
 _MAX_RETRY_DELAY_S = 30.0
+_TRANSFER_ORDERED_OPS = frozenset(
+    {
+        "transfer_abandon_import",
+        "transfer_abort_write",
+        "transfer_begin_write",
+        "transfer_finish_write",
+        "transfer_release_receipts",
+        "transfer_unpack_archive",
+        "transfer_write_chunk",
+    }
+)
 
 
 def executor_retry_delay(attempt: int, random_value: float) -> float:
@@ -41,6 +52,20 @@ def executor_retry_delay(attempt: int, random_value: float) -> float:
 type CommandExecutor = Callable[[ExecutorCommand], Any]
 type HelloFactory = Callable[[], ExecutorHelloRequest]
 type Sleep = Callable[[float], Awaitable[None]]
+type _CommandOrderKey = tuple[str, str]
+
+
+def _command_order_key(command: ExecutorCommand) -> _CommandOrderKey | None:
+    if command.session_id is not None and command.op in {
+        "session.create",
+        "session.terminate",
+    }:
+        return ("session", str(command.session_id))
+    if command.op in _TRANSFER_ORDERED_OPS:
+        transfer_id = command.args.get("transfer_id")
+        if isinstance(transfer_id, str) and transfer_id:
+            return ("transfer", transfer_id)
+    return None
 
 
 class _ControlClient(Protocol):
@@ -107,7 +132,9 @@ class ExecutorConnection:
         self._owner_action = asyncio.Event()
         self._owner_action_error: ExecutorOwnerActionRequired | None = None
         self._command_tasks: set[asyncio.Task[None]] = set()
-        self._session_mutation_tails: dict[str, asyncio.Future[None]] = {}
+        self._command_order_tails: dict[
+            _CommandOrderKey, asyncio.Future[None]
+        ] = {}
         self._main_task: asyncio.Task[None] | None = None
 
     @classmethod
@@ -257,17 +284,15 @@ class ExecutorConnection:
                 continue
             predecessor: asyncio.Future[None] | None = None
             completion: asyncio.Future[None] | None = None
-            if command.session_id is not None and command.op in {
-                "session.create",
-                "session.terminate",
-            }:
-                session_id = str(command.session_id)
-                predecessor = self._session_mutation_tails.get(session_id)
+            order_key = _command_order_key(command)
+            if order_key is not None:
+                predecessor = self._command_order_tails.get(order_key)
                 completion = asyncio.get_running_loop().create_future()
-                self._session_mutation_tails[session_id] = completion
+                self._command_order_tails[order_key] = completion
             task = asyncio.create_task(
                 self._run_command_ordered(
                     command,
+                    order_key=order_key,
                     predecessor=predecessor,
                     completion=completion,
                 ),
@@ -290,10 +315,11 @@ class ExecutorConnection:
         self,
         command: ExecutorCommand,
         *,
+        order_key: _CommandOrderKey | None,
         predecessor: asyncio.Future[None] | None,
         completion: asyncio.Future[None] | None,
     ) -> None:
-        """Preserve receipt order for same-session existence mutations."""
+        """Preserve offer order for narrow session/transfer mutation chains."""
         try:
             if predecessor is not None:
                 await asyncio.shield(predecessor)
@@ -301,10 +327,12 @@ class ExecutorConnection:
         finally:
             if completion is not None and not completion.done():
                 completion.set_result(None)
-            if command.session_id is not None and completion is not None:
-                session_id = str(command.session_id)
-                if self._session_mutation_tails.get(session_id) is completion:
-                    self._session_mutation_tails.pop(session_id, None)
+            if (
+                order_key is not None
+                and completion is not None
+                and self._command_order_tails.get(order_key) is completion
+            ):
+                self._command_order_tails.pop(order_key, None)
 
     async def _run_command(self, command: ExecutorCommand) -> None:
         try:

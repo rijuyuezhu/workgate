@@ -19,7 +19,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, BinaryIO, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 from ..protocol.transfer import (
     DEFAULT_TRANSFER_CHUNK_BYTES,
@@ -64,13 +70,33 @@ class _WriteTransferReceipt(BaseModel):
 
     destination: _ReceiptPath
     overwrite: bool
-    expected_bytes: _ReceiptNonNegativeInt | None
+    expected_bytes: _ReceiptNonNegativeInt | None = None
     destination_existed: bool
-    status: Literal["committing", "completed"]
-    final_bytes: _ReceiptNonNegativeInt
-    final_sha256: _ReceiptSha256
+    status: Literal["receiving", "committing", "completed"]
+    abandonment_status: (
+        Literal["discard_temp", "discard_destination"] | None
+    ) = None
+    final_bytes: _ReceiptNonNegativeInt | None = None
+    final_sha256: _ReceiptSha256 | None = None
     updated_at: _ReceiptTimestamp
     committed_at: _ReceiptTimestamp | None = None
+
+    @model_validator(mode="after")
+    def _validate_final_state(self) -> _WriteTransferReceipt:
+        if self.status in {"committing", "completed"} and (
+            self.final_bytes is None or self.final_sha256 is None
+        ):
+            raise ValueError(
+                "final write receipt is missing committed identity"
+            )
+        if (
+            self.status == "receiving"
+            and self.abandonment_status == "discard_destination"
+        ):
+            raise ValueError(
+                "receiving write cannot discard committed destination"
+            )
+        return self
 
 
 class _UnpackTransferReceipt(BaseModel):
@@ -83,7 +109,13 @@ class _UnpackTransferReceipt(BaseModel):
     cleanup_archive: bool
     entries: _ReceiptNonNegativeInt
     destination_existed: bool
-    status: Literal["prepared", "backup_moved", "publishing", "completed"]
+    status: Literal[
+        "extracting", "prepared", "backup_moved", "publishing", "completed"
+    ]
+    abandonment_status: (
+        Literal["rollback", "commit", "rollback_archive", "commit_archive"]
+        | None
+    ) = None
     created_at: _ReceiptTimestamp
     committed_at: _ReceiptTimestamp | None = None
     backup_deleted: bool | None = None
@@ -127,12 +159,66 @@ def _scratch_dir(context: TransferContext) -> Path:
     return temp_dir(context.config.temp_dir)
 
 
+def _receipt_owned_transfer_scratch_paths(
+    context: TransferContext,
+) -> frozenset[Path] | None:
+    """Return scratch paths still owned by durable transfer receipts."""
+    receipt_dir = context.store.state_store.layout.executor_transfers_dir
+    scratch = _scratch_dir(context).resolve(strict=False)
+    protected: set[Path] = set()
+    try:
+        write_receipts = tuple(receipt_dir.glob("write-*.json"))
+        unpack_receipts = tuple(receipt_dir.glob("unpack-*.json"))
+    except OSError:
+        return None
+
+    for receipt_path in write_receipts:
+        try:
+            receipt = _load_write_receipt(context, receipt_path)
+        except OSError, ValueError:
+            return None
+        transfer_id = receipt_path.name.removeprefix("write-").removesuffix(
+            ".json"
+        )
+        destination = Path(receipt.destination).resolve(strict=False)
+        try:
+            destination.relative_to(scratch)
+        except ValueError:
+            continue
+        try:
+            temporary = _transfer_temp_path(destination, transfer_id)
+        except ValueError:
+            return None
+        protected.update(
+            {destination, temporary, _transfer_metadata_path(temporary)}
+        )
+
+    for receipt_path in unpack_receipts:
+        try:
+            receipt = _load_unpack_receipt(context, receipt_path)
+        except OSError, ValueError:
+            return None
+        archive = Path(receipt.archive).resolve(strict=False)
+        try:
+            archive.relative_to(scratch)
+        except ValueError:
+            continue
+        protected.add(archive)
+
+    return frozenset(protected)
+
+
 def _prune_transfer_scratch(context: TransferContext) -> None:
+    protected = _receipt_owned_transfer_scratch_paths(context)
+    if protected is None:
+        return
     prune_temp_dir(
         minimum_age_s=_TRANSFER_TMP_PRUNE_MINIMUM_AGE_S,
         max_files=context.config.max_tmp_files,
         max_bytes=context.config.max_tmp_bytes,
         directory=context.config.temp_dir,
+        protected_paths=protected,
+        excluded_name_prefixes=(),
     )
 
 
@@ -370,6 +456,18 @@ def _write_write_receipt(
     context.store.state_store.write_json(path, receipt)
 
 
+def _load_unpack_receipt(
+    context: TransferContext, path: Path
+) -> _UnpackTransferReceipt:
+    try:
+        raw = context.store.state_store.read_json(path, max_bytes=64 * 1024)
+        return _UnpackTransferReceipt.model_validate(raw)
+    except OSError, ValueError, ValidationError:
+        raise ValueError(
+            f"transfer unpack receipt is invalid: {path}"
+        ) from None
+
+
 def _read_unpack_receipt(
     context: TransferContext,
     path: Path,
@@ -379,13 +477,7 @@ def _read_unpack_receipt(
     overwrite: bool,
     cleanup_archive: bool,
 ) -> dict[str, Any]:
-    try:
-        raw = context.store.state_store.read_json(path, max_bytes=64 * 1024)
-        receipt = _UnpackTransferReceipt.model_validate(raw)
-    except OSError, ValueError, ValidationError:
-        raise ValueError(
-            f"transfer unpack receipt is invalid: {path}"
-        ) from None
+    receipt = _load_unpack_receipt(context, path)
     if receipt.destination != str(destination):
         raise ValueError("transfer unpack receipt destination mismatch")
     if receipt.archive != str(archive):
@@ -397,26 +489,86 @@ def _read_unpack_receipt(
     return receipt.model_dump(mode="python", exclude_none=True)
 
 
-def _read_write_receipt(
-    context: TransferContext,
-    path: Path,
-    destination: Path,
-    *,
-    overwrite: bool,
-    expected_bytes: int | None,
-) -> dict[str, Any]:
+def _load_write_receipt(
+    context: TransferContext, path: Path
+) -> _WriteTransferReceipt:
     try:
         raw = context.store.state_store.read_json(path, max_bytes=64 * 1024)
-        receipt = _WriteTransferReceipt.model_validate(raw)
+        return _WriteTransferReceipt.model_validate(raw)
     except OSError, ValueError, ValidationError:
         raise ValueError(f"transfer write receipt is invalid: {path}") from None
-    if receipt.destination != str(destination):
-        raise ValueError("transfer write receipt destination mismatch")
-    if receipt.overwrite != overwrite:
-        raise ValueError("transfer overwrite mode mismatch")
-    if receipt.expected_bytes != expected_bytes:
-        raise ValueError("transfer expected size mismatch")
-    return receipt.model_dump(mode="python", exclude_none=True)
+
+
+def _completed_unpack_consumed_write_destination(
+    transfer_id: str,
+    destination: Path,
+    *,
+    context: TransferContext,
+) -> bool:
+    """Prove a completed unpack legitimately consumed one scratch archive."""
+    if os.path.lexists(destination):
+        return False
+    unpack_path = _unpack_receipt_path(context, transfer_id)
+    if not unpack_path.exists():
+        return False
+    receipt = _load_unpack_receipt(context, unpack_path)
+    return (
+        receipt.status == "completed"
+        and receipt.cleanup_archive
+        and receipt.archive == str(destination)
+    )
+
+
+def _bound_write_destination(
+    path: str | Path,
+    transfer_id: str,
+    *,
+    session_id: str | None = None,
+    workdir: str | None = None,
+    context: TransferContext,
+) -> tuple[Path, _WriteTransferReceipt | None]:
+    """Resolve an active write through its executor-issued durable binding."""
+    receipt_path = _write_receipt_path(context, transfer_id)
+    if receipt_path.exists():
+        receipt = _load_write_receipt(context, receipt_path)
+        destination = _resolve_transfer_destination(
+            receipt.destination,
+            context=context,
+        )
+        return destination, receipt
+    return (
+        _resolve_transfer_destination(
+            path,
+            session_id=session_id,
+            workdir=workdir,
+            context=context,
+        ),
+        None,
+    )
+
+
+def _validate_abandon_receipt_identity(
+    transfer_id: str, *, context: TransferContext
+) -> None:
+    """Fail closed before mutating linked directory-transfer receipts."""
+    state_store = context.store.state_store
+    write_path = _write_receipt_path(context, transfer_id)
+    unpack_path = _unpack_receipt_path(context, transfer_id)
+    if not write_path.exists() or not unpack_path.exists():
+        return
+    try:
+        write_receipt = _WriteTransferReceipt.model_validate(
+            state_store.read_json(write_path, max_bytes=64 * 1024)
+        )
+        unpack_receipt = _UnpackTransferReceipt.model_validate(
+            state_store.read_json(unpack_path, max_bytes=64 * 1024)
+        )
+    except OSError, ValueError, ValidationError:
+        raise ValueError(
+            "linked transfer abandonment receipt is invalid"
+        ) from None
+    if write_receipt.destination != unpack_receipt.archive:
+        raise ValueError("transfer archive write receipt identity mismatch")
 
 
 def transfer_release_receipts(
@@ -474,12 +626,68 @@ def _abandon_final_write_receipt(
         current = _WriteTransferReceipt.model_validate(raw)
         if current.destination != str(destination):
             raise ValueError("transfer write receipt destination mismatch")
+        abandonment_status = current.abandonment_status
+        if abandonment_status == "discard_temp":
+            if current.status not in {"receiving", "committing"}:
+                raise RuntimeError(
+                    "transfer write abandonment state is invalid"
+                )
+            temporary.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
+            context.store.state_store.remove(receipt_path)
+            return True
+        if abandonment_status == "discard_destination":
+            if not discard_committed_destination or temporary.exists():
+                raise RuntimeError(
+                    "transfer write abandonment state is invalid"
+                )
+            assert current.final_bytes is not None
+            assert current.final_sha256 is not None
+            if os.path.lexists(destination):
+                with _open_transfer_source(destination) as destination_handle:
+                    destination_stat = os.fstat(destination_handle.fileno())
+                    if int(destination_stat.st_size) != current.final_bytes:
+                        raise RuntimeError("committed transfer size changed")
+                    digest = _sha256_handle(destination_handle)
+                if digest != current.final_sha256:
+                    raise RuntimeError("committed transfer digest changed")
+                destination.unlink()
+            metadata_path.unlink(missing_ok=True)
+            context.store.state_store.remove(receipt_path)
+            return True
+        if current.status == "receiving":
+            current = current.model_copy(
+                update={
+                    "abandonment_status": "discard_temp",
+                    "updated_at": time.time(),
+                }
+            )
+            _write_write_receipt(
+                context,
+                receipt_path,
+                current.model_dump(mode="python", exclude_none=True),
+            )
+            temporary.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
+            context.store.state_store.remove(receipt_path)
+            return True
         if current.status == "committing" and temporary.exists():
-            if discard_committed_destination and destination.exists():
+            if discard_committed_destination and os.path.lexists(destination):
                 raise RuntimeError(
                     "transfer archive destination changed before commit"
                 )
-            temporary.unlink()
+            current = current.model_copy(
+                update={
+                    "abandonment_status": "discard_temp",
+                    "updated_at": time.time(),
+                }
+            )
+            _write_write_receipt(
+                context,
+                receipt_path,
+                current.model_dump(mode="python", exclude_none=True),
+            )
+            temporary.unlink(missing_ok=True)
             metadata_path.unlink(missing_ok=True)
             context.store.state_store.remove(receipt_path)
             return True
@@ -487,15 +695,36 @@ def _abandon_final_write_receipt(
             raise RuntimeError(
                 "completed transfer write unexpectedly retains its temporary file"
             )
-        with _open_transfer_source(destination) as destination_handle:
-            destination_stat = os.fstat(destination_handle.fileno())
-            if int(destination_stat.st_size) != current.final_bytes:
-                raise RuntimeError("committed transfer size changed")
-            digest = _sha256_handle(destination_handle)
-        if digest != current.final_sha256:
-            raise RuntimeError("committed transfer digest changed")
+        assert current.final_bytes is not None
+        assert current.final_sha256 is not None
+        consumed_by_unpack = (
+            discard_committed_destination
+            and current.status == "completed"
+            and _completed_unpack_consumed_write_destination(
+                transfer_id, destination, context=context
+            )
+        )
+        if not consumed_by_unpack:
+            with _open_transfer_source(destination) as destination_handle:
+                destination_stat = os.fstat(destination_handle.fileno())
+                if int(destination_stat.st_size) != current.final_bytes:
+                    raise RuntimeError("committed transfer size changed")
+                digest = _sha256_handle(destination_handle)
+            if digest != current.final_sha256:
+                raise RuntimeError("committed transfer digest changed")
         if discard_committed_destination:
-            destination.unlink()
+            current = current.model_copy(
+                update={
+                    "abandonment_status": "discard_destination",
+                    "updated_at": time.time(),
+                }
+            )
+            _write_write_receipt(
+                context,
+                receipt_path,
+                current.model_dump(mode="python", exclude_none=True),
+            )
+            destination.unlink(missing_ok=consumed_by_unpack)
         metadata_path.unlink(missing_ok=True)
         context.store.state_store.remove(receipt_path)
         return True
@@ -544,73 +773,158 @@ def _abandon_unpack_receipt(
         destination_exists = os.path.lexists(destination)
         backup_exists = os.path.lexists(backup)
         staging_exists = staging.exists()
-        if status == "prepared":
-            if current.destination_existed:
-                if backup_exists and not destination_exists:
-                    os.replace(backup, destination)
-                elif destination_exists and not backup_exists:
-                    pass
-                else:
-                    raise RuntimeError(
-                        "transfer unpack prepared state cannot be safely abandoned"
-                    )
-            elif backup_exists:
-                raise RuntimeError(
-                    "transfer unpack prepared state has an unexpected backup"
-                )
-            if staging_exists:
-                shutil.rmtree(staging)
-        elif status == "backup_moved":
-            if (
-                not current.destination_existed
-                or not backup_exists
-                or destination_exists
-            ):
-                raise RuntimeError(
-                    "transfer unpack backup state cannot be safely abandoned"
-                )
-            os.replace(backup, destination)
-            if staging_exists:
-                shutil.rmtree(staging)
-        elif status == "publishing":
-            if staging_exists:
+        abandonment_status = current.abandonment_status
+        if abandonment_status is None:
+            if status == "extracting":
                 if current.destination_existed:
-                    if not backup_exists or destination_exists:
+                    if not destination_exists or backup_exists:
                         raise RuntimeError(
-                            "transfer unpack publishing state cannot be rolled back"
+                            "transfer unpack extracting state cannot be safely abandoned"
                         )
-                    os.replace(backup, destination)
+                elif destination_exists or backup_exists:
+                    raise RuntimeError(
+                        "transfer unpack extracting state has unexpected destination state"
+                    )
+                abandonment_status = "rollback"
+            elif status == "prepared":
+                if current.destination_existed:
+                    if not (
+                        (backup_exists and not destination_exists)
+                        or (destination_exists and not backup_exists)
+                    ):
+                        raise RuntimeError(
+                            "transfer unpack prepared state cannot be safely abandoned"
+                        )
                 elif backup_exists:
                     raise RuntimeError(
-                        "transfer unpack publishing state has an unexpected backup"
+                        "transfer unpack prepared state has an unexpected backup"
                     )
-                shutil.rmtree(staging)
-            else:
+                abandonment_status = "rollback"
+            elif status == "backup_moved":
+                if (
+                    not current.destination_existed
+                    or not backup_exists
+                    or destination_exists
+                ):
+                    raise RuntimeError(
+                        "transfer unpack backup state cannot be safely abandoned"
+                    )
+                abandonment_status = "rollback"
+            elif status == "publishing":
+                if staging_exists:
+                    if current.destination_existed:
+                        if not backup_exists or destination_exists:
+                            raise RuntimeError(
+                                "transfer unpack publishing state cannot be rolled back"
+                            )
+                    elif backup_exists:
+                        raise RuntimeError(
+                            "transfer unpack publishing state has an unexpected backup"
+                        )
+                    abandonment_status = "rollback"
+                else:
+                    if not destination.is_dir() or destination.is_symlink():
+                        raise RuntimeError(
+                            "transfer unpack publishing state cannot confirm commit"
+                        )
+                    if current.destination_existed:
+                        if not backup_exists:
+                            raise RuntimeError(
+                                "transfer unpack publishing state lost its backup"
+                            )
+                    elif backup_exists:
+                        raise RuntimeError(
+                            "transfer unpack publishing state has an unexpected backup"
+                        )
+                    abandonment_status = "commit"
+            elif status == "completed":
                 if not destination.is_dir() or destination.is_symlink():
                     raise RuntimeError(
-                        "transfer unpack publishing state cannot confirm commit"
+                        "committed transfer directory is missing"
                     )
-                if current.destination_existed:
-                    if not backup_exists:
-                        raise RuntimeError(
-                            "transfer unpack publishing state lost its backup"
-                        )
-                    _remove_existing_path(backup)
-                elif backup_exists:
+                abandonment_status = "commit"
+            else:
+                raise RuntimeError("transfer unpack recovery state is invalid")
+            current = current.model_copy(
+                update={
+                    "abandonment_status": abandonment_status,
+                    "updated_at": time.time(),
+                }
+            )
+            _write_unpack_receipt(
+                context,
+                receipt_path,
+                current.model_dump(mode="python", exclude_none=True),
+            )
+
+        if abandonment_status in {"rollback", "rollback_archive"}:
+            if current.destination_existed:
+                if backup_exists and not destination_exists:
+                    if abandonment_status == "rollback":
+                        os.replace(backup, destination)
+                elif not (destination_exists and not backup_exists):
                     raise RuntimeError(
-                        "transfer unpack publishing state has an unexpected backup"
+                        "transfer unpack rollback state cannot be safely abandoned"
                     )
-        elif status == "completed":
+            elif backup_exists or destination_exists:
+                raise RuntimeError(
+                    "transfer unpack rollback state cannot be safely abandoned"
+                )
+            if abandonment_status == "rollback" and staging.exists():
+                shutil.rmtree(staging)
+        elif abandonment_status in {"commit", "commit_archive"}:
             if not destination.is_dir() or destination.is_symlink():
                 raise RuntimeError("committed transfer directory is missing")
-            if backup_exists:
-                _remove_existing_path(backup)
-            if staging_exists:
+            if current.destination_existed:
+                if abandonment_status == "commit" and os.path.lexists(backup):
+                    _remove_existing_path(backup)
+            elif os.path.lexists(backup):
+                raise RuntimeError(
+                    "transfer unpack commit state has an unexpected backup"
+                )
+            if abandonment_status == "commit" and staging.exists():
                 shutil.rmtree(staging)
         else:
-            raise RuntimeError("transfer unpack recovery state is invalid")
-        if current.cleanup_archive and archive.exists():
-            archive.unlink()
+            raise RuntimeError("transfer unpack abandonment state is invalid")
+
+        if abandonment_status in {"rollback", "commit"}:
+            abandonment_status = (
+                "rollback_archive"
+                if abandonment_status == "rollback"
+                else "commit_archive"
+            )
+            current = current.model_copy(
+                update={
+                    "abandonment_status": abandonment_status,
+                    "updated_at": time.time(),
+                }
+            )
+            _write_unpack_receipt(
+                context,
+                receipt_path,
+                current.model_dump(mode="python", exclude_none=True),
+            )
+
+        if abandonment_status == "rollback_archive":
+            if current.destination_existed:
+                if not os.path.lexists(destination):
+                    raise RuntimeError(
+                        "transfer unpack rollback lost its destination"
+                    )
+            elif os.path.lexists(destination):
+                raise RuntimeError(
+                    "transfer unpack rollback unexpectedly retained destination"
+                )
+        elif abandonment_status == "commit_archive" and (
+            not destination.is_dir() or destination.is_symlink()
+        ):
+            raise RuntimeError("committed transfer directory is missing")
+        if os.path.lexists(backup) or staging.exists():
+            raise RuntimeError(
+                "transfer unpack abandonment cleanup is incomplete"
+            )
+        if current.cleanup_archive:
+            archive.unlink(missing_ok=True)
         context.store.state_store.remove(receipt_path)
         return True, archive
 
@@ -622,47 +936,27 @@ def transfer_abandon_import(
     *,
     context: TransferContext,
 ) -> dict[str, bool]:
-    """Make executor transfer state safe to forget after control abandonment."""
+    """Reconcile all ordered state before control forgets one transfer."""
+    _ = import_path
     if kind not in {"file", "dir"}:
         raise ValueError("transfer abandon kind must be 'file' or 'dir'")
-    unpack_reconciled, archive = _abandon_unpack_receipt(
+    _validate_abandon_receipt_identity(transfer_id, context=context)
+    write_path = _write_receipt_path(context, transfer_id)
+    had_write_receipt = write_path.exists()
+    write_reconciled = False
+    if had_write_receipt:
+        write_reconciled = _abandon_final_write_receipt(
+            transfer_id,
+            discard_committed_destination=kind == "dir",
+            context=context,
+        )
+    unpack_reconciled, _archive = _abandon_unpack_receipt(
         transfer_id, context=context
     )
-    write_path = _write_receipt_path(context, transfer_id)
-    write_reconciled = False
-    if write_path.exists():
-        if unpack_reconciled:
-            raw = context.store.state_store.read_json(
-                write_path, max_bytes=64 * 1024
-            )
-            try:
-                receipt = _WriteTransferReceipt.model_validate(raw)
-            except ValidationError:
-                raise ValueError(
-                    f"transfer write receipt is invalid: {write_path}"
-                ) from None
-            if archive is None or receipt.destination != str(archive):
-                raise ValueError(
-                    "transfer archive write receipt identity mismatch"
-                )
-            if archive.exists():
-                archive.unlink()
-            context.store.state_store.remove(write_path)
-            write_reconciled = True
-        else:
-            write_reconciled = _abandon_final_write_receipt(
-                transfer_id,
-                discard_committed_destination=kind == "dir",
-                context=context,
-            )
-    elif import_path is not None:
-        # Before finish_write there is no durable receipt yet.  The control
-        # checkpoint carries the exact import destination, so reuse the
-        # ordinary abort primitive to remove its deterministic temp+metadata.
-        transfer_abort_write(import_path, transfer_id, context=context)
-        write_reconciled = True
     return {
-        "safe_to_forget": write_reconciled or unpack_reconciled,
+        # Executor receipt-order chaining guarantees that no earlier offered
+        # mutation for this transfer can run after this operation completes.
+        "safe_to_forget": True,
         "write_reconciled": write_reconciled,
         "unpack_reconciled": unpack_reconciled,
     }
@@ -1011,6 +1305,41 @@ def _validate_transfer_identity(
     return file_stat
 
 
+def _recover_uncommitted_transfer_suffix(
+    handle: BinaryIO, metadata: dict[str, Any]
+) -> os.stat_result:
+    """Rollback bytes fsynced after the last durable contiguous-prefix metadata."""
+    file_stat = os.fstat(handle.fileno())
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ValueError("transfer temporary path is not a regular file")
+    expected_identity = (
+        int(metadata.get("temporary_identity_a", -1)),
+        int(metadata.get("temporary_identity_b", -1)),
+    )
+    if expected_identity != _transfer_handle_identity(handle):
+        raise ValueError("transfer temporary file identity changed")
+    durable_size = int(metadata.get("temporary_size", -1))
+    actual_size = int(file_stat.st_size)
+    if actual_size == durable_size:
+        return file_stat
+    ranges = _received_ranges(metadata)
+    durable_prefix = 0 if ranges == [] else ranges[0][1]
+    if (
+        actual_size < durable_size
+        or durable_size < 0
+        or ranges not in ([], [[0, durable_prefix]])
+        or durable_prefix != durable_size
+    ):
+        raise ValueError("transfer temporary file size changed")
+    handle.truncate(durable_size)
+    handle.flush()
+    os.fsync(handle.fileno())
+    repaired = os.fstat(handle.fileno())
+    if int(repaired.st_size) != durable_size:
+        raise RuntimeError("transfer temporary suffix rollback failed")
+    return repaired
+
+
 def _sha256_handle(handle: BinaryIO) -> str:
     """Hash an open transfer file without reopening its path."""
     digest = hashlib.sha256()
@@ -1021,12 +1350,34 @@ def _sha256_handle(handle: BinaryIO) -> str:
     return digest.hexdigest()
 
 
-def _prune_stale_destination_transfers(destination: Path) -> None:
+def _stale_transfer_candidate_is_owned(
+    destination: Path, temporary: Path, *, context: TransferContext
+) -> bool:
+    prefix = f".{destination.name}.{_TRANSFER_TMP_MARKER}-"
+    suffix = ".tmp"
+    name = temporary.name
+    if not name.startswith(prefix) or not name.endswith(suffix):
+        return True
+    transfer_id = name[len(prefix) : -len(suffix)]
+    try:
+        return _write_receipt_path(context, transfer_id).exists()
+    except ValueError:
+        return True
+
+
+def _prune_stale_destination_transfers(
+    destination: Path, *, context: TransferContext
+) -> None:
     prune_before = time.time() - _TRANSFER_STALE_GRACE_S
     pattern = f".{destination.name}.{_TRANSFER_TMP_MARKER}-*.tmp"
     for temporary in destination.parent.glob(pattern):
         try:
-            if temporary.stat().st_mtime > prune_before:
+            if (
+                _stale_transfer_candidate_is_owned(
+                    destination, temporary, context=context
+                )
+                or temporary.stat().st_mtime > prune_before
+            ):
                 continue
             temporary.unlink(missing_ok=True)
             _transfer_metadata_path(temporary).unlink(missing_ok=True)
@@ -1037,7 +1388,10 @@ def _prune_stale_destination_transfers(destination: Path) -> None:
         temporary = Path(str(metadata_path).removesuffix(".json"))
         try:
             if (
-                temporary.exists()
+                _stale_transfer_candidate_is_owned(
+                    destination, temporary, context=context
+                )
+                or temporary.exists()
                 or metadata_path.stat().st_mtime > prune_before
             ):
                 continue
@@ -1056,60 +1410,118 @@ def transfer_begin_write(
     workdir: str | None = None,
     context: TransferContext,
 ) -> TransferBeginWriteOutput:
-    """Create or safely resume a private transactional chunked write."""
-    destination = _resolve_transfer_destination(
-        path,
-        session_id=session_id,
-        workdir=workdir,
-        context=context,
-    )
+    """Create or resume a write under one executor-issued destination binding."""
     expected = None if expected_bytes is None else int(expected_bytes)
     if expected is not None and expected < 0:
         raise ValueError("expected_bytes must be >= 0")
-    destination.parent.mkdir(parents=True, exist_ok=True)
     _prune_transfer_scratch(context)
     requested_id = transfer_id or uuid.uuid4().hex
-    temporary = _transfer_temp_path(destination, requested_id)
     receipt_path = _write_receipt_path(context, requested_id)
+    initial_receipt = (
+        _load_write_receipt(context, receipt_path)
+        if receipt_path.exists()
+        else None
+    )
+    if initial_receipt is not None:
+        destination = _resolve_transfer_destination(
+            initial_receipt.destination,
+            context=context,
+        )
+    else:
+        destination = _resolve_transfer_destination(
+            path,
+            session_id=session_id,
+            workdir=workdir,
+            context=context,
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _transfer_temp_path(destination, requested_id)
     with path_locks([destination, temporary, receipt_path]):
-        _prune_stale_destination_transfers(destination)
-        if transfer_id is not None and receipt_path.exists():
-            receipt = _read_write_receipt(
-                context,
-                receipt_path,
-                destination,
-                overwrite=overwrite,
-                expected_bytes=expected,
-            )
-            status = str(receipt["status"])
-            if status == "completed" or not temporary.exists():
-                final_bytes = int(receipt["final_bytes"])
-                final_sha256 = str(receipt["final_sha256"])
-                with _open_transfer_source(destination) as destination_handle:
-                    destination_stat = os.fstat(destination_handle.fileno())
-                    if int(destination_stat.st_size) != final_bytes:
-                        raise ValueError("committed transfer size changed")
-                    digest = _sha256_handle(destination_handle)
-                if digest != final_sha256:
-                    raise ValueError("committed transfer digest changed")
+        receipt: _WriteTransferReceipt | None = None
+        if receipt_path.exists():
+            receipt = _load_write_receipt(context, receipt_path)
+            if receipt.destination != str(destination):
+                raise ValueError("transfer write receipt destination mismatch")
+            if receipt.overwrite != bool(overwrite):
+                raise ValueError("transfer overwrite mode mismatch")
+            if receipt.expected_bytes != expected:
+                raise ValueError("transfer expected size mismatch")
+            if receipt.abandonment_status is not None:
+                raise RuntimeError("transfer write is being abandoned")
+            if receipt.status == "completed" or (
+                receipt.status == "committing" and not temporary.exists()
+            ):
+                assert receipt.final_bytes is not None
+                assert receipt.final_sha256 is not None
+                final_bytes = receipt.final_bytes
+                final_sha256 = receipt.final_sha256
+                consumed_by_unpack = (
+                    receipt.status == "completed"
+                    and _completed_unpack_consumed_write_destination(
+                        requested_id, destination, context=context
+                    )
+                )
+                if not consumed_by_unpack:
+                    with _open_transfer_source(
+                        destination
+                    ) as destination_handle:
+                        destination_stat = os.fstat(destination_handle.fileno())
+                        if int(destination_stat.st_size) != final_bytes:
+                            raise ValueError("committed transfer size changed")
+                        digest = _sha256_handle(destination_handle)
+                    if digest != final_sha256:
+                        raise ValueError("committed transfer digest changed")
+                if receipt.status == "committing":
+                    now = time.time()
+                    receipt = receipt.model_copy(
+                        update={
+                            "status": "completed",
+                            "committed_at": receipt.committed_at or now,
+                            "updated_at": now,
+                        }
+                    )
+                    _write_write_receipt(
+                        context,
+                        receipt_path,
+                        receipt.model_dump(mode="python", exclude_none=True),
+                    )
                 _transfer_metadata_path(temporary).unlink(missing_ok=True)
                 return TransferBeginWriteOutput(
                     path=_display(destination, context),
                     temp_path=_display(temporary, context),
                     transfer_id=requested_id,
-                    created=not bool(receipt.get("destination_existed", False)),
+                    created=not receipt.destination_existed,
                     expected_bytes=expected,
                     offset=final_bytes,
                     resumed=True,
                     completed=True,
                     sha256=final_sha256,
                 )
+        else:
+            _prune_stale_destination_transfers(destination, context=context)
+
         exists = os.path.lexists(destination)
         if exists and destination.is_dir() and not destination.is_symlink():
             raise IsADirectoryError(str(destination))
         if exists and not overwrite:
             raise FileExistsError(str(destination))
-        if transfer_id is not None and temporary.exists():
+
+        if receipt is None:
+            receipt = _WriteTransferReceipt(
+                destination=str(destination),
+                overwrite=bool(overwrite),
+                expected_bytes=expected,
+                destination_existed=bool(exists),
+                status="receiving",
+                updated_at=time.time(),
+            )
+            _write_write_receipt(
+                context,
+                receipt_path,
+                receipt.model_dump(mode="python", exclude_none=True),
+            )
+
+        if temporary.exists():
             metadata = _read_transfer_metadata(temporary, destination)
             if bool(metadata.get("overwrite", True)) != bool(overwrite):
                 raise ValueError("transfer overwrite mode mismatch")
@@ -1117,7 +1529,7 @@ def transfer_begin_write(
             if metadata_expected != expected:
                 raise ValueError("transfer expected size mismatch")
             with _open_transfer_for_update(temporary) as handle:
-                _validate_transfer_identity(handle, metadata)
+                _recover_uncommitted_transfer_suffix(handle, metadata)
             ranges = _received_ranges(metadata)
             offset = 0 if ranges == [] else ranges[0][1]
             if ranges not in ([], [[0, offset]]):
@@ -1126,7 +1538,7 @@ def transfer_begin_write(
                 path=_display(destination, context),
                 temp_path=_display(temporary, context),
                 transfer_id=requested_id,
-                created=not exists,
+                created=not receipt.destination_existed,
                 expected_bytes=expected,
                 offset=offset,
                 resumed=True,
@@ -1157,7 +1569,7 @@ def transfer_begin_write(
         path=_display(destination, context),
         temp_path=_display(temporary, context),
         transfer_id=requested_id,
-        created=not exists,
+        created=not receipt.destination_existed,
         expected_bytes=expected,
         offset=0,
         resumed=False,
@@ -1195,12 +1607,17 @@ def transfer_write_bytes(
     context: TransferContext,
 ) -> TransferWriteChunkOutput:
     """Write one raw validated chunk into an active transactional destination."""
-    destination = _resolve_transfer_destination(
+    destination, receipt = _bound_write_destination(
         path,
+        transfer_id,
         session_id=session_id,
         workdir=workdir,
         context=context,
     )
+    if receipt is not None and (
+        receipt.status != "receiving" or receipt.abandonment_status is not None
+    ):
+        raise RuntimeError("transfer write is not receiving data")
     temporary = _transfer_temp_path(destination, transfer_id)
     start = int(offset)
     if start < 0:
@@ -1274,12 +1691,20 @@ def transfer_finish_write(
     context: TransferContext,
 ) -> TransferFinishWriteOutput:
     """Validate and atomically publish a completed chunked write."""
-    destination = _resolve_transfer_destination(
+    destination, bound_receipt = _bound_write_destination(
         path,
+        transfer_id,
         session_id=session_id,
         workdir=workdir,
         context=context,
     )
+    if bound_receipt is not None and (
+        bound_receipt.status not in {"receiving", "committing"}
+        or bound_receipt.abandonment_status is not None
+    ):
+        raise RuntimeError(
+            "transfer write cannot be finished in its current state"
+        )
     temporary = _transfer_temp_path(destination, transfer_id)
     metadata_path = _transfer_metadata_path(temporary)
     receipt_path = _write_receipt_path(context, transfer_id)
@@ -1331,23 +1756,60 @@ def transfer_finish_write(
             destination
         ):
             raise FileExistsError(str(destination))
-        receipt = {
-            "destination": str(destination),
-            "overwrite": bool(metadata.get("overwrite", True)),
-            "expected_bytes": metadata.get("expected_bytes"),
-            "destination_existed": bool(
-                metadata.get("destination_existed", False)
-            ),
-            "status": "committing",
-            "final_bytes": size,
-            "final_sha256": digest,
-            "updated_at": time.time(),
-        }
-        _write_write_receipt(context, receipt_path, receipt)
+        current_receipt = (
+            _load_write_receipt(context, receipt_path)
+            if receipt_path.exists()
+            else None
+        )
+        if current_receipt is not None:
+            if current_receipt.destination != str(destination):
+                raise ValueError("transfer write receipt destination mismatch")
+            if current_receipt.abandonment_status is not None:
+                raise RuntimeError("transfer write is being abandoned")
+            if current_receipt.status not in {"receiving", "committing"}:
+                raise RuntimeError("transfer write receipt cannot be committed")
+            if current_receipt.overwrite != bool(
+                metadata.get("overwrite", True)
+            ):
+                raise ValueError("transfer overwrite mode mismatch")
+            if current_receipt.expected_bytes != metadata.get("expected_bytes"):
+                raise ValueError("transfer expected size mismatch")
+            receipt = current_receipt.model_copy(
+                update={
+                    "status": "committing",
+                    "final_bytes": size,
+                    "final_sha256": digest,
+                    "updated_at": time.time(),
+                }
+            )
+        else:
+            receipt = _WriteTransferReceipt(
+                destination=str(destination),
+                overwrite=bool(metadata.get("overwrite", True)),
+                expected_bytes=metadata.get("expected_bytes"),
+                destination_existed=bool(
+                    metadata.get("destination_existed", False)
+                ),
+                status="committing",
+                final_bytes=size,
+                final_sha256=digest,
+                updated_at=time.time(),
+            )
+        _write_write_receipt(
+            context,
+            receipt_path,
+            receipt.model_dump(mode="python", exclude_none=True),
+        )
         os.replace(temporary, destination)
         metadata_path.unlink(missing_ok=True)
-        receipt.update({"status": "completed", "committed_at": time.time()})
-        _write_write_receipt(context, receipt_path, receipt)
+        receipt = receipt.model_copy(
+            update={"status": "completed", "committed_at": time.time()}
+        )
+        _write_write_receipt(
+            context,
+            receipt_path,
+            receipt.model_dump(mode="python", exclude_none=True),
+        )
     return TransferFinishWriteOutput(
         path=_display(destination, context),
         bytes=size,
@@ -1365,20 +1827,35 @@ def transfer_abort_write(
     context: TransferContext,
 ) -> TransferAbortWriteOutput:
     """Abort an active chunked write and remove its private state."""
-    destination = _resolve_transfer_destination(
+    destination, receipt = _bound_write_destination(
         path,
+        transfer_id,
         session_id=session_id,
         workdir=workdir,
         context=context,
     )
     temporary = _transfer_temp_path(destination, transfer_id)
     metadata_path = _transfer_metadata_path(temporary)
+    receipt_path = _write_receipt_path(context, transfer_id)
     deleted = False
-    with path_lock(temporary):
+    with path_locks([temporary, metadata_path, receipt_path]):
+        current = (
+            _load_write_receipt(context, receipt_path)
+            if receipt_path.exists()
+            else receipt
+        )
+        if current is not None and current.status != "receiving":
+            return TransferAbortWriteOutput(
+                path=_display(destination, context),
+                temp_path=_display(temporary, context),
+                deleted=False,
+            )
         if temporary.exists():
             temporary.unlink()
             deleted = True
         metadata_path.unlink(missing_ok=True)
+        if current is not None:
+            context.store.state_store.remove(receipt_path)
     return TransferAbortWriteOutput(
         path=_display(destination, context),
         temp_path=_display(temporary, context),
@@ -1578,12 +2055,63 @@ def _resumable_unpack_archive(
                 )
             if not archive.is_file():
                 raise FileNotFoundError(str(archive))
+            exists = os.path.lexists(destination)
+            if (
+                exists
+                and not overwrite
+                and not (
+                    destination.is_dir()
+                    and not destination.is_symlink()
+                    and not any(destination.iterdir())
+                )
+            ):
+                raise FileExistsError(
+                    f"destination already exists: {destination}"
+                )
+            with tarfile.open(archive, "r:*") as tar:
+                members = _safe_members(tar, staging, context)
+            receipt = {
+                "destination": str(destination),
+                "archive": str(archive),
+                "archive_display": _display(archive, context),
+                "overwrite": bool(overwrite),
+                "cleanup_archive": bool(cleanup_archive),
+                "entries": len(members),
+                "destination_existed": bool(exists),
+                "status": "extracting",
+                "created_at": time.time(),
+            }
+            _write_unpack_receipt(context, receipt_path, receipt)
+
+        status = str(receipt.get("status") or "")
+        destination_existed = bool(receipt.get("destination_existed", False))
+        if status == "extracting":
+            destination_exists = os.path.lexists(destination)
+            backup_exists = os.path.lexists(backup)
+            if destination_existed:
+                if not destination_exists or backup_exists:
+                    raise RuntimeError(
+                        "transfer unpack extracting state changed destination topology"
+                    )
+            elif destination_exists or backup_exists:
+                raise RuntimeError(
+                    "transfer unpack extracting state has unexpected destination state"
+                )
+            if not archive.is_file():
+                raise FileNotFoundError(str(archive))
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            destination.parent.mkdir(parents=True, exist_ok=True)
             staging.mkdir(parents=True, exist_ok=False)
-            members: list[tarfile.TarInfo] = []
+            extracted_members: list[tarfile.TarInfo] = []
             try:
                 with tarfile.open(archive, "r:*") as tar:
-                    members = _safe_members(tar, staging, context)
-                    for member in members:
+                    extracted_members = _safe_members(tar, staging, context)
+                    if len(extracted_members) != int(receipt["entries"]):
+                        raise RuntimeError(
+                            "transfer unpack archive changed during extraction recovery"
+                        )
+                    for member in extracted_members:
                         target = staging / member.name
                         if member.isdir():
                             target.mkdir(parents=True, exist_ok=True)
@@ -1605,37 +2133,11 @@ def _resumable_unpack_archive(
             except BaseException:
                 shutil.rmtree(staging, ignore_errors=True)
                 raise
-
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            exists = os.path.lexists(destination)
-            if (
-                exists
-                and not overwrite
-                and not (
-                    destination.is_dir()
-                    and not destination.is_symlink()
-                    and not any(destination.iterdir())
-                )
-            ):
-                shutil.rmtree(staging, ignore_errors=True)
-                raise FileExistsError(
-                    f"destination already exists: {destination}"
-                )
-            receipt = {
-                "destination": str(destination),
-                "archive": str(archive),
-                "archive_display": _display(archive, context),
-                "overwrite": bool(overwrite),
-                "cleanup_archive": bool(cleanup_archive),
-                "entries": len(members),
-                "destination_existed": bool(exists),
-                "status": "prepared",
-                "created_at": time.time(),
-            }
+            receipt["status"] = "prepared"
+            receipt["updated_at"] = time.time()
             _write_unpack_receipt(context, receipt_path, receipt)
+            status = "prepared"
 
-        status = str(receipt.get("status") or "")
-        destination_existed = bool(receipt.get("destination_existed", False))
         if status == "prepared":
             if not staging.exists():
                 raise RuntimeError(
@@ -1769,13 +2271,29 @@ def transfer_unpack_archive(
     context: TransferContext,
 ) -> TransferUnpackArchiveOutput:
     """Validate in staging and transactionally replace a directory destination."""
-    destination = _resolve_transfer_destination(
-        dst_path,
-        session_id=session_id,
-        workdir=workdir,
-        context=context,
-    )
     if transfer_id is not None:
+        receipt_path = _unpack_receipt_path(context, transfer_id)
+        if receipt_path.exists():
+            try:
+                raw = context.store.state_store.read_json(
+                    receipt_path, max_bytes=64 * 1024
+                )
+                receipt = _UnpackTransferReceipt.model_validate(raw)
+            except OSError, ValueError, ValidationError:
+                raise ValueError(
+                    f"transfer unpack receipt is invalid: {receipt_path}"
+                ) from None
+            destination = _resolve_transfer_destination(
+                receipt.destination,
+                context=context,
+            )
+        else:
+            destination = _resolve_transfer_destination(
+                dst_path,
+                session_id=session_id,
+                workdir=workdir,
+                context=context,
+            )
         return _resumable_unpack_archive(
             archive_path,
             destination,
@@ -1784,6 +2302,12 @@ def transfer_unpack_archive(
             transfer_id=transfer_id,
             context=context,
         )
+    destination = _resolve_transfer_destination(
+        dst_path,
+        session_id=session_id,
+        workdir=workdir,
+        context=context,
+    )
     archive = _resolve_transfer_path(
         archive_path, must_exist=True, context=context
     )

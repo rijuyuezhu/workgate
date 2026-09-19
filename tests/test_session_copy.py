@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 from contextlib import asynccontextmanager
@@ -281,6 +282,9 @@ class _DestinationOnlyTransport:
         self.source_executor_id = source_executor_id
         self.destination_executor_id = destination_executor_id
         self.calls: list[str] = []
+        self.call_details: list[
+            tuple[str, dict[str, Any], str | None, float | None]
+        ] = []
         self.data = bytearray()
         self.fail_release_receipts = False
         self.fail_abandon_import = False
@@ -303,6 +307,7 @@ class _DestinationOnlyTransport:
         assert executor_id == self.destination_executor_id
         values = args or {}
         self.calls.append(op)
+        self.call_details.append((op, dict(values), session_id, timeout_s))
         if op == "transfer_begin_write":
             result: Any = {
                 "path": str(values["path"]),
@@ -455,6 +460,20 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
         str(checkpoint.destination_session_id),
     )
     assert transport.data == payload
+    import_calls = [
+        detail
+        for detail in transport.call_details
+        if detail[0]
+        in {
+            "transfer_begin_write",
+            "transfer_write_chunk",
+            "transfer_finish_write",
+        }
+    ]
+    assert import_calls
+    for _op, args, session_id, _timeout_s in import_calls:
+        assert "workdir" not in args
+        assert session_id == str(checkpoint.destination_session_id)
     assert result.transport == "control_payload"
     assert result.bytes == len(payload)
     assert result.sha256 == hashlib.sha256(payload).hexdigest()
@@ -512,6 +531,11 @@ async def test_retention_abandonment_keeps_tombstone_until_executor_reconciles(
     assert retained.payload_retained is False
     assert not payload_path.exists()
     assert transport.calls == ["transfer_abandon_import"]
+    op, args, session_id, timeout_s = transport.call_details[-1]
+    assert op == "transfer_abandon_import"
+    assert "workdir" not in args
+    assert session_id is None
+    assert timeout_s == session_copy_module._ABANDONMENT_RPC_TIMEOUT_S
 
     transport.fail_abandon_import = False
     await service.reconcile_abandonments(
@@ -523,6 +547,42 @@ async def test_retention_abandonment_keeps_tombstone_until_executor_reconciles(
         "transfer_abandon_import",
         "transfer_abandon_import",
     ]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_abandonment_reruns_after_overlapping_hello(
+    tmp_path, monkeypatch
+):
+    service, _sessions, _transport, checkpoint, _state_store = (
+        _checkpoint_service(tmp_path, b"rerun-after-timeout")
+    )
+    executor_id = str(checkpoint.destination_executor_id)
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    calls: list[str | None] = []
+
+    async def reconcile(*, executor_id: str | None = None) -> None:
+        calls.append(executor_id)
+        if len(calls) == 1:
+            first_started.set()
+            await release_first.wait()
+            raise TimeoutError("simulated stale offered cleanup")
+        second_started.set()
+
+    monkeypatch.setattr(service, "reconcile_abandonments", reconcile)
+    service.schedule_reconcile_abandonments(executor_id=executor_id)
+    await asyncio.wait_for(first_started.wait(), timeout=0.5)
+
+    # A reconnect hello arriving while the old offered cleanup is still pending
+    # must request one bounded rerun instead of being lost to task coalescing.
+    service.schedule_reconcile_abandonments(executor_id=executor_id)
+    release_first.set()
+    await asyncio.wait_for(second_started.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert calls == [executor_id, executor_id]
+    await service.aclose()
 
 
 @pytest.mark.asyncio
