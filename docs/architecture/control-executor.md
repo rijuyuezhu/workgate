@@ -274,6 +274,40 @@ inventory or explicit lookup repairs its display projection.
 Cross-executor copy may use a feature-specific transfer checkpoint; this is not a
 reason to build a generic workflow engine.
 
+For a relative destination, the first executor-side file write begin resolves
+against the executor-authoritative destination session cwd and durably records
+the canonical destination under the transfer ID before creating transfer-owned
+temp state. Resumable directory unpack does the same before creating its staging
+tree. Later write/unpack/abandon recovery follows those executor-issued bindings;
+control's `resolved_workdir` projection is display/reconciliation state and is
+never durable filesystem authority for the transfer. If completed directory
+unpack has already consumed its internal scratch archive, the completed unpack
+receipt is the durable proof that lets retry/abandon reconcile the linked write
+receipt without requiring that scratch file to reappear. For resumable writes,
+the durable metadata owns the committed contiguous prefix: if a crash leaves
+extra fsynced bytes beyond that prefix, begin/recovery truncates only that
+uncommitted suffix before resuming; identity changes, missing committed bytes,
+or non-contiguous durable ranges still fail closed.
+
+Recovery may advance a durable transfer FSM, but may not report a later state
+only in memory. In particular, after validating a `committing` write whose final
+rename already happened, executor durably promotes its write receipt to
+`completed` before returning completed recovery to control. While a write or
+unpack receipt remains live, the filesystem objects that receipt still owns are
+also recovery state: generic temp GC stays out of the reserved transfer scratch
+namespace, and transfer-specific scratch/stale-write GC skips receipt-owned
+archives, temporaries, and metadata. Age or budget pressure may reclaim only
+orphan transfer objects.
+
+Executor also preserves offer order for mutation commands carrying the same
+durable transfer ID. This is a tiny process-local per-transfer chain, analogous
+to the create/terminate session chain, and does not serialize unrelated
+transfers. An abandonment may report `safe_to_forget` only after it reaches the
+tail of that chain and reconciles the transfer receipts, so no earlier-offered
+mutation can subsequently recreate transfer-owned state. Executor restart may
+drop the in-memory chain because it also drops those old offered tasks; durable
+receipts remain the recovery authority across restart.
+
 ## Persistence and long-lived resources
 
 Persist only facts the user can still care about after restart. Examples include

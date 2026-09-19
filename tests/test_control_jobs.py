@@ -40,6 +40,8 @@ class FakeSessions:
         self.availability = availability
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.admitted: list[tuple[str, ...]] = []
+        self.required_available: list[tuple[str, ...] | None] = []
+        self.offline_sessions: set[str] = set()
         self.executor_result = JobOutput(operation="list")
 
     def require_session_status(self, session_id: str, allowed: set[str]):
@@ -56,8 +58,20 @@ class FakeSessions:
         return self.executor_result.model_dump(mode="json")
 
     @asynccontextmanager
-    async def session_admission(self, session_ids: tuple[str, ...]):
+    async def session_admission(
+        self,
+        session_ids: tuple[str, ...],
+        *,
+        require_available: tuple[str, ...] | None = None,
+    ):
         self.admitted.append(session_ids)
+        self.required_available.append(require_available)
+        required = (
+            session_ids if require_available is None else require_available
+        )
+        offline = self.offline_sessions.intersection(required)
+        if offline:
+            raise RuntimeError(f"executor offline: {sorted(offline)[0]}")
         yield ()
 
 
@@ -205,6 +219,53 @@ async def test_control_job_retry_admits_referenced_sessions(
 
     assert [row.job_id for row in result.retried] == ["job_managed"]
     assert sessions.admitted == [("sess_a", "sess_b")]
+    assert sessions.required_available == [("sess_a", "sess_b")]
+
+
+@pytest.mark.asyncio
+async def test_control_job_retry_uses_feature_availability_without_source_executor(
+    monkeypatch,
+) -> None:
+    sessions = FakeSessions()
+    sessions.offline_sessions.add("sess_a")
+    retried = JobRetryOutput(
+        **_job("job_managed", status="running").model_dump()
+    )
+    monkeypatch.setattr(
+        control_jobs,
+        "managed_job_id_set",
+        lambda _session_id, _requested: {"job_managed"},
+    )
+    monkeypatch.setattr(
+        control_jobs,
+        "managed_job_referenced_session_ids",
+        lambda _session_id, _job_id: ("sess_a", "sess_b"),
+    )
+
+    called = False
+
+    async def retry_managed(_session_id: str, job_id: str):
+        nonlocal called
+        called = True
+        assert job_id == "job_managed"
+        return retried
+
+    monkeypatch.setattr(
+        control_jobs,
+        "retry_managed_job_without_session_admission",
+        retry_managed,
+    )
+    service = ControlJobService(
+        sessions,  # type: ignore[arg-type]
+        managed_retry_availability=lambda _job_id, _session_ids: ("sess_b",),
+    )
+
+    result = await service.execute(session_id="sess_a", retry=["job_managed"])
+
+    assert called is True
+    assert [row.job_id for row in result.retried] == ["job_managed"]
+    assert sessions.admitted == [("sess_a", "sess_b")]
+    assert sessions.required_available == [("sess_b",)]
 
 
 @pytest.mark.asyncio

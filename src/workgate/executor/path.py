@@ -23,19 +23,33 @@ def prune_temp_dir(
     max_bytes: int,
     directory: Path,
     minimum_age_s: float = 0.0,
+    protected_paths: frozenset[Path] = frozenset(),
+    excluded_name_prefixes: tuple[str, ...] = (
+        "remote-transfer-",
+        ".remote-transfer-",
+    ),
 ) -> None:
-    """Remove over-budget temporary files from one explicit scratch directory."""
+    """Remove over-budget scratch files without crossing durable namespaces."""
     path = temp_dir(directory)
     try:
         files = [item for item in path.iterdir() if item.is_file()]
     except OSError:
         return
 
+    try:
+        protected = {item.resolve(strict=False) for item in protected_paths}
+    except OSError:
+        return
     entries: list[tuple[float, int, Path]] = []
     for item in files:
         try:
+            resolved = item.resolve(strict=False)
             stat = item.stat()
         except OSError:
+            continue
+        if resolved in protected or item.name.startswith(
+            excluded_name_prefixes
+        ):
             continue
         entries.append((stat.st_mtime, stat.st_size, item))
 

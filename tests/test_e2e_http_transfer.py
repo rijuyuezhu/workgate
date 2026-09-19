@@ -123,7 +123,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "chunk_size": 64 * 1024,
             },
         )
-        assert copied["transport"] == "executor_rpc"
+        assert copied["transport"] == "control_payload"
         assert copied["relation"]["route"] == "different_executors"
         assert copied["relation"]["same_executor"] is False
         assert copied["source"]["executor_id"] == source_executor.executor_id
@@ -153,7 +153,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "chunk_size": 64 * 1024,
             },
         )
-        assert directory_copy["transport"] == "executor_rpc"
+        assert directory_copy["transport"] == "control_payload"
         assert directory_copy["relation"]["route"] == "different_executors"
         assert directory_copy["chunks"] > 1
         assert (

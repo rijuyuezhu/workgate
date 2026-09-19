@@ -3,11 +3,14 @@ import threading
 
 import pytest
 
+from workgate.config.settings import Settings
+from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import (
     ExecutorConnection,
     executor_retry_delay,
 )
 from workgate.executor.control_client import ExecutorControlError
+from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
 from workgate.protocol.executor import (
     ExecutorCommand,
@@ -188,6 +191,126 @@ async def test_saturated_blocking_handler_does_not_starve_heartbeat() -> None:
 
     assert client.heartbeat_calls >= 2
     assert client.closed
+
+
+@pytest.mark.asyncio
+async def test_same_transfer_abandonment_waits_for_earlier_offered_begin(
+    tmp_path,
+) -> None:
+    transfer_id = "copy_" + "a" * 22
+    session_id = "sess_0000000000000000000001"
+    workspace = tmp_path / "workspace"
+    workdir = workspace / "session"
+    workdir.mkdir(parents=True)
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                workspace_root=workspace,
+                state_dir=tmp_path / "state",
+                agent_bridge_enabled=False,
+            )
+        ),
+        enable_control_connection=False,
+    )
+    runtime.services.tool_session_store.create_session(
+        session_id=session_id, workdir=workdir
+    )
+    begin = ExecutorCommand(
+        id=new_command_id(),
+        op="transfer_begin_write",
+        session_id=session_id,
+        args={"path": "result.bin", "transfer_id": transfer_id},
+    )
+    abandon = ExecutorCommand(
+        id=new_command_id(),
+        op="transfer_abandon_import",
+        args={
+            "transfer_id": transfer_id,
+            "kind": "file",
+            "import_path": "result.bin",
+        },
+    )
+    second_offered = asyncio.Event()
+    begin_started = asyncio.Event()
+    abandon_started = asyncio.Event()
+    release_begin = asyncio.Event()
+    results_seen = asyncio.Event()
+    execution_order: list[str] = []
+
+    class FakeClient(_BaseFakeClient):
+        poll_calls = 0
+        results: list[ExecutorResult] = []
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return begin
+            if self.poll_calls == 2:
+                second_offered.set()
+                return abandon
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            self.results.append(result)
+            if len(self.results) == 2:
+                results_seen.set()
+
+    async def execute(command: ExecutorCommand):
+        if command.id == begin.id:
+            execution_order.append("begin")
+            begin_started.set()
+            await release_begin.wait()
+        else:
+            assert command.id == abandon.id
+            execution_order.append("abandon")
+            abandon_started.set()
+        return await runtime._execute_protocol_command(command)
+
+    client = FakeClient()
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=execute,
+        max_concurrent_commands=2,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(begin_started.wait(), timeout=0.5)
+        await asyncio.wait_for(second_offered.wait(), timeout=0.5)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert not abandon_started.is_set()
+
+        release_begin.set()
+        await asyncio.wait_for(abandon_started.wait(), timeout=0.5)
+        await asyncio.wait_for(results_seen.wait(), timeout=0.5)
+        assert execution_order == ["begin", "abandon"]
+        abandon_result = next(
+            row for row in client.results if row.id == abandon.id
+        )
+        assert abandon_result.ok is True
+        assert isinstance(abandon_result.result, dict)
+        assert abandon_result.result["safe_to_forget"] is True
+        receipt_path = (
+            runtime.services.state_store.layout.executor_transfers_dir
+            / f"write-{transfer_id}.json"
+        )
+        temporary = workdir / f".result.bin.workgate-transfer-{transfer_id}.tmp"
+        assert not receipt_path.exists()
+        assert not temporary.exists()
+        assert not temporary.with_name(temporary.name + ".json").exists()
+    finally:
+        release_begin.set()
+        await connection.aclose()
 
 
 @pytest.mark.asyncio

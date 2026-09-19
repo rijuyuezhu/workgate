@@ -141,20 +141,23 @@ class ControlRuntime:
                                     await self.managed_jobs_runtime.aclose()
                             finally:
                                 try:
-                                    await self.executor_pairing.aclose()
+                                    await self.session_copy_service.aclose()
                                 finally:
                                     try:
-                                        await self.session_coordinator.aclose()
+                                        await self.executor_pairing.aclose()
                                     finally:
                                         try:
-                                            if executor_transport_started:
-                                                await self.executor_transport.aclose()
+                                            await self.session_coordinator.aclose()
                                         finally:
                                             try:
-                                                self.control_state.close()
+                                                if executor_transport_started:
+                                                    await self.executor_transport.aclose()
                                             finally:
-                                                installation.close()
-                                                self._closed = True
+                                                try:
+                                                    self.control_state.close()
+                                                finally:
+                                                    installation.close()
+                                                    self._closed = True
             raise
         self._installation = installation
         self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
@@ -195,19 +198,22 @@ class ControlRuntime:
                 self._oauth_binding_installed = False
                 self._previous_oauth_state = None
             try:
-                await self.executor_pairing.aclose()
+                await self.session_copy_service.aclose()
             finally:
                 try:
-                    await self.session_coordinator.aclose()
+                    await self.executor_pairing.aclose()
                 finally:
                     try:
-                        await self.executor_transport.aclose()
+                        await self.session_coordinator.aclose()
                     finally:
                         try:
-                            self.control_state.close()
+                            await self.executor_transport.aclose()
                         finally:
-                            if installation is not None:
-                                installation.close()
+                            try:
+                                self.control_state.close()
+                            finally:
+                                if installation is not None:
+                                    installation.close()
         if managed_jobs_error is not None:
             raise managed_jobs_error
         if human_ui_error is not None:
@@ -247,21 +253,30 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_agent_sessions=config.max_agent_sessions,
         agent_session_retention_s=config.agent_session_retention_s,
     )
+    session_copy_service = ControlSessionCopyService(
+        session_coordinator,
+        executor_transport,
+        services.state_store,
+        config.data_dir,
+    )
 
     async def authenticated_hello(executor_id: str, credential: str) -> None:
         await executor_pairing.complete_authenticated_hello(
             executor_id, credential
         )
         await session_coordinator.reconcile_hello(executor_id)
+        session_copy_service.schedule_reconcile_abandonments(
+            executor_id=executor_id
+        )
 
     executor_transport.set_authenticated_hello_callback(authenticated_hello)
-    session_copy_service = ControlSessionCopyService(
-        session_coordinator, executor_transport
-    )
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )
-    job_service = ControlJobService(session_coordinator)
+    job_service = ControlJobService(
+        session_coordinator,
+        managed_retry_availability=session_copy_service.retry_require_available,
+    )
     todo_service = ControlTodoService(
         control_state, services.state_store, config
     )

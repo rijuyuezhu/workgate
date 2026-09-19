@@ -177,8 +177,19 @@ async def test_transfer_composition_preserves_unbound_command_admission(
         )
         == "transfer_delete_temp_path"
     )
+    assert (
+        await handlers["transfer_abandon_import"](
+            {
+                "session_id": "sess-command",
+                "transfer_id": "transfer-1",
+                "kind": "dir",
+                "import_path": str(tmp_path / "scratch.tar.gz"),
+            }
+        )
+        == "transfer_abandon_import"
+    )
 
-    assert store.admitted == ["sess-command"] * 7
+    assert store.admitted == ["sess-command"] * 8
     assert [name for name, _args, _kwargs in calls] == [
         "transfer_read_chunk",
         "transfer_begin_write",
@@ -187,7 +198,14 @@ async def test_transfer_composition_preserves_unbound_command_admission(
         "transfer_abort_write",
         "transfer_copy_file",
         "transfer_delete_temp_path",
+        "transfer_abandon_import",
     ]
+    assert calls[-1][1] == (
+        "transfer-1",
+        "dir",
+        str(tmp_path / "scratch.tar.gz"),
+    )
+    assert calls[-1][2]["context"].config == runtime.config
     assert (
         transfer_composition._transfer_session_id(
             {"session_id": "sess-command", "_workgate_unbound_temp": True}

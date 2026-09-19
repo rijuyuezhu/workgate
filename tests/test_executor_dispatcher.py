@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from workgate.executor.dispatch import (
+    EXECUTOR_INTERNAL_OPERATION_NAMES,
     EXECUTOR_OPERATION_NAMES,
     ExecutorDispatcher,
     build_executor_dispatcher,
@@ -23,8 +24,11 @@ def test_executor_dispatcher_membership_preserves_public_machine_boundary() -> (
 
     assert frozenset(dispatcher.handlers) == EXECUTOR_OPERATION_NAMES
     assert (
-        {"job"} | EXECUTOR_AGENT_MCP_OPERATION_NAMES
+        {"job"}
+        | EXECUTOR_AGENT_MCP_OPERATION_NAMES
+        | EXECUTOR_INTERNAL_OPERATION_NAMES
     ) == EXECUTOR_OPERATION_NAMES - MACHINE_TOOL_NAMES
+    assert EXECUTOR_INTERNAL_OPERATION_NAMES.isdisjoint(MACHINE_TOOL_NAMES)
 
 
 def test_executor_dispatchers_are_fresh_and_handler_maps_are_immutable() -> (

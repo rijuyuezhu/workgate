@@ -526,9 +526,21 @@ class ControlSessionCoordinator:
                 )
 
     @asynccontextmanager
-    async def session_admission(self, session_ids: tuple[str, ...]):
-        """Hold stable-order lifecycle locks for one single/multi-session operation."""
+    async def session_admission(
+        self,
+        session_ids: tuple[str, ...],
+        *,
+        require_available: tuple[str, ...] | None = None,
+    ):
+        """Hold lifecycle locks and require selected active sessions to be available."""
         unique = tuple(dict.fromkeys(session_ids))
+        availability = (
+            set(unique) if require_available is None else set(require_available)
+        )
+        if not availability.issubset(set(unique)):
+            raise ValueError(
+                "availability admission must reference admitted sessions"
+            )
         async with AsyncExitStack() as stack:
             for session_id in sorted(unique):
                 await stack.enter_async_context(self._lock(session_id))
@@ -537,7 +549,8 @@ class ControlSessionCoordinator:
                 for session_id in unique
             )
             for record in records:
-                await self._require_available(record)
+                if str(record.session_id) in availability:
+                    await self._require_available(record)
             yield records
 
     async def admit_sessions(
