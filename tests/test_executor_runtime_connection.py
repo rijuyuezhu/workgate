@@ -21,6 +21,7 @@ from workgate.protocol.executor import (
     ExecutorHelloResponse,
     ExecutorResult,
     JobInventorySummary,
+    SessionInventorySummary,
     ShellInventorySummary,
 )
 from workgate.protocol.ids import new_command_id, new_executor_id
@@ -224,12 +225,20 @@ async def test_executor_runtime_hello_includes_resource_inventory(
         )
     )
     session_id = "sess_0000000000000000000001"
-    runtime.services.tool_session_store.create_session(
-        session_id=session_id, workdir=workspace
+    before = SessionInventorySummary(
+        session_id=session_id,
+        resolved_workdir=str(workspace),
+        has_persistent_shells=True,
+        has_active_jobs=True,
+    )
+    after = before.model_copy(update={"has_active_jobs": False})
+    session_snapshots = iter(((before,), (after,)))
+    monkeypatch.setattr(
+        runtime.sessions, "inventory", lambda: next(session_snapshots)
     )
     shell = ShellInventorySummary(shell_id="shell-1", session_id=session_id)
     job = JobInventorySummary(
-        job_id="job-1", session_id=session_id, status="running"
+        job_id="job-1", session_id=session_id, status="lost"
     )
 
     async def reconnect_inventory(
@@ -262,11 +271,61 @@ async def test_executor_runtime_hello_includes_resource_inventory(
             _FakeControlClient.hello_seen.wait(), timeout=0.5
         )
         hello = _FakeControlClient.hellos[-1]
-        assert [str(row.session_id) for row in hello.sessions] == [session_id]
+        assert hello.sessions == (after,)
         assert hello.shells == (shell,)
         assert hello.jobs == (job,)
     finally:
         await runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_hello_retries_when_session_ids_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                workspace_root=workspace,
+                state_dir=tmp_path / "state",
+            )
+        )
+    )
+    first_id = "sess_0000000000000000000001"
+    second_id = "sess_0000000000000000000002"
+    first = SessionInventorySummary(
+        session_id=first_id,
+        resolved_workdir=str(workspace),
+    )
+    second = SessionInventorySummary(
+        session_id=second_id,
+        resolved_workdir=str(workspace),
+    )
+    snapshots = iter(((first,), (second,), (second,), (second,)))
+    monkeypatch.setattr(runtime.sessions, "inventory", lambda: next(snapshots))
+    observed: list[frozenset[str]] = []
+
+    async def reconnect_inventory(
+        session_ids: frozenset[str],
+    ) -> tuple[
+        tuple[ShellInventorySummary, ...],
+        tuple[JobInventorySummary, ...],
+    ]:
+        observed.append(session_ids)
+        return (), ()
+
+    monkeypatch.setattr(
+        runtime.shell, "reconnect_inventory", reconnect_inventory
+    )
+
+    hello = await runtime._build_reconnect_hello()
+
+    assert observed == [
+        frozenset({first_id}),
+        frozenset({second_id}),
+    ]
+    assert hello.sessions == (second,)
 
 
 @pytest.mark.asyncio

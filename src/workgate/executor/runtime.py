@@ -18,6 +18,7 @@ from ..utils.path_policy import resolve_path_with_policy
 from .agent import ExecutorAgentBridgeService
 from .config import ExecutorConfig
 from .dispatch import ExecutorDispatcher
+from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
 from .search_composition import build_executor_dispatcher_with_search
 from .services import (
@@ -76,14 +77,23 @@ class ExecutorRuntime:
         """Build one complete authoritative executor resource inventory."""
         from .hello import build_executor_hello
 
-        sessions = self.sessions.inventory()
-        session_ids = frozenset(str(row.session_id) for row in sessions)
-        shells, jobs = await self.shell.reconnect_inventory(session_ids)
-        return build_executor_hello(
-            self.config,
-            sessions=sessions,
-            shells=shells,
-            jobs=jobs,
+        for _attempt in range(2):
+            before = self.sessions.inventory()
+            session_ids = frozenset(str(row.session_id) for row in before)
+            shells, jobs = await self.shell.reconnect_inventory(session_ids)
+            sessions = self.sessions.inventory()
+            if (
+                frozenset(str(row.session_id) for row in sessions)
+                == session_ids
+            ):
+                return build_executor_hello(
+                    self.config,
+                    sessions=sessions,
+                    shells=shells,
+                    jobs=jobs,
+                )
+        raise ExecutorResourceInventoryUnavailable(
+            "session inventory changed while reconnect snapshot was built"
         )
 
     async def start(self) -> None:
