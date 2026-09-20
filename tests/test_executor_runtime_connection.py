@@ -20,6 +20,8 @@ from workgate.protocol.executor import (
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
+    JobInventorySummary,
+    ShellInventorySummary,
 )
 from workgate.protocol.ids import new_command_id, new_executor_id
 
@@ -205,6 +207,66 @@ async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
 
     with executor_run_lock(runtime.services.state_store):
         pass
+
+
+@pytest.mark.asyncio
+async def test_executor_runtime_hello_includes_resource_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from workgate.executor import control_client as control_client_module
+
+    state_dir = tmp_path / "state"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(workspace_root=workspace, state_dir=state_dir)
+        )
+    )
+    session_id = "sess_0000000000000000000001"
+    runtime.services.tool_session_store.create_session(
+        session_id=session_id, workdir=workspace
+    )
+    shell = ShellInventorySummary(shell_id="shell-1", session_id=session_id)
+    job = JobInventorySummary(
+        job_id="job-1", session_id=session_id, status="running"
+    )
+
+    async def reconnect_inventory(
+        session_ids: frozenset[str],
+    ) -> tuple[
+        tuple[ShellInventorySummary, ...],
+        tuple[JobInventorySummary, ...],
+    ]:
+        assert session_ids == frozenset({session_id})
+        return (shell,), (job,)
+
+    monkeypatch.setattr(
+        runtime.shell, "reconnect_inventory", reconnect_inventory
+    )
+    profile = ExecutorProfile(
+        control_url="https://control.example",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    assert runtime.profile_store is not None
+    runtime.profile_store.save(profile)
+    _FakeControlClient.hello_seen = asyncio.Event()
+    monkeypatch.setattr(
+        control_client_module, "ExecutorControlClient", _FakeControlClient
+    )
+
+    await runtime.start()
+    try:
+        await asyncio.wait_for(
+            _FakeControlClient.hello_seen.wait(), timeout=0.5
+        )
+        hello = _FakeControlClient.hellos[-1]
+        assert [str(row.session_id) for row in hello.sessions] == [session_id]
+        assert hello.shells == (shell,)
+        assert hello.jobs == (job,)
+    finally:
+        await runtime.aclose()
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,10 @@ from ..protocol.executor import (
 )
 from ..utils.serialization import to_jsonable
 from .control_client import ExecutorControlClient, ExecutorControlError
-from .errors import ExecutorOperationFailure
+from .errors import (
+    ExecutorOperationFailure,
+    ExecutorResourceInventoryUnavailable,
+)
 
 _JSON_VALUE = TypeAdapter(JsonValue)
 _INITIAL_RETRY_DELAY_S = 0.5
@@ -50,7 +53,9 @@ def executor_retry_delay(attempt: int, random_value: float) -> float:
 
 
 type CommandExecutor = Callable[[ExecutorCommand], Any]
-type HelloFactory = Callable[[], ExecutorHelloRequest]
+type HelloFactory = Callable[
+    [], ExecutorHelloRequest | Awaitable[ExecutorHelloRequest]
+]
 type Sleep = Callable[[float], Awaitable[None]]
 type _CommandOrderKey = tuple[str, str]
 
@@ -182,10 +187,16 @@ class ExecutorConnection:
             # healthy enough to reset the reconnect failure streak.
             delivery_progress = asyncio.Event()
             try:
-                policy = await self._client.hello(self._hello_factory())
+                hello = self._hello_factory()
+                if inspect.isawaitable(hello):
+                    hello = await hello
+                policy = await self._client.hello(hello)
                 await self._run_connected(
                     policy, delivery_progress=delivery_progress
                 )
+            except ExecutorResourceInventoryUnavailable:
+                await self._sleep(self._retry_delay(attempt))
+                attempt += 1
             except ExecutorControlError as exc:
                 reconnectable = (
                     exc.retryable

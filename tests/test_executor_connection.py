@@ -10,6 +10,7 @@ from workgate.executor.connection import (
     executor_retry_delay,
 )
 from workgate.executor.control_client import ExecutorControlError
+from workgate.executor.errors import ExecutorResourceInventoryUnavailable
 from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
 from workgate.protocol.executor import (
@@ -310,6 +311,61 @@ async def test_same_transfer_abandonment_waits_for_earlier_offered_begin(
         assert not temporary.with_name(temporary.name + ".json").exists()
     finally:
         release_begin.set()
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_non_authoritative_resource_inventory_retries_before_hello() -> (
+    None
+):
+    hello_seen = asyncio.Event()
+    factory_calls = 0
+    retry_sleeps: list[float] = []
+
+    class FakeClient(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            assert message == _hello()
+            hello_seen.set()
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result should be submitted")
+
+    async def hello_factory() -> ExecutorHelloRequest:
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 1:
+            raise ExecutorResourceInventoryUnavailable("inventory uncertain")
+        return _hello()
+
+    async def yielding_sleep(delay: float) -> None:
+        retry_sleeps.append(delay)
+        await asyncio.sleep(0)
+
+    connection = ExecutorConnection(
+        FakeClient(),
+        hello_factory=hello_factory,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        sleep=yielding_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(hello_seen.wait(), timeout=0.5)
+        assert factory_calls == 2
+        assert retry_sleeps == [0.5]
+        assert connection.owner_action_error is None
+    finally:
         await connection.aclose()
 
 

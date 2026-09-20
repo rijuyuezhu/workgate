@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...jobs.state import CONFIRMED_TERMINAL_STATUSES
+from ...protocol.executor import JobInventorySummary
 from ...schemas.result_models.jobs import (
     JobListOutput,
     JobOutput,
@@ -13,6 +15,7 @@ from ...schemas.result_models.jobs import (
     JobTailOutput,
 )
 from ..config import ExecutorConfig
+from ..errors import ExecutorResourceInventoryUnavailable
 from ..tool_session.lifecycle import session_lifecycle_lock
 from ..tool_session.store import ToolSessionStore
 from . import shell as shell_jobs
@@ -102,6 +105,26 @@ class ExecutorJobService:
         return await shell_jobs.reconcile_shell_jobs_execute(
             self.config, self.store
         )
+
+    async def reconnect_inventory(
+        self, session_ids: frozenset[str]
+    ) -> tuple[tuple[JobInventorySummary, ...], frozenset[str]]:
+        """Return authoritative retained jobs plus their private backing shells."""
+        jobs, shell_ids = shell_jobs.shell_job_inventory_snapshot(session_ids)
+        if not any(
+            row.status not in CONFIRMED_TERMINAL_STATUSES for row in jobs
+        ):
+            return jobs, shell_ids
+        if not await self.reconcile():
+            raise ExecutorResourceInventoryUnavailable(
+                "background job inventory is currently non-authoritative"
+            )
+        return shell_jobs.shell_job_inventory_snapshot(session_ids)
+
+    def backing_shell_ids(self, session_ids: frozenset[str]) -> frozenset[str]:
+        """Return private shell ids currently assigned to executor job attempts."""
+        _jobs, shell_ids = shell_jobs.shell_job_inventory_snapshot(session_ids)
+        return shell_ids
 
     async def execute(self, args: dict[str, Any]) -> JobOutput:
         """Execute one public executor-side shell-job companion operation."""

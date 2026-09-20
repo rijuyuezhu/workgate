@@ -147,7 +147,7 @@ async def persist_profile_before_first_hello(
     profile_store.save(profile)
     client = client_factory(profile)
     try:
-        await client.hello(build_executor_hello(config))
+        await client.hello(build_executor_hello(config, capabilities=()))
     finally:
         await client.aclose()
     return profile

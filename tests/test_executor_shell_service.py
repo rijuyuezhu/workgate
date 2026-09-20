@@ -338,6 +338,48 @@ async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
 
 
 @pytest.mark.asyncio
+async def test_shell_service_hides_job_backing_shells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _store = _service(tmp_path)
+    inventory = ListPersistentShellsOutput(
+        shells=[
+            PersistentShellInfo(shell_id="shell-user"),
+            PersistentShellInfo(shell_id="shell-job"),
+        ]
+    )
+
+    async def owned(*_args: Any) -> list[str]:
+        return ["shell-user", "shell-job"]
+
+    async def listed(*_args: Any) -> ListPersistentShellsOutput:
+        return inventory
+
+    monkeypatch.setattr(
+        shell_service_module, "list_owned_persistent_shell_ids_execute", owned
+    )
+    monkeypatch.setattr(
+        shell_service_module, "list_persistent_shells_execute", listed
+    )
+    monkeypatch.setattr(
+        service.jobs,
+        "backing_shell_ids",
+        lambda session_ids: frozenset({"shell-job"}),
+    )
+
+    visible = await service.list({"session_id": "sess-1"})
+    assert [shell.shell_id for shell in visible.shells] == ["shell-user"]
+    with pytest.raises(ValueError, match="belongs to a tracked job"):
+        await service.send(
+            {
+                "session_id": "sess-1",
+                "shell_id": "shell-job",
+                "input_text": "echo hidden",
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_shell_service_stop_owned_reconciles_and_stops_live_shells(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

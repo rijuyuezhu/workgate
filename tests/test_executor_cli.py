@@ -16,7 +16,6 @@ from workgate.main import _build_parser
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
-from workgate.protocol.executor import ExecutorHelloResponse
 from workgate.protocol.ids import (
     new_device_code,
     new_executor_id,
@@ -46,14 +45,6 @@ def _profile(control_url: str = "https://control.test") -> ExecutorProfile:
         control_url=control_url,
         executor_id=new_executor_id(),
         credential=new_executor_credential(),
-    )
-
-
-def _hello_response() -> ExecutorHelloResponse:
-    return ExecutorHelloResponse(
-        heartbeat_interval_s=15,
-        offline_after_s=60,
-        poll_timeout_s=25,
     )
 
 
@@ -124,17 +115,15 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
     store = _store(tmp_path)
     existing = _profile()
     ExecutorProfileStore(store).save(existing)
-    hello_calls = 0
+    heartbeat_calls = 0
 
     class ExistingClient(ExecutorControlClient):
         def __init__(self, profile: ExecutorProfile) -> None:
             assert profile == existing
 
-        async def hello(self, message):
-            del message
-            nonlocal hello_calls
-            hello_calls += 1
-            return _hello_response()
+        async def heartbeat(self) -> None:
+            nonlocal heartbeat_calls
+            heartbeat_calls += 1
 
         async def aclose(self) -> None:
             return None
@@ -156,7 +145,7 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
 
     await executor_cli._connect(_args())
 
-    assert hello_calls == 1
+    assert heartbeat_calls == 1
     output = capsys.readouterr().out
     assert existing.executor_id in output
     assert existing.credential not in output
@@ -185,8 +174,7 @@ async def test_connect_does_not_repair_transient_or_protocol_incompatible_profil
         def __init__(self, _profile: ExecutorProfile) -> None:
             return None
 
-        async def hello(self, message):
-            del message
+        async def heartbeat(self) -> None:
             error = (
                 None
                 if code is None
@@ -240,8 +228,7 @@ async def test_revoked_profile_starts_pairing_with_existing_id_hint_without_secr
         def __init__(self, _profile: ExecutorProfile) -> None:
             return None
 
-        async def hello(self, message):
-            del message
+        async def heartbeat(self) -> None:
             raise ExecutorControlError(
                 "revoked",
                 status_code=403,

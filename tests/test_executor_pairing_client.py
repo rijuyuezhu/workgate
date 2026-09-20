@@ -190,6 +190,10 @@ async def test_profile_is_persisted_before_first_authenticated_hello(
             assert message.workspace_root == str(
                 _config(tmp_path).workspace_root
             )
+            assert message.capabilities == ()
+            assert message.sessions == ()
+            assert message.shells == ()
+            assert message.jobs == ()
             hello_observations.append(profile_store.load())
             return ExecutorHelloResponse(
                 heartbeat_interval_s=15,

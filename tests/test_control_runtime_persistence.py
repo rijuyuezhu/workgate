@@ -17,6 +17,9 @@ from workgate.protocol.executor import (
     ExecutorHelloRequest,
     ExecutorResult,
     ExecutorRuntimeSummary,
+    JobInventorySummary,
+    SessionInventorySummary,
+    ShellInventorySummary,
 )
 from workgate.protocol.ids import new_executor_id, new_session_id
 
@@ -118,6 +121,36 @@ async def test_control_runtime_restores_only_durable_product_facts(
         assert await second.executor_transport.pending_count(executor_id) == 0
         assert not await second.executor_transport.is_online(executor_id)
         assert await second.executor_transport.inventory(executor_id) is None
+
+        reconnect = ExecutorHelloRequest(
+            runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            capabilities=("session",),
+            sessions=(
+                SessionInventorySummary(
+                    session_id=session_id,
+                    resolved_workdir="/home/user/src/workgate",
+                    has_persistent_shells=True,
+                    has_active_jobs=True,
+                ),
+            ),
+            shells=(
+                ShellInventorySummary(
+                    shell_id="shell-after-restart", session_id=session_id
+                ),
+            ),
+            jobs=(
+                JobInventorySummary(
+                    job_id="job-after-restart",
+                    session_id=session_id,
+                    status="running",
+                ),
+            ),
+        )
+        await second.executor_transport.hello(credential, reconnect)
+        assert (
+            await second.executor_transport.inventory(executor_id) == reconnect
+        )
+        assert await second.executor_transport.is_online(executor_id)
     finally:
         await second.aclose()
 

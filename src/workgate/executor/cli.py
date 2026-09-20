@@ -13,7 +13,6 @@ from ..persistence import get_state_store
 from ..protocol.errors import ProtocolErrorCode
 from .config import resolve_executor_config
 from .control_client import ExecutorControlClient, ExecutorControlError
-from .hello import build_executor_hello
 from .pairing import (
     ExecutorPairingClient,
     build_pair_start_request,
@@ -53,7 +52,7 @@ async def _connect(args: argparse.Namespace) -> None:
             )
         client = ExecutorControlClient(existing)
         try:
-            await client.hello(build_executor_hello(config))
+            await client.heartbeat()
         except ExecutorControlError as exc:
             if exc.code not in {
                 ProtocolErrorCode.UNAUTHORIZED_EXECUTOR,

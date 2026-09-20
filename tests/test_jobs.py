@@ -445,6 +445,13 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
     assert listed.counts == {"running": 1}
     assert listed.jobs[0].job_id == started.job_id
     assert listed.jobs[0].session_id == session_id
+    inventory, backing_shells = await ExecutorJobService(
+        *_executor_job_dependencies()
+    ).reconnect_inventory(frozenset({session_id}))
+    assert [
+        (row.job_id, str(row.session_id), row.status) for row in inventory
+    ] == [(started.job_id, session_id, "running")]
+    assert backing_shells == frozenset({"shell_1"})
 
     tailed = await _test_job_tail_execute(session_id, started.job_id, lines=5)
     assert tailed.output == "tail shell_1\n"
@@ -463,8 +470,71 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
 
     retried = await _test_job_retry_execute(session_id, started.job_id)
     assert retried.status == "running"
+    assert retried.job_id == started.job_id
     assert retried.attempts == 2
     assert retried.session_id == session_id
+    assert active_sessions == {"shell_2"}
+    with job_recovery.store_transaction() as durable:
+        row = job_state.find_session_job(durable, session_id, started.job_id)
+        assert row.get("attempts") == 2
+        assert row.get("shell_id") == "shell_2"
+        assert str(row.get("command_path")).endswith("-attempt-2.command")
+
+
+@pytest.mark.asyncio
+async def test_lost_job_start_response_is_rediscovered_by_reconnect_inventory(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    clear_settings_cache()
+    store = get_tool_session_store()
+    store.clear()
+    session_id = _create_session()
+    active_shells = {"shell-lost-response"}
+
+    async def fake_start_shell(
+        _config,
+        _store,
+        cwd: str,
+        name: str | None,
+        command: str | None,
+        *,
+        owner_session_id: str | None = None,
+    ):
+        assert owner_session_id == session_id
+        return StartPersistentShellOutput.model_validate(
+            {
+                "shell_id": "shell-lost-response",
+                "name": name,
+                "cwd": cwd,
+                "command": command,
+                "backend": "fake",
+            }
+        )
+
+    async def fake_active_shell_ids(*_args):
+        return set(active_shells)
+
+    monkeypatch.setattr(
+        job_shell, "start_persistent_shell_execute", fake_start_shell
+    )
+    monkeypatch.setattr(
+        job_shell,
+        "authoritative_persistent_shell_ids_execute",
+        fake_active_shell_ids,
+    )
+
+    await _test_job_start_execute(session_id, "long-running", ".", "lost")
+
+    service = ExecutorJobService(*_executor_job_dependencies())
+    inventory, backing_shells = await service.reconnect_inventory(
+        frozenset({session_id})
+    )
+    assert len(inventory) == 1
+    assert str(inventory[0].session_id) == session_id
+    assert inventory[0].status == "running"
+    assert backing_shells == frozenset({"shell-lost-response"})
 
 
 @pytest.mark.asyncio
@@ -1372,6 +1442,46 @@ async def test_reconcile_shell_jobs_marks_only_missing_shells_terminal(
     assert stale["status"] == "lost"
     assert live["status"] == "running"
     assert managed["status"] == "running"
+
+
+def test_shell_job_inventory_releases_confirmed_terminal_backing_shells(
+    monkeypatch,
+):
+    session_id = "sess_0000000000000000000001"
+    store = {
+        "jobs": [
+            {
+                "kind": "shell",
+                "status": "running",
+                "job_id": "live-job",
+                "session_id": session_id,
+                "shell_id": "live-shell",
+            },
+            {
+                "kind": "shell",
+                "status": "stopped",
+                "job_id": "stopped-job",
+                "session_id": session_id,
+                "shell_id": "reusable-shell",
+            },
+        ]
+    }
+
+    @contextmanager
+    def fake_transaction():
+        yield store
+
+    monkeypatch.setattr(job_shell, "_store_transaction", fake_transaction)
+
+    inventory, backing_shells = job_shell.shell_job_inventory_snapshot(
+        frozenset({session_id})
+    )
+
+    assert [(row.job_id, row.status) for row in inventory] == [
+        ("live-job", "running"),
+        ("stopped-job", "stopped"),
+    ]
+    assert backing_shells == frozenset({"live-shell"})
 
 
 @pytest.mark.asyncio

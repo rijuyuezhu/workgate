@@ -22,6 +22,7 @@ from ...jobs.persistence import (
 from ...jobs.recovery import store_transaction as _store_transaction
 from ...jobs.state import (
     ACTIVE_STATUSES,
+    CONFIRMED_TERMINAL_STATUSES,
     JobAttemptPaths,
     JobRow,
     JobStatusPayload,
@@ -54,6 +55,7 @@ from ...jobs.state import (
 from ...jobs.state import (
     utc as _utc,
 )
+from ...protocol.executor import JobInventorySummary
 from ...schemas.result_models.jobs import (
     JobListOutput,
     JobRetryOutput,
@@ -441,6 +443,44 @@ async def reconcile_shell_jobs_execute(
                 _refresh_job_status(row, active_shells, now)
         _prune_store(store, max_jobs=config.max_jobs)
     return inventory_authoritative
+
+
+def shell_job_inventory_snapshot(
+    session_ids: frozenset[str],
+) -> tuple[tuple[JobInventorySummary, ...], frozenset[str]]:
+    """Project retained executor jobs and their private backing-shell ids."""
+    rows: list[JobInventorySummary] = []
+    backing_shell_ids: set[str] = set()
+    with _store_transaction() as store:
+        jobs = store.get("jobs", [])
+        if not isinstance(jobs, list):
+            raise RuntimeError("tracked job store jobs field is invalid")
+        for row in jobs:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("kind") or "shell") == "managed":
+                continue
+            session_id = str(row.get("session_id") or "")
+            if session_id not in session_ids:
+                continue
+            job_id = str(row.get("job_id") or "").strip()
+            status = str(row.get("status") or "").strip()
+            if not job_id or not status:
+                raise RuntimeError(
+                    "tracked executor job is missing durable inventory identity"
+                )
+            rows.append(
+                JobInventorySummary(
+                    job_id=job_id,
+                    session_id=session_id,
+                    status=status,
+                )
+            )
+            shell_id = _job_shell_id(row)
+            if shell_id and status not in CONFIRMED_TERMINAL_STATUSES:
+                backing_shell_ids.add(shell_id)
+    rows.sort(key=lambda row: (str(row.session_id), row.job_id))
+    return tuple(rows), frozenset(backing_shell_ids)
 
 
 async def stop_shell_job_unlocked(

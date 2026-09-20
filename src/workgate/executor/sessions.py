@@ -160,6 +160,15 @@ class ExecutorSessionService:
         last_active_at, has_shells, has_jobs = (
             self._store.session_cleanup_metadata(session_id)
         )
+        if has_shells:
+            session = self._store.require_session(session_id)
+            backing_shells = self._shell.jobs.backing_shell_ids(
+                frozenset({session_id})
+            )
+            has_shells = any(
+                shell_id not in backing_shells
+                for shell_id in session.persistent_shell_ids
+            )
         return SessionInventorySummary(
             session_id=session_id,
             resolved_workdir=workdir,

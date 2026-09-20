@@ -67,6 +67,35 @@ async def test_shared_session_change_cwd_updates_control_and_executor_binding(
 
 
 @pytest.mark.asyncio
+async def test_session_inventory_excludes_job_backing_shell_from_public_shell_flag(
+    tmp_path, monkeypatch
+):
+    _configure(monkeypatch, tmp_path)
+    harness = build_paired_control_harness(get_settings())
+    started = await harness.control.session_coordinator.start_session(
+        workdir=".", executor_id=harness.executor_id
+    )
+    assert isinstance(started, dict)
+    session_id = str(started["session_id"])
+    store = harness.executor.services.tool_session_store
+    store.reserve_persistent_shell(session_id, "job-shell")
+    monkeypatch.setattr(
+        harness.executor.shell.jobs,
+        "backing_shell_ids",
+        lambda session_ids: frozenset({"job-shell"}),
+    )
+
+    only_job_shell = harness.executor.sessions.lookup(session_id)
+    assert only_job_shell is not None
+    assert only_job_shell.has_persistent_shells is False
+
+    store.reserve_persistent_shell(session_id, "user-shell")
+    with_public_shell = harness.executor.sessions.lookup(session_id)
+    assert with_public_shell is not None
+    assert with_public_shell.has_persistent_shells is True
+
+
+@pytest.mark.asyncio
 async def test_shared_session_end_requires_executor_absence_before_marking_ended(
     tmp_path, monkeypatch
 ):

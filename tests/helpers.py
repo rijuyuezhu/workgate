@@ -14,7 +14,6 @@ from workgate.control.runtime import ControlRuntime, build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import operation_error_from_exception
-from workgate.executor.hello import build_executor_hello
 from workgate.executor.runtime import ExecutorRuntime, build_executor_runtime
 from workgate.executor.services import install_runtime_services
 from workgate.executor.tool_session.store import ToolSessionStore
@@ -59,9 +58,7 @@ class PairedControlHarness:
     async def inventory(self, executor_id: str):
         if executor_id != self.executor_id:
             return None
-        return build_executor_hello(
-            self.executor.config, sessions=self.executor.sessions.inventory()
-        )
+        return await self.executor._build_reconnect_hello()
 
     async def call(
         self,

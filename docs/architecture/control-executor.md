@@ -130,9 +130,13 @@ job_id + session_id + status
 
 Product resource caps bound inventory size. Partial/truncated inventory is not a
 protocol mode: if a valid inventory cannot fit the normal request limit, fail
-explicitly. This keeps absence meaningful. `session.lookup` remains a targeted
-read-only reconciliation operation for ambiguous creation or cwd projection,
-not pagination for hello.
+explicitly. This keeps absence meaningful. Before each reconnect hello, executor
+reconciles feature-owned live job/shell state; if a live resource cannot be
+observed authoritatively, it retries reconnect instead of publishing a false
+empty/partial inventory. Job runner shells are private implementation resources:
+they appear through `jobs`, not as public `shells`. `session.lookup` remains a
+targeted read-only reconciliation operation for ambiguous creation or cwd
+projection, not pagination for hello.
 
 Optional boot metadata is diagnostics only. It is never identity, trust,
 fencing, deduplication, or command-correlation authority.
@@ -322,7 +326,10 @@ turning them into a database-driven command system.
 
 Feature resources own their durability. Persistent jobs/shells and
 cross-executor transfer may have resource-specific IDs/checkpoints. Ordinary RPC
-does not inherit those recovery semantics.
+does not inherit those recovery semantics. Explicit shell-job retry keeps the
+stable `job_id` resource identity but increments its durable attempt number and
+allocates fresh backing-shell/attempt artifacts; that new attempt is not a replay
+of the original ordinary start command.
 
 ## Terminal streams
 

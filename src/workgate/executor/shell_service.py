@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..protocol.executor import JobInventorySummary, ShellInventorySummary
 from ..schemas.result_models.shell import ListPersistentShellsOutput
 from .bash import bash_execute, run_python_code_execute
 from .config import ExecutorConfig
+from .errors import ExecutorResourceInventoryUnavailable
 from .jobs import ExecutorJobService
 from .shell import (
     authoritative_persistent_shell_ids_execute,
@@ -86,6 +88,10 @@ class ShellService:
             raise ValueError(
                 f"shell_id {shell_id!r} is not owned by session {session_id!r}"
             )
+        if shell_id in self.jobs.backing_shell_ids(frozenset({session_id})):
+            raise ValueError(
+                f"shell_id {shell_id!r} belongs to a tracked job; use the job companion"
+            )
         return normalized
 
     async def send(self, args: dict[str, Any]) -> Any:
@@ -140,12 +146,50 @@ class ShellService:
                 "persistent shell ownership is currently uncertain"
             )
         output = await list_persistent_shells_execute(self.config, self.store)
-        owned_set = set(owned)
+        job_shells = self.jobs.backing_shell_ids(frozenset({session_id}))
+        owned_set = set(owned) - job_shells
         return ListPersistentShellsOutput(
             shells=[
                 shell for shell in output.shells if shell.shell_id in owned_set
             ]
         )
+
+    async def reconnect_inventory(
+        self, session_ids: frozenset[str]
+    ) -> tuple[
+        tuple[ShellInventorySummary, ...],
+        tuple[JobInventorySummary, ...],
+    ]:
+        """Return one complete authoritative snapshot for reconnect hello."""
+        jobs, job_shells = await self.jobs.reconnect_inventory(session_ids)
+        public_shell_ids = {
+            shell_id
+            for session in self.store.list_sessions()
+            if session.session_id in session_ids
+            for shell_id in session.persistent_shell_ids
+            if shell_id not in job_shells
+        }
+        if not public_shell_ids:
+            return (), jobs
+        active = await authoritative_persistent_shell_ids_execute(
+            self.config, self.store
+        )
+        if active is None:
+            raise ExecutorResourceInventoryUnavailable(
+                "persistent shell inventory is currently non-authoritative"
+            )
+        shells = [
+            ShellInventorySummary(
+                shell_id=shell_id,
+                session_id=session.session_id,
+            )
+            for session in self.store.list_sessions()
+            if session.session_id in session_ids
+            for shell_id in session.persistent_shell_ids
+            if shell_id in active and shell_id not in job_shells
+        ]
+        shells.sort(key=lambda row: (str(row.session_id), row.shell_id))
+        return tuple(shells), jobs
 
     async def list_all(self) -> ListPersistentShellsOutput:
         """List all executor-local shells for the internal Human UI surface."""
