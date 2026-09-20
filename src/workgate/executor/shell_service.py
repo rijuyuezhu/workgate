@@ -45,6 +45,7 @@ class ShellService:
             bool(args.get("pty", False)),
             None if args.get("name") is None else str(args["name"]),
             job_start=self.jobs.start,
+            forbidden_shell_ids=self.jobs.reserved_shell_ids(),
         )
 
     async def run_python_code(self, args: dict[str, Any]) -> Any:
@@ -61,6 +62,7 @@ class ShellService:
             bool(args.get("pty", False)),
             None if args.get("name") is None else str(args["name"]),
             job_start=self.jobs.start,
+            forbidden_shell_ids=self.jobs.reserved_shell_ids(),
         )
 
     async def start(self, args: dict[str, Any]) -> Any:
@@ -72,6 +74,7 @@ class ShellService:
             None if args.get("name") is None else str(args["name"]),
             None if args.get("command") is None else str(args["command"]),
             owner_session_id=None if session_id is None else str(session_id),
+            forbidden_shell_ids=self.jobs.reserved_shell_ids(),
         )
 
     async def _require_owned(self, session_id: str, shell_id: str) -> set[str]:
@@ -192,8 +195,23 @@ class ShellService:
         return tuple(shells), jobs
 
     async def list_all(self) -> ListPersistentShellsOutput:
-        """List all executor-local shells for the internal Human UI surface."""
-        return await list_persistent_shells_execute(self.config, self.store)
+        """List executor-local Human UI shells without private job runners."""
+        output = await list_persistent_shells_execute(self.config, self.store)
+        reserved = self.jobs.reserved_shell_ids()
+        return ListPersistentShellsOutput(
+            shells=[
+                shell
+                for shell in output.shells
+                if shell.shell_id not in reserved
+            ]
+        )
+
+    def _require_ui_shell_allowed(self, shell_id: str) -> str:
+        if shell_id in self.jobs.reserved_shell_ids():
+            raise ValueError(
+                f"shell_id {shell_id!r} belongs to a tracked job; use the job companion"
+            )
+        return shell_id
 
     async def stop_owned(self, session_id: str) -> list[str]:
         """Stop every persistent shell durably owned by one executor session."""
@@ -246,33 +264,38 @@ class ShellService:
             str(args.get("cwd") or "."),
             None if args.get("name") is None else str(args["name"]),
             None if args.get("command") is None else str(args["command"]),
+            forbidden_shell_ids=self.jobs.reserved_shell_ids(),
         )
 
     async def send_unowned(self, args: dict[str, Any]) -> Any:
+        shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
         return await send_persistent_shell_input_execute(
             self.config,
-            str(args["shell_id"]),
+            shell_id,
             str(args.get("input_text") or ""),
             bool(args.get("enter", True)),
         )
 
     async def resize_unowned(self, args: dict[str, Any]) -> Any:
+        shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
         return await resize_persistent_shell_execute(
             self.config,
-            str(args["shell_id"]),
+            shell_id,
             int(args["cols"]),
             int(args["rows"]),
         )
 
     async def read_unowned(self, args: dict[str, Any]) -> Any:
+        shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
         return await read_persistent_shell_output_execute(
             self.config,
-            str(args["shell_id"]),
+            shell_id,
             int(args.get("lines") or 200),
             preserve_ansi=True,
         )
 
     async def kill_unowned(self, args: dict[str, Any]) -> Any:
+        shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
         return await kill_persistent_shell_execute(
-            self.config, self.store, str(args["shell_id"])
+            self.config, self.store, shell_id
         )

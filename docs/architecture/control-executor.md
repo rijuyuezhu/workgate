@@ -134,9 +134,11 @@ explicitly. This keeps absence meaningful. Before each reconnect hello, executor
 reconciles feature-owned live job/shell state; if a live resource cannot be
 observed authoritatively, it retries reconnect instead of publishing a false
 empty/partial inventory. Job runner shells are private implementation resources:
-they appear through `jobs`, not as public `shells`. `session.lookup` remains a
-targeted read-only reconciliation operation for ambiguous creation or cwd
-projection, not pagination for hello.
+they appear through `jobs`, not as public `shells`. A retained shell-job row
+continues to reserve its backing-shell ID until retention removes that row, so a
+public persistent shell cannot reuse the ID and accidentally inherit job-private
+identity. `session.lookup` remains a targeted read-only reconciliation operation
+for ambiguous creation or cwd projection, not pagination for hello.
 
 Optional boot metadata is diagnostics only. It is never identity, trust,
 fencing, deduplication, or command-correlation authority.

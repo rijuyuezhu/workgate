@@ -22,7 +22,6 @@ from ...jobs.persistence import (
 from ...jobs.recovery import store_transaction as _store_transaction
 from ...jobs.state import (
     ACTIVE_STATUSES,
-    CONFIRMED_TERMINAL_STATUSES,
     JobAttemptPaths,
     JobRow,
     JobStatusPayload,
@@ -249,7 +248,7 @@ async def start_shell_job_unlocked(
     )
     job_id = _new_job_id()
     display_name = name or job_id
-    shell_name = _shell_safe_name(f"{display_name}-{job_id}")
+    shell_name = _shell_safe_name(f"{job_id}-{display_name}")
     paths, runner_command = _prepare_attempt(
         config, job_id, 1, command, resolved_cwd
     )
@@ -445,6 +444,19 @@ async def reconcile_shell_jobs_execute(
     return inventory_authoritative
 
 
+def _job_reserved_shell_ids(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            shell_id
+            for shell_id in (
+                _job_shell_id(row),
+                str(row.get("pending_shell_id") or ""),
+            )
+            if shell_id
+        )
+    )
+
+
 def shell_job_inventory_snapshot(
     session_ids: frozenset[str],
 ) -> tuple[tuple[JobInventorySummary, ...], frozenset[str]]:
@@ -476,11 +488,25 @@ def shell_job_inventory_snapshot(
                     status=status,
                 )
             )
-            shell_id = _job_shell_id(row)
-            if shell_id and status not in CONFIRMED_TERMINAL_STATUSES:
-                backing_shell_ids.add(shell_id)
+            backing_shell_ids.update(_job_reserved_shell_ids(row))
     rows.sort(key=lambda row: (str(row.session_id), row.job_id))
     return tuple(rows), frozenset(backing_shell_ids)
+
+
+def shell_job_reserved_shell_ids() -> frozenset[str]:
+    """Return backing-shell ids reserved by retained executor shell-job rows."""
+    reserved: set[str] = set()
+    with _store_transaction() as store:
+        jobs = store.get("jobs", [])
+        if not isinstance(jobs, list):
+            raise RuntimeError("tracked job store jobs field is invalid")
+        for row in jobs:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("kind") or "shell") == "managed":
+                continue
+            reserved.update(_job_reserved_shell_ids(row))
+    return frozenset(reserved)
 
 
 async def stop_shell_job_unlocked(
@@ -644,13 +670,25 @@ async def retry_shell_job_unlocked(
             job = _refresh_job_status(job, active)
             if job.get("status") in ACTIVE_STATUSES:
                 raise RuntimeError(f"job is still active: {job_id}")
+            previous_shell_id = _job_shell_id(job)
+            if previous_shell_id:
+                if active is None:
+                    raise RuntimeError(
+                        "cannot retry job while previous attempt shell liveness "
+                        f"is unknown: {job_id}"
+                    )
+                if previous_shell_id in active:
+                    raise RuntimeError(
+                        "cannot retry job while previous attempt shell is still "
+                        f"active: {job_id}"
+                    )
             attempts = int(job.get("attempts") or 1) + 1
             command = str(job.get("command") or "")
             resolved_cwd = session_store.resolve_session_path(
                 session, str(job.get("cwd") or "."), must_exist=True
             )
             display_name = str(job.get("name") or job_id)
-            shell_name = _shell_safe_name(f"{display_name}-{job_id}-{attempts}")
+            shell_name = _shell_safe_name(f"{job_id}-{attempts}-{display_name}")
             job.update(
                 {
                     "status": "retrying",

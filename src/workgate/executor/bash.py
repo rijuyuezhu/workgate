@@ -48,6 +48,7 @@ async def bash_execute(
     name: str | None = None,
     *,
     job_start: JobStarter | None = None,
+    forbidden_shell_ids: frozenset[str] = frozenset(),
 ) -> ShellExecutionOutput:
     """Run a shell command under explicit executor-owned session authority."""
     if pty:
@@ -65,6 +66,7 @@ async def bash_execute(
                 name,
                 command_with_env,
                 owner_session_id=session_id,
+                forbidden_shell_ids=forbidden_shell_ids,
             )
             try:
                 store.register_persistent_shell(session_id, result.shell_id)
@@ -132,6 +134,7 @@ async def run_python_code_execute(
     name: str | None = None,
     *,
     job_start: JobStarter | None = None,
+    forbidden_shell_ids: frozenset[str] = frozenset(),
 ) -> RunPythonCodeOutput:
     """Write Python code to a temporary file and execute it through shell modes."""
     session = store.touch_session(session_id)
@@ -162,6 +165,7 @@ async def run_python_code_execute(
         pty,
         name,
         job_start=job_start,
+        forbidden_shell_ids=forbidden_shell_ids,
     )
     return RunPythonCodeOutput(
         **result.model_dump(), script_path=str(script_path)

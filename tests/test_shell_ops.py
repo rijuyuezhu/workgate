@@ -138,10 +138,12 @@ async def test_persistent_shell_creation_is_serialized(monkeypatch):
         *,
         owner_session_id=None,
         shell_id=None,
+        forbidden_shell_ids=frozenset(),
     ):
         nonlocal active, peak
         assert owner_session_id is None
         assert shell_id is None
+        assert forbidden_shell_ids == frozenset()
         active += 1
         peak = max(peak, active)
         await asyncio.sleep(0.02)
@@ -164,6 +166,30 @@ async def test_persistent_shell_creation_is_serialized(monkeypatch):
         (".", "one", "echo one"),
         (".", "two", "echo two"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_persistent_shell_rejects_job_reserved_id_before_start():
+    forbidden = frozenset({"job-shell"})
+    with pytest.raises(ValueError, match="reserved by a tracked job"):
+        await shell_ops.start_persistent_shell_execute(
+            _executor_config(),
+            _executor_store(),
+            ".",
+            "job-shell",
+            "echo hidden",
+            owner_session_id="sess_0000000000000000000001",
+            forbidden_shell_ids=forbidden,
+        )
+    with pytest.raises(ValueError, match="reserved by a tracked job"):
+        await shell_ops.start_persistent_shell_execute(
+            _executor_config(),
+            _executor_store(),
+            ".",
+            "job-shell",
+            "echo hidden",
+            forbidden_shell_ids=forbidden,
+        )
 
 
 @pytest.mark.asyncio
@@ -242,11 +268,13 @@ async def test_owned_tmux_shell_is_reserved_before_backend_start(monkeypatch):
         owner_session_id=None,
         shell_id=None,
         preserve_shell_ids=None,
+        forbidden_shell_ids=frozenset(),
     ):
         assert (cwd, name, command) == (".", "owned", "echo ok")
         assert owner_session_id == "SESSION1"
         assert shell_id == "reserved-shell"
         assert preserve_shell_ids is None
+        assert forbidden_shell_ids == frozenset()
         events.append(("start", shell_id))
         return SimpleNamespace(shell_id=shell_id)
 
@@ -315,10 +343,12 @@ async def test_owned_conpty_shell_uses_shared_admission_and_reservation(
         *,
         owner_session_id=None,
         shell_id=None,
+        forbidden_shell_ids=frozenset(),
     ):
         assert (cwd, name, command) == (".", "owned", "echo ok")
         assert owner_session_id == "SESSION1"
         assert shell_id == "conpty-shell"
+        assert forbidden_shell_ids == frozenset()
         assert shell_ops._PERSISTENT_SHELL_PRESERVE_IDS.get() == frozenset(
             {"conpty-shell"}
         )

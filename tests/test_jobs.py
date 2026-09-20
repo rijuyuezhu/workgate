@@ -370,6 +370,7 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
     session_id = _create_session()
 
     active_sessions: set[str] = set()
+    requested_shell_names: list[str | None] = []
     session_counter = 0
 
     async def fake_start_shell(
@@ -382,6 +383,7 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
         owner_session_id: str | None = None,
     ):
         assert owner_session_id == session_id
+        requested_shell_names.append(name)
         nonlocal session_counter
         session_counter += 1
         shell_id = f"shell_{session_counter}"
@@ -433,6 +435,7 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
     started = await _test_job_start_execute(
         session_id, "python -m http.server", ".", "serve"
     )
+    assert requested_shell_names == [f"{started.job_id}-serve"]
 
     assert started.name == "serve"
     assert started.status == "running"
@@ -469,6 +472,10 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
     assert running_only.counts == {"stopped": 1}
 
     retried = await _test_job_retry_execute(session_id, started.job_id)
+    assert requested_shell_names == [
+        f"{started.job_id}-serve",
+        f"{started.job_id}-2-serve",
+    ]
     assert retried.status == "running"
     assert retried.job_id == started.job_id
     assert retried.attempts == 2
@@ -1444,7 +1451,7 @@ async def test_reconcile_shell_jobs_marks_only_missing_shells_terminal(
     assert managed["status"] == "running"
 
 
-def test_shell_job_inventory_releases_confirmed_terminal_backing_shells(
+def test_shell_job_inventory_keeps_retained_backing_shell_ids_private(
     monkeypatch,
 ):
     session_id = "sess_0000000000000000000001"
@@ -1462,7 +1469,21 @@ def test_shell_job_inventory_releases_confirmed_terminal_backing_shells(
                 "status": "stopped",
                 "job_id": "stopped-job",
                 "session_id": session_id,
-                "shell_id": "reusable-shell",
+                "shell_id": "retained-shell",
+            },
+            {
+                "kind": "shell",
+                "status": "stopped",
+                "job_id": "other-job",
+                "session_id": "sess_0000000000000000000002",
+                "shell_id": "other-shell",
+            },
+            {
+                "kind": "managed",
+                "status": "running",
+                "job_id": "managed-job",
+                "session_id": session_id,
+                "shell_id": "managed-shell",
             },
         ]
     }
@@ -1481,7 +1502,10 @@ def test_shell_job_inventory_releases_confirmed_terminal_backing_shells(
         ("live-job", "running"),
         ("stopped-job", "stopped"),
     ]
-    assert backing_shells == frozenset({"live-shell"})
+    assert backing_shells == frozenset({"live-shell", "retained-shell"})
+    assert job_shell.shell_job_reserved_shell_ids() == frozenset(
+        {"live-shell", "retained-shell", "other-shell"}
+    )
 
 
 @pytest.mark.asyncio

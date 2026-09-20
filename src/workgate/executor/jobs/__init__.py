@@ -122,9 +122,13 @@ class ExecutorJobService:
         return shell_jobs.shell_job_inventory_snapshot(session_ids)
 
     def backing_shell_ids(self, session_ids: frozenset[str]) -> frozenset[str]:
-        """Return private shell ids currently assigned to executor job attempts."""
+        """Return private shell ids retained for executor job attempts."""
         _jobs, shell_ids = shell_jobs.shell_job_inventory_snapshot(session_ids)
         return shell_ids
+
+    def reserved_shell_ids(self) -> frozenset[str]:
+        """Return executor-global shell ids reserved by retained job rows."""
+        return shell_jobs.shell_job_reserved_shell_ids()
 
     async def execute(self, args: dict[str, Any]) -> JobOutput:
         """Execute one public executor-side shell-job companion operation."""

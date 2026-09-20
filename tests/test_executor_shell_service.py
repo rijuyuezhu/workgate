@@ -71,6 +71,8 @@ async def test_shell_service_forwards_command_and_start_operations(
     monkeypatch.setattr(
         shell_service_module, "start_persistent_shell_execute", start_execute
     )
+    reserved = frozenset({"job-shell"})
+    monkeypatch.setattr(service.jobs, "reserved_shell_ids", lambda: reserved)
 
     assert (
         await service.bash(
@@ -117,8 +119,11 @@ async def test_shell_service_forwards_command_and_start_operations(
     ]
     assert calls[0][1][2:5] == ("sess-1", "echo hi", "subdir")
     assert calls[0][2]["job_start"] == service.jobs.start
+    assert calls[0][2]["forbidden_shell_ids"] == reserved
     assert calls[1][1][2:5] == ("sess-1", "print(1)", ".")
+    assert calls[1][2]["forbidden_shell_ids"] == reserved
     assert calls[2][2]["owner_session_id"] == "sess-1"
+    assert calls[2][2]["forbidden_shell_ids"] == reserved
 
 
 @pytest.mark.asyncio
@@ -258,13 +263,14 @@ async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
     inventory = ListPersistentShellsOutput(
         shells=[
             PersistentShellInfo(shell_id="shell-1"),
+            PersistentShellInfo(shell_id="shell-job"),
             PersistentShellInfo(shell_id="shell-other"),
         ]
     )
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     async def owned(*_args: Any) -> list[str]:
-        return ["shell-1"]
+        return ["shell-1", "shell-job"]
 
     async def listed(*_args: Any) -> ListPersistentShellsOutput:
         return inventory
@@ -304,13 +310,32 @@ async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
         "kill_persistent_shell_execute",
         lambda *args, **kwargs: record("kill", *args, **kwargs),
     )
+    monkeypatch.setattr(
+        service.jobs,
+        "backing_shell_ids",
+        lambda session_ids: frozenset({"shell-job"}),
+    )
+    monkeypatch.setattr(
+        service.jobs,
+        "reserved_shell_ids",
+        lambda: frozenset({"shell-job"}),
+    )
 
     visible = await service.list({"session_id": "sess-1"})
     assert [shell.shell_id for shell in visible.shells] == ["shell-1"]
-    assert await service.list_all() == inventory
+    all_visible = await service.list_all()
+    assert [shell.shell_id for shell in all_visible.shells] == [
+        "shell-1",
+        "shell-other",
+    ]
     assert store.admitted == ["sess-1"]
 
     assert await service.start_unowned({"cwd": ".", "name": "ui"}) == "start"
+    assert calls[0][2]["forbidden_shell_ids"] == frozenset({"shell-job"})
+    with pytest.raises(ValueError, match="belongs to a tracked job"):
+        await service.send_unowned(
+            {"shell_id": "shell-job", "input_text": "do not expose"}
+        )
     assert (
         await service.send_unowned(
             {"shell_id": "shell-1", "input_text": "x", "enter": False}
