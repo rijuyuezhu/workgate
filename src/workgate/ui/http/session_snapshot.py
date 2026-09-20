@@ -45,7 +45,7 @@ async def _normalize_audit_snapshot(
 
 
 async def api_session_snapshot(request: Request) -> Response:
-    """Return control-owned Todos and Audit state for one shared session."""
+    """Return control-owned task, plan/Todo, and Audit state for one session."""
     try:
         session_id = todos_http._session_id_arg(
             request.query_params.get("session_id")
@@ -63,15 +63,16 @@ async def api_session_snapshot(request: Request) -> Response:
             field="selected_id",
             max_bytes=audit_http.UI_AUDIT_ENTRY_ID_MAX_BYTES,
         )
-        todos, audit_result = await asyncio.gather(
-            runtime.todo_service.read(session_id),
+        task_state, audit_result = await asyncio.gather(
+            runtime.todo_service.read_with_task(session_id),
             asyncio.to_thread(
                 query_audit,
                 **{**audit_args, "session": session_id},
             ),
         )
+        todos, task = task_state
         raw_audit = audit_query_snapshot(audit_result, selected_id=selected_id)
-        payload = todos_http._final_payload(record, todos)
+        payload = todos_http._final_payload(record, todos, task=task)
         payload["audit"] = audit_http._payload(
             await _normalize_audit_snapshot(session_id, raw_audit, request),
             scope="session",

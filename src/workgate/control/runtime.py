@@ -206,7 +206,9 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
-    todo_service = ControlTodoService(control_state, state_store, config)
+    todo_service = ControlTodoService(
+        control_state, state_store, config, session_coordinator
+    )
     audit_service = ControlAuditService(session_coordinator)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,

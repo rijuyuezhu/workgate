@@ -2,6 +2,7 @@
 
 `workgate` records server and tool activity so users can review what happened. Audit data may include project text, command input, command output, errors, and remote activity after best-effort credential redaction.
 
+Durable task-state tools are stricter: audit records keep structural metadata such as session/revision/status/step IDs, but redact objective, progress prose, findings, blockers, plan content, and notes from both tool-call input/output records and retained audit payloads. The task document itself still contains that data, so its control-state storage remains sensitive.
 Treat the entire audit directory as sensitive.
 
 ## Review activity

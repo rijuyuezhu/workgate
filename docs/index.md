@@ -21,7 +21,8 @@ After connecting an MCP client, start a workspace session and ask it to:
 - run tests, builds, Git commands, and bounded shell tasks;
 - keep long-running jobs or persistent terminals;
 - copy data between sessions on the same or different executors;
-- review Todos and Audit history;
+- keep durable task objectives, progress reports, findings, blockers, and structured plans across control/executor restarts;
+- review task/plan state and Audit history in the Human UI;
 - use configured Skills or upstream MCP servers.
 
 See [Common workflows](guides/common-workflows.md) for examples and the
