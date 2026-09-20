@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 import workgate.executor.shell_service as shell_service_module
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
+from workgate.executor.errors import ExecutorResourceInventoryUnavailable
 from workgate.executor.shell_service import ShellService
 from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.schemas.result_models.shell import (
@@ -237,6 +239,9 @@ async def test_shell_service_rejects_uncertain_and_foreign_shell_ownership(
         uncertain,
     )
     with pytest.raises(RuntimeError, match="ownership is currently uncertain"):
+        await service.list({"session_id": "sess-1"})
+
+    with pytest.raises(RuntimeError, match="ownership is currently uncertain"):
         await service.send(
             {"session_id": "sess-1", "shell_id": "shell-1", "input_text": "x"}
         )
@@ -402,6 +407,102 @@ async def test_shell_service_hides_job_backing_shells(
                 "input_text": "echo hidden",
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_shell_service_reconnect_inventory_is_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _store = _service(tmp_path)
+    session_id = "sess_0000000000000000000001"
+    session = SimpleNamespace(
+        session_id=session_id,
+        persistent_shell_ids=("shell-user", "shell-job"),
+    )
+    monkeypatch.setattr(
+        service.store, "list_sessions", lambda: [session], raising=False
+    )
+
+    async def job_inventory(session_ids: frozenset[str]):
+        assert session_ids == frozenset({session_id})
+        return (), frozenset({"shell-job"})
+
+    async def active_shells(*_args: Any) -> set[str]:
+        return {"shell-user", "shell-job"}
+
+    monkeypatch.setattr(service.jobs, "reconnect_inventory", job_inventory)
+    monkeypatch.setattr(
+        shell_service_module,
+        "authoritative_persistent_shell_ids_execute",
+        active_shells,
+    )
+
+    shells, jobs = await service.reconnect_inventory(frozenset({session_id}))
+    assert jobs == ()
+    assert [(shell.shell_id, str(shell.session_id)) for shell in shells] == [
+        ("shell-user", session_id)
+    ]
+
+    async def uncertain_shells(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        shell_service_module,
+        "authoritative_persistent_shell_ids_execute",
+        uncertain_shells,
+    )
+    with pytest.raises(
+        ExecutorResourceInventoryUnavailable,
+        match="persistent shell inventory is currently non-authoritative",
+    ):
+        await service.reconnect_inventory(frozenset({session_id}))
+
+
+@pytest.mark.asyncio
+async def test_shell_service_stop_owned_fails_if_inventory_becomes_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, store = _service(tmp_path)
+    inventories = iter([["shell-1"], None])
+
+    async def owned(*_args: Any):
+        return next(inventories)
+
+    monkeypatch.setattr(
+        shell_service_module, "list_owned_persistent_shell_ids_execute", owned
+    )
+    with pytest.raises(RuntimeError, match="ownership could not be determined"):
+        await service.stop_owned("sess-1")
+    assert store.reconciled == [("sess-1", {"shell-1"})]
+
+
+@pytest.mark.asyncio
+async def test_shell_service_stop_owned_skips_shell_that_disappeared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, store = _service(tmp_path)
+    inventories = iter([["shell-1"], []])
+
+    async def owned(*_args: Any):
+        return next(inventories)
+
+    async def kill_must_not_run(*_args: Any):
+        raise AssertionError("disappeared shell must not be killed")
+
+    monkeypatch.setattr(
+        shell_service_module, "list_owned_persistent_shell_ids_execute", owned
+    )
+    monkeypatch.setattr(
+        shell_service_module,
+        "kill_persistent_shell_execute",
+        kill_must_not_run,
+    )
+
+    assert await service.stop_owned("sess-1") == []
+    assert store.reconciled == [
+        ("sess-1", {"shell-1"}),
+        ("sess-1", set()),
+    ]
 
 
 @pytest.mark.asyncio

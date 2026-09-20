@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,30 @@ def test_run_async_reports_command_failure(
     assert capsys.readouterr().err == (
         "Status: executor command failed: control unavailable\n"
     )
+
+
+@pytest.mark.asyncio
+async def test_run_requires_paired_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+
+    class Runtime:
+        connection = None
+
+        @asynccontextmanager
+        async def lifespan(self):
+            yield
+
+    monkeypatch.setattr(
+        executor_cli, "settings_from_args", lambda *_a, **_k: settings
+    )
+    monkeypatch.setattr(
+        executor_cli, "build_executor_runtime", lambda _config: Runtime()
+    )
+
+    with pytest.raises(RuntimeError, match="executor is not paired"):
+        await executor_cli._run(argparse.Namespace())
 
 
 def test_root_parser_exposes_final_executor_connect_and_run() -> None:
