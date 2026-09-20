@@ -119,7 +119,7 @@ async def test_shell_service_forwards_command_and_start_operations(
     ]
     assert calls[0][1][2:5] == ("sess-1", "echo hi", "subdir")
     assert calls[0][2]["job_start"] == service.jobs.start
-    assert calls[0][2]["forbidden_shell_ids"] == reserved
+    assert calls[0][2]["forbidden_shell_ids"] == frozenset()
     assert calls[1][1][2:5] == ("sess-1", "print(1)", ".")
     assert calls[1][2]["forbidden_shell_ids"] == reserved
     assert calls[2][2]["owner_session_id"] == "sess-1"

@@ -32,6 +32,7 @@ class ShellService:
         self.jobs = ExecutorJobService(config, store)
 
     async def bash(self, args: dict[str, Any]) -> Any:
+        pty = bool(args.get("pty", False))
         return await bash_execute(
             self.config,
             self.store,
@@ -42,13 +43,16 @@ class ShellService:
             args.get("max_output_bytes"),
             args.get("env"),
             bool(args.get("async_", False)),
-            bool(args.get("pty", False)),
+            pty,
             None if args.get("name") is None else str(args["name"]),
             job_start=self.jobs.start,
-            forbidden_shell_ids=self.jobs.reserved_shell_ids(),
+            forbidden_shell_ids=(
+                self.jobs.reserved_shell_ids() if pty else frozenset()
+            ),
         )
 
     async def run_python_code(self, args: dict[str, Any]) -> Any:
+        pty = bool(args.get("pty", False))
         return await run_python_code_execute(
             self.config,
             self.store,
@@ -59,10 +63,12 @@ class ShellService:
             args.get("max_output_bytes"),
             args.get("env"),
             bool(args.get("async_", False)),
-            bool(args.get("pty", False)),
+            pty,
             None if args.get("name") is None else str(args["name"]),
             job_start=self.jobs.start,
-            forbidden_shell_ids=self.jobs.reserved_shell_ids(),
+            forbidden_shell_ids=(
+                self.jobs.reserved_shell_ids() if pty else frozenset()
+            ),
         )
 
     async def start(self, args: dict[str, Any]) -> Any:

@@ -1463,6 +1463,7 @@ def test_shell_job_inventory_keeps_retained_backing_shell_ids_private(
                 "job_id": "live-job",
                 "session_id": session_id,
                 "shell_id": "live-shell",
+                "pending_shell_id": "pending-shell",
             },
             {
                 "kind": "shell",
@@ -1502,9 +1503,11 @@ def test_shell_job_inventory_keeps_retained_backing_shell_ids_private(
         ("live-job", "running"),
         ("stopped-job", "stopped"),
     ]
-    assert backing_shells == frozenset({"live-shell", "retained-shell"})
+    assert backing_shells == frozenset(
+        {"live-shell", "pending-shell", "retained-shell"}
+    )
     assert job_shell.shell_job_reserved_shell_ids() == frozenset(
-        {"live-shell", "retained-shell", "other-shell"}
+        {"live-shell", "pending-shell", "retained-shell", "other-shell"}
     )
 
 
@@ -2653,6 +2656,60 @@ async def test_job_retry_rejects_running_job_when_inventory_is_uncertain(
         await _test_job_retry_execute(session_id, "job_running")
 
     assert _load_store_untyped()["jobs"][0]["status"] == "running"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("inventory", "message"),
+    [
+        (None, "liveness is unknown"),
+        ({"shell_stopped"}, "shell is still active"),
+    ],
+)
+async def test_job_retry_requires_terminal_attempt_shell_absence(
+    tmp_path, monkeypatch, inventory, message
+):
+    _configure_job_state(tmp_path, monkeypatch)
+    session_id = _create_session(str(tmp_path))
+    row = {
+        "job_id": "job_stopped",
+        "kind": "shell",
+        "name": "stopped",
+        "status": "stopped",
+        "command": "true",
+        "cwd": str(tmp_path),
+        "session_id": session_id,
+        "shell_id": "shell_stopped",
+        "created_at": 1.0,
+        "updated_at": 1.0,
+        "attempts": 1,
+    }
+    job_persistence.save_store(
+        {"version": job_persistence.JOB_STORE_VERSION, "jobs": [row]}
+    )
+
+    async def observed_inventory(*_args):
+        return inventory
+
+    monkeypatch.setattr(
+        job_shell,
+        "authoritative_persistent_shell_ids_execute",
+        observed_inventory,
+    )
+    monkeypatch.setattr(
+        job_shell,
+        "start_persistent_shell_execute",
+        lambda *_args, **_kwargs: pytest.fail(
+            "terminal job must not retry before old shell absence is confirmed"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        await _test_job_retry_execute(session_id, "job_stopped")
+
+    persisted = _load_store_untyped()["jobs"][0]
+    assert persisted["status"] == "stopped"
+    assert persisted["attempts"] == 1
 
 
 def test_managed_job_validation_and_legacy_lost_recovery():

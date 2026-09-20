@@ -134,10 +134,11 @@ explicitly. This keeps absence meaningful. Before each reconnect hello, executor
 reconciles feature-owned live job/shell state; if a live resource cannot be
 observed authoritatively, it retries reconnect instead of publishing a false
 empty/partial inventory. Job runner shells are private implementation resources:
-they appear through `jobs`, not as public `shells`. A retained shell-job row
-continues to reserve its backing-shell ID until retention removes that row, so a
-public persistent shell cannot reuse the ID and accidentally inherit job-private
-identity. `session.lookup` remains a targeted read-only reconciliation operation
+they appear through `jobs`, not as public or Human UI `shells`. A retained
+shell-job row reserves both its current and pending-attempt backing-shell IDs
+until the row/attempt state releases them, so another persistent shell cannot
+reuse an ID and accidentally inherit job-private identity. `session.lookup`
+remains a targeted read-only reconciliation operation
 for ambiguous creation or cwd projection, not pagination for hello.
 
 Optional boot metadata is diagnostics only. It is never identity, trust,
@@ -330,8 +331,10 @@ Feature resources own their durability. Persistent jobs/shells and
 cross-executor transfer may have resource-specific IDs/checkpoints. Ordinary RPC
 does not inherit those recovery semantics. Explicit shell-job retry keeps the
 stable `job_id` resource identity but increments its durable attempt number and
-allocates fresh backing-shell/attempt artifacts; that new attempt is not a replay
-of the original ordinary start command.
+allocates fresh backing-shell/attempt artifacts whose internal names retain the
+`job_id`/attempt prefix. Retry starts only after authoritative shell inventory
+confirms the prior attempt shell is absent; that new attempt is not a replay of
+the original ordinary start command.
 
 ## Terminal streams
 
