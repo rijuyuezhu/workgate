@@ -471,6 +471,9 @@ REST_ROUTES: dict[str, tuple[str, str]] = {
         "/tools/read_persistent_shell_output",
     ),
     "kill_persistent_shell": ("POST", "/tools/kill_persistent_shell"),
+    "read_session_task": ("GET", "/tools/session-task"),
+    "report_session_progress": ("POST", "/tools/session-progress"),
+    "update_session_plan": ("POST", "/tools/session-plan"),
     "read_todos": ("GET", "/tools/todo"),
     "write_todos": ("POST", "/tools/todo"),
 }

@@ -30,6 +30,9 @@ CORE_TOOL_NAMES = {
     "secret_scan",
     "run_python_code",
     "list_persistent_shells",
+    "read_session_task",
+    "report_session_progress",
+    "update_session_plan",
     "read_todos",
     "write_todos",
 }

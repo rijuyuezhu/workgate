@@ -15,6 +15,7 @@ from ...oauth.core.scopes import (
     SCOPE_SHELL_WRITE,
 )
 from ...protocol.ids import SessionId
+from ...schemas.result_models.task import SessionTaskOutput
 from ...schemas.result_models.todo import ReadTodosOutput, WriteTodosOutput
 from .common import json_error as _json_error
 
@@ -136,10 +137,12 @@ def _expected_revision(value: Any) -> int:
 def _final_payload(
     record: Any,
     result: ReadTodosOutput | WriteTodosOutput,
+    *,
+    task: Any | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     session_id = str(record.session_id)
-    return {
+    payload = {
         "session_id": session_id,
         "session": {
             "session_id": session_id,
@@ -160,10 +163,15 @@ def _final_payload(
             "label_bytes": UI_TODO_LABEL_MAX_BYTES,
         },
     }
+    if task is not None:
+        payload["task"] = task.model_dump(mode="json")
+    return payload
 
 
-async def _read_final(runtime: Any, session_id: str) -> ReadTodosOutput:
-    return await runtime.todo_service.read(session_id)
+async def _read_final(
+    runtime: Any, session_id: str
+) -> tuple[ReadTodosOutput, SessionTaskOutput]:
+    return await runtime.todo_service.read_with_task(session_id)
 
 
 async def _write_final(
@@ -171,8 +179,8 @@ async def _write_final(
     session_id: str,
     todos: list[dict[str, str]],
     expected_revision: int,
-) -> WriteTodosOutput:
-    return await runtime.todo_service.write(
+) -> tuple[WriteTodosOutput, SessionTaskOutput]:
+    return await runtime.todo_service.write_with_task(
         session_id,
         todos,
         expected_revision,
@@ -186,9 +194,8 @@ async def api_todos(request: Request) -> Response:
             session_id = _session_id_arg(request.query_params.get("session_id"))
             _require_todo_scopes()
             runtime, record = _shared_session(request, session_id)
-            return _json_ok(
-                _final_payload(record, await _read_final(runtime, session_id))
-            )
+            result, task = await _read_final(runtime, session_id)
+            return _json_ok(_final_payload(record, result, task=task))
 
         body = await request.json()
         if not isinstance(body, dict):
@@ -198,17 +205,13 @@ async def api_todos(request: Request) -> Response:
         expected_revision = _expected_revision(body.get("expected_revision"))
         todos = _todo_items(body.get("todos"))
         runtime, record = _shared_session(request, session_id)
-        return _json_ok(
-            _final_payload(
-                record,
-                await _write_final(
-                    runtime,
-                    session_id,
-                    todos,
-                    expected_revision,
-                ),
-            )
+        result, task = await _write_final(
+            runtime,
+            session_id,
+            todos,
+            expected_revision,
         )
+        return _json_ok(_final_payload(record, result, task=task))
     except HTTPException:
         raise
     except TodoConflictError as exc:

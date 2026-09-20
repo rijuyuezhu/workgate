@@ -424,9 +424,24 @@
             <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
           </dl>
 
+          <section class="session-resource session-task">
+            <div class="session-resource-heading">
+              <div><p class="eyebrow">Durable task state</p><h3>Progress</h3></div>
+              <span id="task-state" class="muted">Select a session</span>
+            </div>
+            <dl class="session-task-grid">
+              <div><dt>Task status</dt><dd id="task-status">—</dd></div>
+              <div><dt>Objective</dt><dd id="task-objective">—</dd></div>
+              <div><dt>Summary</dt><dd id="task-summary">—</dd></div>
+              <div><dt>Next action</dt><dd id="task-next-action">—</dd></div>
+              <div><dt>Findings</dt><dd id="task-findings">—</dd></div>
+              <div><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
+            </dl>
+          </section>
+
           <section class="session-resource session-todos">
             <div class="session-resource-heading">
-              <div><p class="eyebrow">Session state</p><h3>Todos</h3></div>
+              <div><p class="eyebrow">Durable task state</p><h3>Plan</h3></div>
               <span id="todo-state" class="muted">Select a session</span>
             </div>
             <div class="todo-toolbar">
@@ -435,20 +450,20 @@
                 <select id="todo-filter" name="todo-filter">
                   <option value="all">All</option>
                   <option value="open">Open</option>
-                  <option value="completed">Completed</option>
+                  <option value="completed">Completed / skipped</option>
                 </select>
               </label>
               <div class="todo-actions">
                 <button id="todo-refresh" type="button">Reload</button>
-                <button id="todo-add" type="button">Add todo</button>
-                <button id="todo-save" class="primary-action" type="button" disabled>Save changes</button>
+                <button id="todo-add" type="button">Add step</button>
+                <button id="todo-save" class="primary-action" type="button" disabled>Save plan</button>
               </div>
             </div>
             <div id="todo-summary" class="todo-summary" aria-live="polite">
               <span>0 total</span><span>0 open</span><span>0 completed</span><span>revision 0</span>
             </div>
             <div id="todo-list" class="todo-list" aria-live="polite">
-              <div class="empty-state">Select a session to load its todo list.</div>
+              <div class="empty-state">Select a session to load its plan.</div>
             </div>
           </section>
 

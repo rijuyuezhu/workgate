@@ -278,7 +278,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         managed_retry_availability=session_copy_service.retry_require_available,
     )
     todo_service = ControlTodoService(
-        control_state, services.state_store, config
+        control_state, services.state_store, config, session_coordinator
     )
     audit_service = ControlAuditService(session_coordinator)
     session_coordinator.set_control_resource_hooks(

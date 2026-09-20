@@ -646,6 +646,7 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
         "list_persistent_shells",
         "read",
         "read_persistent_shell_output",
+        "read_session_task",
         "read_todos",
         "search",
         "secret_scan",

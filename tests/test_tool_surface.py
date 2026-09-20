@@ -53,6 +53,9 @@ LOCAL_MCP_TOOL_NAMES = {
     "list_file_links",
     "revoke_file_link",
     "secret_scan",
+    "read_session_task",
+    "report_session_progress",
+    "update_session_plan",
     "read_todos",
     "write_todos",
     "job",
@@ -286,6 +289,129 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
     )
 
     assert http_payload == _mcp_payload_data(mcp_response)
+
+
+@pytest.mark.asyncio
+async def test_http_session_task_matches_mcp_and_progress_mutates_it(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    app = _build_paired_surface_http_app()
+    client = TestClient(app)
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session_id = session["session_id"]
+    reported = client.post(
+        "/tools/session-progress",
+        json={
+            "session_id": session_id,
+            "expected_revision": 0,
+            "objective": "Durable task",
+            "summary": "Reported over HTTP",
+        },
+    )
+    assert reported.status_code == 200
+    assert reported.json()["revision"] == 1
+
+    args = {"session_id": session_id}
+    http_payload = client.get("/tools/session-task", params=args).json()
+    mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
+        "read_session_task", args
+    )
+
+    assert http_payload == _mcp_payload_data(mcp_response)
+    assert http_payload["objective"] == "Durable task"
+    assert http_payload["progress"]["summary"] == "Reported over HTTP"
+
+
+def test_http_task_mutations_reject_boolean_expected_revision(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    client = TestClient(_build_paired_surface_http_app())
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    payload = {
+        "session_id": session["session_id"],
+        "expected_revision": True,
+    }
+
+    progress = client.post(
+        "/tools/session-progress",
+        json={**payload, "summary": "reject boolean revisions"},
+    )
+    plan = client.post(
+        "/tools/session-plan",
+        json={
+            **payload,
+            "steps": [{"id": "one", "content": "reject boolean revisions"}],
+        },
+    )
+
+    assert progress.status_code == 400
+    assert plan.status_code == 400
+
+
+def test_http_task_stale_revision_is_conflict_and_plan_typos_are_rejected(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    client = TestClient(
+        _build_paired_surface_http_app(), raise_server_exceptions=False
+    )
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session_id = session["session_id"]
+    first = client.post(
+        "/tools/session-progress",
+        json={
+            "session_id": session_id,
+            "expected_revision": 0,
+            "summary": "advance revision",
+        },
+    )
+    assert first.status_code == 200
+
+    stale = client.post(
+        "/tools/session-plan",
+        json={
+            "session_id": session_id,
+            "expected_revision": 0,
+            "steps": [{"id": "one", "content": "stale"}],
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"] == "revision_conflict"
+    assert "revision 0 to 1" in stale.json()["message"]
+
+    typo = client.post(
+        "/tools/session-plan",
+        json={
+            "session_id": session_id,
+            "expected_revision": 1,
+            "steps": [
+                {
+                    "id": "one",
+                    "content": "must reject typo",
+                    "state": "completed",
+                }
+            ],
+        },
+    )
+    assert typo.status_code == 400
+    assert "unsupported fields: state" in typo.json()["message"]
 
 
 @pytest.mark.asyncio
