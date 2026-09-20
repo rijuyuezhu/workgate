@@ -63,7 +63,7 @@ async def test_shell_execution_runs_bounded_command_in_session_workdir(
     assert result.mode == "command"
     assert result.command == command
     assert result.cwd == str(session_dir)
-    assert result.result["ok"] is True
+    assert result.result["ok"] is True, result.result
     assert result.result["stdout"] == f"hello:{session_dir}"
 
 
@@ -231,9 +231,11 @@ async def test_shell_execution_routes_pty_to_persistent_shell(
         command=None,
         *,
         owner_session_id=None,
+        forbidden_shell_ids=frozenset(),
     ):
         assert config_arg is config
         assert store_arg is store
+        assert forbidden_shell_ids == frozenset()
         calls.append((cwd, name, command, owner_session_id))
         return StartPersistentShellOutput.model_validate(
             {
