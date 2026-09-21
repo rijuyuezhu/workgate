@@ -93,7 +93,47 @@ async def test_run_requires_paired_executor(
     assert settings.state_dir.is_dir()
 
 
-def test_root_parser_exposes_final_executor_connect_and_run() -> None:
+@pytest.mark.asyncio
+async def test_managed_run_clears_workgate_environment_before_loading_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    observed: dict[str, str] = {}
+
+    class Runtime:
+        connection = None
+
+        @asynccontextmanager
+        async def lifespan(self):
+            yield
+
+    monkeypatch.setenv("WORKGATE_STATE_DIR", "/wrong/from-environment")
+    monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "secret")
+
+    def fake_settings_from_args(*_args, **_kwargs):
+        observed.update(
+            {
+                name: value
+                for name, value in executor_cli.os.environ.items()
+                if name.startswith("WORKGATE_")
+            }
+        )
+        return settings
+
+    monkeypatch.setattr(
+        executor_cli, "settings_from_args", fake_settings_from_args
+    )
+    monkeypatch.setattr(
+        executor_cli, "build_executor_runtime", lambda _config: Runtime()
+    )
+
+    with pytest.raises(RuntimeError, match="executor is not paired"):
+        await executor_cli._run(argparse.Namespace(managed_service=True))
+
+    assert observed == {}
+
+
+def test_root_parser_exposes_executor_runtime_and_service_lifecycle() -> None:
     connect = _build_parser().parse_args(
         ["executor", "connect", "https://control.test", "--name", "Laptop"]
     )
@@ -110,6 +150,21 @@ def test_root_parser_exposes_final_executor_connect_and_run() -> None:
     assert run.command == "executor"
     assert run.executor_command == "run"
     assert run._workgate_default_config_path == app_paths().executor_config_file
+
+    for command in (
+        "install-service",
+        "status",
+        "start",
+        "stop",
+        "restart",
+        "uninstall-service",
+    ):
+        parsed = _build_parser().parse_args(["executor", command])
+        assert parsed.executor_command == command
+
+    logs = _build_parser().parse_args(["executor", "logs", "--lines", "25"])
+    assert logs.executor_command == "logs"
+    assert logs.lines == 25
 
 
 @pytest.mark.asyncio
