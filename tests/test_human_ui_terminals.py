@@ -715,3 +715,95 @@ def test_terminal_read_normalization_rejects_oversized_executor_output():
 
     with pytest.raises(RuntimeError, match="oversized terminal output"):
         terminal_module._normalize_read("executor-a", "demo", 50, oversized)
+
+
+def test_terminal_http_maps_executor_connection_failure(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    async def fail_list(_runtime, _executor_id):
+        raise ConnectionError("executor offline")
+
+    monkeypatch.setattr(terminal_module, "_list_shells", fail_list)
+
+    response = client.get("/api/ui/terminals")
+
+    assert response.status_code == 503
+    assert "executor offline" in response.json()["message"]
+
+
+def test_terminal_attach_rejects_missing_shell(monkeypatch, tmp_path):
+    client, backend, harness = _client(monkeypatch, tmp_path)
+    backend.shells = [{"shell_id": "other", "cwd": "/workspace"}]
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 80, "rows": 24},
+        )
+
+    assert response.status_code == 400
+    assert "Persistent shell not found" in response.json()["message"]
+    assert harness.control.stream_hub.active_count() == 0
+
+
+def test_terminal_http_rejects_unknown_action(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/ui/terminals/unknown", json={})
+
+    assert response.status_code == 400
+    assert "Unsupported terminal action" in response.json()["message"]
+
+
+def test_terminal_websocket_rejects_malformed_request(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/bad%20id"),
+            subprotocols=["workgate-ui-terminal"],
+        ),
+    ):
+        pass
+
+    assert caught.value.code == 4400
+
+
+def test_terminal_websocket_maps_executor_connection_failure(
+    monkeypatch, tmp_path
+):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    async def fail_list(_runtime, _executor_id):
+        raise ConnectionError("executor offline")
+
+    monkeypatch.setattr(terminal_module, "_list_shells", fail_list)
+
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/demo"),
+            subprotocols=["workgate-ui-terminal"],
+        ),
+    ):
+        pass
+
+    assert caught.value.code == 1013
+    assert caught.value.reason == "executor offline"
+
+
+def test_terminal_websocket_rejects_invalid_oauth_bearer(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/demo"),
+            subprotocols=["workgate-ui-terminal", "bearer.bm90LWEtand0"],
+        ),
+    ):
+        pass
+
+    assert caught.value.code == 4401
+    assert caught.value.reason == "Invalid OAuth bearer token"
