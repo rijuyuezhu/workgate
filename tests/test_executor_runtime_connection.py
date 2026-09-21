@@ -329,6 +329,81 @@ async def test_reconnect_hello_retries_when_session_ids_change(
 
 
 @pytest.mark.asyncio
+async def test_executor_runtime_terminal_attach_owns_stream_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from workgate.executor.terminal import stream as stream_module
+
+    settings = Settings(
+        workspace_root=tmp_path / "workspace",
+        state_dir=tmp_path / "state",
+    )
+    runtime = build_executor_runtime(resolve_executor_config(settings))
+    profile = ExecutorProfile(
+        control_url="https://control.example",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    assert runtime.profile_store is not None
+    runtime.profile_store.save(profile)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class FakeStream:
+        stream_id = "stream_abcdefghijklmnopqrstuvwxyz"
+        shell_id = "shell-1"
+        backend = "fake-pty"
+
+        async def run(self) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+    async def connect_stream(
+        current_profile: ExecutorProfile,
+        *,
+        stream_id: str,
+        shell_id: str,
+        cols: int,
+        rows: int,
+    ) -> FakeStream:
+        assert current_profile == profile
+        assert stream_id == FakeStream.stream_id
+        assert shell_id == FakeStream.shell_id
+        assert (cols, rows) == (101, 37)
+        return FakeStream()
+
+    monkeypatch.setattr(
+        stream_module, "connect_executor_terminal_stream", connect_stream
+    )
+
+    result = await runtime._execute_protocol_command(
+        ExecutorCommand(
+            id=new_command_id(),
+            op="terminal.attach",
+            args={
+                "stream_id": FakeStream.stream_id,
+                "shell_id": FakeStream.shell_id,
+                "cols": 101,
+                "rows": 37,
+            },
+        )
+    )
+
+    assert result == {
+        "stream_id": FakeStream.stream_id,
+        "shell_id": FakeStream.shell_id,
+        "backend": "fake-pty",
+        "connected": True,
+    }
+    await asyncio.wait_for(started.wait(), timeout=0.5)
+    await runtime.aclose()
+    await asyncio.wait_for(cancelled.wait(), timeout=0.5)
+
+
+@pytest.mark.asyncio
 async def test_executor_runtime_restart_reuses_same_profile_credential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

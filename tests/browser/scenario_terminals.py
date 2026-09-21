@@ -38,27 +38,25 @@ def _wait_terminal_output(
     raise AssertionError(f"terminal output did not contain {marker!r}")
 
 
-def _terminal_resize_events(
-    harness: BrowserHarness, shell_id: str, start: int
-) -> list[str]:
+def _terminal_resize_events(harness: BrowserHarness, start: int) -> list[str]:
     return [
         event
         for event in harness.websocket_events[start:]
         if event.startswith("sent ws://")
-        and f"/ui/ws/terminals/{shell_id}?" in event
+        and "/stream/stream_" in event
         and '{"type":"resize"' in event
     ]
 
 
-def _wait_terminal_resize(
-    harness: BrowserHarness, shell_id: str, start: int
-) -> None:
+def _wait_terminal_resize(harness: BrowserHarness, start: int) -> None:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        if _terminal_resize_events(harness, shell_id, start):
+        if _terminal_resize_events(harness, start):
             return
         harness.page.wait_for_timeout(50)
-    raise AssertionError("terminal route did not send a visible resize")
+    raise AssertionError(
+        "terminal StreamHub route did not send a visible resize"
+    )
 
 
 def _start_terminal(harness: BrowserHarness, name: str) -> str:
@@ -123,30 +121,16 @@ def run_terminals(harness: BrowserHarness) -> None:
     )
     initial_resize_start = len(harness.websocket_events)
     page.evaluate("window.dispatchEvent(new Event('resize'))")
-    _wait_terminal_resize(harness, executor_shell, initial_resize_start)
+    _wait_terminal_resize(harness, initial_resize_start)
 
     hidden_resize_start = len(harness.websocket_events)
     harness.navigate("files")
     page.wait_for_timeout(250)
-    assert not _terminal_resize_events(
-        harness, executor_shell, hidden_resize_start
-    )
+    assert not _terminal_resize_events(harness, hidden_resize_start)
 
     visible_resize_start = len(harness.websocket_events)
     harness.navigate("terminals")
-    _wait_terminal_resize(harness, executor_shell, visible_resize_start)
-    resized = harness.api(
-        "POST",
-        "/api/ui/terminals/resize",
-        body={
-            "executor_id": executor_id,
-            "shell_id": executor_shell,
-            "cols": 111,
-            "rows": 37,
-        },
-    )
-    assert resized["status"] == 200
-    assert resized["payload"]["data"]["cols"] == 111
+    _wait_terminal_resize(harness, visible_resize_start)
 
     _send_terminal(
         harness,

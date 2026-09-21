@@ -32,6 +32,7 @@ from .search_composition import build_control_tool_catalog
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
+from .streams import ControlStreamHub
 from .todos import ControlTodoService
 
 
@@ -63,6 +64,8 @@ class ControlRuntime:
     """Control authority for canonical public audit history."""
     managed_jobs_runtime: ManagedJobsRuntime
     """Control-owned managed background-job tasks, handlers, and leases."""
+    stream_hub: ControlStreamHub
+    """Process-local terminal stream rendezvous and live relay state."""
     human_ui_runtime: HumanUiRuntime
     """Control-owned Human UI connection admission state."""
     oauth_state: OAuthState
@@ -119,44 +122,47 @@ class ControlRuntime:
             human_ui_started = True
         except BaseException:
             try:
-                if human_ui_started:
-                    await self.human_ui_runtime.aclose()
+                await self.stream_hub.aclose()
             finally:
                 try:
-                    if oauth_bound:
-                        configure_oauth_state(previous_oauth_state)
+                    if human_ui_started:
+                        await self.human_ui_runtime.aclose()
                 finally:
                     try:
-                        if oauth_started:
-                            await self.oauth_state.aclose()
+                        if oauth_bound:
+                            configure_oauth_state(previous_oauth_state)
                     finally:
                         try:
-                            if managed_jobs_bound:
-                                configure_managed_jobs_runtime(
-                                    previous_managed_jobs_runtime
-                                )
+                            if oauth_started:
+                                await self.oauth_state.aclose()
                         finally:
                             try:
-                                if managed_jobs_started:
-                                    await self.managed_jobs_runtime.aclose()
+                                if managed_jobs_bound:
+                                    configure_managed_jobs_runtime(
+                                        previous_managed_jobs_runtime
+                                    )
                             finally:
                                 try:
-                                    await self.session_copy_service.aclose()
+                                    if managed_jobs_started:
+                                        await self.managed_jobs_runtime.aclose()
                                 finally:
                                     try:
-                                        await self.executor_pairing.aclose()
+                                        await self.session_copy_service.aclose()
                                     finally:
                                         try:
-                                            await self.session_coordinator.aclose()
+                                            await self.executor_pairing.aclose()
                                         finally:
                                             try:
-                                                if executor_transport_started:
-                                                    await self.executor_transport.aclose()
+                                                await self.session_coordinator.aclose()
                                             finally:
                                                 try:
-                                                    self.control_state.close()
+                                                    if executor_transport_started:
+                                                        await self.executor_transport.aclose()
                                                 finally:
-                                                    installation.close()
+                                                    try:
+                                                        self.control_state.close()
+                                                    finally:
+                                                        installation.close()
                                                     self._closed = True
             raise
         self._installation = installation
@@ -171,6 +177,7 @@ class ControlRuntime:
         self._installation = None
         self._closed = True
         managed_jobs_error: BaseException | None = None
+        stream_hub_error: BaseException | None = None
         human_ui_error: BaseException | None = None
         oauth_error: BaseException | None = None
         try:
@@ -178,6 +185,10 @@ class ControlRuntime:
                 await self.managed_jobs_runtime.aclose()
             except BaseException as exc:
                 managed_jobs_error = exc
+            try:
+                await self.stream_hub.aclose()
+            except BaseException as exc:
+                stream_hub_error = exc
             try:
                 await self.human_ui_runtime.aclose()
             except BaseException as exc:
@@ -216,6 +227,8 @@ class ControlRuntime:
                                     installation.close()
         if managed_jobs_error is not None:
             raise managed_jobs_error
+        if stream_hub_error is not None:
+            raise stream_hub_error
         if human_ui_error is not None:
             raise human_ui_error
         if oauth_error is not None:
@@ -295,6 +308,17 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     )
     managed_jobs_runtime.register_handler(managed_kind, managed_handler)
     human_ui_runtime = build_human_ui_runtime()
+    stream_hub = ControlStreamHub(
+        max_streams=settings.ui_terminal_max_connections,
+        idle_timeout_s=config.ui_terminal_idle_timeout_s,
+        reserve_slot=lambda: human_ui_runtime.terminal_connections.reserve(
+            settings.ui_terminal_max_connections
+        ),
+        release_slot=human_ui_runtime.terminal_connections.release,
+    )
+    executor_transport.set_executor_invalidated_callback(
+        stream_hub.close_executor
+    )
     oauth_state = build_oauth_state(
         config.state_dir, state_store=services.state_store
     )
@@ -311,6 +335,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         todo_service=todo_service,
         audit_service=audit_service,
         managed_jobs_runtime=managed_jobs_runtime,
+        stream_hub=stream_hub,
         human_ui_runtime=human_ui_runtime,
         oauth_state=oauth_state,
         tool_catalog=build_control_tool_catalog(

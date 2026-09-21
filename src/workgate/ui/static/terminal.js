@@ -399,16 +399,26 @@ export function createTerminalController({
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
 
-  function terminalWebSocketUrl(shellId, executorId) {
+  function terminalSnapshotWebSocketUrl(shellId, executorId) {
     const url = new URL(`${uiPath}/ws/terminals/${encodeURIComponent(shellId)}`, location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const size = terminalSize();
     url.searchParams.set("executor_id", executorId);
     url.searchParams.set("lines", "1000");
-    url.searchParams.set("mode", "auto");
+    url.searchParams.set("mode", "snapshot");
     url.searchParams.set("cols", String(size.cols));
     url.searchParams.set("rows", String(size.rows));
     return url;
+  }
+
+  function terminalStreamWebSocketUrl(streamId) {
+    const url = new URL(`/stream/${encodeURIComponent(streamId)}`, location.href);
+    url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    return url;
+  }
+
+  function terminalStreamProtocols(token) {
+    return ["workgate-ui-terminal", `workgate-stream-token.${token}`];
   }
 
   function sendTerminalResize() {
@@ -426,7 +436,7 @@ export function createTerminalController({
       .slice(0, 4096);
   }
 
-  function connectTerminal(shellId) {
+  async function connectTerminal(shellId) {
     const requestedExecutor = controllerState.terminalExecutorId;
     if (
       !shellId ||
@@ -438,6 +448,10 @@ export function createTerminalController({
     closeTerminalSocket();
     controllerState.selectedShellId = shellId;
     const generation = controllerState.terminalGeneration;
+    const selectionCurrent = () =>
+      generation === controllerState.terminalGeneration &&
+      requestedExecutor === controllerState.terminalExecutorId &&
+      shellId === controllerState.selectedShellId;
     elements.terminalTitle.textContent = `${requestedExecutor} / ${shellId}`;
     elements.terminalState.textContent = "Connecting";
     controllerState.terminalCommandHistory = [];
@@ -446,17 +460,49 @@ export function createTerminalController({
     showTerminalMessage(`Connecting to ${requestedExecutor}…`);
     renderTerminalList({ shells: controllerState.terminalSessions });
 
-    const socket = new WebSocket(
-      terminalWebSocketUrl(shellId, requestedExecutor),
-      terminalSocketProtocols(),
-    );
+    let socket;
+    let rawStream = false;
+    try {
+      const size = terminalSize();
+      const grant = await terminalAction("attach", {
+        shell_id: shellId,
+        cols: size.cols,
+        rows: size.rows,
+      });
+      if (!selectionCurrent()) return;
+      if (
+        grant.executor_id !== requestedExecutor ||
+        grant.shell_id !== shellId ||
+        !grant.stream_id ||
+        !grant.browser_token
+      ) {
+        throw new Error("Terminal attach response was malformed.");
+      }
+      rawStream = true;
+      socket = new WebSocket(
+        terminalStreamWebSocketUrl(grant.stream_id),
+        terminalStreamProtocols(grant.browser_token),
+      );
+    } catch (error) {
+      if (!selectionCurrent()) return;
+      if (error?.payload?.error !== "TerminalBridgeUnsupportedError") {
+        elements.terminalState.textContent = "Unable to attach terminal";
+        showTerminalMessage(error instanceof Error ? error.message : String(error));
+        setTerminalControls(false);
+        return;
+      }
+      socket = new WebSocket(
+        terminalSnapshotWebSocketUrl(shellId, requestedExecutor),
+        terminalSocketProtocols(),
+      );
+    }
+
     socket.binaryType = "arraybuffer";
     controllerState.terminalSocket = socket;
     controllerState.terminalSocketExecutorId = requestedExecutor;
     const current = () =>
-      generation === controllerState.terminalGeneration &&
+      selectionCurrent() &&
       socket === controllerState.terminalSocket &&
-      requestedExecutor === controllerState.terminalExecutorId &&
       requestedExecutor === controllerState.terminalSocketExecutorId;
     socket.addEventListener("open", () => {
       if (!current()) return;
@@ -524,11 +570,13 @@ export function createTerminalController({
       controllerState.terminalSocketExecutorId = "";
       controllerState.terminalReady = false;
       setTerminalControls(false);
-      if (event.code === 4401 || event.code === 4403) {
+      if (!rawStream && (event.code === 4401 || event.code === 4403)) {
         showAuthentication("Authentication required", event.reason || "Terminal authorization failed.");
       } else {
         elements.terminalState.textContent = event.reason || `Disconnected · ${requestedExecutor}`;
-        if (event.code === 4404) refreshTerminalsInBackground({ force: true });
+        if (event.code === 4403 || event.code === 4404) {
+          refreshTerminalsInBackground({ force: true });
+        }
       }
     });
     socket.addEventListener("error", () => {

@@ -59,6 +59,7 @@ def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
         control_state=object(),
         executor_transport=object(),
         executor_pairing=object(),
+        stream_hub=object(),
     )
 
 

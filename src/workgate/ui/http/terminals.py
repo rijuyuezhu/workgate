@@ -1,7 +1,5 @@
 """Authenticated Human UI terminal adapter over final executor RPC."""
 
-import base64
-import contextlib
 from typing import Any
 
 import jwt
@@ -26,39 +24,28 @@ from ...protocol.terminal import (
     PERSISTENT_SHELL_MAX_ROWS,
     PERSISTENT_SHELL_MIN_COLUMNS,
     PERSISTENT_SHELL_MIN_ROWS,
-    TERMINAL_BRIDGE_MAX_CHUNK_BYTES,
-    TerminalBridgeBusyError,
-    TerminalBridgeNotFoundError,
-    TerminalBridgeUnsupportedError,
 )
 from .common import bounded_text as _bounded_text
 from .common import json_error as _json_error
 from .live_state import human_ui_runtime
 from .session import has_valid_ui_origin, ui_session_claims
 from .terminal_protocol import (
-    _BRIDGE_ID_PATTERN,
     UI_TERMINAL_DEFAULT_LINES,
     UI_TERMINAL_INPUT_MAX_BYTES,
     UI_TERMINAL_METADATA_MAX_BYTES,
     UI_TERMINAL_OUTPUT_MAX_BYTES,
-    UI_TERMINAL_RAW_READ_WAIT_MS,
     UI_TERMINAL_READ_MAX_LINES,
     UI_TERMINAL_SUBPROTOCOL,
     _bounded_int,
     _executor_id_arg,
-    _normalize_bridge_close,
-    _normalize_bridge_open,
-    _normalize_bridge_read,
-    _normalize_bridge_resize,
-    _normalize_bridge_write,
     _normalize_kill,
     _normalize_list,
     _normalize_read,
     _normalize_resize,
     _normalize_send,
     _normalize_start,
+    _optional_text,
     _shell_id,
-    _TerminalBridgeHandle,
     _websocket_protocols,
     _websocket_token,
     parse_terminal_websocket_request,
@@ -72,13 +59,6 @@ __all__ = [
     "UI_TERMINAL_INPUT_MAX_BYTES",
     "UI_TERMINAL_OUTPUT_MAX_BYTES",
     "UI_TERMINAL_SUBPROTOCOL",
-    "TerminalBridgeBusyError",
-    "TerminalBridgeNotFoundError",
-    "TerminalBridgeUnsupportedError",
-    "_TerminalBridgeHandle",
-    "_normalize_bridge_open",
-    "_normalize_bridge_read",
-    "_normalize_bridge_resize",
     "_normalize_read",
     "_websocket_protocols",
 ]
@@ -209,98 +189,63 @@ async def _kill_shell(
     return _normalize_kill(executor_id, shell_id, value)
 
 
-async def _discard_open_bridge(
-    runtime: Any, executor_id: str, value: Any
-) -> None:
-    if not isinstance(value, dict):
-        return
-    bridge_id = str(value.get("bridge_id") or "")
-    if not _BRIDGE_ID_PATTERN.fullmatch(bridge_id):
-        return
-    with contextlib.suppress(Exception):
-        await _terminal_call(
-            runtime,
-            executor_id,
-            "ui.terminals.bridge.close",
-            {"bridge_id": bridge_id},
-        )
-
-
-async def _open_bridge(
+async def _attach_stream(
     runtime: Any,
     executor_id: str,
     shell_id: str,
     cols: int,
     rows: int,
-) -> _TerminalBridgeHandle:
-    executor_id, value = await _terminal_call(
-        runtime,
-        executor_id,
-        "ui.terminals.bridge.open",
-        {"shell_id": shell_id, "cols": cols, "rows": rows},
-    )
+) -> dict[str, Any]:
+    shells = await _list_shells(runtime, executor_id)
+    if shell_id not in {
+        str(item.get("shell_id") or "") for item in shells["shells"]
+    }:
+        raise ValueError("Persistent shell not found")
+    grant = await runtime.stream_hub.create(executor_id)
     try:
-        # Pin the physical executor id in the handle for the bridge lifetime.
-        return _normalize_bridge_open(executor_id, shell_id, cols, rows, value)
-    except Exception:
-        await _discard_open_bridge(runtime, executor_id, value)
+        resolved_executor_id, value = await _terminal_call(
+            runtime,
+            executor_id,
+            "terminal.attach",
+            {
+                "stream_id": grant.stream_id,
+                "shell_id": shell_id,
+                "cols": cols,
+                "rows": rows,
+            },
+        )
+        if resolved_executor_id != executor_id:
+            raise RuntimeError("Terminal attach executor identity changed")
+        if not isinstance(value, dict):
+            raise RuntimeError(
+                "Executor returned malformed terminal attach data"
+            )
+        if str(value.get("stream_id") or "") != grant.stream_id:
+            raise RuntimeError(
+                "Executor returned mismatched terminal stream_id"
+            )
+        if str(value.get("shell_id") or "") != shell_id:
+            raise RuntimeError("Executor returned mismatched terminal shell_id")
+        if not bool(value.get("connected")):
+            raise RuntimeError("Executor did not establish terminal stream")
+        backend = _optional_text(value.get("backend"), field="terminal backend")
+        expires_at = await runtime.stream_hub.browser_expires_at(
+            grant.stream_id
+        )
+        if expires_at is None:
+            raise RuntimeError("Terminal stream expired before browser attach")
+    except BaseException:
+        await runtime.stream_hub.cancel(grant.stream_id)
         raise
-
-
-async def _read_bridge(
-    runtime: Any, handle: _TerminalBridgeHandle
-) -> tuple[bytes, bool]:
-    _executor_id, value = await _terminal_call(
-        runtime,
-        handle.executor_id,
-        "ui.terminals.bridge.read",
-        {
-            "bridge_id": handle.bridge_id,
-            "max_bytes": TERMINAL_BRIDGE_MAX_CHUNK_BYTES,
-            "wait_ms": UI_TERMINAL_RAW_READ_WAIT_MS,
-        },
-    )
-    return _normalize_bridge_read(handle, value)
-
-
-async def _write_bridge(
-    runtime: Any, handle: _TerminalBridgeHandle, data: bytes
-) -> None:
-    if len(data) > UI_TERMINAL_INPUT_MAX_BYTES:
-        raise ValueError("Terminal input is too large")
-    encoded = base64.b64encode(data).decode("ascii")
-    _executor_id, value = await _terminal_call(
-        runtime,
-        handle.executor_id,
-        "ui.terminals.bridge.write",
-        {"bridge_id": handle.bridge_id, "data_b64": encoded},
-    )
-    _normalize_bridge_write(handle, value, len(data))
-
-
-async def _resize_bridge(
-    runtime: Any,
-    handle: _TerminalBridgeHandle,
-    cols: int,
-    rows: int,
-) -> None:
-    _executor_id, value = await _terminal_call(
-        runtime,
-        handle.executor_id,
-        "ui.terminals.bridge.resize",
-        {"bridge_id": handle.bridge_id, "cols": cols, "rows": rows},
-    )
-    _normalize_bridge_resize(handle, value, cols, rows)
-
-
-async def _close_bridge(runtime: Any, handle: _TerminalBridgeHandle) -> None:
-    _executor_id, value = await _terminal_call(
-        runtime,
-        handle.executor_id,
-        "ui.terminals.bridge.close",
-        {"bridge_id": handle.bridge_id},
-    )
-    _normalize_bridge_close(handle, value)
+    return {
+        "executor_id": executor_id,
+        "shell_id": shell_id,
+        "stream_id": grant.stream_id,
+        "browser_token": grant.browser_token,
+        "expires_at": expires_at,
+        "mode": "pty",
+        "backend": backend,
+    }
 
 
 def _authorize_websocket(
@@ -380,7 +325,7 @@ async def api_terminal_read(request: Request) -> Response:
 
 
 async def api_terminal_action(request: Request) -> Response:
-    """Start, write, resize, or terminate an executor-owned shell."""
+    """Start, attach, or terminate an executor-owned shell."""
     action = str(request.path_params.get("action") or "")
     try:
         body = await request.json()
@@ -418,24 +363,11 @@ async def api_terminal_action(request: Request) -> Response:
                     name=name or None,
                     command=command or None,
                 )
-            case "send":
-                shell_id = _shell_id(body.get("shell_id"))
-                input_text = str(body.get("input_text") or "")
-                if (
-                    len(input_text.encode("utf-8"))
-                    > UI_TERMINAL_INPUT_MAX_BYTES
-                ):
-                    raise ValueError(
-                        f"input_text exceeds {UI_TERMINAL_INPUT_MAX_BYTES} encoded bytes"
-                    )
-                result = await _send_shell(
-                    runtime,
-                    executor_id,
-                    shell_id,
-                    input_text,
-                    bool(body.get("enter", True)),
+            case "send" | "resize":
+                raise ValueError(
+                    "Interactive terminal input and resize require StreamHub attach"
                 )
-            case "resize":
+            case "attach":
                 shell_id = _shell_id(body.get("shell_id"))
                 cols = _bounded_int(
                     body.get("cols"),
@@ -451,7 +383,7 @@ async def api_terminal_action(request: Request) -> Response:
                     maximum=PERSISTENT_SHELL_MAX_ROWS,
                     label="rows",
                 )
-                result = await _resize_shell(
+                result = await _attach_stream(
                     runtime, executor_id, shell_id, cols, rows
                 )
             case "kill":
@@ -468,7 +400,7 @@ async def api_terminal_action(request: Request) -> Response:
 
 
 async def ui_terminal_websocket(websocket: WebSocket) -> None:
-    """Bridge one executor-owned shell using snapshots or a raw PTY stream."""
+    """Serve the snapshot-only compatibility terminal WebSocket."""
     try:
         request = parse_terminal_websocket_request(
             executor_id=websocket.query_params.get("executor_id"),
@@ -480,6 +412,12 @@ async def ui_terminal_websocket(websocket: WebSocket) -> None:
         )
     except ValueError as exc:
         await websocket.close(code=4400, reason=str(exc)[:120])
+        return
+    if request.requested_mode != "snapshot":
+        await websocket.close(
+            code=4406,
+            reason="Raw PTY terminal attach moved to the StreamHub endpoint",
+        )
         return
 
     runtime = _runtime(websocket)
@@ -494,15 +432,6 @@ async def ui_terminal_websocket(websocket: WebSocket) -> None:
         resize_shell=lambda executor_id, shell_id, cols, rows: _resize_shell(
             runtime, executor_id, shell_id, cols, rows
         ),
-        open_bridge=lambda executor_id, shell_id, cols, rows: _open_bridge(
-            runtime, executor_id, shell_id, cols, rows
-        ),
-        read_bridge=lambda handle: _read_bridge(runtime, handle),
-        write_bridge=lambda handle, data: _write_bridge(runtime, handle, data),
-        resize_bridge=lambda handle, cols, rows: _resize_bridge(
-            runtime, handle, cols, rows
-        ),
-        close_bridge=lambda handle: _close_bridge(runtime, handle),
     )
     await serve_terminal_websocket(
         websocket,

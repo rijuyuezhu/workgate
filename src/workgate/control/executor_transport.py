@@ -104,6 +104,9 @@ class ExecutorTransport:
         self._authenticated_hello_callback: (
             Callable[[str, str], Awaitable[None]] | None
         ) = None
+        self._executor_invalidated_callback: (
+            Callable[[str], Awaitable[None]] | None
+        ) = None
         self._started = False
         self._closed = False
 
@@ -118,6 +121,12 @@ class ExecutorTransport:
     ) -> None:
         """Observe one successful full reconnect hello after presence publication."""
         self._authenticated_hello_callback = callback
+
+    def set_executor_invalidated_callback(
+        self, callback: Callable[[str], Awaitable[None]] | None
+    ) -> None:
+        """Observe revoke/replacement after trust mutation commits."""
+        self._executor_invalidated_callback = callback
 
     def start(self) -> None:
         """Open this process-local coordination owner after durable state is loaded."""
@@ -232,14 +241,19 @@ class ExecutorTransport:
             poll_timeout_s=self._poll_timeout_s,
         )
 
-    async def validate(self, credential: str) -> None:
-        """Authenticate one bearer without publishing executor presence or inventory."""
+    def authenticate_live_bearer(self, credential: str) -> str:
+        """Authenticate the current executor bearer without touching live presence."""
         self._require_running()
         record = self._authenticate(credential)
         self._reauthenticate(record.executor_id, credential)
+        return record.executor_id
+
+    async def validate(self, credential: str) -> None:
+        """Authenticate one bearer without publishing executor presence or inventory."""
+        executor_id = self.authenticate_live_bearer(credential)
         callback = self._authenticated_proof_callback
         if callback is not None:
-            await callback(record.executor_id, credential)
+            await callback(executor_id, credential)
 
     async def heartbeat(self, credential: str) -> None:
         """Refresh authenticated presence independently of command capacity."""
@@ -446,7 +460,10 @@ class ExecutorTransport:
             channel.last_activity = None
             channel.hello = None
             channel.wake.set()
-            return record
+        callback = self._executor_invalidated_callback
+        if callback is not None:
+            await callback(record.executor_id)
+        return record
 
     async def replace_executor(self, record: ExecutorTrustRecord) -> None:
         """Replace trust under the handoff lock and interrupt old live correlations."""
@@ -464,6 +481,9 @@ class ExecutorTransport:
             channel.last_activity = None
             channel.hello = None
             channel.wake.set()
+        callback = self._executor_invalidated_callback
+        if callback is not None:
+            await callback(record.executor_id)
 
     @staticmethod
     def _interrupt_channel(

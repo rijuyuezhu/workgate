@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -65,6 +66,9 @@ class ExecutorRuntime:
     """Final v1 profile store, absent for the temporary legacy worker runtime."""
     connection: ExecutorConnection | None = field(default=None, init=False)
     """Live final executor v1 reconnect loop when a final profile exists."""
+    _terminal_stream_tasks: set[asyncio.Task[None]] = field(
+        default_factory=set, init=False, repr=False
+    )
     _profile_lock: ExitStack | None = field(
         default=None, init=False, repr=False
     )
@@ -144,6 +148,49 @@ class ExecutorRuntime:
 
     async def _execute_protocol_command(self, command: ExecutorCommand):
         """Adapt final v1 envelopes to executor-owned operation services."""
+        if command.op == "terminal.attach":
+            if command.session_id is not None:
+                raise ValueError("terminal.attach must not carry session_id")
+            profile_store = self.profile_store
+            profile = None if profile_store is None else profile_store.load()
+            if profile is None:
+                raise RuntimeError(
+                    "terminal.attach requires a paired executor profile"
+                )
+            stream_id = command.args.get("stream_id")
+            shell_id = command.args.get("shell_id")
+            if not isinstance(stream_id, str) or not stream_id:
+                raise ValueError("terminal.attach requires stream_id")
+            if not isinstance(shell_id, str) or not shell_id:
+                raise ValueError("terminal.attach requires shell_id")
+            cols_arg = command.args.get("cols")
+            rows_arg = command.args.get("rows")
+            if cols_arg is not None and not isinstance(
+                cols_arg, (str, int, float)
+            ):
+                raise ValueError("terminal.attach cols must be numeric")
+            if rows_arg is not None and not isinstance(
+                rows_arg, (str, int, float)
+            ):
+                raise ValueError("terminal.attach rows must be numeric")
+            from .terminal.stream import connect_executor_terminal_stream
+
+            stream = await connect_executor_terminal_stream(
+                profile,
+                stream_id=stream_id,
+                shell_id=shell_id,
+                cols=120 if cols_arg is None else int(cols_arg),
+                rows=36 if rows_arg is None else int(rows_arg),
+            )
+            task = asyncio.create_task(stream.run())
+            self._terminal_stream_tasks.add(task)
+            task.add_done_callback(self._terminal_stream_done)
+            return {
+                "stream_id": stream.stream_id,
+                "shell_id": stream.shell_id,
+                "backend": stream.backend,
+                "connected": True,
+            }
         ui_legacy_aliases = {
             "ui.dashboard.snapshot": "dashboard_snapshot",
         }
@@ -205,6 +252,13 @@ class ExecutorRuntime:
             args.setdefault("session_id", command.session_id)
         return await self.dispatcher.execute(command.op, args)
 
+    def _terminal_stream_done(self, task: asyncio.Task[None]) -> None:
+        self._terminal_stream_tasks.discard(task)
+        if task.cancelled():
+            return
+        with suppress(Exception):
+            task.exception()
+
     async def aclose(self) -> None:
         """Restore prior compatibility bindings; repeated close is harmless."""
         installation = self._installation
@@ -218,6 +272,12 @@ class ExecutorRuntime:
             if connection is not None:
                 await connection.aclose()
         finally:
+            stream_tasks = tuple(self._terminal_stream_tasks)
+            self._terminal_stream_tasks.clear()
+            for task in stream_tasks:
+                task.cancel()
+            if stream_tasks:
+                await asyncio.gather(*stream_tasks, return_exceptions=True)
             try:
                 if profile_lock is not None:
                     profile_lock.close()

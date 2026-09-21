@@ -268,7 +268,13 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
         'url.searchParams.set("executor_id", executorId)'
         in terminal_script.text
     )
-    assert 'url.searchParams.set("mode", "auto")' in terminal_script.text
+    assert 'url.searchParams.set("mode", "snapshot")' in terminal_script.text
+    assert (
+        "new URL(`/stream/${encodeURIComponent(streamId)}`"
+        in terminal_script.text
+    )
+    assert "workgate-stream-token.${token}" in terminal_script.text
+    assert 'terminalAction("attach"' in terminal_script.text
     assert 'socket.binaryType = "arraybuffer"' in terminal_script.text
     assert "controllerState.terminalReady" in terminal_script.text
     assert "activateTerminalMode" in terminal_script.text
