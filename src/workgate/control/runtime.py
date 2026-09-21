@@ -260,15 +260,19 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         config.data_dir,
     )
 
-    async def authenticated_hello(executor_id: str, credential: str) -> None:
-        await executor_pairing.complete_authenticated_hello(
+    async def authenticated_proof(executor_id: str, credential: str) -> None:
+        await executor_pairing.complete_authenticated_proof(
             executor_id, credential
         )
+
+    async def authenticated_hello(executor_id: str, credential: str) -> None:
+        _ = credential
         await session_coordinator.reconcile_hello(executor_id)
         session_copy_service.schedule_reconcile_abandonments(
             executor_id=executor_id
         )
 
+    executor_transport.set_authenticated_proof_callback(authenticated_proof)
     executor_transport.set_authenticated_hello_callback(authenticated_hello)
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config

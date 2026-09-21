@@ -18,6 +18,7 @@ from ..protocol.executor import (
     EXECUTOR_HELLO_PATH,
     EXECUTOR_POLL_PATH,
     EXECUTOR_RESULT_PATH,
+    EXECUTOR_VALIDATE_PATH,
     ExecutorCommand,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
@@ -100,6 +101,9 @@ class ExecutorControlClient:
             raise ExecutorControlError(
                 "control returned an invalid hello response"
             ) from exc
+
+    async def validate(self) -> None:
+        await self._post(EXECUTOR_VALIDATE_PATH, json={}, timeout=30.0)
 
     async def heartbeat(self) -> None:
         await self._post(EXECUTOR_HEARTBEAT_PATH, json={}, timeout=30.0)

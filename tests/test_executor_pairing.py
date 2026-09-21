@@ -309,12 +309,12 @@ async def test_stale_authenticated_hello_cannot_consume_replacement_delivery(
         if authenticated_credential == old_credential:
             old_hello_authenticated.set()
             await release_old_hello.wait()
-        await service.complete_authenticated_hello(
+        await service.complete_authenticated_proof(
             authenticated_executor_id,
             authenticated_credential,
         )
 
-    transport.set_authenticated_hello_callback(delayed_completion)
+    transport.set_authenticated_proof_callback(delayed_completion)
     old_hello = asyncio.create_task(transport.hello(old_credential, _hello()))
     await old_hello_authenticated.wait()
 
@@ -350,7 +350,7 @@ async def test_stale_authenticated_hello_cannot_consume_replacement_delivery(
 
 
 @pytest.mark.asyncio
-async def test_first_authenticated_hello_or_close_erases_plaintext_delivery(
+async def test_first_authenticated_proof_or_close_erases_plaintext_delivery(
     tmp_path: Path,
 ) -> None:
     service, _state_owner, transport, _clock = _service(tmp_path)
@@ -364,7 +364,7 @@ async def test_first_authenticated_hello_or_close_erases_plaintext_delivery(
     assert approved.executor_id is not None
     delivery = await service.poll(started.device_code)
 
-    await service.complete_authenticated_hello(
+    await service.complete_authenticated_proof(
         approved.executor_id, delivery.credential
     )
     with pytest.raises(ExecutorPairingError) as caught:

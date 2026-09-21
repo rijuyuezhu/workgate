@@ -27,13 +27,16 @@ from workgate.protocol.executor import (
     EXECUTOR_PAIR_START_PATH,
     EXECUTOR_POLL_PATH,
     EXECUTOR_RESULT_PATH,
+    EXECUTOR_VALIDATE_PATH,
     ExecutorCommand,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
     ExecutorRuntimeSummary,
+    JobInventorySummary,
     OperationError,
     SessionInventorySummary,
+    ShellInventorySummary,
 )
 from workgate.protocol.ids import (
     new_command_id,
@@ -66,6 +69,7 @@ def test_executor_protocol_v1_paths_are_frozen_under_executor_namespace() -> (
         EXECUTOR_PAIR_START_PATH,
         EXECUTOR_PAIR_POLL_PATH,
         EXECUTOR_HELLO_PATH,
+        EXECUTOR_VALIDATE_PATH,
         EXECUTOR_HEARTBEAT_PATH,
         EXECUTOR_POLL_PATH,
         EXECUTOR_RESULT_PATH,
@@ -73,6 +77,7 @@ def test_executor_protocol_v1_paths_are_frozen_under_executor_namespace() -> (
         "/executor/v1/pair/start",
         "/executor/v1/pair/poll",
         "/executor/v1/hello",
+        "/executor/v1/validate",
         "/executor/v1/heartbeat",
         "/executor/v1/poll",
         "/executor/v1/result",
@@ -160,7 +165,7 @@ def test_protocol_rejects_old_short_session_identity() -> None:
         )
 
 
-def test_hello_uses_complete_thin_session_inventory() -> None:
+def test_hello_uses_complete_thin_resource_inventory() -> None:
     session_id = new_session_id()
     hello = ExecutorHelloRequest(
         protocol_version=EXECUTOR_PROTOCOL_VERSION,
@@ -178,8 +183,14 @@ def test_hello_uses_complete_thin_session_inventory() -> None:
                 has_active_jobs=True,
             ),
         ),
-        shells=(),
-        jobs=(),
+        shells=(
+            ShellInventorySummary(shell_id="shell-1", session_id=session_id),
+        ),
+        jobs=(
+            JobInventorySummary(
+                job_id="job-1", session_id=session_id, status="running"
+            ),
+        ),
     )
 
     encoded = hello.model_dump(mode="json")
@@ -191,6 +202,16 @@ def test_hello_uses_complete_thin_session_inventory() -> None:
             "last_active_at": 123.0,
             "has_persistent_shells": True,
             "has_active_jobs": True,
+        }
+    ]
+    assert encoded["shells"] == [
+        {"shell_id": "shell-1", "session_id": session_id}
+    ]
+    assert encoded["jobs"] == [
+        {
+            "job_id": "job-1",
+            "session_id": session_id,
+            "status": "running",
         }
     ]
     assert "executor_id" not in encoded

@@ -1,6 +1,10 @@
 """Executor-local feature error vocabulary."""
 
 
+class ExecutorResourceInventoryUnavailable(RuntimeError):
+    """Reconnect inventory is temporarily non-authoritative and must be retried."""
+
+
 class ExecutorOperationFailure(RuntimeError):
     """Feature-owned executor operation failure returned over ordinary RPC."""
 

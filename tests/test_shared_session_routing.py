@@ -18,7 +18,6 @@ from workgate.control.state import ExecutorTrustRecord
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import ExecutorConnection
 from workgate.executor.control_client import ExecutorControlClient
-from workgate.executor.hello import build_executor_hello
 from workgate.executor.profile import ExecutorProfile
 from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.credentials import (
@@ -113,9 +112,7 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
         client = ExecutorControlClient(profile, client=http_client)
         connection = ExecutorConnection.from_client(
             client,
-            hello_factory=lambda: build_executor_hello(
-                executor.config, sessions=executor.sessions.inventory()
-            ),
+            hello_factory=executor._build_reconnect_hello,
             execute=executor._execute_protocol_command,
             max_concurrent_commands=executor.config.max_concurrent_commands,
         )

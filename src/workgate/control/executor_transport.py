@@ -98,16 +98,25 @@ class ExecutorTransport:
         self._clock = clock
         self._wall_clock = wall_clock
         self._channels: dict[str, _ExecutorChannel] = {}
+        self._authenticated_proof_callback: (
+            Callable[[str, str], Awaitable[None]] | None
+        ) = None
         self._authenticated_hello_callback: (
             Callable[[str, str], Awaitable[None]] | None
         ) = None
         self._started = False
         self._closed = False
 
+    def set_authenticated_proof_callback(
+        self, callback: Callable[[str, str], Awaitable[None]] | None
+    ) -> None:
+        """Observe a bearer that completed an auth-only proof or full hello."""
+        self._authenticated_proof_callback = callback
+
     def set_authenticated_hello_callback(
         self, callback: Callable[[str, str], Awaitable[None]] | None
     ) -> None:
-        """Observe the executor ID and bearer that authenticated one successful hello."""
+        """Observe one successful full reconnect hello after presence publication."""
         self._authenticated_hello_callback = callback
 
     def start(self) -> None:
@@ -211,14 +220,26 @@ class ExecutorTransport:
             self._reauthenticate(record.executor_id, credential)
             channel.hello = request
             self._touch(channel)
-        callback = self._authenticated_hello_callback
-        if callback is not None:
-            await callback(record.executor_id, credential)
+        proof_callback = self._authenticated_proof_callback
+        if proof_callback is not None:
+            await proof_callback(record.executor_id, credential)
+        hello_callback = self._authenticated_hello_callback
+        if hello_callback is not None:
+            await hello_callback(record.executor_id, credential)
         return ExecutorHelloResponse(
             heartbeat_interval_s=self._heartbeat_interval_s,
             offline_after_s=self._offline_after_s,
             poll_timeout_s=self._poll_timeout_s,
         )
+
+    async def validate(self, credential: str) -> None:
+        """Authenticate one bearer without publishing executor presence or inventory."""
+        self._require_running()
+        record = self._authenticate(credential)
+        self._reauthenticate(record.executor_id, credential)
+        callback = self._authenticated_proof_callback
+        if callback is not None:
+            await callback(record.executor_id, credential)
 
     async def heartbeat(self, credential: str) -> None:
         """Refresh authenticated presence independently of command capacity."""

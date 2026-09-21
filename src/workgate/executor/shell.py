@@ -800,8 +800,14 @@ async def _start_persistent_shell_locked(
     *,
     owner_session_id: str | None = None,
     shell_id: str | None = None,
+    forbidden_shell_ids: frozenset[str] = frozenset(),
 ) -> StartPersistentShellOutput:
     """Start a persistent shell while the creation lock is held."""
+    shell_id = shell_id or _tmux_session_name(name)
+    if shell_id in forbidden_shell_ids:
+        raise ValueError(
+            f"persistent shell id {shell_id!r} is reserved by a tracked job"
+        )
     resolved_cwd = resolve_path_with_policy(
         cwd,
         workspace_root=config.workspace_root,
@@ -809,7 +815,6 @@ async def _start_persistent_shell_locked(
         path_denylist=config.path_denylist,
         must_exist=True,
     )
-    shell_id = shell_id or _tmux_session_name(name)
     active_shell_ids = await authoritative_persistent_shell_ids_execute(
         config, store
     )
@@ -928,6 +933,7 @@ async def start_persistent_shell_execute(
     command: str | None = None,
     *,
     owner_session_id: str | None = None,
+    forbidden_shell_ids: frozenset[str] = frozenset(),
 ) -> StartPersistentShellOutput:
     """Start one persistent shell without racing the configured capacity."""
     async with (
@@ -937,6 +943,13 @@ async def start_persistent_shell_execute(
         reserved_shell_id = (
             _tmux_session_name(name) if owner_session_id is not None else None
         )
+        if (
+            reserved_shell_id is not None
+            and reserved_shell_id in forbidden_shell_ids
+        ):
+            raise ValueError(
+                f"persistent shell id {reserved_shell_id!r} is reserved by a tracked job"
+            )
         session_store = None
         reservation_added = False
         if reserved_shell_id is not None:
@@ -962,6 +975,7 @@ async def start_persistent_shell_execute(
                     command,
                     owner_session_id=owner_session_id,
                     shell_id=reserved_shell_id,
+                    forbidden_shell_ids=forbidden_shell_ids,
                 )
             finally:
                 _PERSISTENT_SHELL_PRESERVE_IDS.reset(token)

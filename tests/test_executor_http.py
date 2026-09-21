@@ -145,7 +145,7 @@ async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
 
 
 @pytest.mark.asyncio
-async def test_pairing_routes_are_public_and_first_hello_clears_delivery(
+async def test_pairing_routes_are_public_and_validation_clears_delivery(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
@@ -204,12 +204,21 @@ async def test_pairing_routes_are_public_and_first_hello_clears_delivery(
             assert delivered.status_code == 200
             credential = delivered.json()["credential"]
 
-            hello = await client.post(
-                "/executor/v1/hello",
-                json=_hello_payload(),
+            validated = await client.post(
+                "/executor/v1/validate",
+                json={},
                 headers={"Authorization": f"Bearer {credential}"},
             )
-            assert hello.status_code == 200
+            assert validated.status_code == 204
+            assert not await runtime.executor_transport.is_online(
+                str(approved.executor_id)
+            )
+            assert (
+                await runtime.executor_transport.inventory(
+                    str(approved.executor_id)
+                )
+                is None
+            )
 
             gone = await client.post(
                 "/executor/v1/pair/poll",

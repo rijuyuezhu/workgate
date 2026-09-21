@@ -83,11 +83,14 @@ pairing attempt remains alive, the same `device_code` receives the same
 credential. Control never durably stores that plaintext credential.
 
 The executor atomically persists `control_url`, `executor_id`, and credential in
-its private profile **before** its first authenticated hello. A failed profile
-write sends no hello, so credential delivery can still be retried. First
-successful authenticated hello or pairing expiry clears the transient delivery
-copy. If control restarts after the executor persisted the credential, the
-executor authenticates normally from its profile. Fresh pairing may be needed
+its private profile **before** its first authenticated credential proof. A failed
+profile write sends no proof, so credential delivery can still be retried. The
+auth-only proof validates the bearer without publishing executor presence or
+resource inventory; the normal runtime hello does that only after `executor run`
+starts. First successful authenticated proof (or a full hello) or pairing expiry
+clears the transient delivery copy. If control restarts after the executor
+persisted the credential, the executor authenticates normally from its profile.
+Fresh pairing may be needed
 only when credential delivery/profile persistence did not complete before
 process-local delivery state was lost; this rare window does not justify durable
 plaintext credential storage. A pairing client's unauthenticated
@@ -130,9 +133,18 @@ job_id + session_id + status
 
 Product resource caps bound inventory size. Partial/truncated inventory is not a
 protocol mode: if a valid inventory cannot fit the normal request limit, fail
-explicitly. This keeps absence meaningful. `session.lookup` remains a targeted
-read-only reconciliation operation for ambiguous creation or cwd projection,
-not pagination for hello.
+explicitly. This keeps absence meaningful. Before each reconnect hello, executor
+waits for every already-offered session/job/shell resource mutation to finish
+its execution phase, but not for its obsolete result upload to complete. It then
+reconciles feature-owned live job/shell state; if a live resource cannot be
+observed authoritatively, it retries reconnect instead of publishing a false
+empty/partial inventory. Job runner shells are private implementation resources:
+they appear through `jobs`, not as public or Human UI `shells`. A retained
+shell-job row reserves both its current and pending-attempt backing-shell IDs
+until the row/attempt state releases them, so another persistent shell cannot
+reuse an ID and accidentally inherit job-private identity. `session.lookup`
+remains a targeted read-only reconciliation operation
+for ambiguous creation or cwd projection, not pagination for hello.
 
 Optional boot metadata is diagnostics only. It is never identity, trust,
 fencing, deduplication, or command-correlation authority.
@@ -322,7 +334,12 @@ turning them into a database-driven command system.
 
 Feature resources own their durability. Persistent jobs/shells and
 cross-executor transfer may have resource-specific IDs/checkpoints. Ordinary RPC
-does not inherit those recovery semantics.
+does not inherit those recovery semantics. Explicit shell-job retry keeps the
+stable `job_id` resource identity but increments its durable attempt number and
+allocates fresh backing-shell/attempt artifacts whose internal names retain the
+`job_id`/attempt prefix. Retry starts only after authoritative shell inventory
+confirms the prior attempt shell is absent; that new attempt is not a replay of
+the original ordinary start command.
 
 ## Terminal streams
 

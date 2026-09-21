@@ -18,6 +18,7 @@ from ..utils.path_policy import resolve_path_with_policy
 from .agent import ExecutorAgentBridgeService
 from .config import ExecutorConfig
 from .dispatch import ExecutorDispatcher
+from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
 from .search_composition import build_executor_dispatcher_with_search
 from .services import (
@@ -32,7 +33,7 @@ from .ui_files import UiFilesService
 from .ui_terminals import UiTerminalsService
 
 if TYPE_CHECKING:
-    from ..protocol.executor import ExecutorCommand
+    from ..protocol.executor import ExecutorCommand, ExecutorHelloRequest
     from .connection import ExecutorConnection
     from .profile import ExecutorProfileStore
     from .sessions import ExecutorSessionService
@@ -52,6 +53,8 @@ class ExecutorRuntime:
     """Executor-owned terminal bridge and ConPTY live state."""
     dispatcher: ExecutorDispatcher
     """Executor-local machine operation dispatcher."""
+    shell: ShellService
+    """Executor-owned public shell and tracked-job resource service."""
     sessions: ExecutorSessionService
     """Executor-authoritative final shared-session resource service."""
     ui_files: UiFilesService
@@ -69,6 +72,29 @@ class ExecutorRuntime:
         default=None, init=False, repr=False
     )
     _closed: bool = field(default=False, init=False, repr=False)
+
+    async def _build_reconnect_hello(self) -> ExecutorHelloRequest:
+        """Build one complete authoritative executor resource inventory."""
+        from .hello import build_executor_hello
+
+        for _attempt in range(2):
+            before = self.sessions.inventory()
+            session_ids = frozenset(str(row.session_id) for row in before)
+            shells, jobs = await self.shell.reconnect_inventory(session_ids)
+            sessions = self.sessions.inventory()
+            if (
+                frozenset(str(row.session_id) for row in sessions)
+                == session_ids
+            ):
+                return build_executor_hello(
+                    self.config,
+                    sessions=sessions,
+                    shells=shells,
+                    jobs=jobs,
+                )
+        raise ExecutorResourceInventoryUnavailable(
+            "session inventory changed while reconnect snapshot was built"
+        )
 
     async def start(self) -> None:
         """Install compatibility bindings inside the executor's owning loop."""
@@ -90,7 +116,6 @@ class ExecutorRuntime:
             if profile is not None:
                 from .connection import ExecutorConnection
                 from .control_client import ExecutorControlClient
-                from .hello import build_executor_hello
                 from .profile import executor_run_lock
 
                 profile_lock.enter_context(
@@ -99,9 +124,7 @@ class ExecutorRuntime:
                 client = ExecutorControlClient(profile)
                 connection = ExecutorConnection.from_client(
                     client,
-                    hello_factory=lambda: build_executor_hello(
-                        self.config, sessions=self.sessions.inventory()
-                    ),
+                    hello_factory=self._build_reconnect_hello,
                     execute=self._execute_protocol_command,
                     max_concurrent_commands=self.config.max_concurrent_commands,
                 )
@@ -256,6 +279,7 @@ def build_executor_runtime(
         config=config,
         services=services,
         agent_bridge=agent_bridge,
+        shell=shell_service,
         terminal_runtime=build_terminal_runtime(
             services.state_store,
             workspace_root=config.workspace_root,

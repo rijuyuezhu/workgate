@@ -495,6 +495,15 @@ async def test_conpty_reader_failure_reaps_session(monkeypatch, tmp_path):
     assert conpty.authoritative_shell_ids() == set()
 
 
+def test_conpty_raw_subscriber_empty_wait_times_out_without_eof():
+    subscriber = conpty._RawSubscriber(b"")
+
+    data, eof = subscriber.read_wait(10, 20)
+
+    assert data == b""
+    assert eof is False
+
+
 def test_conpty_raw_subscriber_overflow_finishes_stream(monkeypatch):
     monkeypatch.setattr(conpty, "CONPTY_RAW_BUFFER_BYTES", 4)
     subscriber = conpty._RawSubscriber(b"")
