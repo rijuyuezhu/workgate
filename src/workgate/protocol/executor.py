@@ -12,6 +12,7 @@ EXECUTOR_PROTOCOL_VERSION = 1
 EXECUTOR_PAIR_START_PATH = "/executor/v1/pair/start"
 EXECUTOR_PAIR_POLL_PATH = "/executor/v1/pair/poll"
 EXECUTOR_HELLO_PATH = "/executor/v1/hello"
+EXECUTOR_VALIDATE_PATH = "/executor/v1/validate"
 EXECUTOR_HEARTBEAT_PATH = "/executor/v1/heartbeat"
 EXECUTOR_POLL_PATH = "/executor/v1/poll"
 EXECUTOR_RESULT_PATH = "/executor/v1/result"

@@ -14,14 +14,13 @@ from workgate.executor.control_client import (
 )
 from workgate.executor.pairing import (
     ExecutorPairingClient,
-    persist_profile_before_first_hello,
+    persist_profile_and_validate,
     wait_for_pairing,
 )
 from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
-from workgate.protocol.executor import ExecutorHelloResponse
 from workgate.protocol.ids import (
     new_device_code,
     new_executor_id,
@@ -172,7 +171,43 @@ async def test_wait_for_pairing_retries_only_pending() -> None:
 
 
 @pytest.mark.asyncio
-async def test_profile_is_persisted_before_first_authenticated_hello(
+async def test_wait_for_pairing_does_not_retry_terminal_error() -> None:
+    started = PairStartResponse(
+        device_code=new_device_code(),
+        user_code=new_user_code(),
+        verification_uri="https://control.test/pair",
+        expires_in=600,
+        poll_interval=2,
+    )
+    sleeps: list[float] = []
+
+    class StubPairingClient(ExecutorPairingClient):
+        def __init__(self) -> None:
+            pass
+
+        async def poll(self, device_code: str) -> PairPollSuccess:
+            assert device_code == started.device_code
+            raise ExecutorControlError(
+                "expired",
+                status_code=410,
+                protocol_error=ProtocolError(
+                    code=ProtocolErrorCode.PAIRING_EXPIRED,
+                    message="expired",
+                ),
+            )
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    with pytest.raises(ExecutorControlError) as caught:
+        await wait_for_pairing(StubPairingClient(), started, sleep=fake_sleep)
+
+    assert caught.value.code is ProtocolErrorCode.PAIRING_EXPIRED
+    assert sleeps == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_profile_is_persisted_before_authenticated_validation(
     tmp_path: Path,
 ) -> None:
     profile_store = ExecutorProfileStore(_store(tmp_path))
@@ -180,44 +215,31 @@ async def test_profile_is_persisted_before_first_authenticated_hello(
         executor_id=new_executor_id(),
         credential=new_executor_credential(),
     )
-    hello_observations: list[ExecutorProfile | None] = []
+    validation_observations: list[ExecutorProfile | None] = []
 
     class RecordingClient(ExecutorControlClient):
         def __init__(self, profile: ExecutorProfile) -> None:
             self.profile = profile
 
-        async def hello(self, message):
-            assert message.workspace_root == str(
-                _config(tmp_path).workspace_root
-            )
-            assert message.capabilities == ()
-            assert message.sessions == ()
-            assert message.shells == ()
-            assert message.jobs == ()
-            hello_observations.append(profile_store.load())
-            return ExecutorHelloResponse(
-                heartbeat_interval_s=15,
-                offline_after_s=60,
-                poll_timeout_s=25,
-            )
+        async def validate(self) -> None:
+            validation_observations.append(profile_store.load())
 
         async def aclose(self) -> None:
             return None
 
-    profile = await persist_profile_before_first_hello(
+    profile = await persist_profile_and_validate(
         control_url="https://control.test",
         pairing_result=issued,
         profile_store=profile_store,
-        config=_config(tmp_path),
         client_factory=RecordingClient,
     )
 
     assert profile_store.load() == profile
-    assert hello_observations == [profile]
+    assert validation_observations == [profile]
 
 
 @pytest.mark.asyncio
-async def test_profile_write_failure_sends_no_authenticated_hello(
+async def test_profile_write_failure_sends_no_authenticated_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     profile_store = ExecutorProfileStore(_store(tmp_path))
@@ -239,11 +261,10 @@ async def test_profile_write_failure_sends_no_authenticated_hello(
     monkeypatch.setattr(profile_store, "save", fail_save)
 
     with pytest.raises(OSError, match="disk full"):
-        await persist_profile_before_first_hello(
+        await persist_profile_and_validate(
             control_url="https://control.test",
             pairing_result=issued,
             profile_store=profile_store,
-            config=_config(tmp_path),
             client_factory=ShouldNotExist,
         )
 

@@ -22,13 +22,11 @@ from ..protocol.pairing import (
     PairStartRequest,
     PairStartResponse,
 )
-from .config import ExecutorConfig
 from .control_client import (
     ExecutorControlClient,
     ExecutorControlError,
     _response_error,
 )
-from .hello import build_executor_hello
 from .profile import (
     ExecutorProfile,
     ExecutorProfileStore,
@@ -128,17 +126,16 @@ async def wait_for_pairing(
             raise
 
 
-async def persist_profile_before_first_hello(
+async def persist_profile_and_validate(
     *,
     control_url: str,
     pairing_result: PairPollSuccess,
     profile_store: ExecutorProfileStore,
-    config: ExecutorConfig,
     client_factory: Callable[
         [ExecutorProfile], ExecutorControlClient
     ] = ExecutorControlClient,
 ) -> ExecutorProfile:
-    """Atomically save the issued bearer before proving it with the first hello."""
+    """Persist the issued bearer before proving it without publishing presence."""
     profile = ExecutorProfile(
         control_url=normalize_control_url(control_url),
         executor_id=pairing_result.executor_id,
@@ -147,7 +144,7 @@ async def persist_profile_before_first_hello(
     profile_store.save(profile)
     client = client_factory(profile)
     try:
-        await client.hello(build_executor_hello(config, capabilities=()))
+        await client.validate()
     finally:
         await client.aclose()
     return profile

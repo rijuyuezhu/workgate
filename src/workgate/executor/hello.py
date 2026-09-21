@@ -19,7 +19,6 @@ from .config import ExecutorConfig
 def build_executor_hello(
     config: ExecutorConfig,
     *,
-    capabilities: tuple[str, ...] = (EXECUTOR_CAPABILITY_SESSIONS,),
     sessions: tuple[SessionInventorySummary, ...] = (),
     shells: tuple[ShellInventorySummary, ...] = (),
     jobs: tuple[JobInventorySummary, ...] = (),
@@ -30,7 +29,7 @@ def build_executor_hello(
             workgate_version=__version__,
             platform=platform.system()[:128] or None,
         ),
-        capabilities=capabilities,
+        capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
         workspace_root=str(config.workspace_root),
         sessions=sessions,
         shells=shells,

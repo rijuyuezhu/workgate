@@ -370,6 +370,47 @@ async def test_non_authoritative_resource_inventory_retries_before_hello() -> (
 
 
 @pytest.mark.asyncio
+async def test_unexpected_local_reconnect_failure_requires_owner_action() -> (
+    None
+):
+    class FakeClient(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            raise AssertionError(
+                "hello must not run after local inventory failure"
+            )
+
+        async def heartbeat(self) -> None:
+            raise AssertionError("heartbeat must not start")
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            raise AssertionError("poll must not start")
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("result must not submit")
+
+    async def hello_factory() -> ExecutorHelloRequest:
+        raise RuntimeError("corrupt durable job inventory")
+
+    connection = ExecutorConnection(
+        FakeClient(),
+        hello_factory=hello_factory,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+    )
+    connection.start()
+    try:
+        error = await asyncio.wait_for(
+            connection.wait_owner_action(), timeout=0.5
+        )
+        assert "executor connection failed locally" in str(error)
+        assert "RuntimeError: corrupt durable job inventory" in str(error)
+    finally:
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
 async def test_transient_poll_failure_reconnects_with_fresh_hello_without_replay() -> (
     None
 ):
@@ -422,6 +463,147 @@ async def test_transient_poll_failure_reconnects_with_fresh_hello_without_replay
         assert client.poll_calls == 2
         assert connection.active_command_count == 0
     finally:
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_waits_for_offered_inventory_mutation_execution() -> (
+    None
+):
+    command_started = asyncio.Event()
+    release_command = asyncio.Event()
+    reconnected = asyncio.Event()
+
+    class FakeClient(_BaseFakeClient):
+        hello_calls = 0
+        poll_calls = 0
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            self.hello_calls += 1
+            if self.hello_calls >= 2:
+                reconnected.set()
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return ExecutorCommand(
+                    id=new_command_id(),
+                    op="job",
+                    session_id="sess_0000000000000000000001",
+                    args={"list_jobs": True},
+                )
+            if self.poll_calls == 2:
+                await command_started.wait()
+                raise ExecutorControlError("temporary network failure")
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            return None
+
+    async def execute(command: ExecutorCommand):
+        command_started.set()
+        await release_command.wait()
+        return {"ok": True}
+
+    async def yielding_sleep(delay: float) -> None:
+        await asyncio.sleep(0)
+
+    client = FakeClient()
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=execute,
+        max_concurrent_commands=2,
+        sleep=yielding_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(command_started.wait(), timeout=0.5)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert client.hello_calls == 1
+        assert not reconnected.is_set()
+
+        release_command.set()
+        await asyncio.wait_for(reconnected.wait(), timeout=0.5)
+        assert client.hello_calls == 2
+    finally:
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_does_not_wait_for_old_inventory_result_upload() -> (
+    None
+):
+    execution_finished = asyncio.Event()
+    release_upload = asyncio.Event()
+    reconnected = asyncio.Event()
+
+    class FakeClient(_BaseFakeClient):
+        hello_calls = 0
+        poll_calls = 0
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            self.hello_calls += 1
+            if self.hello_calls >= 2:
+                reconnected.set()
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return ExecutorCommand(
+                    id=new_command_id(),
+                    op="job",
+                    session_id="sess_0000000000000000000001",
+                    args={"list_jobs": True},
+                )
+            if self.poll_calls == 2:
+                await execution_finished.wait()
+                raise ExecutorControlError("temporary network failure")
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            await release_upload.wait()
+
+    async def execute(command: ExecutorCommand):
+        execution_finished.set()
+        return {"ok": True}
+
+    async def yielding_sleep(delay: float) -> None:
+        await asyncio.sleep(0)
+
+    client = FakeClient()
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=execute,
+        max_concurrent_commands=2,
+        sleep=yielding_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(execution_finished.wait(), timeout=0.5)
+        await asyncio.wait_for(reconnected.wait(), timeout=0.5)
+        assert client.hello_calls == 2
+        assert connection.active_command_count == 1
+    finally:
+        release_upload.set()
         await connection.aclose()
 
 

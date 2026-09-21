@@ -16,7 +16,7 @@ workgate executor connect https://control.example --name gpu1
 
 The command prints an owner verification URL and a short pairing code. Open the verification URL, sign in as the owner, open **Executors**, inspect the reported machine metadata, and approve or deny the request. The browser never receives the executor bearer credential.
 
-After approval, the executor atomically saves its private profile before the first authenticated hello. Re-running `connect` against the same control URL first checks the saved profile; a still-valid profile is reused rather than paired again.
+After approval, the executor atomically saves its private profile before an auth-only credential validation. That proof does not mark the executor online or publish resource inventory; `executor run` publishes the first runtime hello. Re-running `connect` against the same control URL first validates the saved profile; a still-valid profile is reused rather than paired again.
 
 The executor profile is private durable state under Workgate's normal state root at `executor/profile.json`. It contains the control URL, stable executor ID, and bearer credential, so keep the state directory private and do not copy the profile into logs or support output.
 

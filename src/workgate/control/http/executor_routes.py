@@ -17,6 +17,7 @@ from ...protocol.executor import (
     EXECUTOR_PAIR_START_PATH,
     EXECUTOR_POLL_PATH,
     EXECUTOR_RESULT_PATH,
+    EXECUTOR_VALIDATE_PATH,
     ExecutorHelloRequest,
     ExecutorResult,
 )
@@ -121,6 +122,13 @@ def executor_routes(
             return _error_response(exc)
         return JSONResponse(response.model_dump(mode="json"))
 
+    async def validate(request: Request) -> Response:
+        try:
+            await transport.validate(_bearer(request))
+        except ExecutorTransportError as exc:
+            return _error_response(exc)
+        return Response(status_code=204)
+
     async def heartbeat(request: Request) -> Response:
         try:
             await transport.heartbeat(_bearer(request))
@@ -159,6 +167,7 @@ def executor_routes(
             else []
         ),
         Route(EXECUTOR_HELLO_PATH, hello, methods=["POST"]),
+        Route(EXECUTOR_VALIDATE_PATH, validate, methods=["POST"]),
         Route(EXECUTOR_HEARTBEAT_PATH, heartbeat, methods=["POST"]),
         Route(EXECUTOR_POLL_PATH, poll, methods=["POST"]),
         Route(EXECUTOR_RESULT_PATH, result, methods=["POST"]),

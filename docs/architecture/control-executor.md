@@ -83,11 +83,14 @@ pairing attempt remains alive, the same `device_code` receives the same
 credential. Control never durably stores that plaintext credential.
 
 The executor atomically persists `control_url`, `executor_id`, and credential in
-its private profile **before** its first authenticated hello. A failed profile
-write sends no hello, so credential delivery can still be retried. First
-successful authenticated hello or pairing expiry clears the transient delivery
-copy. If control restarts after the executor persisted the credential, the
-executor authenticates normally from its profile. Fresh pairing may be needed
+its private profile **before** its first authenticated credential proof. A failed
+profile write sends no proof, so credential delivery can still be retried. The
+auth-only proof validates the bearer without publishing executor presence or
+resource inventory; the normal runtime hello does that only after `executor run`
+starts. First successful authenticated proof (or a full hello) or pairing expiry
+clears the transient delivery copy. If control restarts after the executor
+persisted the credential, the executor authenticates normally from its profile.
+Fresh pairing may be needed
 only when credential delivery/profile persistence did not complete before
 process-local delivery state was lost; this rare window does not justify durable
 plaintext credential storage. A pairing client's unauthenticated
@@ -131,6 +134,8 @@ job_id + session_id + status
 Product resource caps bound inventory size. Partial/truncated inventory is not a
 protocol mode: if a valid inventory cannot fit the normal request limit, fail
 explicitly. This keeps absence meaningful. Before each reconnect hello, executor
+waits for every already-offered session/job/shell resource mutation to finish
+its execution phase, but not for its obsolete result upload to complete. It then
 reconciles feature-owned live job/shell state; if a live resource cannot be
 observed authoritatively, it retries reconnect instead of publishing a false
 empty/partial inventory. Job runner shells are private implementation resources:

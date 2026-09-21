@@ -73,6 +73,27 @@ def _command_order_key(command: ExecutorCommand) -> _CommandOrderKey | None:
     return None
 
 
+def _affects_reconnect_inventory(command: ExecutorCommand) -> bool:
+    if command.op in {
+        "session.create",
+        "session.terminate",
+        "session.change_cwd",
+        "start_persistent_shell",
+        "send_persistent_shell_input",
+        "resize_persistent_shell",
+        "read_persistent_shell_output",
+        "kill_persistent_shell",
+        "list_persistent_shells",
+        "job",
+    }:
+        return True
+    if command.op in {"bash", "run_python_code"}:
+        return bool(
+            command.args.get("async_", False) or command.args.get("pty", False)
+        )
+    return False
+
+
 class _ControlClient(Protocol):
     async def hello(
         self, message: ExecutorHelloRequest
@@ -137,6 +158,7 @@ class ExecutorConnection:
         self._owner_action = asyncio.Event()
         self._owner_action_error: ExecutorOwnerActionRequired | None = None
         self._command_tasks: set[asyncio.Task[None]] = set()
+        self._inventory_mutations: set[asyncio.Future[None]] = set()
         self._command_order_tails: dict[
             _CommandOrderKey, asyncio.Future[None]
         ] = {}
@@ -187,6 +209,7 @@ class ExecutorConnection:
             # healthy enough to reset the reconnect failure streak.
             delivery_progress = asyncio.Event()
             try:
+                await self._wait_for_inventory_mutations()
                 hello = self._hello_factory()
                 if inspect.isawaitable(hello):
                     hello = await hello
@@ -211,6 +234,9 @@ class ExecutorConnection:
                     attempt = 0
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
+            except Exception as exc:
+                self._require_local_owner_action(exc)
+                break
 
         if self._owner_action_error is not None and not self._stop.is_set():
             # Stay quiescent instead of creating a tight service-manager restart loop.
@@ -295,22 +321,36 @@ class ExecutorConnection:
                 continue
             predecessor: asyncio.Future[None] | None = None
             completion: asyncio.Future[None] | None = None
+            inventory_completion: asyncio.Future[None] | None = None
             order_key = _command_order_key(command)
             if order_key is not None:
                 predecessor = self._command_order_tails.get(order_key)
                 completion = asyncio.get_running_loop().create_future()
                 self._command_order_tails[order_key] = completion
+            if _affects_reconnect_inventory(command):
+                inventory_completion = (
+                    asyncio.get_running_loop().create_future()
+                )
+                self._inventory_mutations.add(inventory_completion)
             task = asyncio.create_task(
                 self._run_command_ordered(
                     command,
                     order_key=order_key,
                     predecessor=predecessor,
                     completion=completion,
+                    inventory_completion=inventory_completion,
                 ),
                 name=f"workgate-executor-command-{command.id}",
             )
             self._command_tasks.add(task)
             task.add_done_callback(self._command_tasks.discard)
+
+    async def _wait_for_inventory_mutations(self) -> None:
+        while self._inventory_mutations:
+            pending = tuple(self._inventory_mutations)
+            await asyncio.gather(
+                *(asyncio.shield(completion) for completion in pending)
+            )
 
     async def _wait_for_capacity(self) -> None:
         while len(self._command_tasks) >= self._max_concurrent_commands:
@@ -329,12 +369,15 @@ class ExecutorConnection:
         order_key: _CommandOrderKey | None,
         predecessor: asyncio.Future[None] | None,
         completion: asyncio.Future[None] | None,
+        inventory_completion: asyncio.Future[None] | None,
     ) -> None:
         """Preserve offer order for narrow session/transfer mutation chains."""
         try:
             if predecessor is not None:
                 await asyncio.shield(predecessor)
-            await self._run_command(command)
+            await self._run_command(
+                command, inventory_completion=inventory_completion
+            )
         finally:
             if completion is not None and not completion.done():
                 completion.set_result(None)
@@ -345,22 +388,35 @@ class ExecutorConnection:
             ):
                 self._command_order_tails.pop(order_key, None)
 
-    async def _run_command(self, command: ExecutorCommand) -> None:
+    async def _run_command(
+        self,
+        command: ExecutorCommand,
+        *,
+        inventory_completion: asyncio.Future[None] | None,
+    ) -> None:
         try:
-            value = await self._execute_command(command)
-            result = ExecutorResult(
-                id=command.id,
-                ok=True,
-                result=_JSON_VALUE.validate_python(to_jsonable(value)),
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            result = ExecutorResult(
-                id=command.id,
-                ok=False,
-                error=operation_error_from_exception(exc),
-            )
+            try:
+                value = await self._execute_command(command)
+                result = ExecutorResult(
+                    id=command.id,
+                    ok=True,
+                    result=_JSON_VALUE.validate_python(to_jsonable(value)),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                result = ExecutorResult(
+                    id=command.id,
+                    ok=False,
+                    error=operation_error_from_exception(exc),
+                )
+        finally:
+            if (
+                inventory_completion is not None
+                and not inventory_completion.done()
+            ):
+                inventory_completion.set_result(None)
+                self._inventory_mutations.discard(inventory_completion)
         await self._submit_result_until_terminal(result)
 
     async def _execute_command(self, command: ExecutorCommand) -> Any:
@@ -398,6 +454,16 @@ class ExecutorConnection:
         )
         self._owner_action_error = ExecutorOwnerActionRequired(
             f"executor connection requires owner action: {code}"
+        )
+        self._owner_action.set()
+
+    def _require_local_owner_action(self, exc: Exception) -> None:
+        if self._owner_action_error is not None:
+            return
+        message = str(exc).strip() or type(exc).__name__
+        self._owner_action_error = ExecutorOwnerActionRequired(
+            "executor connection failed locally: "
+            f"{type(exc).__name__}: {message[:500]}"
         )
         self._owner_action.set()
 

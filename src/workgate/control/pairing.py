@@ -260,10 +260,10 @@ class ExecutorPairingService:
                 credential=attempt.credential,
             )
 
-    async def complete_authenticated_hello(
+    async def complete_authenticated_proof(
         self, executor_id: str, credential: str
     ) -> None:
-        """Erase only delivery for the bearer that authenticated this hello."""
+        """Erase only delivery for the bearer that completed an authenticated proof."""
         async with self._lock:
             self._prune_expired_locked(self._clock())
             for device_code, attempt in tuple(self._attempts.items()):

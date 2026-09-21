@@ -15,6 +15,7 @@ from workgate.protocol.executor import (
     EXECUTOR_HELLO_PATH,
     EXECUTOR_POLL_PATH,
     EXECUTOR_RESULT_PATH,
+    EXECUTOR_VALIDATE_PATH,
     ExecutorHelloRequest,
     ExecutorResult,
     ExecutorRuntimeSummary,
@@ -115,6 +116,7 @@ async def test_executor_control_client_uses_v1_paths_and_persisted_bearer() -> (
 
     client, http = _client(profile, handler)
     try:
+        await client.validate()
         policy = await client.hello(_hello())
         await client.heartbeat()
         command = await client.poll(timeout_s=policy.poll_timeout_s)
@@ -127,6 +129,7 @@ async def test_executor_control_client_uses_v1_paths_and_persisted_bearer() -> (
 
     assert command is None
     assert [path for path, _ in seen] == [
+        EXECUTOR_VALIDATE_PATH,
         EXECUTOR_HELLO_PATH,
         EXECUTOR_HEARTBEAT_PATH,
         EXECUTOR_POLL_PATH,

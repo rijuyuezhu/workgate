@@ -16,7 +16,7 @@ from .control_client import ExecutorControlClient, ExecutorControlError
 from .pairing import (
     ExecutorPairingClient,
     build_pair_start_request,
-    persist_profile_before_first_hello,
+    persist_profile_and_validate,
     wait_for_pairing,
 )
 from .profile import ExecutorProfileStore, normalize_control_url
@@ -38,8 +38,7 @@ def _run_async(coro: Any) -> Any:
 
 
 async def _connect(args: argparse.Namespace) -> None:
-    settings = settings_from_args(args, configure=True)
-    config = resolve_executor_config(settings)
+    settings_from_args(args, configure=True)
     profile_store = ExecutorProfileStore(get_state_store())
     control_url = normalize_control_url(str(args.control_url))
     existing = profile_store.load()
@@ -52,7 +51,7 @@ async def _connect(args: argparse.Namespace) -> None:
             )
         client = ExecutorControlClient(existing)
         try:
-            await client.heartbeat()
+            await client.validate()
         except ExecutorControlError as exc:
             if exc.code not in {
                 ProtocolErrorCode.UNAUTHORIZED_EXECUTOR,
@@ -88,11 +87,10 @@ async def _connect(args: argparse.Namespace) -> None:
     finally:
         await pairing_client.aclose()
 
-    profile = await persist_profile_before_first_hello(
+    profile = await persist_profile_and_validate(
         control_url=control_url,
         pairing_result=result,
         profile_store=profile_store,
-        config=config,
     )
     print(f"Paired executor: {profile.executor_id}", flush=True)
 

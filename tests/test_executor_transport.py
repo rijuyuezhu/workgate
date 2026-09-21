@@ -92,6 +92,10 @@ async def test_hello_heartbeat_and_presence_are_process_local(
     )
 
     assert not await transport.is_online(executor_id)
+    assert await transport.inventory(executor_id) is None
+    await transport.validate(credential)
+    assert not await transport.is_online(executor_id)
+    assert await transport.inventory(executor_id) is None
     await _mark_online(transport, credential)
     assert await transport.is_online(executor_id)
     assert await transport.inventory(executor_id) == _hello()

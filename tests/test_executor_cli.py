@@ -140,15 +140,15 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
     store = _store(tmp_path)
     existing = _profile()
     ExecutorProfileStore(store).save(existing)
-    heartbeat_calls = 0
+    validate_calls = 0
 
     class ExistingClient(ExecutorControlClient):
         def __init__(self, profile: ExecutorProfile) -> None:
             assert profile == existing
 
-        async def heartbeat(self) -> None:
-            nonlocal heartbeat_calls
-            heartbeat_calls += 1
+        async def validate(self) -> None:
+            nonlocal validate_calls
+            validate_calls += 1
 
         async def aclose(self) -> None:
             return None
@@ -170,7 +170,7 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
 
     await executor_cli._connect(_args())
 
-    assert heartbeat_calls == 1
+    assert validate_calls == 1
     output = capsys.readouterr().out
     assert existing.executor_id in output
     assert existing.credential not in output
@@ -199,7 +199,7 @@ async def test_connect_does_not_repair_transient_or_protocol_incompatible_profil
         def __init__(self, _profile: ExecutorProfile) -> None:
             return None
 
-        async def heartbeat(self) -> None:
+        async def validate(self) -> None:
             error = (
                 None
                 if code is None
@@ -253,7 +253,7 @@ async def test_revoked_profile_starts_pairing_with_existing_id_hint_without_secr
         def __init__(self, _profile: ExecutorProfile) -> None:
             return None
 
-        async def heartbeat(self) -> None:
+        async def validate(self) -> None:
             raise ExecutorControlError(
                 "revoked",
                 status_code=403,
@@ -314,7 +314,7 @@ async def test_revoked_profile_starts_pairing_with_existing_id_hint_without_secr
     monkeypatch.setattr(executor_cli, "wait_for_pairing", fake_wait)
     monkeypatch.setattr(
         executor_cli,
-        "persist_profile_before_first_hello",
+        "persist_profile_and_validate",
         fake_persist,
     )
 
