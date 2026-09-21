@@ -92,6 +92,9 @@ class SessionCapabilitiesEnvironment(BaseModel):
         description="Whether a raw persistent-terminal backend is available."
     )
     conpty: bool = Field(description="Whether Windows ConPTY is available.")
+    browser: bool = Field(
+        description="Whether structured Playwright browser automation is available on this executor."
+    )
 
 
 class SessionPolicyEnvironment(BaseModel):
@@ -230,6 +233,10 @@ class SessionEndOutput(BaseModel):
     stopped_shells: list[str] = Field(
         default_factory=list,
         description="Persistent shell ids stopped before session removal.",
+    )
+    stopped_browsers: list[str] = Field(
+        default_factory=list,
+        description="Ephemeral browser session ids stopped before session removal.",
     )
     force_released: bool = Field(
         default=False,

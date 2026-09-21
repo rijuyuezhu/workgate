@@ -20,6 +20,10 @@ class SessionTerminationRequestedError(ValueError):
         super().__init__(f"Session {session_id}: {SESSION_TERMINATION_PROMPT}")
 
 
+class BrowserUnavailableError(RuntimeError):
+    """Raised when the bound executor cannot provide structured browser automation."""
+
+
 class PathNotFoundError(FileNotFoundError):
     """A missing filesystem path selected from a trusted operation endpoint."""
 
@@ -177,6 +181,7 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
         "ValueError": ValueError,
         "OSError": OSError,
         "RuntimeError": RuntimeError,
+        "BrowserUnavailableError": BrowserUnavailableError,
     }
     if exception_type := public_types.get(error_type):
         return exception_type(message)

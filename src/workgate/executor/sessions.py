@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config.executor import ExecutorConfig
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
@@ -14,6 +14,9 @@ from .shell_service import ShellService
 from .tool_session.lifecycle import session_lifecycle_lock
 from .tool_session.store import ToolSessionStore, UnknownAgentSessionError
 
+if TYPE_CHECKING:
+    from .browser import BrowserService
+
 
 class ExecutorSessionService:
     """Own final shared session IDs and their executor-side durable state."""
@@ -23,10 +26,12 @@ class ExecutorSessionService:
         config: ExecutorConfig,
         store: ToolSessionStore,
         shell: ShellService,
+        browser: BrowserService | None = None,
     ) -> None:
         self._config = config
         self._store = store
         self._shell = shell
+        self._browser = browser
 
     def inventory(self) -> tuple[SessionInventorySummary, ...]:
         """Return the complete final-session inventory for hello reconciliation."""
@@ -77,6 +82,11 @@ class ExecutorSessionService:
         try:
             async with session_lifecycle_lock(session_id):
                 self._store.prepare_session_termination(session_id)
+                stopped_browsers = (
+                    []
+                    if self._browser is None
+                    else await self._browser.close_owned(session_id)
+                )
                 stopped_jobs = await self._stop_owned_jobs(session_id)
                 stopped_shells = await self._shell.stop_owned(session_id)
                 self._store.end_session(session_id)
@@ -87,6 +97,7 @@ class ExecutorSessionService:
             "absent": True,
             "stopped_jobs": stopped_jobs,
             "stopped_shells": stopped_shells,
+            "stopped_browsers": stopped_browsers,
         }
 
     async def _stop_owned_jobs(self, session_id: str) -> list[str]:
