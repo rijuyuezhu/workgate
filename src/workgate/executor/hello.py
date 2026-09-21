@@ -6,6 +6,7 @@ import platform
 
 from .. import __version__
 from ..protocol.executor import (
+    EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
     ExecutorRuntimeSummary,
@@ -13,6 +14,7 @@ from ..protocol.executor import (
     SessionInventorySummary,
     ShellInventorySummary,
 )
+from .browser import browser_capability_available
 from .config import ExecutorConfig
 
 
@@ -29,7 +31,14 @@ def build_executor_hello(
             workgate_version=__version__,
             platform=platform.system()[:128] or None,
         ),
-        capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
+        capabilities=(
+            EXECUTOR_CAPABILITY_SESSIONS,
+            *(
+                (EXECUTOR_CAPABILITY_BROWSER,)
+                if browser_capability_available()
+                else ()
+            ),
+        ),
         workspace_root=str(config.workspace_root),
         sessions=sessions,
         shells=shells,

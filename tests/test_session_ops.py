@@ -117,6 +117,7 @@ async def test_shared_session_end_requires_executor_absence_before_marking_ended
         "force_released": False,
         "stopped_jobs": [],
         "stopped_shells": [],
+        "stopped_browsers": [],
     }
     record = harness.control.control_state.snapshot_sessions()[session_id]
     assert record.status == "ended"

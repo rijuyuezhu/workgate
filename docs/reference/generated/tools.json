@@ -1,11 +1,11 @@
 {
-  "count": 40,
+  "count": 43,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "40"
+          "code": "43"
         },
         "."
       ],
@@ -277,6 +277,195 @@
             ]
           },
           "Read bounded canonical control audit history through an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."
+        ]
+      ]
+    },
+    {
+      "body": "Register executor-routed structured browser automation.",
+      "headers": [
+        "Tool",
+        "Parameters",
+        "Description"
+      ],
+      "heading": "Browser",
+      "kind": "table",
+      "rows": [
+        [
+          {
+            "code": "browser_act"
+          },
+          {
+            "items": [
+              {
+                "description": "Ordered high-level structured actions. Element targets may be snapshot refs such as e1 or bounded CSS selectors.",
+                "head": {
+                  "code": "actions"
+                },
+                "note": "(array, required)"
+              },
+              {
+                "description": "Opaque browser_session_id returned by browser_session action=start.",
+                "head": {
+                  "code": "browser_session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Optional browser page_id; omit to use the most recently active page.",
+                "head": {
+                  "code": "page_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Per-action Playwright timeout in milliseconds.",
+                "head": {
+                  "code": "timeout_ms"
+                },
+                "note": "(integer, optional)"
+              }
+            ]
+          },
+          "Perform bounded high-level browser actions on an owned browser session. Prefer snapshot refs such as e1 over CSS selectors. Supported actions are navigate, new_page, close_page, click, fill, type, select, press, check, uncheck, hover, wait, wait_for_text, and wait_for_url. There is intentionally no arbitrary Playwright-script escape hatch in this structured surface."
+        ],
+        [
+          {
+            "code": "browser_session"
+          },
+          {
+            "items": [
+              {
+                "description": "Browser lifecycle action inside the owning Workgate session.",
+                "head": {
+                  "code": "action"
+                },
+                "note": "(start / list / close, required)"
+              },
+              {
+                "description": "Opaque browser_session_id returned by browser_session action=start.",
+                "head": {
+                  "code": "browser_session_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Run Chromium headlessly. Headless mode is recommended on executors.",
+                "head": {
+                  "code": "headless"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
+                "description": "Browser viewport height in CSS pixels.",
+                "head": {
+                  "code": "height"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Optional http(s) URL to open. file:, data:, javascript:, and other schemes are rejected.",
+                "head": {
+                  "code": "url"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Playwright navigation readiness condition.",
+                "head": {
+                  "code": "wait_until"
+                },
+                "note": "(load / domcontentloaded / networkidle / commit, optional)"
+              },
+              {
+                "description": "Browser viewport width in CSS pixels.",
+                "head": {
+                  "code": "width"
+                },
+                "note": "(integer, optional)"
+              }
+            ]
+          },
+          "Start, list, or close ephemeral Chromium sessions owned by one Workgate session. Browser resources live on the bound executor, are isolated from other Workgate sessions, and are discarded on executor restart. Only http(s) navigation is permitted. Use browser_snapshot after starting to obtain visible text and stable short element refs."
+        ],
+        [
+          {
+            "code": "browser_snapshot"
+          },
+          {
+            "items": [
+              {
+                "description": "Opaque browser_session_id returned by browser_session action=start.",
+                "head": {
+                  "code": "browser_session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Capture the full scrollable page when screenshot_path is set.",
+                "head": {
+                  "code": "full_page"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
+                "description": "Include bounded visible body text in the snapshot.",
+                "head": {
+                  "code": "include_text"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
+                "description": "Maximum visible interactive elements returned by one snapshot.",
+                "head": {
+                  "code": "max_elements"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Maximum visible-text characters returned by one snapshot.",
+                "head": {
+                  "code": "max_text_chars"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Optional browser page_id; omit to use the most recently active page.",
+                "head": {
+                  "code": "page_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Optional new .png path inside the owning Workgate session workdir. Existing files are never overwritten.",
+                "head": {
+                  "code": "screenshot_path"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG inside the session workdir so existing view_image/create_file_link flows can consume it."
         ]
       ]
     },
@@ -1633,6 +1822,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -1725,6 +1915,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -2321,6 +2512,1238 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
+      "description": "Perform bounded high-level browser actions on an owned browser session. Prefer snapshot refs such as e1 over CSS selectors. Supported actions are navigate, new_page, close_page, click, fill, type, select, press, check, uncheck, hover, wait, wait_for_text, and wait_for_url. There is intentionally no arbitrary Playwright-script escape hatch in this structured surface.",
+      "inputSchema": {
+        "$defs": {
+          "BrowserClosePageAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "close_page",
+                "title": "Action",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "BrowserClosePageAction",
+            "type": "object"
+          },
+          "BrowserNavigateAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "navigate",
+                "title": "Action",
+                "type": "string"
+              },
+              "url": {
+                "description": "Browser action URL or URL pattern.",
+                "maxLength": 8192,
+                "minLength": 1,
+                "title": "Url",
+                "type": "string"
+              },
+              "wait_until": {
+                "description": "Playwright navigation readiness condition.",
+                "enum": [
+                  "load",
+                  "domcontentloaded",
+                  "networkidle",
+                  "commit"
+                ],
+                "title": "Wait Until",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "url"
+            ],
+            "title": "BrowserNavigateAction",
+            "type": "object"
+          },
+          "BrowserNewPageAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "new_page",
+                "title": "Action",
+                "type": "string"
+              },
+              "url": {
+                "description": "Browser action URL or URL pattern.",
+                "maxLength": 8192,
+                "minLength": 1,
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "BrowserNewPageAction",
+            "type": "object"
+          },
+          "BrowserPressAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "press",
+                "title": "Action",
+                "type": "string"
+              },
+              "key": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Key",
+                "type": "string"
+              },
+              "target": {
+                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "target",
+              "key"
+            ],
+            "title": "BrowserPressAction",
+            "type": "object"
+          },
+          "BrowserSelectAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "select",
+                "title": "Action",
+                "type": "string"
+              },
+              "target": {
+                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "description": "Bounded value entered into the page.",
+                    "maxLength": 100000,
+                    "type": "string"
+                  },
+                  {
+                    "description": "Bounded option values selected in one action.",
+                    "items": {
+                      "description": "Bounded value entered into the page.",
+                      "maxLength": 100000,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "action",
+              "target",
+              "value"
+            ],
+            "title": "BrowserSelectAction",
+            "type": "object"
+          },
+          "BrowserTargetAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "click",
+                  "check",
+                  "uncheck",
+                  "hover"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "target": {
+                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "target"
+            ],
+            "title": "BrowserTargetAction",
+            "type": "object"
+          },
+          "BrowserValueAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "fill",
+                  "type"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "target": {
+                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              },
+              "value": {
+                "description": "Bounded value entered into the page.",
+                "maxLength": 100000,
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "target",
+              "value"
+            ],
+            "title": "BrowserValueAction",
+            "type": "object"
+          },
+          "BrowserWaitAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "wait",
+                "title": "Action",
+                "type": "string"
+              },
+              "ms": {
+                "maximum": 30000,
+                "minimum": 0,
+                "title": "Ms",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "BrowserWaitAction",
+            "type": "object"
+          },
+          "BrowserWaitForTextAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "wait_for_text",
+                "title": "Action",
+                "type": "string"
+              },
+              "text": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "text"
+            ],
+            "title": "BrowserWaitForTextAction",
+            "type": "object"
+          },
+          "BrowserWaitForUrlAction": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "wait_for_url",
+                "title": "Action",
+                "type": "string"
+              },
+              "url": {
+                "description": "Browser action URL or URL pattern.",
+                "maxLength": 8192,
+                "minLength": 1,
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "url"
+            ],
+            "title": "BrowserWaitForUrlAction",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "actions": {
+            "description": "Ordered high-level structured actions. Element targets may be snapshot refs such as e1 or bounded CSS selectors.",
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "check": "#/$defs/BrowserTargetAction",
+                  "click": "#/$defs/BrowserTargetAction",
+                  "close_page": "#/$defs/BrowserClosePageAction",
+                  "fill": "#/$defs/BrowserValueAction",
+                  "hover": "#/$defs/BrowserTargetAction",
+                  "navigate": "#/$defs/BrowserNavigateAction",
+                  "new_page": "#/$defs/BrowserNewPageAction",
+                  "press": "#/$defs/BrowserPressAction",
+                  "select": "#/$defs/BrowserSelectAction",
+                  "type": "#/$defs/BrowserValueAction",
+                  "uncheck": "#/$defs/BrowserTargetAction",
+                  "wait": "#/$defs/BrowserWaitAction",
+                  "wait_for_text": "#/$defs/BrowserWaitForTextAction",
+                  "wait_for_url": "#/$defs/BrowserWaitForUrlAction"
+                },
+                "propertyName": "action"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/BrowserNavigateAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserNewPageAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserClosePageAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserTargetAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserValueAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserSelectAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserPressAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserWaitAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserWaitForTextAction"
+                },
+                {
+                  "$ref": "#/$defs/BrowserWaitForUrlAction"
+                }
+              ]
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Actions",
+            "type": "array"
+          },
+          "browser_session_id": {
+            "description": "Opaque browser_session_id returned by browser_session action=start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^browser_[A-Za-z0-9_-]{12,}$",
+            "title": "Browser Session Id",
+            "type": "string"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^page_[A-Za-z0-9_-]{8,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional browser page_id; omit to use the most recently active page.",
+            "title": "Page Id"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "default": 30000,
+            "description": "Per-action Playwright timeout in milliseconds.",
+            "maximum": 120000,
+            "minimum": 1,
+            "title": "Timeout Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "browser_session_id",
+          "actions"
+        ],
+        "title": "browser_actArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "browser_act",
+      "outputSchema": {
+        "$defs": {
+          "BrowserActionResult": {
+            "description": "One structured action result.",
+            "properties": {
+              "action": {
+                "title": "Action",
+                "type": "string"
+              },
+              "closed": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closed"
+              },
+              "index": {
+                "title": "Index",
+                "type": "integer"
+              },
+              "matched": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Matched"
+              },
+              "page_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Page Id"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Status"
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Target"
+              },
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Url"
+              },
+              "waited_ms": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Waited Ms"
+              }
+            },
+            "required": [
+              "index",
+              "action"
+            ],
+            "title": "BrowserActionResult",
+            "type": "object"
+          },
+          "BrowserPageSummary": {
+            "description": "One live page inside a browser session.",
+            "properties": {
+              "page_id": {
+                "title": "Page Id",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "page_id",
+              "title",
+              "url"
+            ],
+            "title": "BrowserPageSummary",
+            "type": "object"
+          }
+        },
+        "description": "Result of a bounded ordered browser action sequence.",
+        "properties": {
+          "browser_session_id": {
+            "title": "Browser Session Id",
+            "type": "string"
+          },
+          "page_id": {
+            "title": "Page Id",
+            "type": "string"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/$defs/BrowserPageSummary"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/$defs/BrowserActionResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "browser_session_id",
+          "page_id",
+          "title",
+          "url",
+          "pages",
+          "results"
+        ],
+        "title": "BrowserActOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Start, list, or close ephemeral Chromium sessions owned by one Workgate session. Browser resources live on the bound executor, are isolated from other Workgate sessions, and are discarded on executor restart. Only http(s) navigation is permitted. Use browser_snapshot after starting to obtain visible text and stable short element refs.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "Browser lifecycle action inside the owning Workgate session.",
+            "enum": [
+              "start",
+              "list",
+              "close"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "browser_session_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^browser_[A-Za-z0-9_-]{12,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Opaque browser_session_id returned by browser_session action=start.",
+            "title": "Browser Session Id"
+          },
+          "headless": {
+            "default": true,
+            "description": "Run Chromium headlessly. Headless mode is recommended on executors.",
+            "title": "Headless",
+            "type": "boolean"
+          },
+          "height": {
+            "default": 1000,
+            "description": "Browser viewport height in CSS pixels.",
+            "maximum": 4320,
+            "minimum": 240,
+            "title": "Height",
+            "type": "integer"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional http(s) URL to open. file:, data:, javascript:, and other schemes are rejected.",
+            "title": "Url"
+          },
+          "wait_until": {
+            "default": "domcontentloaded",
+            "description": "Playwright navigation readiness condition.",
+            "enum": [
+              "load",
+              "domcontentloaded",
+              "networkidle",
+              "commit"
+            ],
+            "title": "Wait Until",
+            "type": "string"
+          },
+          "width": {
+            "default": 1440,
+            "description": "Browser viewport width in CSS pixels.",
+            "maximum": 7680,
+            "minimum": 320,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "action"
+        ],
+        "title": "browser_sessionArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "browser_session",
+      "outputSchema": {
+        "$defs": {
+          "BrowserPageSummary": {
+            "description": "One live page inside a browser session.",
+            "properties": {
+              "page_id": {
+                "title": "Page Id",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "page_id",
+              "title",
+              "url"
+            ],
+            "title": "BrowserPageSummary",
+            "type": "object"
+          },
+          "BrowserSessionSummary": {
+            "description": "One ephemeral browser owned by a Workgate session.",
+            "properties": {
+              "browser_session_id": {
+                "title": "Browser Session Id",
+                "type": "string"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "current_page_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Current Page Id"
+              },
+              "last_used_at": {
+                "title": "Last Used At",
+                "type": "number"
+              },
+              "pages": {
+                "items": {
+                  "$ref": "#/$defs/BrowserPageSummary"
+                },
+                "title": "Pages",
+                "type": "array"
+              }
+            },
+            "required": [
+              "browser_session_id",
+              "created_at",
+              "last_used_at"
+            ],
+            "title": "BrowserSessionSummary",
+            "type": "object"
+          }
+        },
+        "description": "Lifecycle result for browser_session.",
+        "properties": {
+          "browser_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Browser Session Id"
+          },
+          "cleanup_pending": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cleanup Pending"
+          },
+          "closed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "current_page_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Current Page Id"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Used At"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/$defs/BrowserPageSummary"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "sessions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/BrowserSessionSummary"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sessions"
+          }
+        },
+        "title": "BrowserSessionOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG inside the session workdir so existing view_image/create_file_link flows can consume it.",
+      "inputSchema": {
+        "properties": {
+          "browser_session_id": {
+            "description": "Opaque browser_session_id returned by browser_session action=start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^browser_[A-Za-z0-9_-]{12,}$",
+            "title": "Browser Session Id",
+            "type": "string"
+          },
+          "full_page": {
+            "default": false,
+            "description": "Capture the full scrollable page when screenshot_path is set.",
+            "title": "Full Page",
+            "type": "boolean"
+          },
+          "include_text": {
+            "default": true,
+            "description": "Include bounded visible body text in the snapshot.",
+            "title": "Include Text",
+            "type": "boolean"
+          },
+          "max_elements": {
+            "default": 100,
+            "description": "Maximum visible interactive elements returned by one snapshot.",
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Max Elements",
+            "type": "integer"
+          },
+          "max_text_chars": {
+            "default": 100000,
+            "description": "Maximum visible-text characters returned by one snapshot.",
+            "maximum": 100000,
+            "minimum": 0,
+            "title": "Max Text Chars",
+            "type": "integer"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^page_[A-Za-z0-9_-]{8,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional browser page_id; omit to use the most recently active page.",
+            "title": "Page Id"
+          },
+          "screenshot_path": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional new .png path inside the owning Workgate session workdir. Existing files are never overwritten.",
+            "title": "Screenshot Path"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "browser_session_id"
+        ],
+        "title": "browser_snapshotArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "browser_snapshot",
+      "outputSchema": {
+        "$defs": {
+          "BrowserErrorEvent": {
+            "description": "Bounded page/console/request failure metadata.",
+            "properties": {
+              "failure": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "method": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Method"
+              },
+              "page_id": {
+                "title": "Page Id",
+                "type": "string"
+              },
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Url"
+              }
+            },
+            "required": [
+              "page_id",
+              "kind"
+            ],
+            "title": "BrowserErrorEvent",
+            "type": "object"
+          },
+          "BrowserInteractiveElement": {
+            "description": "Bounded interactive element metadata with a snapshot-scoped short ref.",
+            "properties": {
+              "disabled": {
+                "title": "Disabled",
+                "type": "boolean"
+              },
+              "href": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Href"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "placeholder": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Placeholder"
+              },
+              "ref": {
+                "title": "Ref",
+                "type": "string"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Role"
+              },
+              "tag": {
+                "title": "Tag",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Type"
+              }
+            },
+            "required": [
+              "ref",
+              "tag",
+              "text",
+              "disabled"
+            ],
+            "title": "BrowserInteractiveElement",
+            "type": "object"
+          },
+          "BrowserPageSummary": {
+            "description": "One live page inside a browser session.",
+            "properties": {
+              "page_id": {
+                "title": "Page Id",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "page_id",
+              "title",
+              "url"
+            ],
+            "title": "BrowserPageSummary",
+            "type": "object"
+          }
+        },
+        "description": "Bounded browser snapshot suitable for model-driven interaction.",
+        "properties": {
+          "browser_session_id": {
+            "title": "Browser Session Id",
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/$defs/BrowserErrorEvent"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "interactive_elements": {
+            "items": {
+              "$ref": "#/$defs/BrowserInteractiveElement"
+            },
+            "title": "Interactive Elements",
+            "type": "array"
+          },
+          "page_id": {
+            "title": "Page Id",
+            "type": "string"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/$defs/BrowserPageSummary"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "screenshot_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screenshot Path"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "text_truncated": {
+            "title": "Text Truncated",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "browser_session_id",
+          "page_id",
+          "title",
+          "url",
+          "pages",
+          "text",
+          "text_truncated",
+          "interactive_elements",
+          "errors",
+          "screenshot_path"
+        ],
+        "title": "BrowserSnapshotOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
       "description": "Call a control-owned network MCP tool or, with session_id, an executor-owned stdio tool.",
       "inputSchema": {
         "properties": {
@@ -2379,6 +3802,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -4244,6 +5668,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -4309,6 +5734,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -4369,6 +5795,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -5271,6 +6698,7 @@
               "git:write",
               "file:share",
               "remote:use",
+              "browser:use",
               "audit:read",
               "audit:full"
             ],
@@ -6589,6 +8017,11 @@
           "SessionCapabilitiesEnvironment": {
             "description": "Executor-local feature support relevant to choosing session tools.",
             "properties": {
+              "browser": {
+                "description": "Whether structured Playwright browser automation is available on this executor.",
+                "title": "Browser",
+                "type": "boolean"
+              },
               "conpty": {
                 "description": "Whether Windows ConPTY is available.",
                 "title": "Conpty",
@@ -6602,7 +8035,8 @@
             },
             "required": [
               "raw_pty",
-              "conpty"
+              "conpty",
+              "browser"
             ],
             "title": "SessionCapabilitiesEnvironment",
             "type": "object"
@@ -7619,6 +9053,14 @@
             "title": "Session Id",
             "type": "string"
           },
+          "stopped_browsers": {
+            "description": "Ephemeral browser session ids stopped before session removal.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Stopped Browsers",
+            "type": "array"
+          },
           "stopped_jobs": {
             "description": "Tracked job ids stopped before session removal.",
             "items": {
@@ -7766,6 +9208,11 @@
           "SessionCapabilitiesEnvironment": {
             "description": "Executor-local feature support relevant to choosing session tools.",
             "properties": {
+              "browser": {
+                "description": "Whether structured Playwright browser automation is available on this executor.",
+                "title": "Browser",
+                "type": "boolean"
+              },
               "conpty": {
                 "description": "Whether Windows ConPTY is available.",
                 "title": "Conpty",
@@ -7779,7 +9226,8 @@
             },
             "required": [
               "raw_pty",
-              "conpty"
+              "conpty",
+              "browser"
             ],
             "title": "SessionCapabilitiesEnvironment",
             "type": "object"

@@ -242,6 +242,224 @@ def test_audit_uniformly_redacts_secrets_but_retains_fingerprints(
     assert record["nested"]["password"] == "<redacted>"
 
 
+def test_browser_action_values_are_redacted_before_audit_storage(
+    tmp_path, monkeypatch
+):
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "browser-entered-secret"
+    selected = "private-select-value"
+    pressed = "private-key-value"
+
+    audit_tool_call_start(
+        call_id="browser-redaction",
+        transport="mcp",
+        tool="browser_act",
+        input={
+            "actions": [
+                {
+                    "action": "fill",
+                    "target": "e1",
+                    "value": secret,
+                },
+                {
+                    "action": "select",
+                    "target": "e2",
+                    "value": [selected],
+                },
+                {"action": "click", "target": "e3"},
+                {"action": "press", "target": "e4", "key": pressed},
+            ]
+        },
+    )
+
+    text = path.read_text(encoding="utf-8")
+    record = _records(path)[0]
+    assert secret not in text
+    assert selected not in text
+    assert pressed not in text
+    assert record["input"]["actions"][0]["value"] == "<redacted>"
+    assert record["input"]["actions"][1]["value"] == "<redacted>"
+    assert record["input"]["actions"][2]["target"] == "e3"
+    assert record["input"]["actions"][3]["key"] == "<redacted>"
+
+
+def test_browser_audit_omits_page_body_and_url_secrets(tmp_path, monkeypatch):
+    path = _configure_audit(tmp_path, monkeypatch)
+    page_secret = "page-body-secret"
+    query_secret = "query-secret"
+    form_secret = "form-secret"
+    call_id = "browser-output-redaction"
+
+    session_ids = audit_tool_call_start(
+        call_id=call_id,
+        transport="mcp",
+        tool="browser_act",
+        input={
+            "session_id": "sess_0000000000000000000001",
+            "actions": [
+                {
+                    "action": "navigate",
+                    "url": f"https://user:pass@example.test/path?token={query_secret}#frag",
+                },
+                {
+                    "action": "fill",
+                    "target": "input[name='password']",
+                    "value": form_secret,
+                },
+            ],
+        },
+    )
+    audit_tool_call_end(
+        call_id=call_id,
+        transport="mcp",
+        tool="browser_snapshot",
+        ok=True,
+        duration_ms=1,
+        output={
+            "url": f"https://example.test/path?token={query_secret}",
+            "title": page_secret,
+            "pages": [
+                {
+                    "page_id": "page_12345678",
+                    "title": page_secret,
+                    "url": f"https://example.test/page?token={query_secret}",
+                }
+            ],
+            "text": page_secret,
+            "interactive_elements": [
+                {"ref": "e1", "text": page_secret, "href": None}
+            ],
+            "errors": [
+                {
+                    "page_id": "page_12345678",
+                    "kind": "console",
+                    "message": page_secret,
+                    "url": f"https://example.test/fail?token={query_secret}",
+                }
+            ],
+        },
+        session_ids=session_ids,
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert page_secret not in raw
+    assert query_secret not in raw
+    assert form_secret not in raw
+    assert "user:pass" not in raw
+    assert "input[name='password']" not in raw
+    records = _records(path)
+    start = next(item for item in records if item["event"] == "tool_call_start")
+    end = next(item for item in records if item["event"] == "tool_call_end")
+    assert start["input"]["actions"][0]["url"] == "https://example.test"
+    assert start["input"]["actions"][1]["target"] == "<selector>"
+    assert end["output"]["text_omitted_from_audit"] is True
+    assert end["output"]["interactive_element_count"] == 1
+    assert end["output"]["title"] == "<omitted-from-audit>"
+    assert end["output"]["pages"] == [
+        {
+            "page_id": "page_12345678",
+            "title": "<omitted-from-audit>",
+            "url": "https://example.test",
+        }
+    ]
+    assert end["output"]["errors"] == [
+        {
+            "page_id": "page_12345678",
+            "kind": "console",
+            "method": None,
+            "url": "https://example.test",
+        }
+    ]
+
+
+def test_browser_session_url_is_origin_only_in_audit(tmp_path, monkeypatch):
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "path-and-query-secret"
+
+    audit_tool_call_start(
+        call_id="browser-session-url-redaction",
+        transport="mcp",
+        tool="browser_session",
+        input={
+            "session_id": "sess_0000000000000000000001",
+            "action": "start",
+            "url": f"https://user:pass@example.test/{secret}?token={secret}",
+        },
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert secret not in raw
+    assert "user:pass" not in raw
+    record = _records(path)[0]
+    assert record["input"]["url"] == "https://example.test"
+
+
+def test_browser_session_list_audit_redacts_nested_page_content(
+    tmp_path, monkeypatch
+):
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "nested-page-secret"
+
+    audit_tool_call_end(
+        call_id="browser-session-list-output",
+        transport="mcp",
+        tool="browser_session",
+        ok=True,
+        duration_ms=1,
+        output={
+            "sessions": [
+                {
+                    "browser_session_id": "browser_test_session",
+                    "pages": [
+                        {
+                            "page_id": "page_12345678",
+                            "title": secret,
+                            "url": f"https://example.test/{secret}?token={secret}",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert secret not in raw
+    output = _records(path)[0]["output"]
+    assert output["sessions"][0]["pages"] == [
+        {
+            "page_id": "page_12345678",
+            "title": "<omitted-from-audit>",
+            "url": "https://example.test",
+        }
+    ]
+
+
+def test_browser_error_audit_omits_backend_diagnostics(tmp_path, monkeypatch):
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "sensitive-playwright-error-detail"
+
+    audit_tool_call_end(
+        call_id="browser-error-redaction",
+        transport="mcp",
+        tool="browser_act",
+        ok=False,
+        duration_ms=1,
+        error={
+            "type": "TimeoutError",
+            "message": f"navigation failed for https://example.test/?token={secret}",
+            "repr": f"TimeoutError(locator=input[name='{secret}'])",
+        },
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert secret not in raw
+    record = _records(path)[0]
+    assert record["error"] == {
+        "type": "TimeoutError",
+        "details_omitted_from_audit": True,
+    }
+
+
 def test_audit_values_are_portable_and_cycle_safe(tmp_path, monkeypatch):
     path = _configure_audit(tmp_path, monkeypatch)
     cycle: dict[str, Any] = {}

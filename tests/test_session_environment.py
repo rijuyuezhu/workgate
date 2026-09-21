@@ -191,6 +191,7 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
     )
     monkeypatch.setattr(env_ops, "_collect_tools", lambda _config: tools)
     monkeypatch.setattr(env_ops, "conpty_available", lambda: False)
+    monkeypatch.setattr(env_ops, "browser_capability_available", lambda: False)
 
     environment = env_ops.collect_executor_session_environment(
         config, workdir=str(tmp_path)
@@ -200,9 +201,10 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
 
     assert environment.workspace.workspace_root == str(tmp_path)
     assert environment.capabilities.raw_pty is True
+    assert environment.capabilities.browser is False
     assert environment.policy.max_jobs == 17
     assert environment.policy.max_search_results == 23
-    assert set(payload["capabilities"]) == {"raw_pty", "conpty"}
+    assert set(payload["capabilities"]) == {"raw_pty", "conpty", "browser"}
     assert "authentication_mode" not in payload["policy"]
     assert "max_agent_sessions" not in payload["policy"]
     for control_only in (

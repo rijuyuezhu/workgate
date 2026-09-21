@@ -17,6 +17,7 @@ from workgate.control.state import (
     ControlState,
     ExecutorTrustRecord,
 )
+from workgate.errors import BrowserUnavailableError
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import (
     executor_credential_verifier,
@@ -24,6 +25,7 @@ from workgate.protocol.credentials import (
 )
 from workgate.protocol.errors import ProtocolErrorCode
 from workgate.protocol.executor import (
+    EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
     ExecutorResult,
@@ -55,10 +57,13 @@ def _trust(state: ControlState, executor_id: str) -> None:
     )
 
 
-def _hello(*sessions: tuple[str, str]) -> ExecutorHelloRequest:
+def _hello(
+    *sessions: tuple[str, str],
+    capabilities: tuple[str, ...] = (EXECUTOR_CAPABILITY_SESSIONS,),
+) -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
-        capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
+        capabilities=capabilities,
         workspace_root="/workspace",
         sessions=tuple(
             SessionInventorySummary(
@@ -498,6 +503,49 @@ async def test_transport_uncertainty_does_not_refresh_activity(
     ) = await coordinator.session_activity_projection(session_id)
     assert availability == "available"
     assert last_active_at == 10.0
+
+
+@pytest.mark.asyncio
+async def test_browser_tools_require_bound_executor_capability(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(_active_record(executor_id, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello((session_id, "/workspace/project"))
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+
+    with pytest.raises(
+        BrowserUnavailableError, match="browser automation is unavailable"
+    ):
+        await coordinator.call_session_tool(
+            "browser_snapshot",
+            {
+                "session_id": session_id,
+                "browser_session_id": "browser_test_session",
+            },
+        )
+    assert transport.calls == []
+
+    transport.hellos[executor_id] = _hello(
+        (session_id, "/workspace/project"),
+        capabilities=(
+            EXECUTOR_CAPABILITY_SESSIONS,
+            EXECUTOR_CAPABILITY_BROWSER,
+        ),
+    )
+    await coordinator.call_session_tool(
+        "browser_snapshot",
+        {
+            "session_id": session_id,
+            "browser_session_id": "browser_test_session",
+        },
+    )
+    assert transport.calls[-1][1] == "browser_snapshot"
 
 
 @pytest.mark.asyncio
