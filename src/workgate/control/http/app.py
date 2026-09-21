@@ -21,6 +21,7 @@ from ..runtime import ControlRuntime, build_control_runtime
 from .errors import install_error_handlers
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
+from .stream_routes import terminal_stream_routes
 from .tool_routes import (
     install_tool_cache_control_middleware,
     install_tools_timeout_middleware,
@@ -58,9 +59,14 @@ def _install_public_routes(
     installed_routes = [
         *public_http_routes(settings),
         *(
-            executor_routes(
-                runtime.executor_transport, runtime.executor_pairing
-            )
+            [
+                *executor_routes(
+                    runtime.executor_transport, runtime.executor_pairing
+                ),
+                *terminal_stream_routes(
+                    runtime.executor_transport, runtime.stream_hub
+                ),
+            ]
             if runtime is not None
             else ()
         ),

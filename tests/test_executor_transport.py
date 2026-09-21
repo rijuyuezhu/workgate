@@ -11,6 +11,7 @@ from workgate.control.executor_transport import (
     ExecutorTransportError,
 )
 from workgate.control.state import ControlState, ExecutorTrustRecord
+from workgate.control.streams import ControlStreamHub
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import (
     executor_credential_verifier,
@@ -336,3 +337,56 @@ async def test_shutdown_interrupts_pending_future_without_durable_replay(
     assert await transport.pending_count(executor_id) == 0
     with pytest.raises(RuntimeError, match="cannot be restarted"):
         transport.start()
+
+
+@pytest.mark.asyncio
+async def test_revoke_and_replace_notify_executor_invalidation(
+    tmp_path: Path,
+) -> None:
+    transport, state, executor_id, _credential = _running_transport(tmp_path)
+    invalidated: list[str] = []
+
+    async def on_invalidated(value: str) -> None:
+        invalidated.append(value)
+
+    transport.set_executor_invalidated_callback(on_invalidated)
+    await transport.revoke_executor(executor_id, revoked_at=123.0)
+    assert invalidated == [executor_id]
+
+    replacement = ExecutorTrustRecord(
+        executor_id=executor_id,
+        name="executor",
+        credential_verifier=executor_credential_verifier(
+            new_executor_credential()
+        ),
+        created_at=2.0,
+    )
+    await transport.replace_executor(replacement)
+    assert invalidated == [executor_id, executor_id]
+    assert state.snapshot_executors()[executor_id] == replacement
+
+
+@pytest.mark.asyncio
+async def test_revoke_and_replace_close_executor_stream_hub_slots(
+    tmp_path: Path,
+) -> None:
+    transport, _state, executor_id, _credential = _running_transport(tmp_path)
+    hub = ControlStreamHub(max_streams=2, idle_timeout_s=0)
+    transport.set_executor_invalidated_callback(hub.close_executor)
+
+    await hub.create(executor_id)
+    assert hub.active_count() == 1
+    await transport.revoke_executor(executor_id, revoked_at=123.0)
+    assert hub.active_count() == 0
+
+    await hub.create(executor_id)
+    replacement = ExecutorTrustRecord(
+        executor_id=executor_id,
+        name="executor",
+        credential_verifier=executor_credential_verifier(
+            new_executor_credential()
+        ),
+        created_at=2.0,
+    )
+    await transport.replace_executor(replacement)
+    assert hub.active_count() == 0

@@ -24,6 +24,7 @@ from ...tools.metadata import install_tool_safety_annotations
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..http.executor_admin import executor_admin_routes
 from ..http.executor_routes import executor_routes
+from ..http.stream_routes import terminal_stream_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from ..tool_timeouts import tool_timeout_s
 from .instructions import SERVER_INSTRUCTIONS
@@ -122,10 +123,15 @@ def _add_public_routes_to_mcp_http_app(
     public_routes: list[BaseRoute] = [
         *public_http_routes(settings),
         *(
-            executor_routes(
-                runtime.executor_transport,
-                runtime.executor_pairing,
-            )
+            [
+                *executor_routes(
+                    runtime.executor_transport,
+                    runtime.executor_pairing,
+                ),
+                *terminal_stream_routes(
+                    runtime.executor_transport, runtime.stream_hub
+                ),
+            ]
             if runtime is not None
             else ()
         ),

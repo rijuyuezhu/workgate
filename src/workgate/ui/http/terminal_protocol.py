@@ -14,8 +14,6 @@ from ...protocol.terminal import (
     PERSISTENT_SHELL_MAX_ROWS,
     PERSISTENT_SHELL_MIN_COLUMNS,
     PERSISTENT_SHELL_MIN_ROWS,
-    TERMINAL_BRIDGE_BACKENDS,
-    TERMINAL_BRIDGE_MAX_CHUNK_BYTES,
 )
 from ...schemas.result_models.shell import (
     KillPersistentShellOutput,
@@ -37,20 +35,8 @@ UI_TERMINAL_EXECUTOR_MAX_BYTES = 255
 UI_TERMINAL_METADATA_MAX_BYTES = 4_096
 UI_TERMINAL_OUTPUT_MAX_BYTES = 4_000_000
 UI_TERMINAL_MAX_SHELLS = 256
-UI_TERMINAL_RAW_READ_WAIT_MS = 100
 UI_TERMINAL_MODES = frozenset({"snapshot", "auto", "pty"})
 _SHELL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
-_BRIDGE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
-
-
-@dataclass(frozen=True)
-class _TerminalBridgeHandle:
-    executor_id: str
-    shell_id: str
-    bridge_id: str
-    cols: int
-    rows: int
-    backend: str
 
 
 @dataclass(frozen=True)
@@ -75,14 +61,12 @@ class TerminalWebSocketRequest:
 
 @dataclass(frozen=True)
 class TerminalInputControl:
-    """Validated textual or raw terminal input control."""
+    """Validated textual terminal input control."""
 
     kind: Literal["input"]
     """Discriminator for an input control."""
     input_text: str
     """Validated textual input payload."""
-    raw_input: bytes
-    """Validated decoded raw byte payload."""
     enter: bool
     """Whether a newline should follow textual input."""
 
@@ -230,7 +214,6 @@ def parse_terminal_binary_input(value: Any) -> bytes:
 def parse_terminal_control(
     text: str,
     *,
-    active_mode: str,
     current_cols: int,
     current_rows: int,
 ) -> TerminalControl:
@@ -247,16 +230,12 @@ def parse_terminal_control(
     kind = control.get("type")
     if kind == "input":
         input_text = str(control.get("data") or "")
-        raw_input = input_text.encode("utf-8")
         enter = bool(control.get("enter", False))
-        if active_mode == "pty" and enter:
-            raw_input += b"\r"
-        if len(raw_input) > UI_TERMINAL_INPUT_MAX_BYTES:
+        if len(input_text.encode("utf-8")) > UI_TERMINAL_INPUT_MAX_BYTES:
             raise ValueError("Terminal input is too large")
         return TerminalInputControl(
             kind="input",
             input_text=input_text,
-            raw_input=raw_input,
             enter=enter,
         )
     if kind == "resize":
@@ -455,152 +434,6 @@ def _normalize_kill(
         "killed": model.killed,
         "stderr": stderr,
     }
-
-
-def _bridge_mapping(value: Any, *, label: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise RuntimeError(
-            f"Executor returned malformed terminal bridge {label}"
-        )
-    return value
-
-
-def _bridge_result_id(value: Any, *, expected: str | None = None) -> str:
-    bridge_id = str(value or "")
-    if not _BRIDGE_ID_PATTERN.fullmatch(bridge_id):
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge capability"
-        )
-    if expected is not None and bridge_id != expected:
-        raise RuntimeError(
-            "Executor returned mismatched terminal bridge capability"
-        )
-    return bridge_id
-
-
-def _normalize_bridge_open(
-    executor_id: str,
-    shell_id: str,
-    cols: int,
-    rows: int,
-    value: Any,
-) -> _TerminalBridgeHandle:
-    data = _bridge_mapping(value, label="open data")
-    bridge_id = _bridge_result_id(data.get("bridge_id"))
-    try:
-        returned_shell = _shell_id(data.get("shell_id"))
-        returned_cols = int(str(data.get("cols") or ""))
-        returned_rows = int(str(data.get("rows") or ""))
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge open data"
-        ) from exc
-    backend = str(data.get("backend") or "")
-    if (
-        returned_shell != shell_id
-        or returned_cols != cols
-        or returned_rows != rows
-        or backend not in TERMINAL_BRIDGE_BACKENDS
-    ):
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge open data"
-        )
-    return _TerminalBridgeHandle(
-        executor_id=executor_id,
-        shell_id=shell_id,
-        bridge_id=bridge_id,
-        cols=cols,
-        rows=rows,
-        backend=backend,
-    )
-
-
-def _normalize_bridge_read(
-    handle: _TerminalBridgeHandle,
-    value: Any,
-) -> tuple[bytes, bool]:
-    data = _bridge_mapping(value, label="read data")
-    _bridge_result_id(data.get("bridge_id"), expected=handle.bridge_id)
-    encoded = data.get("data_b64")
-    if not isinstance(encoded, str) or len(encoded) > 90_000:
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge read data"
-        )
-    try:
-        raw = base64.b64decode(encoded, validate=True)
-        count = int(str(data.get("bytes")))
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge read data"
-        ) from exc
-    eof = data.get("eof")
-    if (
-        not isinstance(eof, bool)
-        or count != len(raw)
-        or len(raw) > TERMINAL_BRIDGE_MAX_CHUNK_BYTES
-    ):
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge read data"
-        )
-    return raw, eof
-
-
-def _normalize_bridge_write(
-    handle: _TerminalBridgeHandle,
-    value: Any,
-    expected_bytes: int,
-) -> None:
-    data = _bridge_mapping(value, label="write data")
-    _bridge_result_id(data.get("bridge_id"), expected=handle.bridge_id)
-    try:
-        written = int(str(data.get("written_bytes") or ""))
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge write data"
-        ) from exc
-    if written != expected_bytes:
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge write data"
-        )
-
-
-def _normalize_bridge_resize(
-    handle: _TerminalBridgeHandle,
-    value: Any,
-    cols: int,
-    rows: int,
-) -> None:
-    data = _bridge_mapping(value, label="resize data")
-    _bridge_result_id(data.get("bridge_id"), expected=handle.bridge_id)
-    try:
-        returned_cols = int(str(data.get("cols") or ""))
-        returned_rows = int(str(data.get("rows") or ""))
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge resize data"
-        ) from exc
-    resized = data.get("resized")
-    if (
-        returned_cols != cols
-        or returned_rows != rows
-        or not isinstance(resized, bool)
-        or data.get("backend") != handle.backend
-    ):
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge resize data"
-        )
-
-
-def _normalize_bridge_close(
-    handle: _TerminalBridgeHandle,
-    value: Any,
-) -> None:
-    data = _bridge_mapping(value, label="close data")
-    _bridge_result_id(data.get("bridge_id"), expected=handle.bridge_id)
-    if not isinstance(data.get("closed"), bool):
-        raise RuntimeError(
-            "Executor returned malformed terminal bridge close data"
-        )
 
 
 def _websocket_protocols(websocket: WebSocket) -> list[str]:

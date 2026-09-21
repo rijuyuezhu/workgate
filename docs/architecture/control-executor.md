@@ -353,13 +353,16 @@ control -> executor: terminal.attach(stream_id, shell)
 executor -> control: outbound WSS /executor/v1/streams/<stream_id>
                      authenticated by normal executor credential
 control: require stream_id live and bearer executor == expected executor
+control -> executor: stream-accepted handshake; only then may relay start
 browser -> control: /stream/<stream_id> with short-lived browser token
-StreamHub: pair endpoints with bounded backpressure
+                    carried in WebSocket subprotocol, not URL/query logs
+StreamHub: pair endpoints with direct await-send backpressure and no byte queue
 ```
 
 Executor needs no second stream credential: its bearer plus a random live
 `stream_id` binding is sufficient for this threat model. Browser attachment is a
-separate authority and keeps a short-lived, preferably one-use token.
+separate authority and uses a short-lived one-use token. The token is hashed in
+StreamHub memory, consumed on successful browser claim, and never persisted.
 
 Raw terminal bytes, resize messages, and backpressure state remain in memory and
 do not enter command/checkpoint/audit bodies. Control restart drops the

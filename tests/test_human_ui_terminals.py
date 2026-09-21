@@ -1,4 +1,3 @@
-import asyncio
 import base64
 from typing import Any
 
@@ -16,7 +15,12 @@ from workgate.config.settings import (
 )
 from workgate.oauth.core.scopes import SCOPE_SHELL_EXECUTE, SCOPE_SHELL_READ
 from workgate.oauth.protocol.token_codec import issue_access_token
-from workgate.protocol.terminal import TerminalBridgeUnsupportedError
+from workgate.protocol.executor import ExecutorResult
+from workgate.protocol.ids import new_command_id
+from workgate.protocol.terminal import (
+    TERMINAL_BROWSER_SUBPROTOCOL,
+    TERMINAL_BROWSER_TOKEN_PROTOCOL_PREFIX,
+)
 from workgate.ui.http.live_state import (
     build_human_ui_runtime,
     configure_human_ui_runtime,
@@ -100,9 +104,7 @@ class _TerminalExecutorBackend:
             }
         ]
         self.read_output = "hello"
-        self.bridge_id = "bridge_capability_1234567890"
         self.bridge_backend = "tmux-pty"
-        self.bridge_reads: list[bytes] = []
 
     async def execute(self, op: str, args: dict[str, Any]) -> Any:
         args = dict(args)
@@ -148,44 +150,6 @@ class _TerminalExecutorBackend:
                 "killed": True,
                 "stderr": None,
             }
-        if op == "ui.terminals.bridge.open":
-            return {
-                "bridge_id": self.bridge_id,
-                "shell_id": args.get("shell_id"),
-                "cols": args.get("cols"),
-                "rows": args.get("rows"),
-                "backend": self.bridge_backend,
-            }
-        if op == "ui.terminals.bridge.read":
-            if self.bridge_reads:
-                payload = self.bridge_reads.pop(0)
-            else:
-                # A real executor long-polls for bytes. Blocking here prevents a
-                # test-only busy loop and is cancelled when the WebSocket closes.
-                await asyncio.sleep(60)
-                payload = b""
-            return {
-                "bridge_id": args.get("bridge_id"),
-                "data_b64": base64.b64encode(payload).decode("ascii"),
-                "bytes": len(payload),
-                "eof": False,
-            }
-        if op == "ui.terminals.bridge.write":
-            payload = base64.b64decode(str(args.get("data_b64") or ""))
-            return {
-                "bridge_id": args.get("bridge_id"),
-                "written_bytes": len(payload),
-            }
-        if op == "ui.terminals.bridge.resize":
-            return {
-                "bridge_id": args.get("bridge_id"),
-                "cols": args.get("cols"),
-                "rows": args.get("rows"),
-                "resized": True,
-                "backend": self.bridge_backend,
-            }
-        if op == "ui.terminals.bridge.close":
-            return {"bridge_id": args.get("bridge_id"), "closed": True}
         raise AssertionError(f"unexpected terminal op: {op}")
 
 
@@ -198,6 +162,41 @@ def _client(
     monkeypatch.setattr(
         harness.executor.ui_terminals, "execute", backend.execute
     )
+    direct_call = harness.call
+
+    async def call(
+        executor_id: str,
+        op: str,
+        args: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
+        timeout_s: float | None = None,
+    ) -> ExecutorResult:
+        if op == "terminal.attach":
+            payload = dict(args or {})
+            backend.calls.append((op, payload))
+            failure = backend.failures.get(op)
+            if failure is not None:
+                raise failure
+            return ExecutorResult(
+                id=new_command_id(),
+                ok=True,
+                result={
+                    "stream_id": payload["stream_id"],
+                    "shell_id": payload["shell_id"],
+                    "backend": backend.bridge_backend,
+                    "connected": True,
+                },
+            )
+        return await direct_call(
+            executor_id,
+            op,
+            args,
+            session_id=session_id,
+            timeout_s=timeout_s,
+        )
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", call)
     client = _ExecutorTestClient(
         app,
         executor_id=harness.executor_id,
@@ -263,23 +262,14 @@ def test_terminal_http_surface_dispatches_final_executor_ops(
         "/api/ui/terminals/start",
         json={"cwd": ".", "name": "created", "command": "/bin/sh"},
     )
-    sent = client.post(
-        "/api/ui/terminals/send",
-        json={"shell_id": "demo", "input_text": "printf ok", "enter": False},
-    )
-    resized = client.post(
-        "/api/ui/terminals/resize",
-        json={"shell_id": "demo", "cols": 132, "rows": 41},
-    )
     read = client.get(
         "/api/ui/terminals/read", params={"shell_id": "demo", "lines": 321}
     )
     killed = client.post("/api/ui/terminals/kill", json={"shell_id": "demo"})
 
-    assert [
-        response.status_code
-        for response in (started, sent, resized, read, killed)
-    ] == [200] * 5
+    assert [response.status_code for response in (started, read, killed)] == [
+        200
+    ] * 3
     assert started.json()["data"]["executor_id"] == client.executor_id
     assert started.json()["data"]["shell_id"] == "created"
     assert read.json()["data"] == {
@@ -293,14 +283,6 @@ def test_terminal_http_surface_dispatches_final_executor_ops(
         (
             "ui.terminals.start",
             {"cwd": ".", "name": "created", "command": "/bin/sh"},
-        ),
-        (
-            "ui.terminals.send",
-            {"shell_id": "demo", "input_text": "printf ok", "enter": False},
-        ),
-        (
-            "ui.terminals.resize",
-            {"shell_id": "demo", "cols": 132, "rows": 41},
         ),
         ("ui.terminals.read", {"shell_id": "demo", "lines": 321}),
         ("ui.terminals.kill", {"shell_id": "demo"}),
@@ -378,19 +360,7 @@ def test_terminal_http_actions_require_execute_scope(monkeypatch, tmp_path):
         ),
         (
             "post",
-            "/api/ui/terminals/send",
-            {
-                "json": {
-                    "shell_id": "demo",
-                    "input_text": "x"
-                    * (terminal_module.UI_TERMINAL_INPUT_MAX_BYTES + 1),
-                }
-            },
-            "input_text exceeds",
-        ),
-        (
-            "post",
-            "/api/ui/terminals/resize",
+            "/api/ui/terminals/attach",
             {"json": {"shell_id": "demo", "cols": 19, "rows": 30}},
             "cols must be between",
         ),
@@ -403,6 +373,31 @@ def test_terminal_http_surface_rejects_invalid_bounds(
     response = client.request(method, path, **kwargs)
     assert response.status_code == 400
     assert message in response.json()["message"]
+    assert backend.calls == []
+
+
+@pytest.mark.parametrize(
+    ("action", "payload"),
+    [
+        (
+            "send",
+            {"shell_id": "demo", "input_text": "printf ok", "enter": False},
+        ),
+        ("resize", {"shell_id": "demo", "cols": 132, "rows": 41}),
+    ],
+)
+def test_terminal_http_interactive_mutations_require_streamhub_attach(
+    monkeypatch, tmp_path, action, payload
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+
+    response = client.post(f"/api/ui/terminals/{action}", json=payload)
+
+    assert response.status_code == 400
+    assert (
+        response.json()["message"]
+        == "Interactive terminal input and resize require StreamHub attach"
+    )
     assert backend.calls == []
 
 
@@ -590,133 +585,33 @@ def test_terminal_websocket_streams_snapshot_and_orders_controls(
     assert human_ui_runtime().terminal_connections.active_count() == 0
 
 
-def test_terminal_bridge_read_normalization_accepts_empty_poll():
-    handle = terminal_module._TerminalBridgeHandle(
-        executor_id="executor-a",
-        shell_id="demo",
-        bridge_id="bridge_capability_1234567890",
-        cols=100,
-        rows=30,
-        backend="tmux-pty",
-    )
-
-    assert terminal_module._normalize_bridge_read(
-        handle,
-        {
-            "bridge_id": handle.bridge_id,
-            "data_b64": "",
-            "bytes": 0,
-            "eof": False,
-        },
-    ) == (b"", False)
-
-
-def test_terminal_bridge_normalization_accepts_conpty_without_resize():
-    handle = terminal_module._normalize_bridge_open(
-        "executor-a",
-        "demo",
-        100,
-        30,
-        {
-            "bridge_id": "bridge_capability_1234567890",
-            "shell_id": "demo",
-            "cols": 100,
-            "rows": 30,
-            "backend": "conpty",
-        },
-    )
-    terminal_module._normalize_bridge_resize(
-        handle,
-        {
-            "bridge_id": handle.bridge_id,
-            "cols": 120,
-            "rows": 40,
-            "resized": False,
-            "backend": "conpty",
-        },
-        120,
-        40,
-    )
-    with pytest.raises(RuntimeError, match="malformed terminal bridge resize"):
-        terminal_module._normalize_bridge_resize(
-            handle,
-            {
-                "bridge_id": handle.bridge_id,
-                "cols": 120,
-                "rows": 40,
-                "resized": False,
-                "backend": "tmux-pty",
-            },
-            120,
-            40,
-        )
-
-
-def test_terminal_websocket_raw_pty_streams_binary_and_closes_bridge(
-    monkeypatch, tmp_path
-):
+def test_terminal_websocket_rejects_legacy_raw_pty_mode(monkeypatch, tmp_path):
     client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
-    payload = b"\x1b[?1049hRAW\xff"
-    backend.bridge_reads.append(payload)
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
-    with client.websocket_connect(
-        _ws_path(client, "/ui/ws/terminals/demo?mode=auto&cols=90&rows=28"),
-        subprotocols=["workgate-ui-terminal", bearer],
-    ) as websocket:
-        ready = websocket.receive_json()
-        assert ready == {
-            "type": "ready",
-            "executor_id": client.executor_id,
-            "shell_id": "demo",
-            "mode": "pty",
-            "backend": "tmux-pty",
-        }
-        assert backend.bridge_id not in str(ready)
-        assert websocket.receive_bytes() == payload
-        websocket.send_bytes(b"\xff\x00")
-        websocket.send_json(
-            {"type": "input", "data": "echo raw", "enter": True}
-        )
-        websocket.send_json({"type": "resize", "cols": 120, "rows": 36})
-        websocket.send_json({"type": "ping"})
-        assert websocket.receive_json() == {
-            "type": "pong",
-            "executor_id": client.executor_id,
-            "shell_id": "demo",
-            "mode": "pty",
-        }
-        websocket.send_json({"type": "close"})
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/demo?mode=pty&cols=90&rows=28"),
+            subprotocols=["workgate-ui-terminal", bearer],
+        ),
+    ):
+        pass
 
-    write_payloads = [
-        base64.b64decode(str(args["data_b64"]))
-        for op, args in backend.calls
-        if op == "ui.terminals.bridge.write"
-    ]
-    assert b"\xff\x00" in write_payloads
-    assert b"echo raw\r" in write_payloads
-    assert (
-        "ui.terminals.bridge.resize",
-        {"bridge_id": backend.bridge_id, "cols": 120, "rows": 36},
-    ) in backend.calls
-    assert backend.calls[-1] == (
-        "ui.terminals.bridge.close",
-        {"bridge_id": backend.bridge_id},
+    assert caught.value.code == 4406
+    assert not any(
+        op.startswith("ui.terminals.bridge.") for op, _ in backend.calls
     )
-    assert all("session_id" not in args for _, args in backend.calls)
     assert human_ui_runtime().terminal_connections.active_count() == 0
 
 
-def test_terminal_websocket_auto_falls_back_to_snapshot(monkeypatch, tmp_path):
+def test_terminal_websocket_snapshot_compatibility(monkeypatch, tmp_path):
     client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
-    backend.failures["ui.terminals.bridge.open"] = (
-        TerminalBridgeUnsupportedError("PTY unavailable")
-    )
     backend.read_output = "fallback$ "
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
     with client.websocket_connect(
-        _ws_path(client, "/ui/ws/terminals/demo?mode=auto"),
+        _ws_path(client, "/ui/ws/terminals/demo?mode=snapshot"),
         subprotocols=["workgate-ui-terminal", bearer],
     ) as websocket:
         assert websocket.receive_json() == {
@@ -734,7 +629,68 @@ def test_terminal_websocket_auto_falls_back_to_snapshot(monkeypatch, tmp_path):
         }
         websocket.send_json({"type": "close"})
 
-    assert "ui.terminals.bridge.close" not in [op for op, _ in backend.calls]
+    assert not any(
+        op.startswith("ui.terminals.bridge.") for op, _ in backend.calls
+    )
+
+
+def test_terminal_attach_allocates_stream_grant_and_dispatches_executor_attach(
+    monkeypatch, tmp_path
+):
+    client, backend, harness = _client(monkeypatch, tmp_path, auth_mode="none")
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 101, "rows": 37},
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["executor_id"] == client.executor_id
+        assert data["shell_id"] == "demo"
+        assert data["stream_id"].startswith("stream_")
+        assert data["browser_token"]
+        assert data["mode"] == "pty"
+        assert data["backend"] == "tmux-pty"
+        attach = [args for op, args in backend.calls if op == "terminal.attach"]
+        assert attach == [
+            {
+                "stream_id": data["stream_id"],
+                "shell_id": "demo",
+                "cols": 101,
+                "rows": 37,
+            }
+        ]
+        assert harness.control.stream_hub.active_count() == 1
+        with (
+            client.websocket_connect(
+                f"/stream/{data['stream_id']}",
+                subprotocols=[
+                    TERMINAL_BROWSER_SUBPROTOCOL,
+                    f"{TERMINAL_BROWSER_TOKEN_PROTOCOL_PREFIX}wrong",
+                ],
+            ) as websocket,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            websocket.receive_text()
+        assert caught.value.code == 4401
+        assert harness.control.stream_hub.active_count() == 1
+
+
+def test_terminal_attach_failure_releases_pending_stream(monkeypatch, tmp_path):
+    client, backend, harness = _client(monkeypatch, tmp_path, auth_mode="none")
+    backend.failures["terminal.attach"] = RuntimeError("attach failed")
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 101, "rows": 37},
+        )
+
+        assert response.status_code == 502
+        assert "attach failed" in response.json()["message"]
+        assert harness.control.stream_hub.active_count() == 0
 
 
 def test_terminal_http_rejects_malformed_executor_inventory(
@@ -751,39 +707,6 @@ def test_terminal_http_rejects_malformed_executor_inventory(
     assert "malformed terminal inventory" in response.json()["message"]
 
 
-@pytest.mark.asyncio
-async def test_terminal_bridge_malformed_open_is_closed(monkeypatch, tmp_path):
-    client, backend, harness = _client(monkeypatch, tmp_path)
-    backend.overrides["ui.terminals.bridge.open"] = {
-        "bridge_id": backend.bridge_id,
-        "shell_id": "demo",
-        "cols": 81,
-        "rows": 24,
-        "backend": "tmux-pty",
-    }
-
-    with pytest.raises(RuntimeError, match="malformed terminal bridge open"):
-        await terminal_module._open_bridge(
-            harness.control,
-            harness.executor_id,
-            "demo",
-            80,
-            24,
-        )
-
-    assert backend.calls == [
-        (
-            "ui.terminals.bridge.open",
-            {"shell_id": "demo", "cols": 80, "rows": 24},
-        ),
-        (
-            "ui.terminals.bridge.close",
-            {"bridge_id": backend.bridge_id},
-        ),
-    ]
-    client.close()
-
-
 def test_terminal_read_normalization_rejects_oversized_executor_output():
     oversized = {
         "shell_id": "demo",
@@ -792,3 +715,95 @@ def test_terminal_read_normalization_rejects_oversized_executor_output():
 
     with pytest.raises(RuntimeError, match="oversized terminal output"):
         terminal_module._normalize_read("executor-a", "demo", 50, oversized)
+
+
+def test_terminal_http_maps_executor_connection_failure(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    async def fail_list(_runtime, _executor_id):
+        raise ConnectionError("executor offline")
+
+    monkeypatch.setattr(terminal_module, "_list_shells", fail_list)
+
+    response = client.get("/api/ui/terminals")
+
+    assert response.status_code == 503
+    assert "executor offline" in response.json()["message"]
+
+
+def test_terminal_attach_rejects_missing_shell(monkeypatch, tmp_path):
+    client, backend, harness = _client(monkeypatch, tmp_path)
+    backend.shells = [{"shell_id": "other", "cwd": "/workspace"}]
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 80, "rows": 24},
+        )
+
+    assert response.status_code == 400
+    assert "Persistent shell not found" in response.json()["message"]
+    assert harness.control.stream_hub.active_count() == 0
+
+
+def test_terminal_http_rejects_unknown_action(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/ui/terminals/unknown", json={})
+
+    assert response.status_code == 400
+    assert "Unsupported terminal action" in response.json()["message"]
+
+
+def test_terminal_websocket_rejects_malformed_request(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/bad%20id"),
+            subprotocols=["workgate-ui-terminal"],
+        ),
+    ):
+        pass
+
+    assert caught.value.code == 4400
+
+
+def test_terminal_websocket_maps_executor_connection_failure(
+    monkeypatch, tmp_path
+):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    async def fail_list(_runtime, _executor_id):
+        raise ConnectionError("executor offline")
+
+    monkeypatch.setattr(terminal_module, "_list_shells", fail_list)
+
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/demo"),
+            subprotocols=["workgate-ui-terminal"],
+        ),
+    ):
+        pass
+
+    assert caught.value.code == 1013
+    assert caught.value.reason == "executor offline"
+
+
+def test_terminal_websocket_rejects_invalid_oauth_bearer(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+
+    with (
+        pytest.raises(WebSocketDisconnect) as caught,
+        client.websocket_connect(
+            _ws_path(client, "/ui/ws/terminals/demo"),
+            subprotocols=["workgate-ui-terminal", "bearer.bm90LWEtand0"],
+        ),
+    ):
+        pass
+
+    assert caught.value.code == 4401
+    assert caught.value.reason == "Invalid OAuth bearer token"
