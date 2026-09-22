@@ -254,18 +254,29 @@ async def _job_projection(
     if status not in {"active", "terminating"}:
         return (
             [],
-            "Jobs are read-only history after the execution session ends.",
+            "Active jobs are unavailable after the execution session ends.",
         )
     try:
         output = await runtime.job_service.execute(
             session_id=session_id,
             list_jobs=True,
-            include_finished=True,
+            include_finished=False,
             lines=1,
         )
     except Exception as exc:
         return [], f"Job snapshot unavailable: {type(exc).__name__}"
     rows = output.jobs[:_JOB_LIMIT]
+    if len(output.jobs) > _JOB_LIMIT:
+        message = f"Showing {_JOB_LIMIT} most recent jobs."
+    elif output.message and output.message.startswith(
+        "Executor jobs unavailable"
+    ):
+        # ControlJobService may append backend exception text to this diagnostic.
+        # Keep the compact App on an explicit allow-list boundary instead of
+        # forwarding arbitrary executor/control error strings.
+        message = "Some executor job metadata is unavailable."
+    else:
+        message = None
     return (
         [
             LiveWorkspaceJob(
@@ -281,11 +292,7 @@ async def _job_projection(
             )
             for item in rows
         ],
-        (
-            f"Showing {_JOB_LIMIT} most recent jobs."
-            if len(output.jobs) > _JOB_LIMIT
-            else output.message
-        ),
+        message,
     )
 
 
@@ -405,7 +412,9 @@ async def live_workspace_snapshot(
             runtime,
             session_id=session_id,
             executor_id=str(record.executor_id),
-            workdir=record.requested_workdir,
+            # Deep links must follow the session's already-resolved binding, not
+            # re-resolve the user's original cwd spelling later.
+            workdir=record.resolved_workdir_display or record.requested_workdir,
             shell_id=shells[0].shell_id if shells else None,
         ),
     )

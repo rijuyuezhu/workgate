@@ -117,7 +117,13 @@ def _mock_host_html(path: Path) -> str:
     mock = f"""
 <script>
 window.__liveCalls = [];
-window.setInterval = () => 0;
+window.__liveIntervalCallbacks = [];
+window.__liveClearedIntervals = [];
+window.setInterval = (callback) => {{
+  window.__liveIntervalCallbacks.push(callback);
+  return window.__liveIntervalCallbacks.length;
+}};
+window.clearInterval = (id) => window.__liveClearedIntervals.push(id);
 const __initial = {json.dumps(initial)};
 const __blocked = {json.dumps(blocked)};
 const __refreshed = {json.dumps(refreshed)};
@@ -316,6 +322,29 @@ def run_live_workspace(harness: BrowserHarness) -> None:
                 },
             }
         ]
+
+        # A host teardown must stop the App itself, not merely detach the bridge
+        # listener while leaving the passive snapshot timer running.
+        tool_calls_before_teardown = page.evaluate(
+            "window.__liveCalls.filter((call) => call.name === 'tools/call').length"
+        )
+        page.evaluate(
+            """window.postMessage({
+                jsonrpc: "2.0",
+                id: 9001,
+                method: "ui/resource-teardown",
+                params: {}
+            }, "*")"""
+        )
+        page.wait_for_function("window.__liveClearedIntervals.includes(1)")
+        page.evaluate("window.__liveIntervalCallbacks[0]()")
+        page.wait_for_timeout(50)
+        assert (
+            page.evaluate(
+                "window.__liveCalls.filter((call) => call.name === 'tools/call').length"
+            )
+            == tool_calls_before_teardown
+        )
 
         assert not console_errors
         assert not page_errors
