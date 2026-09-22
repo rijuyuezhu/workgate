@@ -64,9 +64,9 @@
           },
           "string",
           {
-            "code": "0.0.0.0"
+            "code": "127.0.0.1"
           },
-          "Bind host for HTTP/MCP transports."
+          "Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments."
         ],
         [
           {
@@ -1892,9 +1892,9 @@
     {
       "choices": [],
       "cli": "--host",
-      "default": "0.0.0.0",
-      "default_display": "0.0.0.0",
-      "description": "Bind host for HTTP/MCP transports.",
+      "default": "127.0.0.1",
+      "default_display": "127.0.0.1",
+      "description": "Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments.",
       "env": "WORKGATE_HOST",
       "name": "host",
       "nullable": false,

@@ -1,13 +1,13 @@
 # Human interface
 
-The HTTP server includes a browser interface for managing the control service and paired executors. An optional OpenTUI client provides the same main areas in a terminal.
+The HTTP control process includes a browser interface for managing the control service and paired executors. An optional OpenTUI client provides the same main areas in a terminal.
 
 ## Start the browser interface
 
-Run the HTTP server:
+Run the HTTP control process:
 
 ```bash
-workgate server --mode http
+workgate control --mode http
 ```
 
 Open:
@@ -22,7 +22,7 @@ The UI path and enablement can be changed through `WORKGATE_UI_PATH` and `WORKGA
 
 ## Start OpenTUI
 
-Keep the HTTP server running, then start the terminal client in another terminal:
+Keep the HTTP control running, then start the terminal client in another terminal:
 
 ```bash
 workgate tui

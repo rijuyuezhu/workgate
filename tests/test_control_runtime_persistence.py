@@ -156,6 +156,59 @@ async def test_control_runtime_restores_only_durable_product_facts(
 
 
 @pytest.mark.asyncio
+async def test_executor_trust_survives_seven_day_control_shutdown(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        workspace_root=tmp_path,
+        state_dir=tmp_path / "state",
+        data_dir=tmp_path / "data",
+    )
+    executor_id = new_executor_id()
+    credential = new_executor_credential()
+    hello = ExecutorHelloRequest(
+        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        sessions=(),
+        shells=(),
+        jobs=(),
+    )
+
+    first = build_control_runtime(settings)
+    await first.start()
+    first.control_state.put_executor(
+        ExecutorTrustRecord(
+            executor_id=executor_id,
+            name="week-offline",
+            credential_verifier=executor_credential_verifier(credential),
+            created_at=1_000.0,
+        )
+    )
+    await first.executor_transport.hello(credential, hello)
+    await first.aclose()
+
+    seven_days_later = 1_000.0 + 7 * 24 * 60 * 60
+    second = build_control_runtime(settings)
+    second.executor_transport._wall_clock = lambda: seven_days_later
+    await second.start()
+    try:
+        assert not await second.executor_transport.is_online(executor_id)
+
+        await second.executor_transport.hello(credential, hello)
+
+        assert await second.executor_transport.is_online(executor_id)
+        assert (
+            await second.executor_transport.last_seen_at(executor_id)
+            == seven_days_later
+        )
+        assert (
+            second.control_state.snapshot_executors()[executor_id].revoked_at
+            is None
+        )
+    finally:
+        await second.aclose()
+
+
+@pytest.mark.asyncio
 async def test_control_runtime_start_failure_discards_control_projection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

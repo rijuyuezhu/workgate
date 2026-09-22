@@ -28,6 +28,14 @@ def test_path_defaults_use_portable_posix_separators():
     assert surface.yaml_default(value) == "/workspace/.workgate"
 
 
+def test_register_setting_cli_args_rejects_unknown_exclusion():
+    with pytest.raises(ValueError, match="unregistered-setting"):
+        surface.register_setting_cli_args(
+            argparse.ArgumentParser(),
+            exclude_names={"unregistered-setting"},
+        )
+
+
 def test_surface_helpers_cover_passthrough_and_failure_paths(monkeypatch):
     assert surface.yaml_default("literal") == "literal"
 

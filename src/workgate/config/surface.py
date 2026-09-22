@@ -6,7 +6,7 @@ configuration files.
 """
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Annotated, Any, Literal, cast, get_args, get_origin
@@ -498,12 +498,25 @@ class BoolChoiceAction(argparse.Action):
         setattr(namespace, self.dest, values == "true")
 
 
-def register_setting_cli_args(parser: argparse.ArgumentParser) -> None:
-    """Register one CLI option for every Settings field, grouped by section."""
+def register_setting_cli_args(
+    parser: argparse.ArgumentParser,
+    *,
+    exclude_names: Collection[str] = (),
+) -> None:
+    """Register Settings CLI options, optionally excluding role-foreign fields."""
     validate_setting_specs()
+    excluded = frozenset(exclude_names)
+    unknown = excluded - SPECS_BY_NAME.keys()
+    if unknown:
+        raise ValueError(
+            f"Unknown setting names excluded from CLI: {sorted(unknown)}"
+        )
     for section, specs in SETTING_SPECS_BY_SECTION:
+        selected = [spec for spec in specs if spec.name not in excluded]
+        if not selected:
+            continue
         group = parser.add_argument_group(section)
-        for spec in specs:
+        for spec in selected:
             default_display = (
                 spec.dynamic_default_label
                 or default_to_string(spec.default)

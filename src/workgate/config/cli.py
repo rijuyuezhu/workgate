@@ -1,6 +1,7 @@
 """Shared argparse contracts for configuration-backed CLI commands."""
 
 import argparse
+from collections.abc import Collection
 
 from .settings import (
     Settings,
@@ -11,8 +12,12 @@ from .settings import (
 from .surface import cli_overrides_from_args, register_setting_cli_args
 
 
-def register_config_and_setting_args(parser: argparse.ArgumentParser) -> None:
-    """Register config-file selection and all Settings overrides."""
+def register_config_and_setting_args(
+    parser: argparse.ArgumentParser,
+    *,
+    exclude_setting_names: Collection[str] = (),
+) -> None:
+    """Register config-file selection and role-appropriate Settings overrides."""
     parser.add_argument(
         "--config",
         default=None,
@@ -22,7 +27,7 @@ def register_config_and_setting_args(parser: argparse.ArgumentParser) -> None:
             "This selects the config file and is not itself a Settings field."
         ),
     )
-    register_setting_cli_args(parser)
+    register_setting_cli_args(parser, exclude_names=exclude_setting_names)
 
 
 def settings_from_args(

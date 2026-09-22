@@ -10,11 +10,11 @@ Settings resolve in this order:
 defaults < config file < WORKGATE_* environment variables < CLI arguments
 ```
 
-The config file is selected as `--config PATH`, then `WORKGATE_CONFIG`, then the platform default config file when it exists. On Linux the default is `${XDG_CONFIG_HOME:-~/.config}/workgate/config.yaml`. A missing default config file is normal and is not created implicitly. Executor commands use the same settings loader, so machine policy such as `workspace_root`, path restrictions, and executable choices must be configured on the executor host rather than assumed from control.
+The config file is selected as `--config PATH`, then `WORKGATE_CONFIG`, then the platform default config file when it exists. On Linux the default is `${XDG_CONFIG_HOME:-~/.config}/workgate/config.yaml`. A missing default config file is normal and is not created implicitly. Executor commands use the same settings loader, so machine policy such as `workspace_root`, path restrictions, and executable choices must be configured on the executor host rather than assumed from control. The generated registry below describes the shared settings schema; a role's `--help` is authoritative for its CLI overrides, and `workgate control` deliberately omits executor-only machine-policy flags.
 
 YAML config files use flat setting names such as `auth_mode` and `workspace_root`. Nested groups are not read by the application settings loader. Filesystem paths stored in YAML are persistent configuration: after `~` and environment-variable expansion they must be absolute. Relative YAML paths such as `./project` or `../state` are rejected. Relative path overrides from environment variables and CLI arguments remain invocation-oriented and resolve against the directory Workgate was started from.
 
-`workspace_root` is the user-content filesystem boundary, not an application-data directory. If it is omitted, Workgate uses the process invocation CWD. Changing a session or shell CWD inside that workspace does not change the boundary. Long-running services should set their launcher working directory or configure `workspace_root` explicitly rather than relying on an incidental daemon CWD.
+`workspace_root` is the executor's user-content filesystem boundary, not an application-data directory. If it is omitted, the executor uses its process invocation CWD. Changing a session or shell CWD inside that workspace does not change the boundary. Long-running executors should set an explicit `workspace_root` rather than relying on an incidental service-manager CWD.
 
 ## Application-owned paths
 

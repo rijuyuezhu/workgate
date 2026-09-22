@@ -1,6 +1,8 @@
 # Install options
 
-Choose where commands should run and how much isolation you need.
+Install Workgate on the machine that hosts the control process and on every
+machine that should act as an executor. They may be the same physical machine,
+but they are separate runtime roles.
 
 ## Local source checkout
 
@@ -11,10 +13,11 @@ git clone https://github.com/rijuyuezhu/workgate.git
 cd workgate
 uv sync
 cp .env.example .env
-uv run workgate server --mode mcp
+uv run workgate control --mode mcp
 ```
 
-Continue with the [Quickstart](quickstart.md) to configure OAuth, HTTPS, and a client connection.
+Continue with the [Quickstart](quickstart.md) to configure OAuth, HTTPS, pair an
+executor, and connect a client.
 
 ## Python package
 
@@ -25,17 +28,40 @@ pipx install workgate
 # or
 pip install workgate
 
-workgate server --mode mcp
+workgate control --mode mcp
 ```
 
-Platform-specific wheels include the native OpenTUI client on supported platforms. A universal wheel may provide only the server; the browser interface remains available.
+Platform-specific wheels include the native OpenTUI client on supported
+platforms. A universal wheel may omit the native TUI; the browser interface
+remains available.
 
 ## Release archive
 
-Best for a self-contained installation without managing a Python environment. Download the archive for your operating system and architecture from the GitHub release, then set an explicit workspace:
+Best for a self-contained installation without managing a Python environment.
+Download the archive for your operating system and architecture from the
+GitHub release, then run the control role explicitly:
 
 ```bash
-WORKGATE_WORKSPACE_ROOT=/path/to/project   ./workgate server --mode mcp
+./workgate control --mode mcp
 ```
 
-Host commands such as Git, compilers, package managers, and shells still need to be installed on the machine where the server runs. POSIX persistent shells also require tmux.
+Workspace authority does not belong to the control process. On the machine
+that should execute shell, file, Git, and tool operations, create an executor
+config such as:
+
+```yaml
+workspace_root: /path/to/project
+allow_full_control: false
+```
+
+Pair that executor once, then run it:
+
+```bash
+./workgate executor connect https://control.example.com \
+  --config /path/to/executor.yaml
+./workgate executor run --config /path/to/executor.yaml
+```
+
+Host commands such as Git, compilers, package managers, shells, `tmux`, and
+`ripgrep` need to be installed on the **executor** machine, not on a remote
+control-only VPS.

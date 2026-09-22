@@ -1,29 +1,96 @@
-"""Command-line registration for the control server adapters."""
+"""Command-line registration for the control process."""
 
 import argparse
+from collections.abc import Generator
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from typing import Any
 
+from ..app_paths import ensure_private_directory
 from ..config.cli import register_config_and_setting_args, settings_from_args
+from ..config.settings import configure_settings
+from ..utils.private_files import private_file_lock
 from .http.app import run_http
 from .mcp.app import run_mcp
 from .runtime import build_control_runtime
 
+CONTROL_EXCLUDED_SETTING_NAMES = frozenset(
+    {
+        "workspace_root",
+        "allow_full_control",
+        "run_shell_default_timeout_s",
+        "run_shell_max_timeout_s",
+        "max_output_bytes",
+        "max_job_log_bytes",
+        "max_jobs",
+        "max_session_snapshots",
+        "max_session_snapshot_bytes",
+        "max_file_read_bytes",
+        "max_view_image_bytes",
+        "max_file_write_bytes",
+        "max_grep_results",
+        "max_directory_entries",
+        "max_glob_results",
+        "max_tree_entries",
+        "max_tmp_files",
+        "max_tmp_bytes",
+        "max_transfer_archive_entries",
+        "max_transfer_unpacked_bytes",
+        "max_concurrent_commands",
+        "max_tmux_sessions",
+        "max_skills",
+        "max_skill_related_files",
+        "max_skill_scan_entries",
+        "max_skill_path_bytes",
+        "command_denylist",
+        "path_denylist",
+        "shell_executable",
+        "tmux_bin",
+        "rg_bin",
+        "git_bin",
+        "python_bin",
+    }
+)
 
-def register_server_cli(subparsers: Any) -> argparse.ArgumentParser:
-    """Register the explicit server command and its Settings overrides."""
+
+def register_control_cli(subparsers: Any) -> argparse.ArgumentParser:
+    """Register the production control-process entrypoint."""
     parser = subparsers.add_parser(
-        "server",
-        help="Run the configured MCP or REST server",
-        description="Run the configured MCP or REST server.",
+        "control",
+        help="Run the Workgate control process",
+        description="Run the Workgate control process.",
     )
-    register_config_and_setting_args(parser)
-    parser.set_defaults(handler=run_server_from_args)
+    register_config_and_setting_args(
+        parser,
+        exclude_setting_names=CONTROL_EXCLUDED_SETTING_NAMES,
+    )
+    parser.set_defaults(handler=run_control_from_args)
     return parser
 
 
-def run_server_from_args(args: argparse.Namespace) -> None:
-    """Load settings and launch the selected control server adapter."""
-    settings = settings_from_args(args, configure=True)
+class ControlAlreadyRunningError(RuntimeError):
+    """Raised when another process already owns the control state root."""
+
+
+@contextmanager
+def control_run_lock(state_dir: Path) -> Generator[None]:
+    """Hold one non-blocking single-writer lock for the control state root."""
+    control_dir = ensure_private_directory(state_dir / "control")
+    stack = ExitStack()
+    try:
+        stack.enter_context(
+            private_file_lock(control_dir / "run.lock", timeout_s=0)
+        )
+    except TimeoutError as exc:
+        raise ControlAlreadyRunningError(
+            "control state is already active in another process"
+        ) from exc
+    with stack:
+        yield
+
+
+def _dispatch_control(settings: Any) -> None:
+    """Build one control runtime and launch the selected transport adapter."""
     runtime = build_control_runtime(settings)
     match runtime.config.mode:
         case "http":
@@ -36,3 +103,17 @@ def run_server_from_args(args: argparse.Namespace) -> None:
             )
         case _:
             raise SystemExit(f"Unsupported mode: {runtime.config.mode}")
+
+
+def run_control_from_args(args: argparse.Namespace) -> None:
+    """Load production control settings without acquiring executor workspace authority."""
+    settings = settings_from_args(args, configure=False)
+    ensure_private_directory(settings.state_dir)
+    ensure_private_directory(settings.data_dir)
+    ensure_private_directory(settings.audit_log_path.parent)
+    configure_settings(settings)
+    try:
+        with control_run_lock(settings.state_dir):
+            _dispatch_control(settings)
+    except ControlAlreadyRunningError as exc:
+        raise SystemExit(str(exc)) from exc

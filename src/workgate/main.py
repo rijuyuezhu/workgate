@@ -3,7 +3,7 @@
 import argparse
 
 from .agent_bridge.cli import register_mcp_cli
-from .control.cli import register_server_cli
+from .control.cli import register_control_cli
 from .executor.cli import register_executor_cli
 from .executor.jobs.cli import register_job_runner_cli
 from .ui.cli import register_tui_cli
@@ -14,7 +14,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build the root parser from domain-owned subcommand registrations."""
     parser = argparse.ArgumentParser(
         prog="workgate",
-        description="Run a control server, executor, native TUI, or Agent Bridge command.",
+        description="Run a control process, executor, native TUI, or Agent Bridge command.",
     )
     parser.add_argument(
         "--version",
@@ -26,7 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="COMMAND",
     )
-    register_server_cli(subparsers)
+    register_control_cli(subparsers)
     register_tui_cli(subparsers)
     register_mcp_cli(subparsers)
     register_executor_cli(subparsers)
