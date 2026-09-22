@@ -16,6 +16,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
         port=9876,
         command_denylist=["shutdown"],
         path_denylist=[".env"],
+        ui_terminal_max_connections=23,
         executor_max_pending_commands=17,
     )
 
@@ -26,6 +27,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     assert control.port == 9876
     assert control.state_dir == settings.state_dir.resolve(strict=False)
     assert control.data_dir == settings.data_dir.resolve(strict=False)
+    assert control.ui_terminal_max_connections == 23
     assert control.executor_max_pending_commands == 17
     assert not hasattr(control, "workspace_root")
     assert not hasattr(control, "command_denylist")

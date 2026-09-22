@@ -21,6 +21,7 @@ from workgate.config.surface import (
     cli_overrides_from_args,
     register_setting_cli_args,
 )
+from workgate.executor.config import ExecutorConfig
 
 
 def _command_parser(name: str) -> argparse.ArgumentParser:
@@ -159,6 +160,26 @@ def test_control_help_omits_executor_machine_policy(capsys):
     for flag in excluded_flags:
         assert flag not in help_text
     assert "--max-todos" in help_text
+
+
+def test_control_cli_excludes_every_executor_only_setting():
+    shared_role_settings = {
+        "state_dir",
+        "ui_terminal_idle_timeout_s",
+        "ui_terminal_max_connections",
+        "agent_config_dir",
+        "agent_auth_dir",
+        "agent_mcp_probe_timeout_s",
+        "agent_mcp_call_timeout_s",
+    }
+    executor_derived_fields = {"temp_dir"}
+    executor_only_settings = (
+        set(ExecutorConfig.__dataclass_fields__)
+        - shared_role_settings
+        - executor_derived_fields
+    )
+
+    assert executor_only_settings == server_cli.CONTROL_EXCLUDED_SETTING_NAMES
 
 
 def test_version_option_prints_package_version(capsys):
