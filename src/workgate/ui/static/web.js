@@ -47,6 +47,32 @@ void (async () => {
     config.sessionEstablishedStorageKey || "workgate-ui-session-established",
   );
   sessionStorage.removeItem(legacyTokenStorageKey);
+
+  function normalizeUiReturnUrl(value) {
+    try {
+      const candidate = new URL(String(value || uiPath), location.origin);
+      if (candidate.origin !== location.origin || candidate.pathname !== uiPath) return uiPath;
+      return `${candidate.pathname}${candidate.search}${candidate.hash}`;
+    } catch {
+      return uiPath;
+    }
+  }
+
+  function startupUiLocation() {
+    const current = new URL(location.href);
+    if (current.pathname !== `${uiPath}/callback`) return current;
+    try {
+      const pending = JSON.parse(sessionStorage.getItem(pendingStorageKey) || "null");
+      if (pending && typeof pending.returnUrl === "string") {
+        return new URL(normalizeUiReturnUrl(pending.returnUrl), location.origin);
+      }
+    } catch {
+      // Invalid pending OAuth state is handled by finishOAuthCallback().
+    }
+    return current;
+  }
+
+  const initialUiLocation = startupUiLocation();
   const viewDefinitions = Object.freeze({
     overview: {
       title: "Overview",
@@ -256,6 +282,19 @@ void (async () => {
     return String(value);
   }
 
+  const deepLinkParams = initialUiLocation.searchParams;
+  function deepLinkValue(name, maxLength) {
+    const value = String(deepLinkParams.get(name) || "").trim();
+    return value.slice(0, maxLength);
+  }
+  const deepLink = Object.freeze({
+    sessionId: deepLinkValue("session_id", 128),
+    executorId: deepLinkValue("executor_id", 255),
+    workdir: deepLinkValue("workdir", 4096),
+    shellId: deepLinkValue("shell_id", 255),
+  });
+  const deepLinkActive = Object.values(deepLink).some(Boolean);
+
   const {
     auditEntryButton,
     auditEntryTitle,
@@ -273,6 +312,7 @@ void (async () => {
     auditTimestamp,
     renderAuditDetailInto,
     renderAuditDetailMessage,
+    initialSessionId: deepLink.sessionId,
   });
   audit.bind();
 
@@ -286,6 +326,9 @@ void (async () => {
     sessionBindingProtocolPrefix,
     showAuthentication,
     onAuthenticationRequired: () => void load(),
+    initialExecutorId: deepLink.executorId,
+    initialSessionId: deepLink.sessionId,
+    initialShellId: deepLink.shellId,
   });
   terminal.bind();
 
@@ -294,9 +337,10 @@ void (async () => {
     request,
     text,
     formatFileBytes,
+    initialExecutorId: deepLink.executorId,
+    initialPath: deepLink.workdir,
   });
   files.bind();
-
 
   const sessions = createSessionsController({
     elements,
@@ -307,6 +351,8 @@ void (async () => {
     auditTimestamp,
     renderAuditDetailInto,
     renderAuditDetailMessage,
+    initialExecutorId: deepLink.executorId,
+    initialSessionId: deepLink.sessionId,
   });
   sessions.bind();
 
@@ -336,9 +382,9 @@ void (async () => {
     return candidate;
   }
 
-  function viewFromLocation() {
-    const hashView = location.hash.slice(1);
-    if (!hashView && location.pathname === "/pair") return "executors";
+  function viewFromLocation(source = location) {
+    const hashView = source.hash.slice(1);
+    if (!hashView && source.pathname === "/pair") return "executors";
     return normalizeView(hashView);
   }
 
@@ -530,8 +576,8 @@ void (async () => {
     return String(value || "").replace(/\/+$/, "");
   }
 
-  function cleanCallbackUrl() {
-    history.replaceState({}, "", uiPath);
+  function cleanCallbackUrl(returnUrl = uiPath) {
+    history.replaceState({}, "", normalizeUiReturnUrl(returnUrl));
   }
 
   function parsePendingOAuth() {
@@ -555,6 +601,8 @@ void (async () => {
       pending.state.length >= 32 &&
       typeof pending.redirectUri === "string" &&
       pending.redirectUri === callbackUrl() &&
+      typeof pending.returnUrl === "string" &&
+      pending.returnUrl === normalizeUiReturnUrl(pending.returnUrl) &&
       typeof pending.createdAt === "number" &&
       Number.isFinite(pending.createdAt);
     if (!valid) {
@@ -609,6 +657,7 @@ void (async () => {
           verifier,
           state,
           redirectUri,
+          returnUrl: normalizeUiReturnUrl(location.href),
           createdAt: Date.now(),
         }),
       );
@@ -693,7 +742,7 @@ void (async () => {
     }
     announceSessionEstablished();
     sessionStorage.removeItem(pendingStorageKey);
-    cleanCallbackUrl();
+    cleanCallbackUrl(pending.returnUrl);
     return true;
   }
 
@@ -863,7 +912,13 @@ void (async () => {
   });
 
   for (const item of elements.appNavItems) {
-    item.addEventListener("click", () => setActiveView(item.dataset.view));
+    item.addEventListener("click", () => {
+      if (deepLinkActive) {
+        location.assign(`${uiPath}#${normalizeView(item.dataset.view)}`);
+        return;
+      }
+      setActiveView(item.dataset.view);
+    });
   }
   if (!config.opentuiAvailable) {
     const consoleNav = elements.appNavItems.find((item) => item.dataset.view === "console");
@@ -890,7 +945,7 @@ void (async () => {
   });
   elements.oauthLogin.hidden = !oauthAvailable();
   elements.authMode.textContent = text(config.authMode);
-  setActiveView(viewFromLocation(), { replaceHash: true });
+  setActiveView(viewFromLocation(initialUiLocation), { replaceHash: true });
   void boot();
   window.setInterval(() => {
     terminal.ping();

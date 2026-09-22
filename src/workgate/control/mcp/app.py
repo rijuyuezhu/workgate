@@ -28,6 +28,7 @@ from ..http.stream_routes import terminal_stream_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from ..tool_timeouts import tool_timeout_s
 from .instructions import SERVER_INSTRUCTIONS
+from .live_workspace import register_live_workspace
 from .session_limits import McpSessionLimitMiddleware
 from .transport_security import transport_security_settings
 from .watchdogs import install_mcp_tool_watchdogs
@@ -88,6 +89,7 @@ def build_mcp(
         read_only_tool_annotations=_make_read_only_tool_annotations(),
     )
     catalog.register_mcp(mcp, context)
+    register_live_workspace(mcp, runtime)
     install_tool_safety_annotations(mcp)
     install_mcp_tool_watchdogs(mcp)
     return mcp

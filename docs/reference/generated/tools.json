@@ -1,11 +1,11 @@
 {
-  "count": 40,
+  "count": 44,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "40"
+          "code": "44"
         },
         "."
       ],
@@ -1590,6 +1590,114 @@
             ]
           },
           "Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id."
+        ]
+      ]
+    },
+    {
+      "body": "",
+      "headers": [
+        "Tool",
+        "Parameters",
+        "Description"
+      ],
+      "heading": "Other",
+      "kind": "table",
+      "rows": [
+        [
+          {
+            "code": "workspace_end"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "confirm_session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "End the explicit Live Workspace session after a separate human confirmation. confirm_session_id must repeat session_id exactly."
+        ],
+        [
+          {
+            "code": "workspace_open"
+          },
+          {
+            "items": [
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Open the Live Workspace for one explicit existing Workgate session_id. This never creates, lists, guesses, rebinds, or revives a session."
+        ],
+        [
+          {
+            "code": "workspace_snapshot"
+          },
+          {
+            "items": [
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Refresh the MCP App snapshot for the same explicit Workgate session."
+        ],
+        [
+          {
+            "code": "workspace_task_control"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "action"
+                },
+                "note": "(block / resume / cancel / next_instruction, required)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "expected_revision"
+                },
+                "note": "(integer, required)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "instruction"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Apply one safe semantic task control from the Live Workspace."
         ]
       ]
     }
@@ -8501,6 +8609,569 @@
     },
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "End the explicit Live Workspace session after a separate human confirmation. confirm_session_id must repeat session_id exactly.",
+      "inputSchema": {
+        "properties": {
+          "confirm_session_id": {
+            "title": "Confirm Session Id",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "confirm_session_id"
+        ],
+        "title": "workspace_endArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
+      "name": "workspace_end",
+      "outputSchema": {
+        "description": "Result of an explicitly confirmed Live Workspace session end.",
+        "properties": {
+          "ended": {
+            "title": "Ended",
+            "type": "boolean"
+          },
+          "force_released": {
+            "default": false,
+            "title": "Force Released",
+            "type": "boolean"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "stopped_jobs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stopped Jobs",
+            "type": "array"
+          },
+          "stopped_shells": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stopped Shells",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_id",
+          "ended"
+        ],
+        "title": "LiveWorkspaceEndOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Open the Live Workspace for one explicit existing Workgate session_id. This never creates, lists, guesses, rebinds, or revives a session.",
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "workspace_openArguments",
+        "type": "object"
+      },
+      "meta": {
+        "openai/outputTemplate": "ui://workgate/live-workspace-d169249759e66946.html",
+        "openai/toolInvocation/invoked": "Live Workspace ready",
+        "openai/toolInvocation/invoking": "Opening Live Workspace",
+        "openai/widgetAccessible": true,
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "resourceUri": "ui://workgate/live-workspace-d169249759e66946.html"
+        },
+        "ui/resourceUri": "ui://workgate/live-workspace-d169249759e66946.html"
+      },
+      "name": "workspace_open",
+      "outputSchema": {
+        "$defs": {
+          "LiveWorkspaceActivity": {
+            "description": "Allow-listed audit identity fields for recent activity.",
+            "properties": {
+              "duration_ms": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration Ms"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Event"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "ok": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ok"
+              },
+              "operation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Operation"
+              },
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Tool"
+              },
+              "ts": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ts"
+              }
+            },
+            "title": "LiveWorkspaceActivity",
+            "type": "object"
+          },
+          "LiveWorkspaceJob": {
+            "description": "Bounded job metadata safe for the compact Live Workspace.",
+            "properties": {
+              "attempts": {
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "completed_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Completed At"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "cwd": {
+                "title": "Cwd",
+                "type": "string"
+              },
+              "job_id": {
+                "title": "Job Id",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "number"
+              }
+            },
+            "required": [
+              "job_id",
+              "kind",
+              "name",
+              "status",
+              "cwd",
+              "created_at",
+              "updated_at",
+              "attempts"
+            ],
+            "title": "LiveWorkspaceJob",
+            "type": "object"
+          },
+          "LiveWorkspaceLinks": {
+            "description": "Links to fuller authenticated Human UI views.",
+            "properties": {
+              "audit": {
+                "title": "Audit",
+                "type": "string"
+              },
+              "files": {
+                "title": "Files",
+                "type": "string"
+              },
+              "sessions": {
+                "title": "Sessions",
+                "type": "string"
+              },
+              "terminals": {
+                "title": "Terminals",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sessions",
+              "files",
+              "terminals",
+              "audit"
+            ],
+            "title": "LiveWorkspaceLinks",
+            "type": "object"
+          },
+          "LiveWorkspaceSession": {
+            "description": "Canonical Workgate session identity and availability projection.",
+            "properties": {
+              "availability": {
+                "title": "Availability",
+                "type": "string"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "executor_id": {
+                "title": "Executor Id",
+                "type": "string"
+              },
+              "executor_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Executor Name"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "last_active_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Active At"
+              },
+              "session_id": {
+                "title": "Session Id",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "number"
+              },
+              "workdir": {
+                "title": "Workdir",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id",
+              "executor_id",
+              "workdir",
+              "status",
+              "availability",
+              "created_at",
+              "updated_at"
+            ],
+            "title": "LiveWorkspaceSession",
+            "type": "object"
+          },
+          "LiveWorkspaceShell": {
+            "description": "Bounded persistent-shell metadata without command or terminal output.",
+            "properties": {
+              "backend": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Backend"
+              },
+              "cwd": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Cwd"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "shell_id": {
+                "title": "Shell Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shell_id"
+            ],
+            "title": "LiveWorkspaceShell",
+            "type": "object"
+          }
+        },
+        "description": "Server-reconstructed view of one explicit Workgate session.",
+        "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceActivity"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "compatibility_plan": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Compatibility Plan",
+            "type": "array"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "jobs_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Jobs Message"
+          },
+          "links": {
+            "$ref": "#/$defs/LiveWorkspaceLinks"
+          },
+          "session": {
+            "$ref": "#/$defs/LiveWorkspaceSession"
+          },
+          "shells": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceShell"
+            },
+            "title": "Shells",
+            "type": "array"
+          },
+          "shells_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shells Message"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task"
+          },
+          "task_control_actions": {
+            "items": {
+              "enum": [
+                "block",
+                "resume",
+                "cancel",
+                "next_instruction"
+              ],
+              "type": "string"
+            },
+            "title": "Task Control Actions",
+            "type": "array"
+          },
+          "task_controls_available": {
+            "default": false,
+            "title": "Task Controls Available",
+            "type": "boolean"
+          },
+          "task_controls_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Controls Message"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session",
+          "links"
+        ],
+        "title": "LiveWorkspaceSnapshot",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
@@ -8589,6 +9260,985 @@
           "results"
         ],
         "title": "SearchOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Refresh the MCP App snapshot for the same explicit Workgate session.",
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "workspace_snapshotArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
+      "name": "workspace_snapshot",
+      "outputSchema": {
+        "$defs": {
+          "LiveWorkspaceActivity": {
+            "description": "Allow-listed audit identity fields for recent activity.",
+            "properties": {
+              "duration_ms": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration Ms"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Event"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "ok": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ok"
+              },
+              "operation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Operation"
+              },
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Tool"
+              },
+              "ts": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ts"
+              }
+            },
+            "title": "LiveWorkspaceActivity",
+            "type": "object"
+          },
+          "LiveWorkspaceJob": {
+            "description": "Bounded job metadata safe for the compact Live Workspace.",
+            "properties": {
+              "attempts": {
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "completed_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Completed At"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "cwd": {
+                "title": "Cwd",
+                "type": "string"
+              },
+              "job_id": {
+                "title": "Job Id",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "number"
+              }
+            },
+            "required": [
+              "job_id",
+              "kind",
+              "name",
+              "status",
+              "cwd",
+              "created_at",
+              "updated_at",
+              "attempts"
+            ],
+            "title": "LiveWorkspaceJob",
+            "type": "object"
+          },
+          "LiveWorkspaceLinks": {
+            "description": "Links to fuller authenticated Human UI views.",
+            "properties": {
+              "audit": {
+                "title": "Audit",
+                "type": "string"
+              },
+              "files": {
+                "title": "Files",
+                "type": "string"
+              },
+              "sessions": {
+                "title": "Sessions",
+                "type": "string"
+              },
+              "terminals": {
+                "title": "Terminals",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sessions",
+              "files",
+              "terminals",
+              "audit"
+            ],
+            "title": "LiveWorkspaceLinks",
+            "type": "object"
+          },
+          "LiveWorkspaceSession": {
+            "description": "Canonical Workgate session identity and availability projection.",
+            "properties": {
+              "availability": {
+                "title": "Availability",
+                "type": "string"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "executor_id": {
+                "title": "Executor Id",
+                "type": "string"
+              },
+              "executor_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Executor Name"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "last_active_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Active At"
+              },
+              "session_id": {
+                "title": "Session Id",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "number"
+              },
+              "workdir": {
+                "title": "Workdir",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id",
+              "executor_id",
+              "workdir",
+              "status",
+              "availability",
+              "created_at",
+              "updated_at"
+            ],
+            "title": "LiveWorkspaceSession",
+            "type": "object"
+          },
+          "LiveWorkspaceShell": {
+            "description": "Bounded persistent-shell metadata without command or terminal output.",
+            "properties": {
+              "backend": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Backend"
+              },
+              "cwd": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Cwd"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "shell_id": {
+                "title": "Shell Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shell_id"
+            ],
+            "title": "LiveWorkspaceShell",
+            "type": "object"
+          }
+        },
+        "description": "Server-reconstructed view of one explicit Workgate session.",
+        "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceActivity"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "compatibility_plan": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Compatibility Plan",
+            "type": "array"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "jobs_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Jobs Message"
+          },
+          "links": {
+            "$ref": "#/$defs/LiveWorkspaceLinks"
+          },
+          "session": {
+            "$ref": "#/$defs/LiveWorkspaceSession"
+          },
+          "shells": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceShell"
+            },
+            "title": "Shells",
+            "type": "array"
+          },
+          "shells_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shells Message"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task"
+          },
+          "task_control_actions": {
+            "items": {
+              "enum": [
+                "block",
+                "resume",
+                "cancel",
+                "next_instruction"
+              ],
+              "type": "string"
+            },
+            "title": "Task Control Actions",
+            "type": "array"
+          },
+          "task_controls_available": {
+            "default": false,
+            "title": "Task Controls Available",
+            "type": "boolean"
+          },
+          "task_controls_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Controls Message"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session",
+          "links"
+        ],
+        "title": "LiveWorkspaceSnapshot",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Apply one safe semantic task control from the Live Workspace.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "block",
+              "resume",
+              "cancel",
+              "next_instruction"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instruction"
+          },
+          "session_id": {
+            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "action",
+          "expected_revision"
+        ],
+        "title": "workspace_task_controlArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
+      "name": "workspace_task_control",
+      "outputSchema": {
+        "$defs": {
+          "LiveWorkspaceActivity": {
+            "description": "Allow-listed audit identity fields for recent activity.",
+            "properties": {
+              "duration_ms": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration Ms"
+              },
+              "event": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Event"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Id"
+              },
+              "ok": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ok"
+              },
+              "operation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Operation"
+              },
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Tool"
+              },
+              "ts": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Ts"
+              }
+            },
+            "title": "LiveWorkspaceActivity",
+            "type": "object"
+          },
+          "LiveWorkspaceJob": {
+            "description": "Bounded job metadata safe for the compact Live Workspace.",
+            "properties": {
+              "attempts": {
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "completed_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Completed At"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "cwd": {
+                "title": "Cwd",
+                "type": "string"
+              },
+              "job_id": {
+                "title": "Job Id",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "number"
+              }
+            },
+            "required": [
+              "job_id",
+              "kind",
+              "name",
+              "status",
+              "cwd",
+              "created_at",
+              "updated_at",
+              "attempts"
+            ],
+            "title": "LiveWorkspaceJob",
+            "type": "object"
+          },
+          "LiveWorkspaceLinks": {
+            "description": "Links to fuller authenticated Human UI views.",
+            "properties": {
+              "audit": {
+                "title": "Audit",
+                "type": "string"
+              },
+              "files": {
+                "title": "Files",
+                "type": "string"
+              },
+              "sessions": {
+                "title": "Sessions",
+                "type": "string"
+              },
+              "terminals": {
+                "title": "Terminals",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sessions",
+              "files",
+              "terminals",
+              "audit"
+            ],
+            "title": "LiveWorkspaceLinks",
+            "type": "object"
+          },
+          "LiveWorkspaceSession": {
+            "description": "Canonical Workgate session identity and availability projection.",
+            "properties": {
+              "availability": {
+                "title": "Availability",
+                "type": "string"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "executor_id": {
+                "title": "Executor Id",
+                "type": "string"
+              },
+              "executor_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Executor Name"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label"
+              },
+              "last_active_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Active At"
+              },
+              "session_id": {
+                "title": "Session Id",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "updated_at": {
+                "title": "Updated At",
+                "type": "number"
+              },
+              "workdir": {
+                "title": "Workdir",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id",
+              "executor_id",
+              "workdir",
+              "status",
+              "availability",
+              "created_at",
+              "updated_at"
+            ],
+            "title": "LiveWorkspaceSession",
+            "type": "object"
+          },
+          "LiveWorkspaceShell": {
+            "description": "Bounded persistent-shell metadata without command or terminal output.",
+            "properties": {
+              "backend": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Backend"
+              },
+              "cwd": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Cwd"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "shell_id": {
+                "title": "Shell Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shell_id"
+            ],
+            "title": "LiveWorkspaceShell",
+            "type": "object"
+          }
+        },
+        "description": "Server-reconstructed view of one explicit Workgate session.",
+        "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceActivity"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "compatibility_plan": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Compatibility Plan",
+            "type": "array"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "jobs_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Jobs Message"
+          },
+          "links": {
+            "$ref": "#/$defs/LiveWorkspaceLinks"
+          },
+          "session": {
+            "$ref": "#/$defs/LiveWorkspaceSession"
+          },
+          "shells": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceShell"
+            },
+            "title": "Shells",
+            "type": "array"
+          },
+          "shells_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Shells Message"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task"
+          },
+          "task_control_actions": {
+            "items": {
+              "enum": [
+                "block",
+                "resume",
+                "cancel",
+                "next_instruction"
+              ],
+              "type": "string"
+            },
+            "title": "Task Control Actions",
+            "type": "array"
+          },
+          "task_controls_available": {
+            "default": false,
+            "title": "Task Controls Available",
+            "type": "boolean"
+          },
+          "task_controls_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Controls Message"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session",
+          "links"
+        ],
+        "title": "LiveWorkspaceSnapshot",
         "type": "object"
       }
     },

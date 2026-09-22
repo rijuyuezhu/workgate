@@ -97,6 +97,32 @@ def _runtime(source: Request | WebSocket) -> Any:
     return runtime
 
 
+def _session_id_arg(value: Any) -> str | None:
+    if value in {None, ""}:
+        return None
+    return _bounded_text(
+        value, field="session_id", max_bytes=128, allow_empty=False
+    )
+
+
+def _require_session_binding(
+    runtime: Any, executor_id: str, session_id: str | None
+) -> None:
+    if session_id is None:
+        return
+    record = runtime.control_state.snapshot_sessions().get(session_id)
+    if record is None:
+        raise ValueError(f"unknown session_id {session_id!r}")
+    if str(record.executor_id) != executor_id:
+        raise ValueError(
+            f"session_id {session_id!r} is not bound to executor_id {executor_id!r}"
+        )
+    if str(record.status) != "active":
+        raise ValueError(
+            f"session_id {session_id!r} is {record.status}; terminal access requires an active session"
+        )
+
+
 async def _terminal_call(
     runtime: Any,
     executor_id: str,
@@ -106,11 +132,25 @@ async def _terminal_call(
     return await call_ui_executor(runtime, executor_id, op, args or {})
 
 
-async def _list_shells(runtime: Any, executor_id: str) -> dict[str, Any]:
+async def _list_shells(
+    runtime: Any, executor_id: str, session_id: str | None = None
+) -> dict[str, Any]:
+    _require_session_binding(runtime, executor_id, session_id)
     _executor_id, value = await _terminal_call(
-        runtime, executor_id, "ui.terminals.list"
+        runtime,
+        executor_id,
+        "ui.terminals.list",
+        {"session_id": session_id} if session_id is not None else {},
     )
     return _normalize_list(executor_id, value)
+
+
+async def _list_shells_for_scope(
+    runtime: Any, executor_id: str, session_id: str | None
+) -> dict[str, Any]:
+    if session_id is None:
+        return await _list_shells(runtime, executor_id)
+    return await _list_shells(runtime, executor_id, session_id)
 
 
 async def _start_shell(
@@ -120,12 +160,17 @@ async def _start_shell(
     cwd: str,
     name: str | None,
     command: str | None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
+    _require_session_binding(runtime, executor_id, session_id)
+    args: dict[str, JsonValue] = {"cwd": cwd, "name": name, "command": command}
+    if session_id is not None:
+        args["session_id"] = session_id
     _executor_id, value = await _terminal_call(
         runtime,
         executor_id,
         "ui.terminals.start",
-        {"cwd": cwd, "name": name, "command": command},
+        args,
     )
     return _normalize_start(executor_id, value)
 
@@ -136,12 +181,21 @@ async def _send_shell(
     shell_id: str,
     input_text: str,
     enter: bool,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
+    _require_session_binding(runtime, executor_id, session_id)
+    args: dict[str, JsonValue] = {
+        "shell_id": shell_id,
+        "input_text": input_text,
+        "enter": enter,
+    }
+    if session_id is not None:
+        args["session_id"] = session_id
     _executor_id, value = await _terminal_call(
         runtime,
         executor_id,
         "ui.terminals.send",
-        {"shell_id": shell_id, "input_text": input_text, "enter": enter},
+        args,
     )
     return _normalize_send(executor_id, shell_id, value)
 
@@ -152,12 +206,21 @@ async def _resize_shell(
     shell_id: str,
     cols: int,
     rows: int,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
+    _require_session_binding(runtime, executor_id, session_id)
+    args: dict[str, JsonValue] = {
+        "shell_id": shell_id,
+        "cols": cols,
+        "rows": rows,
+    }
+    if session_id is not None:
+        args["session_id"] = session_id
     _executor_id, value = await _terminal_call(
         runtime,
         executor_id,
         "ui.terminals.resize",
-        {"shell_id": shell_id, "cols": cols, "rows": rows},
+        args,
     )
     return _normalize_resize(executor_id, shell_id, cols, rows, value)
 
@@ -167,24 +230,36 @@ async def _read_shell(
     executor_id: str,
     shell_id: str,
     lines: int,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
+    _require_session_binding(runtime, executor_id, session_id)
+    args: dict[str, JsonValue] = {"shell_id": shell_id, "lines": lines}
+    if session_id is not None:
+        args["session_id"] = session_id
     _executor_id, value = await _terminal_call(
         runtime,
         executor_id,
         "ui.terminals.read",
-        {"shell_id": shell_id, "lines": lines},
+        args,
     )
     return _normalize_read(executor_id, shell_id, lines, value)
 
 
 async def _kill_shell(
-    runtime: Any, executor_id: str, shell_id: str
+    runtime: Any,
+    executor_id: str,
+    shell_id: str,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
+    _require_session_binding(runtime, executor_id, session_id)
+    args: dict[str, JsonValue] = {"shell_id": shell_id}
+    if session_id is not None:
+        args["session_id"] = session_id
     _executor_id, value = await _terminal_call(
         runtime,
         executor_id,
         "ui.terminals.kill",
-        {"shell_id": shell_id},
+        args,
     )
     return _normalize_kill(executor_id, shell_id, value)
 
@@ -195,8 +270,9 @@ async def _attach_stream(
     shell_id: str,
     cols: int,
     rows: int,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
-    shells = await _list_shells(runtime, executor_id)
+    shells = await _list_shells_for_scope(runtime, executor_id, session_id)
     if shell_id not in {
         str(item.get("shell_id") or "") for item in shells["shells"]
     }:
@@ -291,11 +367,16 @@ def _release_connection(marker: int) -> None:
 
 
 async def api_terminals(request: Request) -> Response:
-    """List persistent shells for one selected executor."""
+    """List persistent shells for one selected executor or explicit session."""
     try:
         executor_id = _executor_id_arg(request.query_params.get("executor_id"))
+        session_id = _session_id_arg(request.query_params.get("session_id"))
         _require_terminal_scopes()
-        return _json_ok(await _list_shells(_runtime(request), executor_id))
+        return _json_ok(
+            await _list_shells_for_scope(
+                _runtime(request), executor_id, session_id
+            )
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -306,6 +387,7 @@ async def api_terminal_read(request: Request) -> Response:
     """Return a bounded recent snapshot from one executor-owned shell."""
     try:
         executor_id = _executor_id_arg(request.query_params.get("executor_id"))
+        session_id = _session_id_arg(request.query_params.get("session_id"))
         _require_terminal_scopes()
         shell_id = _shell_id(request.query_params.get("shell_id"))
         lines = _bounded_int(
@@ -316,7 +398,9 @@ async def api_terminal_read(request: Request) -> Response:
             label="lines",
         )
         return _json_ok(
-            await _read_shell(_runtime(request), executor_id, shell_id, lines)
+            await _read_shell(
+                _runtime(request), executor_id, shell_id, lines, session_id
+            )
         )
     except HTTPException:
         raise
@@ -333,6 +417,7 @@ async def api_terminal_action(request: Request) -> Response:
             raise ValueError("Request body must be a JSON object")
         runtime = _runtime(request)
         executor_id = _executor_id_arg(body.get("executor_id"))
+        session_id = _session_id_arg(body.get("session_id"))
         _require_terminal_scopes(execute=True)
         match action:
             case "start":
@@ -362,6 +447,7 @@ async def api_terminal_action(request: Request) -> Response:
                     ),
                     name=name or None,
                     command=command or None,
+                    session_id=session_id,
                 )
             case "send" | "resize":
                 raise ValueError(
@@ -384,11 +470,14 @@ async def api_terminal_action(request: Request) -> Response:
                     label="rows",
                 )
                 result = await _attach_stream(
-                    runtime, executor_id, shell_id, cols, rows
+                    runtime, executor_id, shell_id, cols, rows, session_id
                 )
             case "kill":
                 result = await _kill_shell(
-                    runtime, executor_id, _shell_id(body.get("shell_id"))
+                    runtime,
+                    executor_id,
+                    _shell_id(body.get("shell_id")),
+                    session_id,
                 )
             case _:
                 raise ValueError(f"Unsupported terminal action: {action}")
@@ -421,16 +510,19 @@ async def ui_terminal_websocket(websocket: WebSocket) -> None:
         return
 
     runtime = _runtime(websocket)
+    session_id = _session_id_arg(websocket.query_params.get("session_id"))
     backend = TerminalWebSocketBackend(
-        list_shells=lambda executor_id: _list_shells(runtime, executor_id),
+        list_shells=lambda executor_id: _list_shells_for_scope(
+            runtime, executor_id, session_id
+        ),
         read_shell=lambda executor_id, shell_id, lines: _read_shell(
-            runtime, executor_id, shell_id, lines
+            runtime, executor_id, shell_id, lines, session_id
         ),
         send_shell=lambda executor_id, shell_id, input_text, enter: _send_shell(
-            runtime, executor_id, shell_id, input_text, enter
+            runtime, executor_id, shell_id, input_text, enter, session_id
         ),
         resize_shell=lambda executor_id, shell_id, cols, rows: _resize_shell(
-            runtime, executor_id, shell_id, cols, rows
+            runtime, executor_id, shell_id, cols, rows, session_id
         ),
     )
     await serve_terminal_websocket(

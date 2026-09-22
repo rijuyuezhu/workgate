@@ -8,18 +8,24 @@ export function createTerminalController({
   sessionBindingProtocolPrefix,
   showAuthentication,
   onAuthenticationRequired,
+  initialExecutorId = "",
+  initialSessionId = "",
+  initialShellId = "",
 }) {
   const controllerState = {
     terminalSocket: null,
     terminalSocketExecutorId: "",
-    terminalExecutorId: "",
+    terminalExecutorId: text(initialExecutorId, ""),
+    terminalExecutorPinned: Boolean(initialExecutorId),
+    terminalSessionId: text(initialSessionId, ""),
+    terminalAutoConnectShellId: text(initialShellId, ""),
     terminalMode: "snapshot",
     terminalReady: false,
     terminalXterm: null,
     terminalFitAddon: null,
     terminalXtermData: null,
     terminalXtermBinary: null,
-    selectedShellId: "",
+    selectedShellId: text(initialShellId, ""),
     terminalSessions: [],
     terminalGeneration: 0,
     terminalListGeneration: 0,
@@ -347,11 +353,23 @@ export function createTerminalController({
       const label = text(executor.name, executorId);
       option.textContent = state === "online" ? label : `${label} (${state})`;
       option.disabled = state !== "online";
-      option.selected = state === "online" && executorId === controllerState.terminalExecutorId;
+      option.selected = executorId === controllerState.terminalExecutorId;
       if (option.selected) currentAvailable = true;
       elements.terminalExecutor.append(option);
     }
     if (!currentAvailable) {
+      if (controllerState.terminalExecutorPinned && controllerState.terminalExecutorId) {
+        const option = document.createElement("option");
+        option.value = controllerState.terminalExecutorId;
+        option.textContent = `${controllerState.terminalExecutorId} (unavailable)`;
+        option.disabled = true;
+        option.selected = true;
+        elements.terminalExecutor.append(option);
+        elements.terminalExecutor.value = controllerState.terminalExecutorId;
+        elements.terminalState.textContent = `Executor unavailable · ${controllerState.terminalExecutorId}`;
+        setTerminalControls(false);
+        return;
+      }
       const firstOnline = available.find((item) => item.status === "online");
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.terminalExecutorId !== nextExecutorId;
@@ -404,6 +422,9 @@ export function createTerminalController({
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const size = terminalSize();
     url.searchParams.set("executor_id", executorId);
+    if (controllerState.terminalSessionId) {
+      url.searchParams.set("session_id", controllerState.terminalSessionId);
+    }
     url.searchParams.set("lines", "1000");
     url.searchParams.set("mode", "snapshot");
     url.searchParams.set("cols", String(size.cols));
@@ -586,6 +607,9 @@ export function createTerminalController({
 
   function terminalQueryPath(executorId = controllerState.terminalExecutorId) {
     const params = new URLSearchParams({ executor_id: executorId });
+    if (controllerState.terminalSessionId) {
+      params.set("session_id", controllerState.terminalSessionId);
+    }
     return `/terminals?${params.toString()}`;
   }
 
@@ -608,6 +632,14 @@ export function createTerminalController({
       elements.terminalState.textContent = controllerState.selectedShellId
         ? `${connected ? "Connected" : "Selected"} · ${requestedExecutor}`
         : `${controllerState.terminalSessions.length} session(s) · ${requestedExecutor}`;
+      const autoConnectShellId = controllerState.terminalAutoConnectShellId;
+      controllerState.terminalAutoConnectShellId = "";
+      if (
+        autoConnectShellId &&
+        controllerState.terminalSessions.some((item) => item.shell_id === autoConnectShellId)
+      ) {
+        void connectTerminal(autoConnectShellId);
+      }
       return payload;
     } catch (error) {
       if (error.authenticationRequired) throw error;
@@ -634,10 +666,17 @@ export function createTerminalController({
   }
 
   async function terminalAction(action, body) {
+    const session = controllerState.terminalSessionId
+      ? { session_id: controllerState.terminalSessionId }
+      : {};
     return request(`/terminals/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ executor_id: controllerState.terminalExecutorId, ...body }),
+      body: JSON.stringify({
+        executor_id: controllerState.terminalExecutorId,
+        ...session,
+        ...body,
+      }),
     });
   }
 
@@ -731,6 +770,9 @@ export function createTerminalController({
 
   elements.terminalExecutor.addEventListener("change", () => {
     if (controllerState.terminalLoading) return;
+    controllerState.terminalExecutorPinned = false;
+    controllerState.terminalSessionId = "";
+    controllerState.terminalAutoConnectShellId = "";
     resetTerminalWorkspace(elements.terminalExecutor.value);
     refreshTerminalsInBackground({ force: true });
   });
