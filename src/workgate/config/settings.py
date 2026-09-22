@@ -82,8 +82,8 @@ class Settings(BaseSettings):
     # Server.
     mode: Literal["mcp", "http", "both", "stdio"] = "mcp"
     """Server transport mode."""
-    host: str = "0.0.0.0"
-    """Bind host for HTTP/MCP transports."""
+    host: str = "127.0.0.1"
+    """Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments."""
     port: int = 8765
     """Bind port for HTTP/MCP transports."""
 

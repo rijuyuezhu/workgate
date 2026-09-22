@@ -301,25 +301,31 @@ jobs:
           cp src/workgate/helpers/bun-1.3.14.LICENSE.md \
             release/workgate-${{ matrix.artifact }}/BUN-1.3.14-LICENSE.md
           cat > release/workgate-${{ matrix.artifact }}/QUICKSTART.txt <<'EOF'
-          Start Workgate:
+          Start the Workgate control:
 
-            ./workgate server --mode mcp
+            ./workgate control --mode mcp
 
-          POSIX persistent shells require tmux to be installed on the host.
+          Pair an executor in another terminal, then run it:
 
-          In another terminal, open the native terminal UI:
+            ./workgate executor connect http://127.0.0.1:8765
+            ./workgate executor run --workspace-root /path/to/workspace
+
+          POSIX persistent shells require tmux on the executor host.
+
+          Open the native terminal UI in another terminal:
 
             ./workgate tui
 
-          Useful environment variables:
+          Useful control environment variables:
 
-            WORKGATE_HOST=0.0.0.0
+            WORKGATE_HOST=127.0.0.1
             WORKGATE_PORT=8765
-            WORKGATE_WORKSPACE_ROOT=/path/to/workspace
             WORKGATE_AUTH_MODE=oauth
-            WORKGATE_PUBLIC_BASE_URL=https://your-public-host.example.com
+            WORKGATE_BASE_URL=https://your-public-host.example.com
             WORKGATE_OAUTH_ADMIN_PIN=change-me
             WORKGATE_OAUTH_JWT_SECRET=change-me-64-hex-random-secret
+
+          Workspace and machine policy belong to the executor, not the control.
           EOF
           cd release
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
@@ -409,7 +415,7 @@ jobs:
           Start the standalone executable:
 
           \`\`\`bash
-          ./workgate server --mode mcp
+          ./workgate control --mode mcp
           \`\`\`
 
           Universal and platform Python package artifacts, executable archives, and SHA256 checksums are attached below.

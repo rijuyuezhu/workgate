@@ -11,34 +11,38 @@ uv sync --group dev
 uv run pre-commit install
 ```
 
-## Run the server during development
+## Run the control during development
 
 Run MCP-over-HTTP locally without OAuth:
 
 ```bash
-WORKGATE_AUTH_MODE=none uv run workgate server --mode mcp --port 13444
+WORKGATE_AUTH_MODE=none uv run workgate control --mode mcp --port 13444
 ```
 
 Run the REST debug API locally without OAuth:
 
 ```bash
-WORKGATE_AUTH_MODE=none uv run workgate server --mode http --port 13444
+WORKGATE_AUTH_MODE=none uv run workgate control --mode http --port 13444
 ```
 
-Use an explicit workspace when needed:
+Workspace and shell policy belong to an executor, not to the control process.
+After pairing a local executor, run it with an explicit workspace:
 
 ```bash
-WORKGATE_WORKSPACE_ROOT=/path/to/project \
-WORKGATE_AUTH_MODE=none \
-uv run workgate server --mode http --port 13444
+uv run workgate executor run --workspace-root /path/to/project
 ```
 
-Use full-control mode only for disposable test workspaces:
+Use full-control mode only for a disposable executor workspace:
 
 ```bash
-WORKGATE_AUTH_MODE=none \
-uv run workgate server --mode http --port 13444 --allow-full-control true
+uv run workgate executor run \
+  --workspace-root /path/to/project \
+  --allow-full-control true
 ```
+
+The executor must already have a valid saved profile; use
+`workgate executor connect <control-url>` to pair it first. Keep control and
+executor terminals separate when debugging process ownership.
 
 ## Smoke-test with curl
 

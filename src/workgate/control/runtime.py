@@ -309,10 +309,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     managed_jobs_runtime.register_handler(managed_kind, managed_handler)
     human_ui_runtime = build_human_ui_runtime()
     stream_hub = ControlStreamHub(
-        max_streams=settings.ui_terminal_max_connections,
+        max_streams=config.ui_terminal_max_connections,
         idle_timeout_s=config.ui_terminal_idle_timeout_s,
         reserve_slot=lambda: human_ui_runtime.terminal_connections.reserve(
-            settings.ui_terminal_max_connections
+            config.ui_terminal_max_connections
         ),
         release_slot=human_ui_runtime.terminal_connections.release,
     )

@@ -84,12 +84,15 @@ arguments, settings loading, runtime imports, or `argv[0]` special cases. The
 private durable-job runner is also a normal argparse subcommand and is labeled
 internal in help rather than parsed by a separate code path.
 
-Runtime commands are explicit: `server`, `tui`, `mcp`, `worker`, `version`, and
-the labeled internal `job-runner`. Running `workgate` without a command is
-an argparse error.
-Global `--version` remains an argparse version action. Settings flags follow the
-command that consumes them, for example `workgate server --mode mcp` and
-`workgate tui --port 8765`.
+Runtime commands are explicit: `control`, `tui`, `mcp`, `executor`,
+`version`, and the labeled internal `job-runner`. Running `workgate`
+without a command is an argparse error. The former `server` and `worker`
+commands are not compatibility aliases.
+
+Global `--version` remains an argparse version action. Settings flags follow
+the role that owns them: `workgate control --mode mcp` exposes control
+settings, while workspace and machine-policy flags belong to
+`workgate executor ...`.
 
 The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns

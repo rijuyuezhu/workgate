@@ -1,6 +1,6 @@
 # Cloudflare Tunnel
 
-A remote MCP client needs a public HTTPS endpoint. Cloudflare Tunnel can forward a public hostname to the local `workgate` service while the server's own OAuth flow protects `/mcp`.
+A remote MCP client needs a public HTTPS endpoint. Cloudflare Tunnel can forward a public hostname to the local `workgate control` service while the control's own OAuth flow protects `/mcp`.
 
 ## Create the tunnel and obtain its token
 
@@ -48,7 +48,7 @@ https://mcp.example.com/mcp
 
 - The connector URL does not end in `/mcp`.
 - `WORKGATE_BASE_URL` incorrectly includes `/mcp`.
-- The tunnel target does not point to the local server address and port.
+- The tunnel target does not point to the local control address and port.
 - The public hostname changed but `.env` still contains the old origin.
 - OAuth is disabled on a public hostname.
 

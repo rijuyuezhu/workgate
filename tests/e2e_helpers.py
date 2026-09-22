@@ -50,13 +50,12 @@ def free_tcp_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def server_env(
-    workspace_root: Path,
+def control_env(
     *,
     mode: str,
+    state_dir: Path,
     port: int | None = None,
     agent_bridge_enabled: bool = False,
-    state_dir: Path | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     pythonpath = str(SRC_ROOT)
@@ -65,22 +64,39 @@ def server_env(
     env.update(
         {
             "PYTHONPATH": pythonpath,
-            "WORKGATE_WORKSPACE_ROOT": str(workspace_root),
-            "WORKGATE_STATE_DIR": str(
-                state_dir or workspace_root / ".workgate"
-            ),
+            "WORKGATE_STATE_DIR": str(state_dir),
             "WORKGATE_MODE": mode,
             "WORKGATE_HOST": "127.0.0.1",
             "WORKGATE_AUTH_MODE": "none",
             "WORKGATE_AGENT_BRIDGE_ENABLED": str(agent_bridge_enabled).lower(),
-            "WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S": "5",
-            "WORKGATE_RUN_SHELL_MAX_TIMEOUT_S": "10",
             "WORKGATE_TOOL_TIMEOUT_S": "15",
         }
     )
     if port is not None:
         env["WORKGATE_PORT"] = str(port)
         env["WORKGATE_BASE_URL"] = f"http://127.0.0.1:{port}"
+    return env
+
+
+def executor_env(
+    workspace_root: Path,
+    *,
+    mode: str,
+    state_dir: Path,
+    agent_bridge_enabled: bool = False,
+) -> dict[str, str]:
+    env = control_env(
+        mode=mode,
+        state_dir=state_dir,
+        agent_bridge_enabled=agent_bridge_enabled,
+    )
+    env.update(
+        {
+            "WORKGATE_WORKSPACE_ROOT": str(workspace_root),
+            "WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S": "5",
+            "WORKGATE_RUN_SHELL_MAX_TIMEOUT_S": "10",
+        }
+    )
     return env
 
 
@@ -137,7 +153,7 @@ def start_executor_process(
         )
     popen_kwargs = {
         "cwd": PROJECT_ROOT,
-        "env": server_env(
+        "env": executor_env(
             workspace_root,
             mode=mode,
             agent_bridge_enabled=agent_bridge_enabled,
@@ -282,8 +298,6 @@ async def run_http_process_with_executors(
     if not executor_workspaces:
         raise ValueError("at least one executor workspace is required")
 
-    control_workspace = tmp_path / f"control-workspace-{mode}"
-    control_workspace.mkdir(parents=True, exist_ok=True)
     port = free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
     control_state_dir = tmp_path / f"control-state-{mode}"
@@ -317,7 +331,7 @@ async def run_http_process_with_executors(
                 sys.executable,
                 "-m",
                 "workgate.main",
-                "server",
+                "control",
                 "--mode",
                 mode,
                 "--host",
@@ -326,16 +340,13 @@ async def run_http_process_with_executors(
                 str(port),
                 "--auth-mode",
                 "none",
-                "--workspace-root",
-                str(control_workspace),
                 "--state-dir",
                 str(control_state_dir),
                 "--agent-bridge-enabled",
                 str(agent_bridge_enabled).lower(),
             ],
             cwd=PROJECT_ROOT,
-            env=server_env(
-                control_workspace,
+            env=control_env(
                 mode=mode,
                 port=port,
                 agent_bridge_enabled=agent_bridge_enabled,
@@ -551,23 +562,24 @@ async def stdio_tool_client(
 ) -> AsyncGenerator[tuple[McpSessionToolClient, Path]]:
     workspace = tmp_path / "workspace-stdio"
     workspace.mkdir()
+    state_dir = tmp_path / "control-state-stdio"
     params = StdioServerParameters(
         command=sys.executable,
         args=[
             "-m",
             "workgate.main",
-            "server",
+            "control",
             "--mode",
             "stdio",
             "--auth-mode",
             "none",
-            "--workspace-root",
-            str(workspace),
+            "--state-dir",
+            str(state_dir),
             "--agent-bridge-enabled",
             "false",
         ],
         cwd=str(PROJECT_ROOT),
-        env=server_env(workspace, mode="stdio"),
+        env=control_env(mode="stdio", state_dir=state_dir),
     )
     async with (
         stdio_client(params) as (read, write),

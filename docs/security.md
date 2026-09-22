@@ -9,7 +9,7 @@
 - Do not expose container-runtime control sockets or unrestricted host roots to the service account.
 - Do not mount unrestricted SSH keys or all of `~/.ssh`.
 - Use single-repository deploy keys or short-lived GitHub App installation tokens.
-- Leave `WORKGATE_ALLOW_FULL_CONTROL=false` by default.
+- Leave `allow_full_control: false` in executor machine policy by default.
 - Review audit logs after each session, then rotate or discard them with the rest of the short-lived state.
 
 Cloudflare Tunnel is a convenient public transport. Cloudflare Access is optional and is not the built-in authentication layer.
@@ -93,7 +93,11 @@ When OAuth authentication is enabled, protected MCP and REST routes authenticate
 
 ## Full-control mode
 
-`WORKGATE_ALLOW_FULL_CONTROL=true` is an explicit full-control mode. It disables built-in command and path denylists, but MCP safety annotations remain conservative and continue to identify destructive or open-world tools.
+`allow_full_control: true` is an explicit **executor** machine-policy mode
+(also available to the executor through `WORKGATE_ALLOW_FULL_CONTROL=true`).
+It disables that executor's built-in command and path denylists, but MCP safety
+annotations remain conservative and continue to identify destructive or
+open-world tools. The control CLI does not accept `--allow-full-control`.
 
 ## Bounded command containment
 

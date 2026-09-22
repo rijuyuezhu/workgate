@@ -5,8 +5,8 @@
 # Server transport mode.
 # Choices: mcp, http, both, stdio.
 mode: "mcp"
-# Bind host for HTTP/MCP transports.
-host: "0.0.0.0"
+# Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments.
+host: "127.0.0.1"
 # Bind port for HTTP/MCP transports.
 port: 8765
 

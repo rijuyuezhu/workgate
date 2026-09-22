@@ -56,6 +56,9 @@ class ControlSettingsView(Protocol):
     def ui_terminal_idle_timeout_s(self) -> int: ...
 
     @property
+    def ui_terminal_max_connections(self) -> int: ...
+
+    @property
     def ui_wallpaper(self) -> Literal["aurora", "grid", "none"]: ...
 
     @property

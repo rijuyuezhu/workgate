@@ -25,9 +25,10 @@ from playwright.sync_api import (
 
 from tests.e2e_helpers import (
     PROJECT_ROOT,
+    control_env,
+    executor_env,
     free_tcp_port,
     provision_executor_pair,
-    server_env,
 )
 from workgate.oauth.core.scopes import default_scope
 from workgate.ui.contracts import POSIX_TUI_EXECUTABLE_NAME
@@ -98,7 +99,6 @@ def _wait_for_http_ready(base_url: str, process: subprocess.Popen[Any]) -> None:
 class BrowserHarness:
     root: Path
     artifacts: Path
-    control_workspace: Path
     executor_workspace: Path
     control_tmux_tmpdir: Path
     executor_tmux_tmpdir: Path
@@ -128,8 +128,6 @@ class BrowserHarness:
         playwright: Playwright,
     ) -> BrowserHarness:
         artifacts.mkdir(parents=True, exist_ok=True)
-        control_workspace = root / "workspace-control"
-        control_workspace.mkdir(parents=True)
         executor_workspace = root / "workspace-executor"
         executor_workspace.mkdir(parents=True)
         control_tmux_tmpdir = Path(tempfile.mkdtemp(prefix="workgate-b-ctl-"))
@@ -174,8 +172,7 @@ class BrowserHarness:
             control_url=base_url,
             name="browser-loopback",
         )
-        env = server_env(
-            control_workspace,
+        env = control_env(
             mode="http",
             port=port,
             state_dir=control_state_dir,
@@ -196,7 +193,7 @@ class BrowserHarness:
                 sys.executable,
                 "-m",
                 "workgate.main",
-                "server",
+                "control",
                 "--mode",
                 "http",
                 "--host",
@@ -205,8 +202,6 @@ class BrowserHarness:
                 str(port),
                 "--auth-mode",
                 "oauth",
-                "--workspace-root",
-                str(control_workspace),
                 "--agent-bridge-enabled",
                 "false",
             ],
@@ -218,16 +213,16 @@ class BrowserHarness:
         executor: subprocess.Popen[Any] | None = None
         try:
             _wait_for_http_ready(base_url, server)
-            executor_env = server_env(
+            executor_process_env = executor_env(
                 executor_workspace,
                 mode="http",
                 state_dir=executor_state_dir,
             )
-            executor_env["TMUX_TMPDIR"] = str(executor_tmux_tmpdir)
+            executor_process_env["TMUX_TMPDIR"] = str(executor_tmux_tmpdir)
             executor = _start_logged_process(
                 [sys.executable, "-m", "workgate.main", "executor", "run"],
                 cwd=PROJECT_ROOT,
-                env=executor_env,
+                env=executor_process_env,
                 stdout_path=artifacts / "executor.stdout.log",
                 stderr_path=artifacts / "executor.stderr.log",
             )
@@ -244,7 +239,6 @@ class BrowserHarness:
             harness = cls(
                 root=root,
                 artifacts=artifacts,
-                control_workspace=control_workspace,
                 executor_workspace=executor_workspace,
                 control_tmux_tmpdir=control_tmux_tmpdir,
                 executor_tmux_tmpdir=executor_tmux_tmpdir,

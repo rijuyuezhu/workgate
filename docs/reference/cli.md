@@ -1,63 +1,61 @@
 # CLI reference
 
-Every runtime mode is selected by an explicit argparse subcommand.
+Every runtime role is selected by an explicit argparse subcommand. The public
+control entrypoint is:
 
 ```text
-workgate server [--config PATH] [--mode MODE] [--host HOST] [--port PORT] [--workspace-root PATH] [...]
+workgate control [--config PATH] [--mode MODE] [--host HOST] [--port PORT] [...]
 ```
 
-Use the built-in help for exact parser output:
+The former `workgate server` command is removed. Use the built-in help for the
+exact parser surface:
 
 ```bash
 workgate --help
-workgate server --help
+workgate control --help
 workgate tui --help
 workgate executor --help
 ```
 
-## Server modes
+## Control modes
 
 | Mode | Purpose |
 |---|---|
-| `mcp` | Serve MCP over HTTP at `/mcp`. This is the default public ChatGPT connector mode. |
-| `stdio` | Run a stdio MCP server for local MCP clients. |
-| `http` | Start the REST debug API only. |
-| `both` | Reserved and exits with an error. Run separate processes if you need MCP and REST together. |
+| `mcp` | Serve MCP over HTTP at `/mcp`. This is the default public connector mode. |
+| `stdio` | Run a stdio MCP control process for local MCP clients. |
+| `http` | Start the REST/debug and Human UI HTTP service. |
+| `both` | Reserved and exits with an error. Run separate processes if both transports are needed. |
+
+The control CLI intentionally does **not** expose executor machine-policy
+settings such as `--workspace-root`, `--allow-full-control`, command/path
+denylists, shell executables, or local tool binary paths. Those settings belong
+to the executor process.
 
 ## Development examples
 
-Run a local MCP server without OAuth:
+Run MCP-over-HTTP locally without OAuth:
 
 ```bash
-WORKGATE_AUTH_MODE=none uv run workgate server --mode mcp
+WORKGATE_AUTH_MODE=none uv run workgate control --mode mcp
 ```
 
-Run the REST debug API:
+Run the REST/debug API:
 
 ```bash
-WORKGATE_AUTH_MODE=none uv run workgate server --mode http
+WORKGATE_AUTH_MODE=none uv run workgate control --mode http
 ```
-
-Run with a specific workspace root:
-
-```bash
-WORKGATE_WORKSPACE_ROOT=/path/to/project uv run workgate server --mode mcp
-```
-
-## Boolean arguments
 
 Boolean CLI values are explicit:
 
 ```bash
-workgate server --allow-full-control false
-workgate server --agent-bridge-enabled true
+workgate control --ui-enabled false
+workgate control --agent-bridge-enabled true
 ```
 
-Every `WORKGATE_*` application setting has a matching CLI flag using lowercase dashed form. For example:
-
-```text
-WORKGATE_AGENT_BRIDGE_ENABLED -> --agent-bridge-enabled true
-```
+Use role-specific config files for long-running deployments. The generated
+[Configuration](configuration.md) reference documents the shared settings
+schema and environment variables; a command's `--help` is authoritative for
+which settings that role accepts as CLI overrides.
 
 ## Executor commands
 

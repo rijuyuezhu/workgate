@@ -29,6 +29,7 @@ class ControlConfig:
     ui_path: str
     ui_tui_command: str | None
     ui_terminal_idle_timeout_s: int
+    ui_terminal_max_connections: int
     ui_wallpaper: Literal["aurora", "grid", "none"]
 
     executor_max_pending_commands: int
@@ -75,6 +76,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         ui_path=settings.ui_path,
         ui_tui_command=settings.ui_tui_command,
         ui_terminal_idle_timeout_s=settings.ui_terminal_idle_timeout_s,
+        ui_terminal_max_connections=settings.ui_terminal_max_connections,
         ui_wallpaper=settings.ui_wallpaper,
         executor_max_pending_commands=settings.executor_max_pending_commands,
         executor_pairing_max_pending=settings.executor_pairing_max_pending,

@@ -1,9 +1,18 @@
 import os
 
 from workgate.config.settings import (
+    Settings,
     initialize_runtime_directories,
     load_settings,
 )
+
+
+def test_default_bind_host_is_loopback(monkeypatch):
+    monkeypatch.delenv("WORKGATE_HOST", raising=False)
+
+    settings = Settings()
+
+    assert settings.host == "127.0.0.1"
 
 
 def test_settings_precedence_config_env_cli(monkeypatch, tmp_path):

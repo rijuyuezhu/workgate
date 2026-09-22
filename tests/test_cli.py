@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import textwrap
 
 import pytest
@@ -18,7 +19,9 @@ from workgate.config.settings import Settings, load_settings
 from workgate.config.surface import (
     SETTING_SPECS,
     cli_overrides_from_args,
+    register_setting_cli_args,
 )
+from workgate.executor.config import ExecutorConfig
 
 
 def _command_parser(name: str) -> argparse.ArgumentParser:
@@ -55,10 +58,10 @@ class NoBreakHelpFormatter(argparse.HelpFormatter):
         )
 
 
-def test_server_subcommand_parses_runtime_settings():
+def test_control_subcommand_parses_control_owned_runtime_settings():
     args = cli._build_parser().parse_args(
         [
-            "server",
+            "control",
             "--config",
             "config.yaml",
             "--mode",
@@ -67,29 +70,50 @@ def test_server_subcommand_parses_runtime_settings():
             "127.0.0.1",
             "--port",
             "9999",
-            "--workspace-root",
-            "/tmp/work",
             "--auth-mode",
             "none",
             "--base-url",
             "https://example.com",
             "--oauth-admin-pin",
             "pin",
-            "--allow-full-control",
-            "true",
+            "--ui-enabled",
+            "false",
+            "--max-todos",
+            "17",
         ]
     )
 
-    assert args.handler is server_cli.run_server_from_args
+    assert args.handler is server_cli.run_control_from_args
     assert args.config == "config.yaml"
     assert args.mode == "stdio"
     assert args.host == "127.0.0.1"
     assert args.port == 9999
-    assert args.workspace_root == "/tmp/work"
     assert args.auth_mode == "none"
     assert args.base_url == "https://example.com"
     assert args.oauth_admin_pin == "pin"
-    assert args.allow_full_control is True
+    assert args.ui_enabled is False
+    assert args.max_todos == 17
+    assert not hasattr(args, "workspace_root")
+    assert not hasattr(args, "allow_full_control")
+
+
+def test_legacy_server_command_is_not_registered():
+    with pytest.raises(SystemExit):
+        cli._build_parser().parse_args(["server"])
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--workspace-root", "/tmp/work"),
+        ("--allow-full-control", "true"),
+        ("--command-denylist", "shutdown"),
+        ("--shell-executable", "/bin/bash"),
+    ],
+)
+def test_control_rejects_executor_machine_policy_flags(flag, value):
+    with pytest.raises(SystemExit):
+        cli._build_parser().parse_args(["control", flag, value])
 
 
 def test_root_parser_requires_an_explicit_command():
@@ -100,10 +124,16 @@ def test_root_parser_requires_an_explicit_command():
 
 
 def test_root_help_lists_registered_commands():
-    help_text = cli._build_parser().format_help()
+    parser = cli._build_parser()
+    help_text = parser.format_help()
+    subparsers = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
 
     for command in (
-        "server",
+        "control",
         "tui",
         "mcp",
         "executor",
@@ -111,7 +141,45 @@ def test_root_help_lists_registered_commands():
         "job-runner",
     ):
         assert command in help_text
+        assert command in subparsers.choices
+    assert "server" not in subparsers.choices
     assert "Run one durable job attempt (internal)" in help_text
+
+
+def test_control_help_omits_executor_machine_policy(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        cli._build_parser().parse_args(["control", "--help"])
+
+    assert exc_info.value.code == 0
+    help_text = capsys.readouterr().out
+    excluded_flags = {
+        spec.cli_flag
+        for spec in SETTING_SPECS
+        if spec.name in server_cli.CONTROL_EXCLUDED_SETTING_NAMES
+    }
+    for flag in excluded_flags:
+        assert flag not in help_text
+    assert "--max-todos" in help_text
+
+
+def test_control_cli_excludes_every_executor_only_setting():
+    shared_role_settings = {
+        "state_dir",
+        "ui_terminal_idle_timeout_s",
+        "ui_terminal_max_connections",
+        "agent_config_dir",
+        "agent_auth_dir",
+        "agent_mcp_probe_timeout_s",
+        "agent_mcp_call_timeout_s",
+    }
+    executor_derived_fields = {"temp_dir"}
+    executor_only_settings = (
+        set(ExecutorConfig.__dataclass_fields__)
+        - shared_role_settings
+        - executor_derived_fields
+    )
+
+    assert executor_only_settings == server_cli.CONTROL_EXCLUDED_SETTING_NAMES
 
 
 def test_version_option_prints_package_version(capsys):
@@ -132,9 +200,9 @@ def test_version_subcommand_prints_package_version(capsys):
     assert capsys.readouterr().out.startswith(f"workgate {__version__}")
 
 
-def test_every_setting_has_cli_option():
-    parser = _command_parser("server")
-    parser.formatter_class = NoBreakHelpFormatter
+def test_every_setting_has_generic_cli_option():
+    parser = argparse.ArgumentParser(formatter_class=NoBreakHelpFormatter)
+    register_setting_cli_args(parser)
     help_text = parser.format_help()
 
     assert "<object object at" not in help_text
@@ -158,7 +226,9 @@ def test_removed_remote_worker_settings_stay_out_of_public_config_surface():
         "remote_max_pending_jobs",
     }
     spec_names = {spec.name for spec in SETTING_SPECS}
-    help_text = _command_parser("server").format_help()
+    parser = argparse.ArgumentParser()
+    register_setting_cli_args(parser)
+    help_text = parser.format_help()
 
     assert removed.isdisjoint(Settings.model_fields)
     assert removed.isdisjoint(spec_names)
@@ -168,7 +238,7 @@ def test_removed_remote_worker_settings_stay_out_of_public_config_surface():
 
 def test_nullable_cli_values_can_be_explicitly_unset():
     args = cli._build_parser().parse_args(
-        ["server", "--unset-base-url", "--unset-oauth-admin-pin"]
+        ["control", "--unset-base-url", "--unset-oauth-admin-pin"]
     )
 
     assert args.base_url is None
@@ -185,7 +255,7 @@ def test_nullable_cli_value_and_unset_flag_are_mutually_exclusive():
     with pytest.raises(SystemExit):
         parser.parse_args(
             [
-                "server",
+                "control",
                 "--base-url",
                 "https://example.com",
                 "--unset-base-url",
@@ -197,15 +267,11 @@ def test_bool_cli_values_parse_explicitly():
     parser = cli._build_parser()
 
     assert (
-        parser.parse_args(
-            ["server", "--allow-full-control", "true"]
-        ).allow_full_control
+        parser.parse_args(["control", "--ui-enabled", "true"]).ui_enabled
         is True
     )
     assert (
-        parser.parse_args(
-            ["server", "--allow-full-control", "false"]
-        ).allow_full_control
+        parser.parse_args(["control", "--ui-enabled", "false"]).ui_enabled
         is False
     )
 
@@ -213,7 +279,9 @@ def test_bool_cli_values_parse_explicitly():
 def test_removed_remote_transfer_flag_is_not_accepted():
     parser = cli._build_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(["server", "--remote-http-transfer-enabled", "false"])
+        parser.parse_args(
+            ["control", "--remote-http-transfer-enabled", "false"]
+        )
 
 
 def test_executor_connect_subcommand_parses_final_pairing_contract():
@@ -272,24 +340,18 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
     def run_from_args(args):
         calls.append(args.mode)
 
-    monkeypatch.setattr(server_cli, "run_server_from_args", run_from_args)
+    monkeypatch.setattr(server_cli, "run_control_from_args", run_from_args)
 
-    cli.main(["server", "--mode", "stdio"])
+    cli.main(["control", "--mode", "stdio"])
 
     assert calls == ["stdio"]
 
 
-def test_server_handler_dispatches_control_modes(monkeypatch):
+def test_control_dispatches_transport_modes(monkeypatch):
     calls = []
     mode = "http"
     runtime = argparse.Namespace(config=argparse.Namespace(mode=mode))
 
-    def settings_from_args(_args, *, configure):
-        assert configure is True
-        runtime.config.mode = mode
-        return argparse.Namespace(mode=mode)
-
-    monkeypatch.setattr(server_cli, "settings_from_args", settings_from_args)
     monkeypatch.setattr(
         server_cli,
         "build_control_runtime",
@@ -305,13 +367,15 @@ def test_server_handler_dispatches_control_modes(monkeypatch):
         "run_mcp",
         lambda *, runtime: calls.append(("mcp", runtime)),
     )
-    args = argparse.Namespace()
+    settings = object()
 
-    server_cli.run_server_from_args(args)
+    server_cli._dispatch_control(settings)
     mode = "mcp"
-    server_cli.run_server_from_args(args)
+    runtime.config.mode = mode
+    server_cli._dispatch_control(settings)
     mode = "stdio"
-    server_cli.run_server_from_args(args)
+    runtime.config.mode = mode
+    server_cli._dispatch_control(settings)
 
     assert calls == [
         ("http", runtime),
@@ -319,13 +383,93 @@ def test_server_handler_dispatches_control_modes(monkeypatch):
         ("mcp", runtime),
     ]
 
-    mode = "both"
+    runtime.config.mode = "both"
     with pytest.raises(SystemExit, match="mode=both is reserved"):
-        server_cli.run_server_from_args(args)
+        server_cli._dispatch_control(settings)
 
-    mode = "unexpected"
+    runtime.config.mode = "unexpected"
     with pytest.raises(SystemExit, match="Unsupported mode"):
-        server_cli.run_server_from_args(args)
+        server_cli._dispatch_control(settings)
+
+
+def test_control_handler_initializes_only_control_owned_directories(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "executor-workspace"
+    state_dir = tmp_path / "state"
+    data_dir = tmp_path / "data"
+    settings = Settings(
+        mode="mcp",
+        workspace_root=workspace,
+        state_dir=state_dir,
+        data_dir=data_dir,
+    )
+    configured = []
+    dispatched = []
+
+    def load_from_args(_args, *, configure):
+        assert configure is False
+        return settings
+
+    monkeypatch.setattr(server_cli, "settings_from_args", load_from_args)
+    monkeypatch.setattr(
+        server_cli,
+        "configure_settings",
+        lambda active: configured.append(active),
+    )
+    monkeypatch.setattr(
+        server_cli,
+        "_dispatch_control",
+        lambda active: dispatched.append(active),
+    )
+
+    server_cli.run_control_from_args(argparse.Namespace())
+
+    assert not workspace.exists()
+    assert state_dir.is_dir()
+    assert data_dir.is_dir()
+    assert settings.audit_log_path.parent.is_dir()
+    if os.name != "nt":
+        assert state_dir.stat().st_mode & 0o777 == 0o700
+        assert data_dir.stat().st_mode & 0o777 == 0o700
+        assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
+    assert configured == [settings]
+    assert dispatched == [settings]
+
+
+def test_control_handler_rejects_a_second_writer(tmp_path, monkeypatch):
+    settings = Settings(
+        mode="mcp",
+        state_dir=tmp_path / "state",
+        data_dir=tmp_path / "data",
+    )
+    monkeypatch.setattr(
+        server_cli,
+        "settings_from_args",
+        lambda _args, *, configure: settings,
+    )
+    monkeypatch.setattr(
+        server_cli, "configure_settings", lambda _settings: None
+    )
+    monkeypatch.setattr(
+        server_cli,
+        "_dispatch_control",
+        lambda _settings: pytest.fail("duplicate control reached dispatch"),
+    )
+
+    with (
+        server_cli.control_run_lock(settings.state_dir),
+        pytest.raises(SystemExit, match="already active"),
+    ):
+        server_cli.run_control_from_args(argparse.Namespace())
+
+
+def test_control_run_lock_preserves_body_timeout_errors(tmp_path):
+    with (
+        pytest.raises(TimeoutError, match="body timeout"),
+        server_cli.control_run_lock(tmp_path / "state"),
+    ):
+        raise TimeoutError("body timeout")
 
 
 def test_internal_job_runner_is_dispatched_by_argparse(monkeypatch):
@@ -377,8 +521,8 @@ def test_internal_job_runner_is_dispatched_by_argparse(monkeypatch):
     ]
 
 
-def test_server_overrides_include_only_explicit_values():
-    args = cli._build_parser().parse_args(["server", "--mode", "stdio"])
+def test_control_overrides_include_only_explicit_values():
+    args = cli._build_parser().parse_args(["control", "--mode", "stdio"])
 
     assert cli_overrides_from_args(args) == {"mode": "stdio"}
 
