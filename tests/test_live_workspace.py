@@ -151,13 +151,54 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
         query = parse_qs(parsed.query)
         assert query["session_id"] == [session_id]
         assert query["executor_id"] == [harness.executor_id]
-    assert parse_qs(urlparse(data["links"]["files"]).query)["workdir"] == ["."]
+    canonical_workdir = data["session"]["workdir"]
+    assert canonical_workdir != "."
+    assert parse_qs(urlparse(data["links"]["files"]).query)["workdir"] == [
+        canonical_workdir
+    ]
     assert "shell_id" not in parse_qs(
         urlparse(data["links"]["terminals"]).query
     )
 
     with pytest.raises(ValueError, match="unknown session_id"):
         await live.live_workspace_snapshot(harness.control, "sess_00000000")
+
+
+@pytest.mark.asyncio
+async def test_live_workspace_job_message_does_not_forward_backend_exception_text(
+    tmp_path, monkeypatch
+):
+    settings = _http_settings(tmp_path, monkeypatch)
+    harness = build_paired_control_harness(settings)
+
+    class _JobOutput:
+        jobs: list[Any] = []
+        message = (
+            "Executor jobs unavailable: RuntimeError: backend-super-secret"
+        )
+
+    calls: list[dict[str, Any]] = []
+
+    async def secret_job_list(**kwargs: Any) -> _JobOutput:
+        calls.append(kwargs)
+        return _JobOutput()
+
+    monkeypatch.setattr(harness.control.job_service, "execute", secret_job_list)
+    jobs, message = await live._job_projection(
+        harness.control, "sess_00000000", "active"
+    )
+
+    assert jobs == []
+    assert message == "Some executor job metadata is unavailable."
+    assert "backend-super-secret" not in message
+    assert calls == [
+        {
+            "session_id": "sess_00000000",
+            "list_jobs": True,
+            "include_finished": False,
+            "lines": 1,
+        }
+    ]
 
 
 class _FakeTask(BaseModel):

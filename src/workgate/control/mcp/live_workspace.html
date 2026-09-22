@@ -117,10 +117,13 @@
   const UI_PROTOCOL_VERSION = "2026-01-26";
   let snapshot = null;
   let standardBridge = null;
+  let refreshTimer = null;
+  let shuttingDown = false;
 
   function createStandardBridge() {
     let nextId = 1;
     let connected = false;
+    let closed = false;
     const pending = new Map();
     const toolResultHandlers = new Set();
 
@@ -151,7 +154,7 @@
       }
       if (message.method === "ui/resource-teardown" && Object.prototype.hasOwnProperty.call(message, "id")) {
         post({ jsonrpc: "2.0", id: message.id, result: {} });
-        window.setTimeout(close, 0);
+        stopLiveWorkspace();
         return;
       }
       if (message.method === "ui/notifications/tool-result") {
@@ -160,6 +163,7 @@
     }
 
     function request(method, params) {
+      if (closed) return Promise.reject(new Error("MCP App bridge is closed"));
       const id = nextId++;
       return new Promise((resolve, reject) => {
         const timer = window.setTimeout(() => {
@@ -189,6 +193,8 @@
     }
 
     function close() {
+      if (closed) return;
+      closed = true;
       window.removeEventListener("message", onMessage);
       for (const waiter of pending.values()) {
         window.clearTimeout(waiter.timer);
@@ -205,6 +211,19 @@
       callTool(name, args) { return request("tools/call", { name, arguments: args }); },
       openLink(url) { return request("ui/open-link", { url }); },
     };
+  }
+
+  function stopLiveWorkspace() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (refreshTimer !== null) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    if (standardBridge) {
+      standardBridge.close();
+      standardBridge = null;
+    }
   }
 
   function payload(value) {
@@ -346,6 +365,7 @@
   }
 
   async function callTool(name, args) {
+    if (shuttingDown) throw new Error("Live Workspace is closed.");
     if (window.openai && typeof window.openai.callTool === "function") {
       return payload(await window.openai.callTool(name, args));
     }
@@ -354,7 +374,7 @@
   }
 
   async function refresh() {
-    if (!snapshot || !snapshot.session) return;
+    if (shuttingDown || !snapshot || !snapshot.session) return;
     try {
       render(await callTool("workspace_snapshot", { session_id: snapshot.session.session_id }));
       $("status").textContent = "Updated from Workgate.";
@@ -427,10 +447,8 @@
   }
 
   void startHostBridge();
-  setInterval(() => void refresh(), 5000);
-  window.addEventListener("beforeunload", () => {
-    if (standardBridge) standardBridge.close();
-  });
+  refreshTimer = window.setInterval(() => void refresh(), 5000);
+  window.addEventListener("beforeunload", stopLiveWorkspace);
 })();
 </script>
 </body>

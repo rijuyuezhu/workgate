@@ -8718,7 +8718,7 @@
         "type": "object"
       },
       "meta": {
-        "openai/outputTemplate": "ui://workgate/live-workspace-d169249759e66946.html",
+        "openai/outputTemplate": "ui://workgate/live-workspace-1b206e66d1efe5d2.html",
         "openai/toolInvocation/invoked": "Live Workspace ready",
         "openai/toolInvocation/invoking": "Opening Live Workspace",
         "openai/widgetAccessible": true,
@@ -8732,9 +8732,9 @@
           }
         ],
         "ui": {
-          "resourceUri": "ui://workgate/live-workspace-d169249759e66946.html"
+          "resourceUri": "ui://workgate/live-workspace-1b206e66d1efe5d2.html"
         },
-        "ui/resourceUri": "ui://workgate/live-workspace-d169249759e66946.html"
+        "ui/resourceUri": "ui://workgate/live-workspace-1b206e66d1efe5d2.html"
       },
       "name": "workspace_open",
       "outputSchema": {
