@@ -60,6 +60,7 @@ nav:
   - Comparison with upstream: comparison.md
   - Getting started:
       - Quickstart: getting-started/quickstart.md
+      - Standalone local mode: getting-started/standalone.md
       - VPS deployment: getting-started/vps.md
       - Cloudflare Tunnel: getting-started/cloudflare-tunnel.md
       - ChatGPT connector: getting-started/chatgpt-connector.md

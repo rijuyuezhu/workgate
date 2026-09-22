@@ -4,6 +4,20 @@ Install Workgate on the machine that hosts the control process and on every
 machine that should act as an executor. They may be the same physical machine,
 but they are separate runtime roles.
 
+## Standalone local mode
+
+Best when control and executor live on the same machine and the installation
+must keep working offline:
+
+```bash
+workgate standalone --workspace-root /path/to/project
+```
+
+This still launches separate control and executor processes and keeps their
+configuration/state authority separate. The supervisor performs a protected
+first-run local bootstrap into the normal executor profile; future launches
+reuse that profile. See [Standalone local mode](standalone.md).
+
 ## Local source checkout
 
 Best for development machines and contributors:

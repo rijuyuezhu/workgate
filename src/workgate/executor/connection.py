@@ -447,6 +447,9 @@ class ExecutorConnection:
     def _require_owner_action(self, exc: ExecutorControlError) -> None:
         if self._owner_action_error is not None:
             return
+        from .standalone_bootstrap import mark_standalone_executor_owner_action
+
+        mark_standalone_executor_owner_action()
         code = (
             exc.code.value
             if exc.code is not None
@@ -460,6 +463,9 @@ class ExecutorConnection:
     def _require_local_owner_action(self, exc: Exception) -> None:
         if self._owner_action_error is not None:
             return
+        from .standalone_bootstrap import mark_standalone_executor_owner_action
+
+        mark_standalone_executor_owner_action()
         message = str(exc).strip() or type(exc).__name__
         self._owner_action_error = ExecutorOwnerActionRequired(
             "executor connection failed locally: "

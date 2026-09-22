@@ -4,6 +4,10 @@ This guide runs a Workgate **control** locally, exposes it through Cloudflare
 Tunnel, pairs a local **executor**, and connects ChatGPT to the public `/mcp`
 endpoint.
 
+For one-machine offline use without a public tunnel, use
+[Standalone local mode](standalone.md) instead. It keeps control and executor as
+separate processes while providing one-command lifecycle convenience.
+
 ## Prerequisites
 
 You need:
