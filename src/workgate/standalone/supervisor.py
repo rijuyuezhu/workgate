@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import secrets
 import signal
@@ -65,11 +64,6 @@ def _private_yaml(path: Path, value: Mapping[str, object]) -> None:
     atomic_write_private_text(path, text)
 
 
-def _runtime_namespace(child_config: StandaloneChildConfig) -> str:
-    state_root = child_config.control_state_dir.parent.resolve(strict=False)
-    return hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()[:16]
-
-
 def prepare_standalone(
     settings: Settings,
     *,
@@ -78,12 +72,12 @@ def prepare_standalone(
     """Resolve separate child authority and private launcher material."""
     resolved = child_config or resolve_standalone_child_config(settings)
     runtime_dir = ensure_private_directory(
-        settings.runtime_dir / "standalone" / _runtime_namespace(resolved)
+        settings.runtime_dir / "standalone" / resolved.instance_namespace
     )
     executor_agent_config_dir = (
         settings.config_dir
         / "standalone"
-        / _runtime_namespace(resolved)
+        / resolved.instance_namespace
         / "executor"
         / "agent"
     )
@@ -172,6 +166,7 @@ def workgate_child_argv(*arguments: str) -> list[str]:
 
 ProcessFactory = Callable[..., subprocess.Popen[Any]]
 ControlReadyProbe = Callable[[str, str], bool]
+StartedCallback = Callable[[], None]
 
 
 def _control_is_listening(control_url: str, ready_nonce: str) -> bool:
@@ -284,9 +279,11 @@ class StandaloneSupervisor:
         self._children[role] = process
         return process
 
-    def _wait_for_control_ready(self) -> None:
+    def _wait_for_control_ready(self) -> bool:
         deadline = time.monotonic() + self._bootstrap_wait_timeout_s
         while True:
+            if self._stop.is_set():
+                return False
             control = self._children["control"]
             if control.poll() is not None:
                 raise RuntimeError(
@@ -298,13 +295,14 @@ class StandaloneSupervisor:
             )
             if (
                 bootstrap_ready
+                and not self._stop.is_set()
                 and self._control_ready_probe(
                     self.prepared.child_config.control_url,
                     self.prepared.control_ready_nonce,
                 )
                 and control.poll() is None
             ):
-                return
+                return True
             if time.monotonic() >= deadline:
                 raise RuntimeError(
                     "timed out waiting for standalone control readiness"
@@ -315,9 +313,13 @@ class StandaloneSupervisor:
         """Launch separate control and executor processes exactly once."""
         if self._children:
             raise RuntimeError("standalone supervisor is already started")
+        if self._stop.is_set():
+            return
         self._spawn("control")
         try:
-            self._wait_for_control_ready()
+            if not self._wait_for_control_ready() or self._stop.is_set():
+                self.shutdown()
+                return
             self._spawn("executor")
         except BaseException:
             self.shutdown()
@@ -359,7 +361,9 @@ class StandaloneSupervisor:
             self._spawn(role)
             if role == "control":
                 try:
-                    self._wait_for_control_ready()
+                    if not self._wait_for_control_ready():
+                        self._stop_process(self._children[role])
+                        continue
                 except RuntimeError as exc:
                     self._blocked_roles.add(role)
                     failed = self._children[role]
@@ -407,15 +411,19 @@ class StandaloneSupervisor:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
 
-    def run_forever(self) -> None:
+    def run_forever(self, *, on_started: StartedCallback | None = None) -> None:
         """Run until interrupted while independently restarting exited children."""
-        self.start()
-        try:
-            with self._signal_handlers():
+        with self._signal_handlers():
+            try:
+                self.start()
+                if self._stop.is_set():
+                    return
+                if on_started is not None:
+                    on_started()
                 while not self._stop.wait(self._poll_interval_s):
                     self.restart_exited_children()
-        finally:
-            self.shutdown()
+            finally:
+                self.shutdown()
 
     def shutdown(self) -> None:
         """Stop both direct children without confusing one role with the other."""
@@ -447,22 +455,27 @@ def run_standalone(settings: Settings) -> None:
         ) from exc
     with stack:
         prepared = prepare_standalone(settings, child_config=child_config)
-        print(
-            f"Standalone control: {prepared.child_config.control_url}",
-            flush=True,
-        )
-        print(
-            "Standalone executor integration config: "
-            f"{prepared.executor_agent_config_dir}",
-            flush=True,
-        )
-        if prepared.generated_oauth_admin_pin:
+
+        def announce_started() -> None:
             print(
-                "Standalone OAuth admin PIN file: "
-                f"{prepared.oauth_admin_pin_path}",
+                f"Standalone control: {prepared.child_config.control_url}",
                 flush=True,
             )
+            print(
+                "Standalone executor integration config: "
+                f"{prepared.executor_agent_config_dir}",
+                flush=True,
+            )
+            if prepared.generated_oauth_admin_pin:
+                print(
+                    "Standalone OAuth admin PIN file: "
+                    f"{prepared.oauth_admin_pin_path}",
+                    flush=True,
+                )
+
         try:
-            StandaloneSupervisor(prepared).run_forever()
+            StandaloneSupervisor(prepared).run_forever(
+                on_started=announce_started
+            )
         finally:
             cleanup_standalone_runtime_files(prepared)

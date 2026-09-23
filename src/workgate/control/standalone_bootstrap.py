@@ -72,6 +72,8 @@ def _load_existing(path: Path) -> StandaloneExecutorBootstrap | None:
 
 def maybe_write_standalone_bootstrap(settings: Settings) -> bool:
     """Issue/reuse one private bootstrap payload before the control starts serving."""
+    if os.getenv(STANDALONE_CONTROL_CHILD_ENV) != "1":
+        return False
     raw_path = os.getenv(STANDALONE_BOOTSTRAP_ENV)
     if not raw_path:
         return False

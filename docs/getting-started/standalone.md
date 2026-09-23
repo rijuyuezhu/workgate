@@ -178,8 +178,13 @@ STATE/
 
 DATA/
   standalone/
-    control/          control-owned durable application data
+    <instance>/
+      control/        control-owned durable application data
 ```
+
+`<instance>` is a stable namespace derived from the standalone state root. This
+keeps control data separate when the same OS account runs multiple standalone
+deployments with distinct state roots but a shared platform data root.
 
 The executor also has a stable, per-standalone configuration namespace under
 the platform Workgate config root for executor-local integrations. That config
@@ -191,8 +196,12 @@ executor trust is below the control state root. A control backup therefore
 never becomes executor machine authority merely because both directories are
 on the same computer.
 
-Back up control and executor state together if you want a standalone
-installation to retain both its logical control facts and its machine identity.
+Back up both `STATE/standalone/` and the matching
+`DATA/standalone/<instance>/` directory if you want a standalone installation
+to retain its logical control facts, immutable control data, and machine
+identity. If you intentionally restore the same standalone state under a new
+state-root path, move the matching control-data directory to the newly derived
+instance namespace as part of that restore.
 
 ## Restart behavior
 

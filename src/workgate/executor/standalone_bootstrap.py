@@ -9,6 +9,7 @@ from pathlib import Path
 from ..protocol.standalone import (
     STANDALONE_BOOTSTRAP_ENV,
     STANDALONE_CONTROL_URL_ENV,
+    STANDALONE_EXECUTOR_CHILD_ENV,
     STANDALONE_EXECUTOR_CONFIG_DIR_ENV,
     STANDALONE_EXECUTOR_OWNER_ACTION_FILE_ENV,
     STANDALONE_EXECUTOR_RUNTIME_DIR_ENV,
@@ -25,8 +26,14 @@ class StandaloneExecutorBootstrapError(RuntimeError):
     """Protected standalone bootstrap requires owner repair before retry."""
 
 
+def _is_standalone_executor_child() -> bool:
+    return os.getenv(STANDALONE_EXECUTOR_CHILD_ENV) == "1"
+
+
 def mark_standalone_executor_owner_action() -> None:
     """Mark one standalone executor exit as requiring owner repair."""
+    if not _is_standalone_executor_child():
+        return
     raw_path = os.getenv(STANDALONE_EXECUTOR_OWNER_ACTION_FILE_ENV)
     if not raw_path:
         return
@@ -43,6 +50,8 @@ def apply_standalone_executor_paths(
     config: ExecutorConfig,
 ) -> ExecutorConfig:
     """Namespace executor-local config/scratch paths for one standalone deployment."""
+    if not _is_standalone_executor_child():
+        return config
     raw_runtime = os.getenv(STANDALONE_EXECUTOR_RUNTIME_DIR_ENV)
     raw_config = os.getenv(STANDALONE_EXECUTOR_CONFIG_DIR_ENV)
     if not raw_runtime and not raw_config:
@@ -72,6 +81,8 @@ def maybe_import_standalone_bootstrap(
     profile_store: ExecutorProfileStore,
 ) -> bool:
     """Persist a normal executor profile before any authenticated hello."""
+    if not _is_standalone_executor_child():
+        return False
     raw_path = os.getenv(STANDALONE_BOOTSTRAP_ENV)
     control_url = os.getenv(STANDALONE_CONTROL_URL_ENV)
     existing = profile_store.load()

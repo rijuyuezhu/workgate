@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,10 +34,18 @@ class StandaloneChildConfig:
     executor_state_dir: Path
     control_data_dir: Path
     control_url: str
+    instance_namespace: str
 
 
 def _model_payload(settings: Settings) -> dict[str, object]:
     return dict(settings.model_dump(mode="json"))
+
+
+def standalone_instance_namespace(state_root: Path) -> str:
+    """Return a stable short namespace for one standalone state root."""
+    resolved = state_root.resolve(strict=False)
+    canonical = os.path.normcase(str(resolved))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def _control_setting_names() -> frozenset[str]:
@@ -52,7 +62,12 @@ def resolve_standalone_child_config(
         )
     payload = _model_payload(settings)
     standalone_state = settings.state_dir.resolve(strict=False) / "standalone"
-    standalone_data = settings.data_dir.resolve(strict=False) / "standalone"
+    instance_namespace = standalone_instance_namespace(standalone_state)
+    standalone_data = (
+        settings.data_dir.resolve(strict=False)
+        / "standalone"
+        / instance_namespace
+    )
     control_state = standalone_state / "control"
     executor_state = standalone_state / "executor"
     control_data = standalone_data / "control"
@@ -83,4 +98,5 @@ def resolve_standalone_child_config(
         executor_state_dir=executor_state,
         control_data_dir=control_data,
         control_url=f"http://127.0.0.1:{settings.port}",
+        instance_namespace=instance_namespace,
     )

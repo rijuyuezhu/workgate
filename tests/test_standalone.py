@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,10 +27,12 @@ from workgate.executor.config import resolve_executor_config
 from workgate.executor.profile import ExecutorProfileStore
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.standalone_bootstrap import (
+    StandaloneExecutorBootstrapError,
     apply_standalone_executor_paths,
     mark_standalone_executor_owner_action,
     maybe_import_standalone_bootstrap,
 )
+from workgate.http.health import health_response
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import executor_credential_is_trusted
 from workgate.protocol.standalone import (
@@ -116,6 +119,13 @@ def test_standalone_resolves_distinct_role_authority(tmp_path: Path) -> None:
     assert resolved.control["state_dir"] == str(
         tmp_path / "state" / "standalone" / "control"
     )
+    assert resolved.control["data_dir"] == str(
+        tmp_path
+        / "data"
+        / "standalone"
+        / resolved.instance_namespace
+        / "control"
+    )
     assert "workspace_root" not in resolved.control
     assert "allow_full_control" not in resolved.control
     assert "command_denylist" not in resolved.control
@@ -135,6 +145,23 @@ def test_standalone_resolves_distinct_role_authority(tmp_path: Path) -> None:
     assert resolved.control_url == "http://127.0.0.1:18765"
 
 
+def test_standalone_control_data_is_namespaced_by_state_root(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "shared-data"
+    first = resolve_standalone_child_config(
+        _settings(tmp_path / "first", data_dir=data_dir)
+    )
+    second = resolve_standalone_child_config(
+        _settings(tmp_path / "second", data_dir=data_dir)
+    )
+
+    assert first.instance_namespace != second.instance_namespace
+    assert first.control_data_dir != second.control_data_dir
+    assert first.control_data_dir.parent.parent == data_dir / "standalone"
+    assert second.control_data_dir.parent.parent == data_dir / "standalone"
+
+
 @pytest.mark.parametrize("port", [-1, 0, 65536])
 def test_standalone_requires_stable_tcp_port(tmp_path: Path, port: int) -> None:
     with pytest.raises(ValueError, match="between 1 and 65535"):
@@ -148,6 +175,8 @@ def test_private_launcher_bootstrap_becomes_normal_executor_profile(
     bootstrap_path = tmp_path / "runtime" / "executor-bootstrap.json"
     bootstrap_path.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap_path))
+    monkeypatch.setenv(STANDALONE_CONTROL_CHILD_ENV, "1")
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
 
     control_settings = Settings(
         state_dir=tmp_path / "control-state",
@@ -210,6 +239,114 @@ def test_standalone_control_child_generates_and_reuses_private_oauth_pin(
         assert stat.S_IMODE(pin_path.stat().st_mode) == 0o600
 
 
+def test_private_launcher_channels_require_explicit_child_markers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bootstrap_path = tmp_path / "runtime" / "executor-bootstrap.json"
+    owner_action_path = tmp_path / "runtime" / "owner-action"
+    bootstrap_path.parent.mkdir(mode=0o700)
+    monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap_path))
+    monkeypatch.setenv(
+        STANDALONE_EXECUTOR_OWNER_ACTION_FILE_ENV, str(owner_action_path)
+    )
+    monkeypatch.setenv(
+        STANDALONE_EXECUTOR_RUNTIME_DIR_ENV, str(tmp_path / "executor-runtime")
+    )
+    monkeypatch.setenv(
+        STANDALONE_EXECUTOR_CONFIG_DIR_ENV, str(tmp_path / "executor-config")
+    )
+
+    control_settings = Settings(
+        state_dir=tmp_path / "control-state",
+        host="127.0.0.1",
+        port=18765,
+    )
+    profile_store = ExecutorProfileStore(
+        FileStateStore(lambda: tmp_path / "executor-state")
+    )
+    executor_config = resolve_executor_config(_settings(tmp_path))
+
+    assert maybe_write_standalone_bootstrap(control_settings) is False
+    assert not bootstrap_path.exists()
+    assert maybe_import_standalone_bootstrap(profile_store) is False
+    assert apply_standalone_executor_paths(executor_config) is executor_config
+    mark_standalone_executor_owner_action()
+    assert not owner_action_path.exists()
+
+
+def test_standalone_executor_private_channel_rejects_invalid_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
+    base = resolve_executor_config(_settings(tmp_path))
+
+    monkeypatch.setenv(STANDALONE_EXECUTOR_RUNTIME_DIR_ENV, "relative-runtime")
+    with pytest.raises(RuntimeError, match="runtime path must be absolute"):
+        apply_standalone_executor_paths(base)
+
+    monkeypatch.delenv(STANDALONE_EXECUTOR_RUNTIME_DIR_ENV)
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CONFIG_DIR_ENV, "relative-config")
+    with pytest.raises(RuntimeError, match="config path must be absolute"):
+        apply_standalone_executor_paths(base)
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        (None, "payload is not available"),
+        ("{not-json", "invalid standalone bootstrap payload"),
+        ("x" * (16 * 1024 + 1), "unexpectedly large"),
+    ],
+)
+def test_standalone_executor_bootstrap_fails_closed_on_bad_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: str | None,
+    match: str,
+) -> None:
+    bootstrap = tmp_path / "runtime" / "bootstrap.json"
+    bootstrap.parent.mkdir(mode=0o700)
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
+    monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap))
+    if payload is not None:
+        bootstrap.write_text(payload, encoding="utf-8")
+    profile_store = ExecutorProfileStore(
+        FileStateStore(lambda: tmp_path / "executor-state")
+    )
+
+    with pytest.raises(StandaloneExecutorBootstrapError, match=match):
+        maybe_import_standalone_bootstrap(profile_store)
+
+
+def test_standalone_executor_bootstrap_requires_absolute_payload_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
+    monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, "relative-bootstrap.json")
+    profile_store = ExecutorProfileStore(
+        FileStateStore(lambda: tmp_path / "executor-state")
+    )
+
+    with pytest.raises(
+        StandaloneExecutorBootstrapError, match="must be absolute"
+    ):
+        maybe_import_standalone_bootstrap(profile_store)
+
+
+def test_owner_action_marker_ignores_missing_or_relative_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
+    mark_standalone_executor_owner_action()
+    monkeypatch.setenv(
+        STANDALONE_EXECUTOR_OWNER_ACTION_FILE_ENV, "relative-owner-action"
+    )
+    mark_standalone_executor_owner_action()
+
+
 def test_control_bootstrap_reuses_existing_launcher_payload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -217,6 +354,7 @@ def test_control_bootstrap_reuses_existing_launcher_payload(
     bootstrap_path = tmp_path / "runtime" / "executor-bootstrap.json"
     bootstrap_path.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap_path))
+    monkeypatch.setenv(STANDALONE_CONTROL_CHILD_ENV, "1")
     settings = Settings(
         state_dir=tmp_path / "control-state",
         host="127.0.0.1",
@@ -243,6 +381,7 @@ def test_control_bootstrap_recovers_payload_written_before_trust(
     bootstrap_path = tmp_path / "runtime" / "executor-bootstrap.json"
     bootstrap_path.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap_path))
+    monkeypatch.setenv(STANDALONE_CONTROL_CHILD_ENV, "1")
     settings = Settings(
         state_dir=tmp_path / "control-state",
         host="127.0.0.1",
@@ -270,6 +409,7 @@ def test_control_bootstrap_refuses_missing_profile_after_trust(
     bootstrap_path = tmp_path / "runtime" / "executor-bootstrap.json"
     bootstrap_path.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap_path))
+    monkeypatch.setenv(STANDALONE_CONTROL_CHILD_ENV, "1")
     settings = Settings(
         state_dir=tmp_path / "control-state",
         host="127.0.0.1",
@@ -289,6 +429,8 @@ def test_executor_reuses_identity_when_standalone_port_changes(
     bootstrap_path = tmp_path / "runtime" / "executor-bootstrap.json"
     bootstrap_path.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_BOOTSTRAP_ENV, str(bootstrap_path))
+    monkeypatch.setenv(STANDALONE_CONTROL_CHILD_ENV, "1")
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
     settings = Settings(
         state_dir=tmp_path / "control-state",
         host="127.0.0.1",
@@ -488,6 +630,21 @@ def test_control_ready_probe_handles_http_error(
             "http://127.0.0.1:8765", "instance-marker"
         )
         is False
+    )
+
+
+def test_health_ready_nonce_requires_standalone_control_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(STANDALONE_CONTROL_READY_NONCE_ENV, "instance-marker")
+
+    ordinary = health_response(cast(Any, None))
+    assert STANDALONE_CONTROL_READY_HEADER not in ordinary.headers
+
+    monkeypatch.setenv(STANDALONE_CONTROL_CHILD_ENV, "1")
+    standalone = health_response(cast(Any, None))
+    assert (
+        standalone.headers[STANDALONE_CONTROL_READY_HEADER] == "instance-marker"
     )
 
 
@@ -701,6 +858,7 @@ def test_owner_action_marker_is_private(
     path = tmp_path / "runtime" / "owner-action"
     path.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_EXECUTOR_OWNER_ACTION_FILE_ENV, str(path))
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
 
     mark_standalone_executor_owner_action()
 
@@ -717,6 +875,7 @@ async def test_invalid_standalone_profile_marks_owner_action(
     marker = tmp_path / "runtime" / "owner-action"
     marker.parent.mkdir(mode=0o700)
     monkeypatch.setenv(STANDALONE_EXECUTOR_OWNER_ACTION_FILE_ENV, str(marker))
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
     config = resolve_executor_config(_settings(tmp_path))
     runtime = build_executor_runtime(config)
     profile_path = runtime.services.state_store.layout.executor_profile_path
@@ -737,6 +896,7 @@ def test_standalone_executor_paths_namespace_temp_and_integration_config(
     runtime_root = tmp_path / "runtime-instance"
     config_root = tmp_path / "config-instance"
     monkeypatch.setenv(STANDALONE_EXECUTOR_RUNTIME_DIR_ENV, str(runtime_root))
+    monkeypatch.setenv(STANDALONE_EXECUTOR_CHILD_ENV, "1")
     monkeypatch.setenv(STANDALONE_EXECUTOR_CONFIG_DIR_ENV, str(config_root))
 
     adjusted = apply_standalone_executor_paths(base)
@@ -976,6 +1136,75 @@ def test_supervisor_signal_context_requests_stop_and_restores_handlers(
     } == before
 
 
+def test_supervisor_start_stops_cleanly_when_stop_arrives_during_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_for_supervisor(tmp_path, monkeypatch)
+    spawned: list[_FakeProcess] = []
+    holder: dict[str, StandaloneSupervisor] = {}
+
+    def factory(argv, *, env):
+        _ = env
+        process = _FakeProcess(list(argv))
+        spawned.append(process)
+        holder["supervisor"].request_stop()
+        return process
+
+    supervisor = StandaloneSupervisor(
+        prepared,
+        process_factory=factory,  # type: ignore[arg-type]
+        control_ready_probe=lambda _url, _token: False,
+    )
+    holder["supervisor"] = supervisor
+
+    supervisor.start()
+
+    assert len(spawned) == 1
+    assert "control" in spawned[0].argv
+    assert spawned[0].terminated
+    assert supervisor.children == {}
+
+
+def test_run_forever_installs_signal_handlers_before_start_and_announces_afterward(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_for_supervisor(tmp_path, monkeypatch)
+    supervisor = StandaloneSupervisor(prepared)
+    events: list[str] = []
+
+    @contextmanager
+    def fake_signal_handlers():
+        events.append("handlers-enter")
+        try:
+            yield
+        finally:
+            events.append("handlers-exit")
+
+    def fake_start() -> None:
+        events.append("start")
+        cast(Any, supervisor)._children.update(
+            {
+                "control": _FakeProcess(["control"]),
+                "executor": _FakeProcess(["executor"]),
+            }
+        )
+
+    def announce() -> None:
+        events.append("announce")
+        assert set(supervisor.children) == {"control", "executor"}
+        supervisor.request_stop()
+
+    monkeypatch.setattr(supervisor, "_signal_handlers", fake_signal_handlers)
+    monkeypatch.setattr(supervisor, "start", fake_start)
+
+    supervisor.run_forever(on_started=announce)
+
+    assert events == ["handlers-enter", "start", "announce", "handlers-exit"]
+    assert supervisor.children == {}
+
+
 def test_run_standalone_maps_lock_contention(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1086,6 +1315,80 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="real standalone process restart coverage is exercised on POSIX",
+)
+def test_two_real_standalone_instances_share_xdg_roots_without_state_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime"
+    config = tmp_path / "config"
+    data = tmp_path / "data"
+    runtime.mkdir(mode=0o700)
+    config.mkdir(mode=0o700)
+    data.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data))
+
+    first = prepare_standalone(
+        _settings(
+            tmp_path / "first",
+            data_dir=data / "workgate",
+            port=_free_tcp_port(),
+        )
+    )
+    second = prepare_standalone(
+        _settings(
+            tmp_path / "second",
+            data_dir=data / "workgate",
+            port=_free_tcp_port(),
+        )
+    )
+    first_supervisor = StandaloneSupervisor(first)
+    second_supervisor = StandaloneSupervisor(second)
+
+    try:
+        first_supervisor.start()
+        second_supervisor.start()
+        _wait_for_health(
+            first.child_config.control_url,
+            first_supervisor.children["control"],  # type: ignore[arg-type]
+        )
+        _wait_for_health(
+            second.child_config.control_url,
+            second_supervisor.children["control"],  # type: ignore[arg-type]
+        )
+
+        assert first.child_config.control_data_dir != (
+            second.child_config.control_data_dir
+        )
+        assert (
+            first.control_config_path.parent
+            != second.control_config_path.parent
+        )
+        assert (
+            first.executor_agent_config_dir != second.executor_agent_config_dir
+        )
+        assert first.executor_profile_path != second.executor_profile_path
+        deadline = time.monotonic() + 10
+        while (
+            not first.executor_profile_path.is_file()
+            or not second.executor_profile_path.is_file()
+        ) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert first.executor_profile_path.is_file()
+        assert second.executor_profile_path.is_file()
+    finally:
+        second_supervisor.shutdown()
+        first_supervisor.shutdown()
+        cleanup_standalone_runtime_files(second)
+        cleanup_standalone_runtime_files(first)
 
 
 @pytest.mark.integration

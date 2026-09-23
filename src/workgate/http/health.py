@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from ..protocol.standalone import (
+    STANDALONE_CONTROL_CHILD_ENV,
     STANDALONE_CONTROL_READY_HEADER,
     STANDALONE_CONTROL_READY_NONCE_ENV,
 )
@@ -16,7 +17,11 @@ from ..version import version_info
 def health_response(request: Request) -> JSONResponse:
     """Return a lightweight process health response."""
     response = JSONResponse({"ok": True})
-    nonce = os.getenv(STANDALONE_CONTROL_READY_NONCE_ENV)
+    nonce = (
+        os.getenv(STANDALONE_CONTROL_READY_NONCE_ENV)
+        if os.getenv(STANDALONE_CONTROL_CHILD_ENV) == "1"
+        else None
+    )
     if nonce:
         response.headers[STANDALONE_CONTROL_READY_HEADER] = nonce
     return response
