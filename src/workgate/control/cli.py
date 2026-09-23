@@ -8,48 +8,15 @@ from typing import Any
 
 from ..app_paths import ensure_private_directory
 from ..config.cli import register_config_and_setting_args, settings_from_args
+from ..config.roles import CONTROL_EXCLUDED_SETTING_NAMES
 from ..config.settings import configure_settings
 from ..utils.private_files import private_file_lock
 from .http.app import run_http
 from .mcp.app import run_mcp
 from .runtime import build_control_runtime
-
-CONTROL_EXCLUDED_SETTING_NAMES = frozenset(
-    {
-        "workspace_root",
-        "allow_full_control",
-        "run_shell_default_timeout_s",
-        "run_shell_max_timeout_s",
-        "max_output_bytes",
-        "max_job_log_bytes",
-        "max_jobs",
-        "max_session_snapshots",
-        "max_session_snapshot_bytes",
-        "max_file_read_bytes",
-        "max_view_image_bytes",
-        "max_file_write_bytes",
-        "max_grep_results",
-        "max_directory_entries",
-        "max_glob_results",
-        "max_tree_entries",
-        "max_tmp_files",
-        "max_tmp_bytes",
-        "max_transfer_archive_entries",
-        "max_transfer_unpacked_bytes",
-        "max_concurrent_commands",
-        "max_tmux_sessions",
-        "max_skills",
-        "max_skill_related_files",
-        "max_skill_scan_entries",
-        "max_skill_path_bytes",
-        "command_denylist",
-        "path_denylist",
-        "shell_executable",
-        "tmux_bin",
-        "rg_bin",
-        "git_bin",
-        "python_bin",
-    }
+from .standalone_bootstrap import (
+    maybe_write_standalone_bootstrap,
+    prepare_standalone_control_settings,
 )
 
 
@@ -111,9 +78,11 @@ def run_control_from_args(args: argparse.Namespace) -> None:
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.data_dir)
     ensure_private_directory(settings.audit_log_path.parent)
-    configure_settings(settings)
     try:
         with control_run_lock(settings.state_dir):
+            settings = prepare_standalone_control_settings(settings)
+            configure_settings(settings)
+            maybe_write_standalone_bootstrap(settings)
             _dispatch_control(settings)
     except ControlAlreadyRunningError as exc:
         raise SystemExit(str(exc)) from exc

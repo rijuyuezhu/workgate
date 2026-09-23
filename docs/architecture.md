@@ -23,6 +23,7 @@ operations, and domain services:
 workgate/
   main.py                 argparse root and command registration
   protocol/               dependency-light control/executor wire contracts
+  standalone/             lifecycle-only local two-process supervisor
   control/
     mcp/                   MCP control-plane adapter and middleware
     http/                  REST/tool HTTP control-plane adapter
@@ -46,7 +47,9 @@ workgate/
 MCP and REST/tool HTTP delivery adapters live under `control`. The executor
 process composition owner and all machine-authoritative session, filesystem,
 shell/job, PTY, and local-integration implementations live under `executor`.
-Human UI delivery adapters live in `ui/http`, and transport-neutral ASGI
+The standalone supervisor may compose process lifecycle and private launcher
+material, but it is not a third authority and must not import control/executor
+machine implementations to perform work. Human UI delivery adapters live in `ui/http`, and transport-neutral ASGI
 infrastructure lives in `http`. The obsolete `executors` and `server` packages
 have been removed and must not be restored.
 
@@ -84,8 +87,8 @@ arguments, settings loading, runtime imports, or `argv[0]` special cases. The
 private durable-job runner is also a normal argparse subcommand and is labeled
 internal in help rather than parsed by a separate code path.
 
-Runtime commands are explicit: `control`, `tui`, `mcp`, `executor`,
-`version`, and the labeled internal `job-runner`. Running `workgate`
+Runtime commands are explicit: `standalone`, `control`, `tui`, `mcp`,
+`executor`, `version`, and the labeled internal `job-runner`. Running `workgate`
 without a command is an argparse error. The former `server` and `worker`
 commands are not compatibility aliases.
 
@@ -93,6 +96,13 @@ Global `--version` remains an argparse version action. Settings flags follow
 the role that owns them: `workgate control --mode mcp` exposes control
 settings, while workspace and machine-policy flags belong to
 `workgate executor ...`.
+
+`workgate standalone` accepts one user-facing configuration for convenience,
+then resolves private role-specific child YAML files before launch. It strips
+ambient `WORKGATE_*` settings from both children, fixes the control to protected
+loopback OAuth, and passes only a short-lived private bootstrap channel needed
+to establish the colocated executor's normal long-lived profile. The supervisor
+does not hold a shared mutable runtime `Settings` object with either child.
 
 The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns

@@ -221,6 +221,22 @@ def test_control_does_not_depend_on_executor_composition() -> None:
     assert actual == frozenset()
 
 
+def test_standalone_supervisor_has_no_control_or_executor_implementation_dependency() -> (
+    None
+):
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.standalone")
+        and (
+            target.startswith(f"{_PACKAGE_NAME}.control")
+            or target.startswith(f"{_PACKAGE_NAME}.executor")
+        )
+    )
+
+    assert actual == frozenset()
+
+
 def test_executor_has_no_legacy_remote_worker_dependency() -> None:
     actual = frozenset(
         (importer, target)

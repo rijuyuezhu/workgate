@@ -116,6 +116,12 @@ class ExecutorRuntime:
             await self.terminal_runtime.start()
             terminal_started = True
             profile_store = self.profile_store
+            if profile_store is not None:
+                from .standalone_bootstrap import (
+                    maybe_import_standalone_bootstrap,
+                )
+
+                maybe_import_standalone_bootstrap(profile_store)
             profile = None if profile_store is None else profile_store.load()
             if profile is not None:
                 from .connection import ExecutorConnection
@@ -133,7 +139,25 @@ class ExecutorRuntime:
                     max_concurrent_commands=self.config.max_concurrent_commands,
                 )
                 connection.start()
-        except BaseException:
+        except BaseException as exc:
+            from .profile import (
+                ExecutorAlreadyRunningError,
+                InvalidExecutorProfileError,
+            )
+            from .standalone_bootstrap import (
+                StandaloneExecutorBootstrapError,
+                mark_standalone_executor_owner_action,
+            )
+
+            if isinstance(
+                exc,
+                (
+                    ExecutorAlreadyRunningError,
+                    InvalidExecutorProfileError,
+                    StandaloneExecutorBootstrapError,
+                ),
+            ):
+                mark_standalone_executor_owner_action()
             if connection is not None:
                 await connection.aclose()
             profile_lock.close()
@@ -305,6 +329,9 @@ def build_executor_runtime(
     config: ExecutorConfig, *, enable_control_connection: bool = True
 ) -> ExecutorRuntime:
     """Construct one executor graph without installing process globals yet."""
+    from .standalone_bootstrap import apply_standalone_executor_paths
+
+    config = apply_standalone_executor_paths(config)
 
     def executor_path_resolver(
         path: str | Path,

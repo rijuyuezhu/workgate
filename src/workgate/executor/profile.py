@@ -60,6 +60,10 @@ def normalize_control_url(value: str) -> str:
     return normalized
 
 
+class InvalidExecutorProfileError(RuntimeError):
+    """The durable executor profile exists but cannot be trusted or parsed."""
+
+
 class ExecutorProfileStore:
     """Persist one small owner-private executor profile through StateStore."""
 
@@ -78,7 +82,9 @@ class ExecutorProfileStore:
         try:
             return ExecutorProfile.model_validate(payload)
         except ValueError as exc:
-            raise RuntimeError(f"Invalid executor profile: {path}") from exc
+            raise InvalidExecutorProfileError(
+                f"Invalid executor profile: {path}"
+            ) from exc
 
     def save(self, profile: ExecutorProfile) -> None:
         """Atomically persist the complete profile before any authenticated hello."""

@@ -11,10 +11,12 @@ import workgate.control.cli as server_cli
 import workgate.executor.cli as executor_cli
 import workgate.executor.jobs.cli as jobs_cli
 import workgate.main as cli
+import workgate.standalone.cli as standalone_cli
 import workgate.ui.cli as tui_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.app_paths import app_paths
+from workgate.config.roles import EXECUTOR_SETTING_NAMES
 from workgate.config.settings import Settings, load_settings
 from workgate.config.surface import (
     SETTING_SPECS,
@@ -102,6 +104,49 @@ def test_legacy_server_command_is_not_registered():
         cli._build_parser().parse_args(["server"])
 
 
+def test_standalone_subcommand_keeps_topology_protected():
+    args = cli._build_parser().parse_args(
+        [
+            "standalone",
+            "--workspace-root",
+            "/tmp/workspace",
+            "--port",
+            "9999",
+        ]
+    )
+
+    assert args.handler is standalone_cli.run_standalone_from_args
+    assert args.workspace_root == "/tmp/workspace"
+    assert args.port == 9999
+    for name in (
+        "mode",
+        "host",
+        "base_url",
+        "auth_mode",
+        "auth_bypass_localhost",
+        "oauth_issuer",
+        "oauth_resource",
+    ):
+        assert not hasattr(args, name)
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--mode", "stdio"),
+        ("--host", "0.0.0.0"),
+        ("--base-url", "https://example.com"),
+        ("--auth-mode", "none"),
+        ("--auth-bypass-localhost", "true"),
+        ("--oauth-issuer", "https://example.com"),
+        ("--oauth-resource", "https://example.com/mcp"),
+    ],
+)
+def test_standalone_rejects_topology_and_auth_overrides(flag, value):
+    with pytest.raises(SystemExit):
+        cli._build_parser().parse_args(["standalone", flag, value])
+
+
 @pytest.mark.parametrize(
     ("flag", "value"),
     [
@@ -133,6 +178,7 @@ def test_root_help_lists_registered_commands():
     )
 
     for command in (
+        "standalone",
         "control",
         "tui",
         "mcp",
@@ -180,6 +226,18 @@ def test_control_cli_excludes_every_executor_only_setting():
     )
 
     assert executor_only_settings == server_cli.CONTROL_EXCLUDED_SETTING_NAMES
+
+
+def test_standalone_executor_child_settings_match_executor_config():
+    derived_executor_fields = {
+        "agent_auth_dir",
+        "agent_config_dir",
+        "temp_dir",
+    }
+
+    assert (
+        set(ExecutorConfig.__dataclass_fields__) - derived_executor_fields
+    ) == EXECUTOR_SETTING_NAMES
 
 
 def test_version_option_prints_package_version(capsys):
@@ -450,6 +508,13 @@ def test_control_handler_rejects_a_second_writer(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         server_cli, "configure_settings", lambda _settings: None
+    )
+    monkeypatch.setattr(
+        server_cli,
+        "prepare_standalone_control_settings",
+        lambda _settings: pytest.fail(
+            "duplicate control touched standalone control secrets"
+        ),
     )
     monkeypatch.setattr(
         server_cli,
