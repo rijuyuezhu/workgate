@@ -511,15 +511,11 @@ def test_prepare_standalone_removes_stale_bootstrap_when_profile_exists(
 
 def test_standalone_runtime_files_are_namespaced_by_state_root(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = tmp_path / "runtime"
-    runtime.mkdir(mode=0o700)
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-
-    first = prepare_standalone(_settings(tmp_path / "first", port=18765))
-    second = prepare_standalone(_settings(tmp_path / "second", port=28765))
+    first_settings = _settings(tmp_path / "first", port=18765)
+    second_settings = _settings(tmp_path / "second", port=28765)
+    first = prepare_standalone(first_settings)
+    second = prepare_standalone(second_settings)
 
     assert first.control_config_path != second.control_config_path
     assert first.executor_config_path != second.executor_config_path
@@ -528,13 +524,13 @@ def test_standalone_runtime_files_are_namespaced_by_state_root(
     assert not first.executor_agent_config_dir.exists()
     assert not second.executor_agent_config_dir.exists()
     assert first.control_config_path.parent.parent == (
-        runtime / "workgate" / "standalone"
+        first_settings.runtime_dir / "standalone"
     )
     assert second.control_config_path.parent.parent == (
-        runtime / "workgate" / "standalone"
+        second_settings.runtime_dir / "standalone"
     )
     assert first.executor_agent_config_dir.parent.parent.parent == (
-        tmp_path / "config" / "workgate" / "standalone"
+        first_settings.config_dir / "standalone"
     )
 
 
