@@ -13,7 +13,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _APP_NAME = "workgate"
-_RUNTIME_FALLBACK_NONCE = secrets.token_hex(8)
+_RUNTIME_FALLBACK_NONCE: str | None = None
+
+
+def _runtime_fallback_nonce() -> str:
+    """Return one per-process random suffix without consuming entropy at import time."""
+    global _RUNTIME_FALLBACK_NONCE
+    if _RUNTIME_FALLBACK_NONCE is None:
+        _RUNTIME_FALLBACK_NONCE = secrets.token_hex(8)
+    return _RUNTIME_FALLBACK_NONCE
 
 
 def _absolute_env_path(value: str | None) -> Path | None:
@@ -94,7 +102,7 @@ def _runtime_base(env: Mapping[str, str], temp_root: Path) -> Path:
     if configured is not None and _is_private_runtime_base(configured):
         return configured / _APP_NAME
     return temp_root / (
-        f"{_APP_NAME}-{_uid_suffix(env)}-{_RUNTIME_FALLBACK_NONCE}"
+        f"{_APP_NAME}-{_uid_suffix(env)}-{_runtime_fallback_nonce()}"
     )
 
 
@@ -121,7 +129,7 @@ def resolve_app_paths(
             data_dir=support / "data",
             cache_dir=user_home / "Library" / "Caches" / _APP_NAME,
             runtime_dir=temporary
-            / f"{_APP_NAME}-{_uid_suffix(active_env)}-{_RUNTIME_FALLBACK_NONCE}",
+            / f"{_APP_NAME}-{_uid_suffix(active_env)}-{_runtime_fallback_nonce()}",
         )
 
     if active_platform.startswith("win"):
@@ -138,7 +146,7 @@ def resolve_app_paths(
             cache_dir=local / _APP_NAME / "cache",
             runtime_dir=temporary
             / _APP_NAME
-            / f"runtime-{_RUNTIME_FALLBACK_NONCE}",
+            / f"runtime-{_runtime_fallback_nonce()}",
         )
 
     config_base = _xdg_base(

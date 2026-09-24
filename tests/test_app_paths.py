@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import workgate.app_paths as app_paths_module
 from workgate.app_paths import ensure_private_directory, resolve_app_paths
 
 
@@ -151,3 +152,29 @@ def test_windows_uses_native_roaming_and_local_namespaces(
     assert paths.runtime_dir.parent == tmp_path / "tmp" / "workgate"
     assert paths.runtime_dir.name.startswith("runtime-")
     assert len({paths.state_dir, paths.data_dir, paths.cache_dir}) == 3
+
+
+def test_runtime_fallback_nonce_is_lazy_and_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+
+    def fake_token_hex(nbytes: int) -> str:
+        calls.append(nbytes)
+        return "0123456789abcdef"
+
+    monkeypatch.setattr(app_paths_module, "_RUNTIME_FALLBACK_NONCE", None)
+    monkeypatch.setattr(app_paths_module.secrets, "token_hex", fake_token_hex)
+
+    kwargs = {
+        "env": {},
+        "home": tmp_path / "home",
+        "platform": "linux",
+        "temp_root": tmp_path / "tmp",
+    }
+    first = resolve_app_paths(**kwargs)
+    second = resolve_app_paths(**kwargs)
+
+    assert calls == [8]
+    assert first.runtime_dir == second.runtime_dir
+    assert first.runtime_dir.name.endswith("-0123456789abcdef")
