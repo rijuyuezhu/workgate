@@ -1,0 +1,16 @@
+[project]
+name = "workgate-cloudflare"
+version = "0.1.0"
+description = "Cloudflare hosted adapter for Workgate"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "workers-py",
+    "workers-runtime-sdk",
+]

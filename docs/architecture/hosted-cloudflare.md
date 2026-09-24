@@ -1,8 +1,12 @@
-# Hosted / Cloudflare feasibility
+# Hosted / Cloudflare
 
-This page records the deliberately narrow hosted-control feasibility result for
-the control/executor architecture. It is **not** a production Cloudflare
-deployment guide, and hosted support is not an alternate Workgate architecture.
+This page records the hosted-control architecture and the constraints measured
+against Cloudflare Workers. The maintained `deploy/cloudflare/` adapter provides
+a deployable single-user subset; hosted support remains an adapter to the same
+control/executor architecture.
+
+For deployment and pairing instructions, see
+[Cloudflare hosted deployment](../getting-started/cloudflare-hosted.md).
 
 The evaluated platform is Cloudflare Workers + one SQLite-backed Durable Object
 per personal Workgate deployment. The observations below were checked against
@@ -40,18 +44,16 @@ actor = build_hosted_control_actor_core(settings, state_store=state_store)
 actor.start()
 ```
 
-The provider-specific Worker/Durable-Object routing layer is intentionally not
-part of the core package. Importing Workgate does not require `workers-py` or a
-Cloudflare account.
-
-This is a source-level/runtime feasibility seam, not yet a claim that the
-published Workgate wheel can be installed directly into Python Workers.
+The provider-specific Worker/Durable-Object routing layer lives under
+`deploy/cloudflare/`, while provider-neutral HTTP/MCP routing remains under
+`workgate.hosted`. Importing Workgate does not require `workers-py` or a
+Cloudflare account. The deployment stages a reduced source closure rather than
+installing the published Workgate wheel directly into Python Workers.
 Workgate's normal package metadata still includes full VPS/desktop dependencies
 such as ordinary `httpx`, `uvicorn[standard]`, and `websockets`, while Python
-Workers only support packages available to Pyodide/PyEmscripten and currently
-document `aiohttp`/`httpx2` as the supported HTTP clients. A production hosted
-distribution would need a deliberately smaller packaging surface or wrapper;
-PR11 does not reshape the default VPS/standalone dependency graph for that.
+Workers only support packages available to Pyodide/PyEmscripten. The maintained
+deployment therefore stages a deliberately smaller source/dependency closure
+instead of reshaping the default VPS/standalone dependency graph.
 
 ## Reconstruction semantics
 
@@ -71,7 +73,7 @@ it:
 The hosted reconstruction tests exercise this boundary with a fresh actor over
 the same SQLite database. No ordinary command is replayed after reconstruction.
 
-## What is not wired in the feasibility adapter
+## What remains unavailable in the hosted adapter
 
 Some current control features still intentionally own local filesystem state.
 The first hosted adapter does not paper over those differences:
@@ -80,8 +82,8 @@ The first hosted adapter does not paper over those differences:
 - session-copy staging/payload retention uses local files;
 - canonical audit JSONL/full-payload storage is file-backed;
 - managed-job leases/recovery still contain host-process/file assumptions;
-- OAuth/public HTTP composition and Human UI routing are not yet wrapped by a
-  Durable Object entrypoint;
+- the hosted MCP endpoint currently uses a static owner bearer rather than the
+  VPS OAuth browser flow; Human UI routing is not present;
 - terminal WebSocket routes are not yet adapted to the Durable Object
   hibernation event/attachment API.
 
@@ -117,8 +119,9 @@ model, not a Workgate pricing guarantee; Cloudflare limits/pricing can change
 and other traffic adds usage.
 
 This means the current HTTP long-poll protocol is technically feasible for a
-personal hosted actor, but it is not hibernation-efficient. PR11 does not change
-the executor transport merely to optimize one hosting provider.
+personal hosted actor, but it is not hibernation-efficient. The core executor
+transport is not replaced with a provider-specific durable queue merely to
+optimize one hosting provider.
 
 ## Terminal streams
 
@@ -147,7 +150,7 @@ Cloudflare's current limits page lists a 2 MB maximum SQL row/string size, up to
 10 GB per SQLite-backed Durable Object, and a 5 GB account-wide SQLite Durable
 Object storage cap on Workers Free. A separate Cloudflare FAQ still describes a
 1 GB Free per-object ceiling, so the precise Free-plan ceiling should be
-rechecked before deployment. The feasibility adapter is intended for small
+rechecked before deployment. The hosted state adapter is intended for small
 restart-critical registries either way, not arbitrary payload blobs.
 
 ## Platform references

@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workgate-control",
+  "main": "src/entry.py",
+  "compatibility_date": "2026-09-24",
+  "compatibility_flags": ["python_workers"],
+  "exports": {
+    "WorkgateControl": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "durable_objects": {
+    "bindings": [
+      {"class_name": "WorkgateControl", "name": "WORKGATE_CONTROL"}
+    ]
+  },
+  "secrets": {
+    "required": ["WORKGATE_OWNER_TOKEN"]
+  },
+  "python_modules": {
+    "exclude": ["**/*.pyc", "**/__pycache__"]
+  },
+  "observability": {"enabled": true}
+}

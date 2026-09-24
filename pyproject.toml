@@ -68,6 +68,18 @@ source-include = [
     "ui-opentui/**",
     "scripts/release/build-platform-wheel.py",
     "scripts/generation/generate-tui-executable-contract.py",
+    "scripts/generation/generate-hosted-tool-manifest.py",
+    "deploy/cloudflare/.gitignore",
+    "deploy/cloudflare/AGENTS.md",
+    "deploy/cloudflare/README.md",
+    "deploy/cloudflare/package.json",
+    "deploy/cloudflare/package-lock.json",
+    "deploy/cloudflare/prepare.py",
+    "deploy/cloudflare/pyproject.toml",
+    "deploy/cloudflare/pylock.toml",
+    "deploy/cloudflare/src/entry.py",
+    "deploy/cloudflare/uv.lock",
+    "deploy/cloudflare/wrangler.jsonc",
     "scripts/README.md",
     "scripts/validation/check-coverage.py",
     "scripts/validation/check-native-provenance.py",
@@ -88,6 +100,12 @@ source-exclude = [
     "/ui-opentui/node_modules",
     "/ui-opentui/dist",
     "/ui-opentui/coverage",
+    "/deploy/cloudflare/.venv",
+    "/deploy/cloudflare/.venv-workers",
+    "/deploy/cloudflare/node_modules",
+    "/deploy/cloudflare/python_modules",
+    "/deploy/cloudflare/src/workgate",
+    "/deploy/cloudflare/dist",
 ]
 
 [project.urls]
@@ -100,6 +118,7 @@ workgate = "workgate.main:main"
 [tool.ruff]
 line-length = 80
 target-version = "py314"
+extend-exclude = ["src/workgate/hosted/_tool_manifest.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

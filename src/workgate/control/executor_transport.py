@@ -64,7 +64,7 @@ class _ExecutorChannel:
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     queue: deque[str] = field(default_factory=deque)
     pending: dict[str, _PendingCommand] = field(default_factory=dict)
-    poll_active: bool = False
+    poll_token: object | None = None
     last_activity: float | None = None
     last_seen_at: float | None = None
     hello: ExecutorHelloRequest | None = None
@@ -227,6 +227,14 @@ class ExecutorTransport:
         channel = self._channel(record.executor_id)
         async with channel.lock:
             self._reauthenticate(record.executor_id, credential)
+            # A fresh hello establishes a new live connection attempt. An older
+            # delivery poll can outlive its external HTTP client on some hosted
+            # runtimes, so invalidate that process-local waiter without adding
+            # any protocol generation/instance identity. The old poll observes
+            # the token mismatch before offering work and exits.
+            if channel.poll_token is not None:
+                channel.poll_token = None
+                channel.wake.set()
             channel.hello = request
             self._touch(channel)
         proof_callback = self._authenticated_proof_callback
@@ -270,20 +278,23 @@ class ExecutorTransport:
         record = self._authenticate(credential)
         executor_id = record.executor_id
         channel = self._channel(executor_id)
+        poll_token = object()
         async with channel.lock:
             self._reauthenticate(executor_id, credential)
-            if channel.poll_active:
+            if channel.poll_token is not None:
                 raise ExecutorTransportError(
                     ProtocolErrorCode.EXECUTOR_OVERLOADED,
                     "executor already has an active delivery poll",
                 )
-            channel.poll_active = True
+            channel.poll_token = poll_token
             self._touch(channel)
 
         deadline = self._clock() + self._poll_timeout_s
         try:
             while True:
                 async with channel.lock:
+                    if channel.poll_token is not poll_token:
+                        return None
                     self._require_running()
                     self._reauthenticate(executor_id, credential)
                     self._touch(channel)
@@ -302,7 +313,8 @@ class ExecutorTransport:
                     return None
         finally:
             async with channel.lock:
-                channel.poll_active = False
+                if channel.poll_token is poll_token:
+                    channel.poll_token = None
 
     def _offer_next(self, channel: _ExecutorChannel) -> ExecutorCommand | None:
         while channel.queue:

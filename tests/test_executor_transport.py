@@ -226,6 +226,33 @@ async def test_only_one_delivery_poll_may_wait_per_executor(
 
 
 @pytest.mark.asyncio
+async def test_fresh_hello_invalidates_stale_delivery_poll(
+    tmp_path: Path,
+) -> None:
+    transport, _, executor_id, credential = _running_transport(tmp_path)
+    await _mark_online(transport, credential)
+
+    stale_poll = asyncio.create_task(transport.poll(credential))
+    await asyncio.sleep(0)
+
+    # A reconnect hello must fence the previous connection's still-live poll
+    # without requiring a protocol generation or executor instance identity.
+    await _mark_online(transport, credential)
+    assert await asyncio.wait_for(stale_poll, timeout=0.1) is None
+
+    caller = asyncio.create_task(
+        transport.call(executor_id, "shell.run", {"command": "true"})
+    )
+    await asyncio.sleep(0)
+    command = await transport.poll(credential)
+    assert command is not None
+    assert command.args == {"command": "true"}
+    expected = ExecutorResult(id=command.id, ok=True, result={"done": True})
+    await transport.submit_result(credential, expected)
+    assert await caller == expected
+
+
+@pytest.mark.asyncio
 async def test_result_requires_current_expected_executor_and_live_command(
     tmp_path: Path,
 ) -> None:

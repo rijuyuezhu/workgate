@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import json
+import tomllib
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+from workgate.hosted._tool_manifest import HOSTED_TOOL_MANIFEST
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_script(relative: str, name: str) -> ModuleType:
+    path = _ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cloudflare_prepare_stages_exact_dependency_light_closure(
+    tmp_path: Path,
+) -> None:
+    prepare = _load_script(
+        "deploy/cloudflare/prepare.py", "workgate_cloudflare_prepare"
+    )
+    dest = tmp_path / "workgate"
+    copied = prepare.stage(dest)
+    assert (
+        tuple(path.relative_to(dest).as_posix() for path in copied)
+        == prepare.MODULES
+    )
+    assert (dest / "hosted/http.py").is_file()
+    assert (dest / "hosted/mcp.py").is_file()
+    assert not (dest / "executor").exists()
+    assert not (dest / "control/mcp").exists()
+    assert not (dest / "tools").exists()
+
+
+def test_cloudflare_tool_manifest_matches_canonical_mcp_definitions() -> None:
+    generator = _load_script(
+        "scripts/generation/generate-hosted-tool-manifest.py",
+        "workgate_hosted_tool_manifest_generator",
+    )
+    generated = asyncio.run(generator.build_manifest())
+    assert tuple(generated) == HOSTED_TOOL_MANIFEST
+
+
+def test_cloudflare_manifest_generator_rejects_unvalidated_schema_keywords() -> (
+    None
+):
+    generator = _load_script(
+        "scripts/generation/generate-hosted-tool-manifest.py",
+        "workgate_hosted_tool_manifest_schema_guard",
+    )
+    with pytest.raises(
+        RuntimeError, match="unsupported hosted MCP schema keyword"
+    ):
+        generator._validate_input_schema(
+            {"type": "string", "enum": ["one"]}, path="test"
+        )
+
+
+def test_cloudflare_wrangler_declares_sqlite_actor_and_owner_secret() -> None:
+    config = json.loads(
+        (_ROOT / "deploy/cloudflare/wrangler.jsonc").read_text(encoding="utf-8")
+    )
+    assert config["compatibility_flags"] == ["python_workers"]
+    assert config["exports"]["WorkgateControl"] == {
+        "type": "durable-object",
+        "storage": "sqlite",
+    }
+    assert config["durable_objects"]["bindings"] == [
+        {"class_name": "WorkgateControl", "name": "WORKGATE_CONTROL"}
+    ]
+    assert config["secrets"]["required"] == ["WORKGATE_OWNER_TOKEN"]
+
+
+def test_cloudflare_generated_and_secret_files_are_ignored() -> None:
+    ignored = (_ROOT / "deploy/cloudflare/.gitignore").read_text(
+        encoding="utf-8"
+    )
+    for path in (
+        ".venv/",
+        ".venv-workers/",
+        "python_modules/",
+        "node_modules/",
+        "src/workgate/",
+        "dist/",
+        ".wrangler/",
+        ".dev.vars*",
+        ".env*",
+        ".secrets-*.json",
+        ".curl-*.cfg",
+        ".mcp-*.py",
+    ):
+        assert path in ignored
+
+
+def test_cloudflare_sdist_uses_explicit_deployment_allowlist() -> None:
+    config = tomllib.loads(
+        (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    included = set(config["tool"]["uv"]["build-backend"]["source-include"])
+    cloudflare = {
+        path for path in included if path.startswith("deploy/cloudflare/")
+    }
+    assert cloudflare == {
+        "deploy/cloudflare/.gitignore",
+        "deploy/cloudflare/AGENTS.md",
+        "deploy/cloudflare/README.md",
+        "deploy/cloudflare/package.json",
+        "deploy/cloudflare/package-lock.json",
+        "deploy/cloudflare/prepare.py",
+        "deploy/cloudflare/pyproject.toml",
+        "deploy/cloudflare/pylock.toml",
+        "deploy/cloudflare/src/entry.py",
+        "deploy/cloudflare/uv.lock",
+        "deploy/cloudflare/wrangler.jsonc",
+    }
