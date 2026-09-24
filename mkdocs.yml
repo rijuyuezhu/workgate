@@ -82,6 +82,7 @@ nav:
   - Architecture:
       - Current implementation: architecture.md
       - Control/executor target: architecture/control-executor.md
+      - Hosted / Cloudflare feasibility: architecture/hosted-cloudflare.md
   - Development: development.md
   - Maintenance:
       - Fork and upstream differences: maintenance/fork-upstream-differences.md

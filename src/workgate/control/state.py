@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from threading import RLock
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -20,6 +20,12 @@ from ..protocol.ids import ExecutorId, SessionId
 
 _REGISTRY_VERSION = 1
 Timestamp = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+class _SyncLockContext(Protocol):
+    def __enter__(self) -> object: ...
+
+    def __exit__(self, *exc_info: object) -> object: ...
 
 
 class ExecutorTrustRecord(BaseModel):
@@ -64,11 +70,16 @@ class ControlSessionRecord(BaseModel):
 class ControlState:
     """Own small write-through registries for restart-critical control facts."""
 
-    def __init__(self, state_store: StateStore) -> None:
+    def __init__(
+        self,
+        state_store: StateStore,
+        *,
+        lock: _SyncLockContext | None = None,
+    ) -> None:
         self.state_store = state_store
         self._executors: dict[str, ExecutorTrustRecord] = {}
         self._sessions: dict[str, ControlSessionRecord] = {}
-        self._lock = RLock()
+        self._lock = RLock() if lock is None else lock
         self._started = False
         self._closed = False
 

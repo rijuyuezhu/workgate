@@ -30,6 +30,14 @@ _ALLOWED_MCP_CONTROL_UI_IMPORTS = frozenset(
 _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
     {
         ("workgate.main", "workgate.control.cli"),
+        # Optional hosted adapters consume the stable control-side core but
+        # must not become a dependency of control itself.
+        ("workgate.hosted.actor", "workgate.control.config"),
+        ("workgate.hosted.actor", "workgate.control.executor_transport"),
+        ("workgate.hosted.actor", "workgate.control.pairing"),
+        ("workgate.hosted.actor", "workgate.control.sessions"),
+        ("workgate.hosted.actor", "workgate.control.state"),
+        ("workgate.hosted.actor", "workgate.control.streams"),
         # These are presentation/download adapters that are part of the control
         # deployment even though their historical package names are shared.
         ("workgate.http.downloads", "workgate.control.download_store"),
@@ -235,6 +243,50 @@ def test_standalone_supervisor_has_no_control_or_executor_implementation_depende
     )
 
     assert actual == frozenset()
+
+
+def test_hosted_adapter_does_not_depend_on_executor_implementation() -> None:
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.hosted")
+        and target.startswith(f"{_PACKAGE_NAME}.executor")
+    )
+
+    assert actual == frozenset()
+
+
+def test_hosted_adapter_has_no_provider_sdk_dependency() -> None:
+    forbidden = (
+        "workers",
+        "cloudflare",
+        "redis",
+        "threading",
+        "multiprocessing",
+    )
+    imports: set[tuple[str, str]] = set()
+    for module, path in _source_modules().items():
+        if not module.startswith(f"{_PACKAGE_NAME}.hosted"):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update((module, alias.name) for alias in node.names)
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.level == 0
+                and node.module
+            ):
+                imports.add((module, node.module))
+
+    assert not {
+        (module, target)
+        for module, target in imports
+        if any(
+            target == name or target.startswith(f"{name}.")
+            for name in forbidden
+        )
+    }
 
 
 def test_executor_has_no_legacy_remote_worker_dependency() -> None:
