@@ -395,7 +395,9 @@ therefore valid only on loopback; a remote executor bearer must never be sent
 over cleartext HTTP.
 
 Optional hosted/Cloudflare work comes only after VPS and standalone are stable
-and must adapt to this core rather than reshape it.
+and must adapt to this core rather than reshape it. The current feasibility
+result and its explicit unsupported/degraded surfaces are documented in
+[Hosted / Cloudflare feasibility](hosted-cloudflare.md).
 
 Explicit non-goals include active-active control, distributed leader election,
 generic durable command queues, transparent ordinary-RPC restart recovery,
