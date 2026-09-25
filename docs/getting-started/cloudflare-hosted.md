@@ -7,10 +7,16 @@ Worker never becomes a machine executor.
 
 ## Supported surface
 
-The current adapter provides executor pairing and v1 transport, a simple owner
-pairing page, owner-authenticated status diagnostics, stateless Streamable HTTP
+The current adapter provides executor pairing and v1 transport, an owner
+pairing review page with explicit credential replacement, owner-authenticated
+status diagnostics, stateless Streamable HTTP
 MCP, and explicit sessions plus the advertised executor-backed file/search/shell
 tools. Executor trust and session facts are persisted in Durable Object SQLite.
+The MCP endpoint implements the `2026-07-28` stateless discovery/tool-call
+subset needed by this surface and keeps compatibility with the handshake-era
+protocol revisions supported by Workgate's current MCP v1 dependency. It does
+not expose unrelated modern protocol features such as subscriptions or
+multi-round-trip tool flows.
 
 Unsupported control-local features are omitted from MCP discovery instead of
 being emulated. Downloads/public links, `session_copy`, control-managed jobs,
@@ -25,7 +31,9 @@ The first hosted adapter uses one high-entropy owner bearer stored as the
 Cloudflare secret `WORKGATE_OWNER_TOKEN`. That bearer protects `/mcp`, `/status`,
 and pairing decisions. Executor routes continue to use their own credentials.
 Clients that require OAuth discovery/authorization instead of a configured
-bearer are not supported yet.
+bearer are not supported yet. Owner-authenticated routes are checked once at
+the stateless Worker edge before the Durable Object is invoked and checked again
+inside the hosted gateway.
 
 ## Deploy
 

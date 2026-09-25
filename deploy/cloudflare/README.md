@@ -97,14 +97,25 @@ Authorization: Bearer <WORKGATE_OWNER_TOKEN>
 ```
 
 The endpoint implements stateless MCP Streamable HTTP POST requests. A normal
-client can initialize, list tools, call `session_start`, and invoke the advertised
-session-bound machine tools. The first hosted adapter uses a static owner bearer
+client can discover/list tools, call `session_start`, and invoke the advertised
+session-bound machine tools. The hosted wire adapter implements the
+`2026-07-28` stateless discovery/tool-call subset needed by this surface,
+including per-request protocol/routing metadata, while retaining the
+handshake-era MCP revisions supported by Workgate's current MCP v1 dependency.
+It does not claim unrelated 2026 protocol features such as subscriptions or
+multi-round-trip tool flows. The first hosted adapter uses a static owner bearer
 rather than Workgate's VPS browser OAuth flow.
+
+Owner-authenticated routes are rejected at the stateless Worker edge before
+they wake the Durable Object; the Durable Object repeats the bearer check before
+dispatch. Executor routes continue to authenticate with executor credentials
+inside the control actor.
 
 ## Other routes
 
 - `GET /healthz` — public liveness check.
-- `GET /pair` — pairing page; approval POSTs require the owner bearer.
+- `GET /pair` — pairing page. Review, approval/denial, and explicit existing
+  credential replacement require the owner bearer.
 - `GET /status` — owner-authenticated executor/session summary.
 - `POST /executor/v1/...` — normal Workgate executor protocol.
 

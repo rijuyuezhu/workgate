@@ -7,10 +7,15 @@ import pytest
 
 from workgate.control.pairing import PairingAttemptView
 from workgate.hosted import HostedHttpGateway, HostedHttpResponse
-from workgate.hosted.http import _pairing_error, _transport_error
+from workgate.hosted.http import (
+    _pairing_error,
+    _transport_error,
+    owner_bearer_matches,
+)
 from workgate.hosted.mcp import (
     HOSTED_MCP_TOOL_NAMES,
     LATEST_MCP_PROTOCOL_VERSION,
+    MODERN_MCP_PROTOCOL_VERSION,
     _json_type_name,
     _jsonable,
     _matches_json_type,
@@ -72,6 +77,8 @@ class _Pairing:
         self.start_error: Exception | None = None
         self.poll_error: Exception | None = None
         self.decide_error: Exception | None = None
+        self.lookup_error: Exception | None = None
+        self.lookup_existing_executor_id: str | None = None
 
     async def start_pairing(self, request: Any) -> Any:
         if self.start_error is not None:
@@ -111,6 +118,22 @@ class _Pairing:
             status="approved",
             executor_id="exec_test",
             name="laptop",
+        )
+
+    async def lookup_user_code(self, user_code: str) -> PairingAttemptView:
+        if self.lookup_error is not None:
+            raise self.lookup_error
+        return PairingAttemptView(
+            user_code=user_code,
+            requested_name="laptop",
+            existing_executor_id=self.lookup_existing_executor_id,
+            metadata=PairingExecutorMetadata(
+                hostname="host",
+                platform="linux",
+                build="test",
+            ),
+            expires_in=300,
+            status="pending",
         )
 
 
@@ -190,6 +213,35 @@ def _headers(token: str = "x" * 32) -> dict[str, str]:
     return {"authorization": f"Bearer {token}"}
 
 
+def _modern_headers(
+    method: str,
+    *,
+    name: str | None = None,
+    version: str = MODERN_MCP_PROTOCOL_VERSION,
+) -> dict[str, str]:
+    headers = {
+        **_headers(),
+        "MCP-Protocol-Version": version,
+        "Mcp-Method": method,
+    }
+    if name is not None:
+        headers["Mcp-Name"] = name
+    return headers
+
+
+def _modern_meta(
+    *, version: str = MODERN_MCP_PROTOCOL_VERSION
+) -> dict[str, Any]:
+    return {
+        "io.modelcontextprotocol/protocolVersion": version,
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientInfo": {
+            "name": "test-client",
+            "version": "1",
+        },
+    }
+
+
 def _json_body(response: HostedHttpResponse) -> dict[str, Any]:
     assert isinstance(response.body, dict)
     return cast(dict[str, Any], response.body)
@@ -230,6 +282,15 @@ def test_hosted_gateway_requires_strong_owner_token() -> None:
         HostedHttpGateway(_actor(), owner_token="short")
 
 
+def test_hosted_owner_bearer_match_is_case_insensitive_and_exact() -> None:
+    token = "x" * 32
+    assert owner_bearer_matches({"Authorization": f"Bearer {token}"}, token)
+    assert not owner_bearer_matches(
+        {"authorization": f"Bearer {token}y"}, token
+    )
+    assert not owner_bearer_matches({"authorization": token}, token)
+
+
 @pytest.mark.asyncio
 async def test_hosted_mcp_requires_owner_bearer_and_lists_generated_tools() -> (
     None
@@ -268,6 +329,318 @@ async def test_hosted_mcp_requires_owner_bearer_and_lists_generated_tools() -> (
     listed_body = _json_body(listed)
     names = {row["name"] for row in listed_body["result"]["tools"]}
     assert names == HOSTED_MCP_TOOL_NAMES
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_discovery_and_tool_listing() -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    discovered = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("server/discover"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {"_meta": _modern_meta()},
+        },
+    )
+    assert discovered.status == 200
+    result = _json_body(discovered)["result"]
+    assert result["supportedVersions"] == [MODERN_MCP_PROTOCOL_VERSION]
+    assert result["resultType"] == "complete"
+    assert result["cacheScope"] == "private"
+    assert result["capabilities"] == {"tools": {"listChanged": False}}
+    assert (
+        result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"]
+        == "workgate-hosted"
+    )
+
+    listed = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("tools/list"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {"_meta": _modern_meta()},
+        },
+    )
+    assert listed.status == 200
+    listed_result = _json_body(listed)["result"]
+    assert listed_result["resultType"] == "complete"
+    assert listed_result["ttlMs"] == 0
+    assert {tool["name"] for tool in listed_result["tools"]} == (
+        HOSTED_MCP_TOOL_NAMES
+    )
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_tool_call_routes_with_modern_result() -> None:
+    actor = _actor()
+    gateway = HostedHttpGateway(actor, owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("tools/call", name="bash"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "_meta": _modern_meta(),
+                "name": "bash",
+                "arguments": {
+                    "session_id": "ABCDEFGH",
+                    "command": "pwd",
+                },
+            },
+        },
+    )
+    assert response.status == 200
+    result = _json_body(response)["result"]
+    assert result["resultType"] == "complete"
+    assert result["isError"] is False
+    assert "ttlMs" not in result
+    assert "cacheScope" not in result
+    assert result["structuredContent"]["tool"] == "bash"
+    assert actor.session_coordinator.calls[-1][0] == "bash"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("headers", "params", "code"),
+    [
+        (
+            _modern_headers("tools/list"),
+            {},
+            -32602,
+        ),
+        (
+            _modern_headers("resources/list"),
+            {"_meta": _modern_meta()},
+            -32020,
+        ),
+        (
+            _modern_headers("tools/list", version="2099-01-01"),
+            {"_meta": _modern_meta(version="2099-01-01")},
+            -32022,
+        ),
+    ],
+)
+async def test_hosted_mcp_2026_rejects_invalid_envelopes(
+    headers: dict[str, str],
+    params: dict[str, Any],
+    code: int,
+) -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=headers,
+        payload={
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/list",
+            "params": params,
+        },
+    )
+    assert response.status == 400
+    assert _json_body(response)["error"]["code"] == code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "headers"),
+    [
+        (
+            "tools/list",
+            {"_meta": _modern_meta(), "cursor": "next"},
+            _modern_headers("tools/list"),
+        ),
+        (
+            "tools/call",
+            {
+                "_meta": _modern_meta(),
+                "name": "bash",
+                "arguments": {
+                    "session_id": "ABCDEFGH",
+                    "command": "pwd",
+                },
+                "requestState": "resume-me",
+            },
+            _modern_headers("tools/call", name="bash"),
+        ),
+        (
+            "tools/call",
+            {
+                "_meta": _modern_meta(),
+                "name": "bash",
+                "arguments": {
+                    "session_id": "ABCDEFGH",
+                    "command": "pwd",
+                },
+                "inputResponses": {},
+            },
+            _modern_headers("tools/call", name="bash"),
+        ),
+        (
+            "tools/call",
+            {
+                "_meta": _modern_meta(),
+                "name": "bash",
+                "arguments": {
+                    "session_id": "ABCDEFGH",
+                    "command": "pwd",
+                },
+                "task": {},
+            },
+            _modern_headers("tools/call", name="bash"),
+        ),
+    ],
+)
+async def test_hosted_mcp_2026_rejects_unimplemented_extensions(
+    method: str,
+    params: dict[str, Any],
+    headers: dict[str, str],
+) -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=headers,
+        payload={
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": method,
+            "params": params,
+        },
+    )
+    assert response.status == 400
+    body = _json_body(response)
+    assert body["error"]["code"] == -32602
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_rejects_name_header_mismatch() -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("tools/call", name="read"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "_meta": _modern_meta(),
+                "name": "bash",
+                "arguments": {
+                    "session_id": "ABCDEFGH",
+                    "command": "pwd",
+                },
+            },
+        },
+    )
+    assert response.status == 400
+    assert _json_body(response)["error"]["code"] == -32020
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_client_info_is_optional_but_validated() -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    meta = _modern_meta()
+    meta.pop("io.modelcontextprotocol/clientInfo")
+    accepted = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("tools/list"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/list",
+            "params": {"_meta": meta},
+        },
+    )
+    assert accepted.status == 200
+
+    meta["io.modelcontextprotocol/clientInfo"] = {"name": "broken"}
+    rejected = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("tools/list"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/list",
+            "params": {"_meta": meta},
+        },
+    )
+    assert rejected.status == 400
+    assert _json_body(rejected)["error"]["code"] == -32602
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_does_not_serve_removed_ping() -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_modern_headers("ping"),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "ping",
+            "params": {"_meta": _modern_meta()},
+        },
+    )
+    assert response.status == 404
+    assert _json_body(response)["error"]["code"] == -32601
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_acknowledges_and_drops_notifications() -> None:
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers={
+            **_headers(),
+            "MCP-Protocol-Version": MODERN_MCP_PROTOCOL_VERSION,
+            "Mcp-Method": "notifications/cancelled",
+        },
+        payload={
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": 1, "reason": "client closed"},
+        },
+    )
+    assert response.status == 202
+    assert response.body is None
+
+
+@pytest.mark.asyncio
+async def test_hosted_mcp_2026_notification_rejects_unsupported_version() -> (
+    None
+):
+    gateway = HostedHttpGateway(_actor(), owner_token="x" * 32)
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers={
+            **_headers(),
+            "MCP-Protocol-Version": "2099-01-01",
+            "Mcp-Method": "notifications/cancelled",
+        },
+        payload={
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {},
+        },
+    )
+    assert response.status == 400
+    assert _json_body(response)["error"]["code"] == -32022
 
 
 @pytest.mark.asyncio
@@ -332,7 +705,44 @@ async def test_hosted_pair_page_is_public_but_decision_requires_owner_bearer() -
     assert page.content_type.startswith("text/html")
     page_body = _text_body(page)
     assert "Pair an executor" in page_body
+    assert "Review request" in page_body
+    assert "Replace the existing executor credential" in page_body
+    assert "/pair/lookup" in page_body
     assert "x" * 32 not in page_body
+
+    lookup_denied = await gateway.dispatch(
+        method="POST",
+        path="/pair/lookup",
+        headers={},
+        payload={"user_code": "ABCD-EFGH"},
+    )
+    assert lookup_denied.status == 401
+
+    existing_id = new_executor_id()
+    actor.executor_pairing.lookup_existing_executor_id = existing_id
+    lookup = await gateway.dispatch(
+        method="POST",
+        path="/pair/lookup",
+        headers=_headers(),
+        payload={"user_code": "ABCD-EFGH"},
+    )
+    assert lookup.status == 200
+    lookup_body = _json_body(lookup)
+    assert lookup_body["requested_name"] == "laptop"
+    assert lookup_body["existing_executor_id"] == existing_id
+    assert lookup_body["metadata"] == {
+        "hostname": "host",
+        "platform": "linux",
+        "build": "test",
+    }
+
+    invalid_lookup = await gateway.dispatch(
+        method="POST",
+        path="/pair/lookup",
+        headers=_headers(),
+        payload={"user_code": "bad"},
+    )
+    assert invalid_lookup.status == 422
 
     denied = await gateway.dispatch(
         method="POST",
@@ -346,11 +756,29 @@ async def test_hosted_pair_page_is_public_but_decision_requires_owner_bearer() -
         method="POST",
         path="/pair",
         headers=_headers(),
-        payload={"user_code": "ABCD-EFGH", "decision": "approve"},
+        payload={
+            "user_code": "ABCD-EFGH",
+            "decision": "approve",
+            "replace_executor_id": existing_id,
+        },
     )
     assert approved.status == 200
     assert _json_body(approved)["status"] == "approved"
     assert actor.executor_pairing.decisions[0].decision is PairDecision.APPROVE
+    assert (
+        actor.executor_pairing.decisions[0].replace_executor_id == existing_id
+    )
+
+    actor.executor_pairing.lookup_error = _ProtocolFailure(
+        ProtocolErrorCode.PAIRING_REQUIRED
+    )
+    missing_lookup = await gateway.dispatch(
+        method="POST",
+        path="/pair/lookup",
+        headers=_headers(),
+        payload={"user_code": "ABCD-EFGH"},
+    )
+    assert missing_lookup.status == 404
 
 
 @pytest.mark.asyncio
@@ -519,13 +947,13 @@ async def test_hosted_misc_routes_and_status_projection() -> None:
     assert body["sessions"][0]["session_id"] == session_id
     assert body["sessions"][0]["workdir"] == "/workspace/project"
 
-    for method, expected in (("GET", 405), ("DELETE", 204), ("PUT", 405)):
+    for method in ("GET", "DELETE", "PUT"):
         response = await gateway.dispatch(
             method=method,
             path="/mcp",
             headers=_headers(),
         )
-        assert response.status == expected
+        assert response.status == 405
 
     missing = await gateway.dispatch(method="GET", path="/missing", headers={})
     assert missing.status == 404
@@ -758,6 +1186,20 @@ async def test_hosted_mcp_jsonrpc_boundary_cases() -> None:
     )
     assert invalid.status == 400
     assert _json_body(invalid)["error"]["code"] == -32600
+
+    for payload in (
+        {"id": 1, "method": "ping"},
+        {"jsonrpc": "1.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 1, "method": 7},
+        {"jsonrpc": "2.0", "id": None, "method": "ping"},
+        {"jsonrpc": "2.0", "id": True, "method": "ping"},
+        {"jsonrpc": "2.0", "id": [], "method": "ping"},
+    ):
+        malformed = await gateway.dispatch(
+            method="POST", path="/mcp", headers=_headers(), payload=payload
+        )
+        assert malformed.status == 400
+        assert _json_body(malformed)["error"]["code"] == -32600
 
     for payload in (
         {"jsonrpc": "2.0", "method": "notifications/initialized"},

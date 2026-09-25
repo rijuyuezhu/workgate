@@ -55,6 +55,15 @@ Workers only support packages available to Pyodide/PyEmscripten. The maintained
 deployment therefore stages a deliberately smaller source/dependency closure
 instead of reshaping the default VPS/standalone dependency graph.
 
+The hosted MCP wire adapter is likewise dependency-light rather than importing
+the full FastMCP server into Python Workers. It implements the MCP
+`2026-07-28` stateless discovery/tool-call subset used by this hosted product,
+including per-request protocol metadata and routing headers, and retains the
+handshake-era revisions generated from Workgate's current MCP v1 dependency.
+It does not claim unrelated modern protocol surfaces such as subscriptions or
+multi-round-trip tool flows. Tool schemas themselves remain generated from the
+canonical Workgate tool catalog so the hosted surface cannot silently drift.
+
 ## Reconstruction semantics
 
 Durable Objects may be evicted or restarted, which discards Python in-memory

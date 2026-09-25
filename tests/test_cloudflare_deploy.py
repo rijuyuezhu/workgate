@@ -88,6 +88,12 @@ def test_cloudflare_manifest_generator_rejects_unvalidated_schema_keywords() -> 
         generator._validate_input_schema(
             {"type": "string", "enum": ["one"]}, path="test"
         )
+    with pytest.raises(
+        RuntimeError, match="unsupported hosted MCP schema keyword"
+    ):
+        generator._validate_input_schema(
+            {"$ref": "#/$defs/SomeInput"}, path="test"
+        )
 
 
 def test_cloudflare_wrangler_declares_sqlite_actor_and_owner_secret() -> None:
@@ -115,7 +121,7 @@ def test_cloudflare_generated_and_secret_files_are_ignored() -> None:
         "python_modules/",
         "node_modules/",
         "src/workgate/",
-        "dist/",
+        "dist*/",
         ".wrangler/",
         ".dev.vars*",
         ".env*",

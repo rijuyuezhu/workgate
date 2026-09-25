@@ -3,7 +3,7 @@
 python_modules/
 node_modules/
 src/workgate/
-dist/
+dist*/
 .wrangler/
 .dev.vars*
 .env*

@@ -15,11 +15,31 @@ from workgate.hosted import (
     HostedHttpGateway,
     HostedHttpResponse,
     build_hosted_control_actor_core,
+    owner_bearer_matches,
 )
 
 
 def _response(value: HostedHttpResponse) -> Response:
-    headers = {"content-type": value.content_type}
+    headers = {
+        "content-type": value.content_type,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+    }
+    if value.content_type.startswith("text/html"):
+        headers.update(
+            {
+                "content-security-policy": (
+                    "default-src 'none'; "
+                    "script-src 'unsafe-inline'; "
+                    "style-src 'unsafe-inline'; "
+                    "connect-src 'self'; "
+                    "form-action 'none'; "
+                    "frame-ancestors 'none'; "
+                    "base-uri 'none'"
+                ),
+                "referrer-policy": "no-referrer",
+            }
+        )
     if value.body is None:
         body = None
     elif value.content_type.startswith("application/json"):
@@ -67,8 +87,31 @@ class WorkgateControl(DurableObject):
         path = urlsplit(str(request.url)).path
         payload = None
         if method in {"POST", "PUT", "PATCH"}:
+            limit = actor.config.max_http_request_bytes
+            content_length = request.headers.get("content-length")
+            if limit > 0 and content_length is not None:
+                try:
+                    declared_bytes = int(content_length)
+                except ValueError:
+                    return Response(
+                        "invalid content-length",
+                        status=400,
+                        headers={"content-type": "text/plain; charset=utf-8"},
+                    )
+                if declared_bytes < 0:
+                    return Response(
+                        "invalid content-length",
+                        status=400,
+                        headers={"content-type": "text/plain; charset=utf-8"},
+                    )
+                if declared_bytes > limit:
+                    return Response(
+                        "request body too large",
+                        status=413,
+                        headers={"content-type": "text/plain; charset=utf-8"},
+                    )
             text = await request.text()
-            if len(text.encode("utf-8")) > actor.config.max_http_request_bytes:
+            if limit > 0 and len(text.encode("utf-8")) > limit:
                 return Response(
                     "request body too large",
                     status=413,
@@ -95,10 +138,33 @@ class WorkgateControl(DurableObject):
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
         parsed = urlsplit(str(request.url))
-        if str(request.method).upper() == "GET" and parsed.path == "/healthz":
+        method = str(request.method).upper()
+        path = parsed.path.rstrip("/") or "/"
+        if method == "GET" and path == "/healthz":
             return Response(
                 '{"ok":true}',
-                headers={"content-type": "application/json"},
+                headers={
+                    "content-type": "application/json",
+                    "cache-control": "no-store",
+                },
+            )
+        owner_route = (
+            path == "/mcp"
+            or (path == "/status" and method == "GET")
+            or (path == "/pair" and method == "POST")
+            or (path == "/pair/lookup" and method == "POST")
+        )
+        if owner_route and not owner_bearer_matches(
+            request.headers,
+            str(self.env.WORKGATE_OWNER_TOKEN),
+        ):
+            return Response(
+                '{"detail":"owner bearer required"}',
+                status=401,
+                headers={
+                    "content-type": "application/json",
+                    "cache-control": "no-store",
+                },
             )
         stub = self.env.WORKGATE_CONTROL.getByName("personal")
         return await stub.fetch(request)
