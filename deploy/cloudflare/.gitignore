@@ -1,0 +1,12 @@
+.venv/
+.venv-workers/
+python_modules/
+node_modules/
+src/workgate/
+dist*/
+.wrangler/
+.dev.vars*
+.env*
+.secrets-*.json
+.curl-*.cfg
+.mcp-*.py

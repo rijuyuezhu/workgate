@@ -294,6 +294,18 @@ jobs:
           test -f "$source_dir/scripts/validation/check-native-provenance.py"
           test -f "$source_dir/scripts/validation/check-release-matrix.py"
           test -f "$source_dir/scripts/generation/generate-tui-executable-contract.py"
+          test -f "$source_dir/scripts/generation/generate-hosted-tool-manifest.py"
+          test -f "$source_dir/deploy/cloudflare/prepare.py"
+          test -f "$source_dir/deploy/cloudflare/wrangler.jsonc"
+          test -f "$source_dir/deploy/cloudflare/package-lock.json"
+          test -f "$source_dir/deploy/cloudflare/uv.lock"
+          test -f "$source_dir/deploy/cloudflare/pylock.toml"
+          test ! -e "$source_dir/deploy/cloudflare/node_modules"
+          test ! -e "$source_dir/deploy/cloudflare/python_modules"
+          test ! -e "$source_dir/deploy/cloudflare/src/workgate"
+          python "$source_dir/deploy/cloudflare/prepare.py" --dest /tmp/workgate-cloudflare-staged
+          test -f /tmp/workgate-cloudflare-staged/hosted/http.py
+          test ! -e /tmp/workgate-cloudflare-staged/executor
           test -f "$source_dir/scripts/validation/coverage-baseline.json"
           test -f "$source_dir/tests/test_coverage_gate.py"
           test -f "$source_dir/tests/test_native_provenance.py"
@@ -341,6 +353,48 @@ jobs:
           /tmp/workgate-wheel-venv/bin/workgate version
           /tmp/workgate-wheel-venv/bin/python -c \
             "from workgate.ui.runtime import embedded_tui_payload; assert embedded_tui_payload() is None"
+
+  cloudflare-package:
+    name: Cloudflare package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: deploy/cloudflare/package-lock.json
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - working-directory: deploy/cloudflare
+        run: npm ci
+      - working-directory: deploy/cloudflare
+        run: uv sync --locked
+      - run: uv run python scripts/generation/generate-hosted-tool-manifest.py --check
+      - working-directory: deploy/cloudflare
+        run: python prepare.py
+      - name: Package Python Worker
+        working-directory: deploy/cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          secrets_file="$RUNNER_TEMP/workgate-cloudflare-secrets.json"
+          python - "$secrets_file" <<'PY'
+          import json
+          import secrets
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps({"WORKGATE_OWNER_TOKEN": secrets.token_urlsafe(40)}),
+              encoding="utf-8",
+          )
+          PY
+          uv run pywrangler deploy --dry-run --outdir dist --secrets-file "$secrets_file"
 
   release-matrix:
     name: Release matrix check
