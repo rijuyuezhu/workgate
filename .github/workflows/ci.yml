@@ -99,7 +99,7 @@ jobs:
           retention-days: 14
 
   browser-e2e:
-    name: Chromium Human UI E2E
+    name: Chromium E2E
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -124,6 +124,8 @@ jobs:
         run: bun run build:tui
       - name: Install locked Chromium revision
         run: uv run playwright install --with-deps chromium
+      - name: Run structured browser tool E2E
+        run: uv run pytest -q -m browser tests/test_browser_service.py
       - name: Run real Chromium Human UI scenario
         run: uv run python scripts/testing/run-browser-e2e.py --artifacts browser-artifacts
       - uses: actions/upload-artifact@v7

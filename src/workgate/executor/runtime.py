@@ -17,6 +17,7 @@ from ..protocol.executor import (
 )
 from ..utils.path_policy import resolve_path_with_policy
 from .agent import ExecutorAgentBridgeService
+from .browser import BrowserService
 from .config import ExecutorConfig
 from .dispatch import ExecutorDispatcher
 from .errors import ExecutorResourceInventoryUnavailable
@@ -64,6 +65,8 @@ class ExecutorRuntime:
     """Executor-owned internal Human UI terminal operations."""
     profile_store: ExecutorProfileStore | None
     """Final v1 profile store, absent for the temporary legacy worker runtime."""
+    browser: BrowserService
+    """Executor-owned ephemeral structured browser resources."""
     connection: ExecutorConnection | None = field(default=None, init=False)
     """Live final executor v1 reconnect loop when a final profile exists."""
     _terminal_stream_tasks: set[asyncio.Task[None]] = field(
@@ -307,7 +310,10 @@ class ExecutorRuntime:
                     profile_lock.close()
             finally:
                 try:
-                    await self.terminal_runtime.aclose()
+                    try:
+                        await self.browser.aclose()
+                    finally:
+                        await self.terminal_runtime.aclose()
                 finally:
                     try:
                         self.agent_bridge.close()
@@ -362,6 +368,7 @@ def build_executor_runtime(
 
     shell_service = ShellService(config, services.tool_session_store)
     agent_bridge = ExecutorAgentBridgeService(config)
+    browser_service = BrowserService(config, services.tool_session_store)
     return ExecutorRuntime(
         config=config,
         services=services,
@@ -378,9 +385,13 @@ def build_executor_runtime(
             services.tool_session_store,
             shell_service=shell_service,
             agent_bridge_service=agent_bridge,
+            browser_service=browser_service,
         ),
         sessions=ExecutorSessionService(
-            config, services.tool_session_store, shell_service
+            config,
+            services.tool_session_store,
+            shell_service,
+            browser_service,
         ),
         ui_files=UiFilesService(
             files_config_from_executor_config(config),
@@ -388,4 +399,5 @@ def build_executor_runtime(
         ),
         ui_terminals=UiTerminalsService(shell_service),
         profile_store=profile_store,
+        browser=browser_service,
     )

@@ -51,6 +51,12 @@ Run the narrowest relevant test first. If it passes, run the project's normal va
 
 For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the executor-bound session genuinely needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same shared `session_id`.
 
+## Automate a web page
+
+When the bound executor advertises browser support, use `browser_session` to start an isolated Chromium context, `browser_snapshot` to obtain bounded visible text and short interactive-element refs such as `e1`, and `browser_act` for high-level navigation and interaction. Re-snapshot after navigation or substantial DOM replacement before reusing refs. Optional screenshots are written only to a new `.png` path inside the owning session workdir and can then be inspected with `view_image` or shared with the normal file-link flow.
+
+Browser sessions are ephemeral and do not silently reuse a person's normal browser profile or credentials. Workgate permits `http://`, `https://`, and `about:blank` navigation on this surface; local `file:` navigation and arbitrary Playwright scripts are not exposed.
+
 ## Copy between sessions
 
 Use `session_copy` to move files or directories between two existing executor-backed sessions. Start both sessions first and name the source and destination clearly; they may be bound to the same executor or different executors.
@@ -69,7 +75,7 @@ Pair or select the intended executor, then start a session with its stable execu
 Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-The normal file, search, shell, job, Todo, and Audit tools all route through the executor bound to that shared session. See [Executors](remote-workers.md) for pairing, reconnect, and trust management.
+The normal file, search, shell, job, browser, Todo, and Audit tools all route through the executor bound to that shared session. See [Executors](remote-workers.md) for pairing, reconnect, and trust management.
 
 ## Review activity
 

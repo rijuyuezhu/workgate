@@ -8,6 +8,7 @@ from ..config.control import ControlSettingsView
 from .contracts import HttpToolRoute, McpToolContext, ToolHandler, ToolRegistry
 from .registry.agent import AgentBridgeToolRegistry
 from .registry.audit import AuditToolRegistry
+from .registry.browser import BrowserToolRegistry
 from .registry.downloads import DownloadToolRegistry
 from .registry.files import FileToolRegistry
 from .registry.image import ImageToolRegistry
@@ -29,6 +30,7 @@ type ToolRegistryFactory = Callable[[ControlSettingsView | None], ToolRegistry]
 BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
     ("agent", AgentBridgeToolRegistry),
     ("audit", AuditToolRegistry),
+    ("browser", BrowserToolRegistry),
     ("downloads", DownloadToolRegistry),
     ("files", FileToolRegistry),
     ("image", ImageToolRegistry),

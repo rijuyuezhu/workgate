@@ -4,6 +4,7 @@ import asyncio
 from typing import Any, cast
 
 from .agent import ExecutorAgentBridgeService
+from .browser import BrowserService
 from .config import ExecutorConfig
 from .dashboard import dashboard_snapshot
 from .dispatch import ExecutorDispatcher, build_executor_dispatcher
@@ -13,6 +14,7 @@ from .search.composition import build_search_service
 from .search.core import SearchPaths
 from .secret_scan import SecretScanService
 from .shell_service import ShellService
+from .tool_session.lifecycle import session_lifecycle_lock
 from .tool_session.store import ToolSessionStore
 from .transfer_composition import build_transfer_handlers
 from .workspace_connector import WorkspaceConnectorService
@@ -24,6 +26,7 @@ def build_executor_dispatcher_with_search(
     *,
     shell_service: ShellService | None = None,
     agent_bridge_service: ExecutorAgentBridgeService | None = None,
+    browser_service: BrowserService | None = None,
 ) -> ExecutorDispatcher:
     """Bind executor-local Search and Files into the final dispatcher."""
     search_service = build_search_service(config, store)
@@ -42,6 +45,8 @@ def build_executor_dispatcher_with_search(
     executor_config = shell_service.config
     if agent_bridge_service is None:
         agent_bridge_service = ExecutorAgentBridgeService(executor_config)
+    if browser_service is None:
+        browser_service = BrowserService(executor_config, store)
 
     async def search_handler(args: dict[str, Any]) -> Any:
         max_results = args.get("max_results")
@@ -238,6 +243,57 @@ def build_executor_dispatcher_with_search(
     async def job_handler(args: dict[str, Any]) -> Any:
         return await shell_service.jobs.execute(args)
 
+    async def browser_session_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await browser_service.manage(
+                session_id,
+                action=str(args["action"]),
+                browser_session_id=(
+                    None
+                    if args.get("browser_session_id") is None
+                    else str(args["browser_session_id"])
+                ),
+                url=None if args.get("url") is None else str(args["url"]),
+                headless=bool(args.get("headless", True)),
+                width=int(args.get("width", 1440)),
+                height=int(args.get("height", 1000)),
+                wait_until=str(args.get("wait_until") or "domcontentloaded"),
+            )
+
+    async def browser_snapshot_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await browser_service.snapshot(
+                session_id,
+                str(args["browser_session_id"]),
+                page_id=None
+                if args.get("page_id") is None
+                else str(args["page_id"]),
+                include_text=bool(args.get("include_text", True)),
+                max_text_chars=int(args.get("max_text_chars", 100_000)),
+                max_elements=int(args.get("max_elements", 100)),
+                screenshot_path=(
+                    None
+                    if args.get("screenshot_path") is None
+                    else str(args["screenshot_path"])
+                ),
+                full_page=bool(args.get("full_page", False)),
+            )
+
+    async def browser_act_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await browser_service.act(
+                session_id,
+                str(args["browser_session_id"]),
+                list(args["actions"]),
+                page_id=None
+                if args.get("page_id") is None
+                else str(args["page_id"]),
+                timeout_ms=int(args.get("timeout_ms", 30_000)),
+            )
+
     return build_executor_dispatcher(
         handler_overrides={
             "search": search_handler,
@@ -270,6 +326,9 @@ def build_executor_dispatcher_with_search(
             "kill_persistent_shell": kill_persistent_shell_handler,
             "list_persistent_shells": list_persistent_shells_handler,
             "job": job_handler,
+            "browser_session": browser_session_handler,
+            "browser_snapshot": browser_snapshot_handler,
+            "browser_act": browser_act_handler,
             **build_transfer_handlers(executor_config, store),
         }
     )

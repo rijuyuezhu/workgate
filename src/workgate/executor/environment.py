@@ -25,6 +25,7 @@ from ..schemas.result_models.session import (
     SessionWorkspaceEnvironment,
 )
 from ..version import package_version
+from .browser import browser_capability_available
 from .config import ExecutorConfig
 from .terminal.conpty import is_available as conpty_available
 from .terminal.tmux import resolve_tmux
@@ -270,6 +271,7 @@ def collect_executor_session_environment(
         capabilities=SessionCapabilitiesEnvironment(
             raw_pty=conpty or tools.tmux.available,
             conpty=conpty,
+            browser=browser_capability_available(),
         ),
         policy=_policy_environment(config),
     )

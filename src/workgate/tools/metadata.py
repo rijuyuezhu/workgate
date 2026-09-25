@@ -36,6 +36,9 @@ def oauth_security_meta(
 _OPEN_WORLD_TOOL_NAMES = frozenset(
     {
         "bash",
+        "browser_act",
+        "browser_session",
+        "browser_snapshot",
         "call_agent_mcp_tool",
         "create_file_link",
         "job",

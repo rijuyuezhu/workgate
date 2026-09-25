@@ -15,6 +15,7 @@ from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -64,6 +65,174 @@ _AUDIT_TRUNCATED_KEY = "$workgate_audit_truncated"
 _AUDIT_BINARY_KEY = "$workgate_audit_binary"
 _AUDIT_CYCLE_KEY = "$workgate_audit_cycle"
 _AUDIT_SAFE_IDENTIFIER_SUFFIXES = ("_sha256", "_fingerprint", "_token_id")
+
+
+def _redact_browser_action_input(value: Any) -> Any:
+    """Remove browser-entered values before generic audit sanitization."""
+    if not isinstance(value, Mapping):
+        return value
+    copied = dict(value)
+    actions = copied.get("actions")
+    if not isinstance(actions, list):
+        return copied
+    redacted_actions: list[Any] = []
+    for item in actions:
+        if not isinstance(item, Mapping):
+            redacted_actions.append(item)
+            continue
+        action = dict(item)
+        action_name = str(action.get("action") or "").strip().lower()
+        if action_name in {"fill", "type", "select"} and "value" in action:
+            action["value"] = "<redacted>"
+        if action_name == "wait_for_text" and "text" in action:
+            action["text"] = "<redacted>"
+        if action_name == "press" and "key" in action:
+            action["key"] = "<redacted>"
+        if "url" in action:
+            action["url"] = _redact_browser_url(action["url"])
+        if "target" in action:
+            target = str(action["target"])
+            action["target"] = (
+                target
+                if re.fullmatch(r"e[1-9][0-9]*", target)
+                else "<selector>"
+            )
+        redacted_actions.append(action)
+    copied["actions"] = redacted_actions
+    return copied
+
+
+def _redact_browser_url(value: Any) -> Any:
+    """Keep only browser URL origin, never credentials/path/query/fragment data."""
+    if not isinstance(value, str):
+        return value
+    if value == "about:blank":
+        return value
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+            return "<redacted-url>"
+        host = parsed.hostname
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, "", "", ""))
+    except TypeError, ValueError:
+        return "<redacted-url>"
+
+
+def _redact_browser_tool_input(tool: str, value: Any) -> Any:
+    """Retain browser intent without storing entered secrets or URL credentials."""
+    if tool == "browser_act":
+        return _redact_browser_action_input(value)
+    if tool != "browser_session" or not isinstance(value, Mapping):
+        return value
+    copied = dict(value)
+    if "url" in copied:
+        copied["url"] = _redact_browser_url(copied["url"])
+    return copied
+
+
+def _redact_browser_tool_output(tool: str, value: Any) -> Any:
+    """Retain browser audit shape without persisting page bodies/form content."""
+    if not isinstance(value, Mapping):
+        return value
+    copied = dict(value)
+    if "title" in copied:
+        copied["title"] = "<omitted-from-audit>"
+    if "url" in copied:
+        copied["url"] = _redact_browser_url(copied["url"])
+    pages = copied.get("pages")
+    if isinstance(pages, list):
+        copied["pages"] = [_redact_browser_page_summary(page) for page in pages]
+    sessions = copied.get("sessions")
+    if isinstance(sessions, list):
+        sanitized_sessions: list[Any] = []
+        for item in sessions:
+            if not isinstance(item, Mapping):
+                sanitized_sessions.append(item)
+                continue
+            row = dict(item)
+            nested_pages = row.get("pages")
+            if isinstance(nested_pages, list):
+                row["pages"] = [
+                    _redact_browser_page_summary(page) for page in nested_pages
+                ]
+            sanitized_sessions.append(row)
+        copied["sessions"] = sanitized_sessions
+    if tool == "browser_snapshot":
+        text = copied.pop("text", None)
+        copied["text_omitted_from_audit"] = text is not None
+        elements = copied.pop("interactive_elements", None)
+        copied["interactive_element_count"] = (
+            len(elements) if isinstance(elements, list) else 0
+        )
+        errors = copied.get("errors")
+        if isinstance(errors, list):
+            copied["errors"] = [
+                {
+                    "page_id": item.get("page_id"),
+                    "kind": item.get("kind"),
+                    "method": item.get("method"),
+                    "url": _redact_browser_url(item.get("url")),
+                }
+                if isinstance(item, Mapping)
+                else item
+                for item in errors
+            ]
+    elif tool == "browser_act":
+        results = copied.get("results")
+        if isinstance(results, list):
+            sanitized: list[Any] = []
+            for item in results:
+                if not isinstance(item, Mapping):
+                    sanitized.append(item)
+                    continue
+                row = dict(item)
+                if "url" in row:
+                    row["url"] = _redact_browser_url(row["url"])
+                if "matched" in row:
+                    row["matched"] = "<redacted>"
+                if "target" in row:
+                    target = str(row["target"])
+                    row["target"] = (
+                        target
+                        if re.fullmatch(r"e[1-9][0-9]*", target)
+                        else "<selector>"
+                    )
+                sanitized.append(row)
+            copied["results"] = sanitized
+    return copied
+
+
+def _redact_browser_tool_error(tool: str, value: Any) -> Any:
+    """Retain only browser error identity, never backend diagnostics or page data."""
+    if tool not in {"browser_session", "browser_snapshot", "browser_act"}:
+        return value
+    if not isinstance(value, Mapping):
+        return {"details_omitted_from_audit": True}
+    error_type = value.get("type")
+    return {
+        "type": (
+            str(error_type)[:256]
+            if isinstance(error_type, str) and error_type
+            else "browser_error"
+        ),
+        "details_omitted_from_audit": True,
+    }
+
+
+def _redact_browser_page_summary(value: Any) -> Any:
+    """Remove page-content-bearing fields while retaining page identity for audit."""
+    if not isinstance(value, Mapping):
+        return value
+    copied = dict(value)
+    if "title" in copied:
+        copied["title"] = "<omitted-from-audit>"
+    if "url" in copied:
+        copied["url"] = _redact_browser_url(copied["url"])
+    return copied
 
 
 def _audit_key_is_sensitive(name: str) -> bool:
@@ -1140,11 +1309,12 @@ def audit_tool_call_start(
     input: Any,
 ) -> tuple[str, ...]:
     """Record the bounded input and caller context for one tool call."""
+    audit_input = _redact_browser_tool_input(tool, input)
     fields: dict[str, Any] = {
         "call_id": call_id,
         "transport": transport,
         "tool": tool,
-        "input": input,
+        "input": audit_input,
     }
     session_ids = tool_input_session_ids(input)
     if session_ids:
@@ -1177,7 +1347,11 @@ def audit_tool_call_end(
         fields["session"] = session_ids[0]
         fields["session_ids"] = list(session_ids)
     if error is not None:
-        fields["error"] = error
+        fields["error"] = _redact_browser_tool_error(tool, error)
     else:
-        fields["output"] = output
+        fields["output"] = (
+            _redact_browser_tool_output(tool, output)
+            if tool in {"browser_session", "browser_snapshot", "browser_act"}
+            else output
+        )
     audit("tool_call_end", **fields)

@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import workgate.executor.hello as hello_ops
 from workgate.config.settings import Settings
 from workgate.executor.config import resolve_executor_config
 from workgate.executor.hello import build_executor_hello
 from workgate.protocol.executor import (
+    EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
     JobInventorySummary,
     SessionInventorySummary,
@@ -12,11 +14,14 @@ from workgate.protocol.executor import (
 
 
 def test_executor_hello_reports_complete_current_v1_namespace(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        hello_ops, "browser_capability_available", lambda: False
+    )
     config = resolve_executor_config(Settings(workspace_root=tmp_path))
 
-    hello = build_executor_hello(config)
+    hello = hello_ops.build_executor_hello(config)
 
     assert hello.protocol_version == 1
     assert hello.runtime.workgate_version
@@ -28,8 +33,11 @@ def test_executor_hello_reports_complete_current_v1_namespace(
 
 
 def test_executor_hello_carries_supplied_resource_inventory(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        hello_ops, "browser_capability_available", lambda: False
+    )
     config = resolve_executor_config(Settings(workspace_root=tmp_path))
     session_id = "sess_0000000000000000000001"
     sessions = (
@@ -54,6 +62,20 @@ def test_executor_hello_carries_supplied_resource_inventory(
     assert hello.sessions == sessions
     assert hello.shells == shells
     assert hello.jobs == jobs
+
+
+def test_executor_hello_advertises_browser_only_when_usable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(hello_ops, "browser_capability_available", lambda: True)
+    config = resolve_executor_config(Settings(workspace_root=tmp_path))
+
+    hello = hello_ops.build_executor_hello(config)
+
+    assert hello.capabilities == (
+        EXECUTOR_CAPABILITY_SESSIONS,
+        EXECUTOR_CAPABILITY_BROWSER,
+    )
 
 
 def test_executor_hello_builder_does_not_import_resource_authorities() -> None:

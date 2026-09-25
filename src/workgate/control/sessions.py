@@ -11,8 +11,9 @@ from typing import Any, Literal
 
 from pydantic import JsonValue
 
-from ..errors import exception_from_tool_error
+from ..errors import BrowserUnavailableError, exception_from_tool_error
 from ..protocol.executor import (
+    EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
     SESSION_CHANGE_CWD_OP,
     SESSION_CREATE_OP,
@@ -33,6 +34,9 @@ _CREATE_ABSENT = "session_create_absent"
 _CREATE_UNCONFIRMED = "session_create_unconfirmed"
 _LOOKUP_TIMEOUT_S = 2.0
 _ACTIVE_SESSION_WINDOW_S = 5 * 60 * 60
+_BROWSER_TOOL_NAMES = frozenset(
+    {"browser_session", "browser_snapshot", "browser_act"}
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +187,15 @@ class ControlSessionCoordinator:
         async with lock:
             record = self._require_status(session_id, {"active"})
             await self._require_available(record)
+            if tool_name in _BROWSER_TOOL_NAMES:
+                hello = await self._transport.inventory(str(record.executor_id))
+                if (
+                    hello is None
+                    or EXECUTOR_CAPABILITY_BROWSER not in hello.capabilities
+                ):
+                    raise BrowserUnavailableError(
+                        "structured browser automation is unavailable on the bound executor"
+                    )
             wire_args = {
                 key: value for key, value in args.items() if key != "session_id"
             }
@@ -289,6 +302,7 @@ class ControlSessionCoordinator:
             "force_released": False,
             "stopped_jobs": stopped_jobs,
             "stopped_shells": payload.get("stopped_shells", []),
+            "stopped_browsers": payload.get("stopped_browsers", []),
         }
 
     async def _reap_for_capacity(self) -> None:

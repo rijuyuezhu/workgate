@@ -13,6 +13,7 @@ from workgate.tools.declarative import DeclarativeToolRegistry
 EXPECTED_BUILTIN_REGISTRIES = (
     "agent",
     "audit",
+    "browser",
     "downloads",
     "files",
     "image",

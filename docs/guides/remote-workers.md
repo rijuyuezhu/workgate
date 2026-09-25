@@ -44,6 +44,8 @@ Start a session in /home/me/project on executor gpu1, inspect the repository and
 
 After `session_start`, the same opaque `session_id` is shared by control and executor. Use it with the normal read, search, edit, shell, job, Todo, and Audit tools. Use `session_change_cwd` to move that session to another allowed directory on the same executor; sessions are never silently rebound.
 
+To enable structured browser tools on that executor, install the matching Chromium runtime with `playwright install chromium` (or the platform-appropriate Playwright installation command). The executor advertises `browser.v1` only when the Playwright Chromium runtime is installed; `browser_session(action=start)` still fails explicitly if Chromium cannot launch on that host. Control rejects browser calls for an executor that does not advertise the capability. Browser processes and contexts remain executor-local and are closed with their owning Workgate session.
+
 For long-running non-interactive commands, use asynchronous `bash` and poll the returned job. Use `pty=true` when the executor-side task genuinely needs an interactive terminal; prefer bounded commands otherwise.
 
 ## Copy files
@@ -68,6 +70,7 @@ To deliberately replace the credential for the same stable executor ID, run `wor
 - **Executor was paired before a reboot:** run `workgate executor run`; ordinary downtime does not require pairing again.
 - **Executor reports revoked or unauthorized:** run `workgate executor connect CONTROL_URL` and complete the owner-approved replacement flow if that machine should still be trusted.
 - **A machine command or file action is unavailable:** verify that the executor is online, the session is bound to it, and the machine has the required executable/capability.
+- **Browser tools report unavailable:** run `playwright install chromium` on the bound executor, then restart/reconnect that executor so its capability hello is refreshed.
 - **A session remains terminating while an executor is offline:** restore the executor so control can confirm machine-side absence, or use the explicit force-release path only when accepting that remote cleanup is unconfirmed.
 
 For exact CLI syntax, see [CLI reference](../reference/cli.md). For implementation and protocol work, see [Development](../development.md), [Control/executor architecture](../architecture/control-executor.md), and [Security](../security.md).

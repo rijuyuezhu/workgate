@@ -1452,6 +1452,7 @@ dependencies = [
     { name = "mcp" },
     { name = "pathspec" },
     { name = "pillow" },
+    { name = "playwright" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
@@ -1466,7 +1467,6 @@ dependencies = [
 dev = [
     { name = "coverage" },
     { name = "packaging" },
-    { name = "playwright" },
     { name = "pre-commit" },
     { name = "pyright" },
     { name = "pytest" },
@@ -1496,6 +1496,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.0,<2" },
     { name = "pathspec", specifier = ">=1.1.1" },
     { name = "pillow", specifier = ">=12.1.1" },
+    { name = "playwright", specifier = ">=1.61.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.13.0" },
@@ -1510,7 +1511,6 @@ requires-dist = [
 dev = [
     { name = "coverage", extras = ["toml"], specifier = ">=7.15.2" },
     { name = "packaging", specifier = ">=26.0" },
-    { name = "playwright", specifier = ">=1.61.0" },
     { name = "pre-commit", specifier = ">=4.6.0" },
     { name = "pyright", specifier = ">=1.1.411" },
     { name = "pytest", specifier = ">=9.1.1" },

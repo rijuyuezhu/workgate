@@ -445,7 +445,7 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
         "resource": f"{base_url}/mcp",
         "scope": (
             "shell:read shell:write shell:execute git:write "
-            "file:share remote:use audit:read audit:full"
+            "file:share remote:use browser:use audit:read audit:full"
         ),
         "registrationEndpoint": "/oauth/register",
         "authorizationEndpoint": "/oauth/authorize",
