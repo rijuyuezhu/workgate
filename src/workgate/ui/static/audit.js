@@ -7,6 +7,7 @@ export function createAuditController({
   auditTimestamp,
   renderAuditDetailInto,
   renderAuditDetailMessage,
+  initialSessionId = "",
 }) {
   const controllerState = {
     auditEntries: [],
@@ -14,7 +15,14 @@ export function createAuditController({
     auditGeneration: 0,
     auditDetailGeneration: 0,
     auditLoading: false,
+    auditSessionId: text(initialSessionId, ""),
   };
+
+  function auditScopeLabel() {
+    return controllerState.auditSessionId
+      ? `Session · ${controllerState.auditSessionId}`
+      : "Global";
+  }
 
   function setAuditControls() {
     elements.auditRefresh.disabled = controllerState.auditLoading;
@@ -23,10 +31,10 @@ export function createAuditController({
     }
   }
 
-  function clearAuditDetail(message = "Select a Global Audit record.") {
+  function clearAuditDetail(message = `Select an Audit record from ${auditScopeLabel()}.`) {
     controllerState.auditDetailGeneration += 1;
     elements.auditDetailTitle.textContent = "No record selected";
-    elements.auditDetailMeta.textContent = "Control Audit";
+    elements.auditDetailMeta.textContent = auditScopeLabel();
     renderAuditDetailMessage(elements.auditDetailBody, message);
   }
 
@@ -38,7 +46,7 @@ export function createAuditController({
     elements.auditList.replaceChildren();
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "Global control Audit records are not loaded.";
+    empty.textContent = `${auditScopeLabel()} Audit records are not loaded.`;
     elements.auditList.append(empty);
     elements.auditSummary.textContent = "0 entries";
     elements.auditState.textContent = "Not loaded · control";
@@ -51,9 +59,9 @@ export function createAuditController({
     if (!controllerState.auditEntries.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = "No Global Audit records match.";
+      empty.textContent = `No ${auditScopeLabel()} Audit records match.`;
       elements.auditList.append(empty);
-      clearAuditDetail("No matching Global Audit record is available.");
+      clearAuditDetail(`No matching Audit record is available for ${auditScopeLabel()}.`);
       return;
     }
     for (const entry of controllerState.auditEntries) {
@@ -69,11 +77,12 @@ export function createAuditController({
 
   function auditQueryPath() {
     const params = new URLSearchParams({
-      scope: "global",
+      scope: controllerState.auditSessionId ? "session" : "global",
       limit: elements.auditLimit.value || "300",
       sort: elements.auditSort.value || "desc",
       include_selected: "true",
     });
+    if (controllerState.auditSessionId) params.set("session", controllerState.auditSessionId);
     if (controllerState.auditSelectedId) params.set("selected_id", controllerState.auditSelectedId);
     const filters = [
       ["operation", elements.auditOperation.value],
@@ -98,7 +107,11 @@ export function createAuditController({
     elements.auditDetailMeta.textContent = "Loading details";
     renderAuditDetailMessage(elements.auditDetailBody, `Loading ${entryId}`);
     try {
-      const params = new URLSearchParams({ scope: "global", id: entryId });
+      const params = new URLSearchParams({
+        scope: controllerState.auditSessionId ? "session" : "global",
+        id: entryId,
+      });
+      if (controllerState.auditSessionId) params.set("session", controllerState.auditSessionId);
       const payload = await request(`/audit/detail?${params.toString()}`);
       if (
         generation !== controllerState.auditDetailGeneration ||
@@ -107,7 +120,7 @@ export function createAuditController({
       const entry = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (!entry) throw new Error("Audit detail response was malformed");
       elements.auditDetailTitle.textContent = auditEntryTitle(entry);
-      elements.auditDetailMeta.textContent = `Global · ${auditTimestamp(entry.ts)}`;
+      elements.auditDetailMeta.textContent = `${auditScopeLabel()} · ${auditTimestamp(entry.ts)}`;
       renderAuditDetailInto(entry, elements.auditDetailBody);
       return entry;
     } catch (error) {
@@ -130,7 +143,7 @@ export function createAuditController({
     const previousSelection = controllerState.auditSelectedId;
     controllerState.auditLoading = true;
     setAuditControls();
-    elements.auditState.textContent = "Loading Global Audit";
+    elements.auditState.textContent = `Loading ${auditScopeLabel()} Audit`;
     try {
       const payload = await request(auditQueryPath());
       if (generation !== controllerState.auditGeneration) return null;
@@ -144,13 +157,13 @@ export function createAuditController({
       const total = Number.isInteger(payload.total_matched)
         ? payload.total_matched
         : controllerState.auditEntries.length;
-      elements.auditSummary.textContent = `${controllerState.auditEntries.length} shown · ${total} matched · Global`;
-      elements.auditState.textContent = `Loaded ${controllerState.auditEntries.length} global records`;
+      elements.auditSummary.textContent = `${controllerState.auditEntries.length} shown · ${total} matched · ${auditScopeLabel()}`;
+      elements.auditState.textContent = `Loaded ${controllerState.auditEntries.length} records · ${auditScopeLabel()}`;
       renderAuditList();
       const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (selected && selected.id === controllerState.auditSelectedId) {
         elements.auditDetailTitle.textContent = auditEntryTitle(selected);
-        elements.auditDetailMeta.textContent = `Global · ${auditTimestamp(selected.ts)}`;
+        elements.auditDetailMeta.textContent = `${auditScopeLabel()} · ${auditTimestamp(selected.ts)}`;
         renderAuditDetailInto(selected, elements.auditDetailBody);
       } else if (payload && payload.entry_error) {
         elements.auditDetailMeta.textContent = "Details unavailable";

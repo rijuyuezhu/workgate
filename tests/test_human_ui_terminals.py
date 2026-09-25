@@ -290,6 +290,69 @@ def test_terminal_http_surface_dispatches_final_executor_ops(
     assert all("session_id" not in args for _, args in backend.calls)
 
 
+def test_terminal_http_surface_preserves_explicit_session_ownership(
+    monkeypatch, tmp_path
+):
+    client, backend, harness = _client(monkeypatch, tmp_path)
+    started_session = client.post("/tools/session_start", json={"workdir": "."})
+    assert started_session.status_code == 200
+    session_id = started_session.json()["session_id"]
+
+    listed = client.get("/api/ui/terminals", params={"session_id": session_id})
+    started = client.post(
+        "/api/ui/terminals/start",
+        json={"session_id": session_id, "cwd": ".", "name": "owned"},
+    )
+    read = client.get(
+        "/api/ui/terminals/read",
+        params={"session_id": session_id, "shell_id": "demo", "lines": 12},
+    )
+    killed = client.post(
+        "/api/ui/terminals/kill",
+        json={"session_id": session_id, "shell_id": "demo"},
+    )
+
+    assert [
+        response.status_code for response in (listed, started, read, killed)
+    ] == [200, 200, 200, 200]
+    assert backend.calls == [
+        ("ui.terminals.list", {"session_id": session_id}),
+        (
+            "ui.terminals.start",
+            {
+                "cwd": ".",
+                "name": "owned",
+                "command": None,
+                "session_id": session_id,
+            },
+        ),
+        (
+            "ui.terminals.read",
+            {"shell_id": "demo", "lines": 12, "session_id": session_id},
+        ),
+        ("ui.terminals.kill", {"shell_id": "demo", "session_id": session_id}),
+    ]
+
+    backend.calls.clear()
+    mismatch = TestClient(
+        client.app, base_url=BASE_URL, client=("203.0.113.12", 50002)
+    ).get(
+        "/api/ui/terminals",
+        params={"executor_id": "missing-executor", "session_id": session_id},
+    )
+    assert mismatch.status_code == 400
+    assert "is not bound to executor_id" in mismatch.json()["message"]
+    assert backend.calls == []
+    assert (
+        str(
+            harness.control.control_state.snapshot_sessions()[
+                session_id
+            ].executor_id
+        )
+        == client.executor_id
+    )
+
+
 def test_terminal_http_requires_explicit_eligible_executor(
     monkeypatch, tmp_path
 ):
@@ -405,7 +468,10 @@ def test_terminal_websocket_requires_oauth_and_execute_scope(
     monkeypatch, tmp_path
 ):
     client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
-    path = _ws_path(client, "/ui/ws/terminals/demo")
+    path = _ws_path(
+        client,
+        "/ui/ws/terminals/demo?session_id=sess_untrusted_probe_1234567890123456789012",
+    )
 
     with (
         pytest.raises(WebSocketDisconnect) as missing,

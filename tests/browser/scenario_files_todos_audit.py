@@ -1,5 +1,6 @@
 import json
 import time
+from urllib.parse import urlencode
 
 from playwright.sync_api import Route, expect
 
@@ -73,6 +74,20 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     session = harness.api("POST", "/tools/session_start", body={"workdir": "."})
     assert session["status"] == 200
     session_id = session["payload"]["session_id"]
+    session_shell = harness.api(
+        "POST",
+        "/tools/bash",
+        body={
+            "session_id": session_id,
+            "command": "bash",
+            "pty": True,
+            "name": "live-workspace-deep-link",
+        },
+    )
+    assert session_shell["status"] == 200
+    assert session_shell["payload"]["mode"] == "pty"
+    shell_id = str(session_shell["payload"]["result"]["shell_id"])
+    harness.track_terminal(harness.executor_id, shell_id)
     snapshot_forbidden = 0
 
     def forbid_combined_snapshot(route: Route) -> None:
@@ -210,6 +225,103 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     assert audited_link["status"] == 200
 
+    # A Live Workspace deep link must restore one exact logical session across
+    # the existing full Human UI instead of falling back to another executor,
+    # session, workdir, or terminal.
+    deep_link_query = urlencode(
+        {
+            "session_id": session_id,
+            "executor_id": harness.executor_id,
+            "workdir": ".",
+            "shell_id": shell_id,
+        }
+    )
+    page.goto(
+        f"{harness.base_url}/ui?{deep_link_query}#sessions",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    expect(page.locator("#session-executor")).to_have_value(harness.executor_id)
+    expect(page.locator("#session-include-inactive")).to_be_checked()
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "true")
+
+    def hide_deep_link_session(route: Route) -> None:
+        response = route.fetch()
+        payload = response.json()
+        rows = payload.get("data", {}).get("sessions", [])
+        payload["data"]["sessions"] = [
+            row for row in rows if row.get("session_id") != session_id
+        ]
+        payload["data"]["count"] = len(payload["data"]["sessions"])
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/sessions?**", hide_deep_link_session)
+    page.locator("#session-refresh").click()
+    expect(page.locator("#session-detail-title")).to_have_text(
+        "No session selected"
+    )
+    expect(
+        page.locator('#session-list .session-entry[aria-current="true"]')
+    ).to_have_count(0)
+    page.unroute("**/api/ui/sessions?**", hide_deep_link_session)
+    page.locator("#session-refresh").click()
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "true")
+
+    page.goto(
+        f"{harness.base_url}/ui?{deep_link_query}#files",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    expect(page.locator("#file-executor")).to_have_value(harness.executor_id)
+    expect(page.locator("#file-path")).to_have_value(".")
+    expect(page.locator("#file-state")).to_contain_text(
+        f"{harness.executor_id}:."
+    )
+
+    page.goto(
+        f"{harness.base_url}/ui?{deep_link_query}#audit",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    expect(page.locator("#audit-summary")).to_contain_text(
+        f"Session · {session_id}"
+    )
+    expect(page.locator("#audit-state")).to_contain_text(
+        f"Session · {session_id}"
+    )
+
+    page.goto(
+        f"{harness.base_url}/ui?{deep_link_query}#terminals",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    expect(page.locator("#terminal-executor")).to_have_value(
+        harness.executor_id
+    )
+    expect(
+        page.locator(f'#terminal-list .terminal-session[title*="{shell_id}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(page.locator("#terminal-state")).to_contain_text("Connected")
+
+    page.goto(
+        f"{harness.base_url}/ui?{deep_link_query}#sessions",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "true")
+
     page.locator("#session-audit-operation").select_option("files")
     page.locator("#session-audit-search").fill("write_file")
     page.locator("#session-audit-refresh").click()
@@ -296,6 +408,8 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     ).to_contain_text("download_link_created")
 
     harness.navigate("audit")
+    expect(page).to_have_url(f"{harness.base_url}/ui#audit")
+    expect(page.locator("#audit-summary")).to_contain_text("Global")
     page.locator("#audit-operation").select_option("files")
     page.locator("#audit-search").fill("write_file")
     page.locator("#audit-refresh").click()

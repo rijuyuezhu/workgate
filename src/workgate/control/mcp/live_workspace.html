@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Workgate Live Workspace</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 14px; background: Canvas; color: CanvasText; }
+    main { display: grid; gap: 12px; max-width: 1100px; margin: 0 auto; }
+    .hero, .card { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 12px; padding: 14px; }
+    .hero { display: grid; gap: 7px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    h1, h2 { margin: 0; font-size: 1rem; }
+    h1 { font-size: 1.2rem; }
+    p { margin: 0; }
+    .muted { opacity: .7; font-size: .88rem; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .pill { border: 1px solid currentColor; border-radius: 999px; padding: 2px 8px; font-size: .78rem; }
+    ul { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 5px 0; }
+    button, a.action {
+      appearance: none; border: 1px solid color-mix(in srgb, CanvasText 28%, transparent);
+      background: color-mix(in srgb, CanvasText 6%, Canvas); color: inherit;
+      border-radius: 8px; padding: 7px 10px; font: inherit; cursor: pointer; text-decoration: none;
+    }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .danger { border-color: #b42318; }
+    textarea, input {
+      width: 100%; border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
+      border-radius: 8px; padding: 8px; font: inherit; background: Canvas; color: inherit;
+    }
+    textarea { min-height: 70px; resize: vertical; }
+    .stack { display: grid; gap: 8px; }
+    .status { min-height: 1.25em; }
+    .activity { display: grid; gap: 6px; margin-top: 8px; }
+    .activity > div { display: grid; grid-template-columns: minmax(110px, .6fr) minmax(0, 2fr); gap: 8px; font-size: .85rem; }
+    @media (max-width: 720px) {
+      body { padding: 8px; }
+      .grid { grid-template-columns: 1fr; }
+      .hero, .card { padding: 11px; }
+      .activity > div { grid-template-columns: 1fr; }
+      button, a.action { min-height: 40px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="row">
+      <h1 id="title">Live Workspace</h1>
+      <span class="pill" id="availability">loading</span>
+      <span class="pill" id="task-status" hidden></span>
+    </div>
+    <div class="mono muted" id="session-id"></div>
+    <div class="row muted"><span id="executor"></span><span id="workdir"></span></div>
+    <p id="objective"></p>
+    <p class="muted status" id="status"></p>
+  </section>
+
+  <section class="grid">
+    <div class="card stack">
+      <h2>Plan & progress</h2>
+      <p id="progress"></p>
+      <p class="muted" id="next-action"></p>
+      <div id="findings-wrap" hidden><strong>Findings</strong><ul id="findings"></ul></div>
+      <div id="blockers-wrap" hidden><strong>Blockers</strong><ul id="blockers"></ul></div>
+      <ul id="plan"></ul>
+      <p class="muted" id="task-message"></p>
+    </div>
+
+    <div class="card stack">
+      <h2>Human controls</h2>
+      <div class="row">
+        <button data-task-action="block">Block / pause</button>
+        <button data-task-action="resume">Resume</button>
+        <button class="danger" data-task-action="cancel">Cancel task</button>
+      </div>
+      <textarea id="instruction" placeholder="New human note / next instruction"></textarea>
+      <button data-task-action="next_instruction">Set next instruction</button>
+      <p class="muted">Task controls mutate the canonical session task state; they do not end the execution session.</p>
+    </div>
+
+    <div class="card stack">
+      <h2>Jobs</h2>
+      <ul id="jobs"></ul>
+      <p class="muted" id="jobs-message"></p>
+    </div>
+
+    <div class="card stack">
+      <h2>Persistent shells</h2>
+      <ul id="shells"></ul>
+      <p class="muted" id="shells-message"></p>
+    </div>
+
+    <div class="card stack">
+      <h2>Recent activity</h2>
+      <div class="activity" id="activity"></div>
+      <p class="muted">Only allow-listed audit identity fields are shown here; arguments, output, and retained payloads are omitted.</p>
+    </div>
+
+    <div class="card stack">
+      <h2>Full views</h2>
+      <div class="row" id="links"></div>
+      <h2>End execution session</h2>
+      <p class="muted">Destructive and separate from task cancellation. Type the exact session ID to confirm.</p>
+      <input id="end-confirm" autocomplete="off" placeholder="sess_...">
+      <button class="danger" id="end-session">End session</button>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const UI_PROTOCOL_VERSION = "2026-01-26";
+  let snapshot = null;
+  let standardBridge = null;
+  let refreshTimer = null;
+  let shuttingDown = false;
+
+  function createStandardBridge() {
+    let nextId = 1;
+    let connected = false;
+    let closed = false;
+    const pending = new Map();
+    const toolResultHandlers = new Set();
+
+    function post(message) {
+      window.parent.postMessage(message, "*");
+    }
+
+    function onMessage(event) {
+      if (event.source !== window.parent && event.source !== window) return;
+      const message = event.data;
+      if (!message || message.jsonrpc !== "2.0") return;
+      const isResponse = Object.prototype.hasOwnProperty.call(message, "id")
+        && !message.method
+        && (Object.prototype.hasOwnProperty.call(message, "result")
+          || Object.prototype.hasOwnProperty.call(message, "error"));
+      if (isResponse) {
+        const waiter = pending.get(message.id);
+        if (!waiter) return;
+        pending.delete(message.id);
+        window.clearTimeout(waiter.timer);
+        if (message.error) waiter.reject(new Error(message.error.message || "MCP App host request failed"));
+        else waiter.resolve(message.result);
+        return;
+      }
+      if (message.method === "ping" && Object.prototype.hasOwnProperty.call(message, "id")) {
+        post({ jsonrpc: "2.0", id: message.id, result: {} });
+        return;
+      }
+      if (message.method === "ui/resource-teardown" && Object.prototype.hasOwnProperty.call(message, "id")) {
+        post({ jsonrpc: "2.0", id: message.id, result: {} });
+        stopLiveWorkspace();
+        return;
+      }
+      if (message.method === "ui/notifications/tool-result") {
+        for (const handler of toolResultHandlers) handler(message.params || {});
+      }
+    }
+
+    function request(method, params) {
+      if (closed) return Promise.reject(new Error("MCP App bridge is closed"));
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`MCP App host did not answer ${method}`));
+        }, 10000);
+        pending.set(id, { resolve, reject, timer });
+        post({ jsonrpc: "2.0", id, method, params });
+      });
+    }
+
+    async function connect() {
+      if (connected) return;
+      window.addEventListener("message", onMessage);
+      try {
+        await request("ui/initialize", {
+          appInfo: { name: "workgate-live-workspace", version: "1.0.0" },
+          appCapabilities: {},
+          protocolVersion: UI_PROTOCOL_VERSION,
+        });
+        post({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+        connected = true;
+      } catch (error) {
+        window.removeEventListener("message", onMessage);
+        throw error;
+      }
+    }
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      window.removeEventListener("message", onMessage);
+      for (const waiter of pending.values()) {
+        window.clearTimeout(waiter.timer);
+        waiter.reject(new Error("MCP App bridge closed"));
+      }
+      pending.clear();
+      connected = false;
+    }
+
+    return {
+      connect,
+      close,
+      onToolResult(handler) { toolResultHandlers.add(handler); },
+      callTool(name, args) { return request("tools/call", { name, arguments: args }); },
+      openLink(url) { return request("ui/open-link", { url }); },
+    };
+  }
+
+  function stopLiveWorkspace() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (refreshTimer !== null) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    if (standardBridge) {
+      standardBridge.close();
+      standardBridge = null;
+    }
+  }
+
+  function payload(value) {
+    if (!value) return null;
+    if (value.structuredContent) return value.structuredContent;
+    if (value.structured_content) return value.structured_content;
+    if (value.data && value.data.session) return value.data;
+    return value;
+  }
+
+  function text(value, fallback = "") {
+    return value === null || value === undefined ? fallback : String(value);
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function li(label) {
+    const item = document.createElement("li");
+    item.textContent = label;
+    return item;
+  }
+
+  function taskRevision() {
+    const revision = snapshot && snapshot.task && snapshot.task.revision;
+    return Number.isInteger(revision) ? revision : null;
+  }
+
+  function render(data) {
+    snapshot = payload(data);
+    if (!snapshot || !snapshot.session) {
+      $("status").textContent = "No session snapshot was supplied.";
+      return;
+    }
+    const session = snapshot.session;
+    const task = snapshot.task;
+    $("title").textContent = session.label || "Live Workspace";
+    $("availability").textContent = text(session.availability, session.status);
+    $("session-id").textContent = session.session_id;
+    $("executor").textContent = `Executor: ${session.executor_name || session.executor_id}`;
+    $("workdir").textContent = `Workdir: ${session.workdir}`;
+
+    const taskStatus = $("task-status");
+    if (task) {
+      taskStatus.hidden = false;
+      taskStatus.textContent = `task: ${text(task.status, "active")}`;
+      $("objective").textContent = task.objective || "";
+      const progress = task.progress || {};
+      $("progress").textContent = progress.summary || "No progress summary yet.";
+      $("next-action").textContent = progress.next_action ? `Next: ${progress.next_action}` : "";
+      const findings = Array.isArray(progress.findings) ? progress.findings : [];
+      const blockers = Array.isArray(progress.blockers) ? progress.blockers : [];
+      clear($("findings"));
+      for (const finding of findings) $("findings").appendChild(li(text(finding)));
+      $("findings-wrap").hidden = findings.length === 0;
+      clear($("blockers"));
+      for (const blocker of blockers) $("blockers").appendChild(li(text(blocker)));
+      $("blockers-wrap").hidden = blockers.length === 0;
+    } else {
+      taskStatus.hidden = true;
+      $("objective").textContent = "";
+      $("progress").textContent = "Canonical durable task state is not available on this server yet.";
+      $("next-action").textContent = "";
+      clear($("findings"));
+      clear($("blockers"));
+      $("findings-wrap").hidden = true;
+      $("blockers-wrap").hidden = true;
+    }
+
+    const steps = task && task.plan && Array.isArray(task.plan.steps)
+      ? task.plan.steps
+      : Array.isArray(snapshot.compatibility_plan) ? snapshot.compatibility_plan : [];
+    clear($("plan"));
+    for (const step of steps) {
+      $("plan").appendChild(li(`[${text(step.status, "pending")}] ${text(step.content)}`));
+    }
+    if (!steps.length) $("plan").appendChild(li("No plan steps."));
+
+    $("task-message").textContent = snapshot.task_controls_message || "";
+    const allowedActions = Array.isArray(snapshot.task_control_actions)
+      ? snapshot.task_control_actions
+      : [];
+    for (const button of document.querySelectorAll("[data-task-action]")) {
+      button.disabled = !snapshot.task_controls_available
+        || taskRevision() === null
+        || !allowedActions.includes(button.dataset.taskAction);
+    }
+
+    clear($("jobs"));
+    for (const job of snapshot.jobs || []) {
+      $("jobs").appendChild(li(`${job.name} · ${job.status} · ${job.kind}`));
+    }
+    if (!(snapshot.jobs || []).length) $("jobs").appendChild(li("No visible jobs."));
+    $("jobs-message").textContent = snapshot.jobs_message || "";
+
+    clear($("shells"));
+    for (const shell of snapshot.shells || []) {
+      $("shells").appendChild(li(`${shell.name || shell.shell_id} · ${shell.cwd || ""}`));
+    }
+    if (!(snapshot.shells || []).length) $("shells").appendChild(li("No visible persistent shells."));
+    $("shells-message").textContent = snapshot.shells_message || "";
+
+    clear($("activity"));
+    for (const event of snapshot.activity || []) {
+      const row = document.createElement("div");
+      const left = document.createElement("span");
+      const right = document.createElement("span");
+      left.className = "mono muted";
+      left.textContent = event.ts ? new Date(event.ts * 1000).toLocaleTimeString() : "activity";
+      right.textContent = [event.event, event.tool, event.operation].filter(Boolean).join(" · ") || "event";
+      row.append(left, right);
+      $("activity").appendChild(row);
+    }
+    if (!(snapshot.activity || []).length) $("activity").textContent = "No recent activity.";
+
+    clear($("links"));
+    const labels = { sessions: "Sessions", files: "Files", terminals: "Terminals", audit: "Audit" };
+    for (const [name, href] of Object.entries(snapshot.links || {})) {
+      const anchor = document.createElement("a");
+      anchor.className = "action";
+      anchor.href = href;
+      anchor.textContent = labels[name] || name;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.addEventListener("click", (event) => {
+        if (window.openai && typeof window.openai.openExternal === "function") {
+          event.preventDefault();
+          void window.openai.openExternal({ href });
+        } else if (standardBridge) {
+          event.preventDefault();
+          void standardBridge.openLink(href).catch((error) => {
+            $("status").textContent = `Unable to open link: ${error instanceof Error ? error.message : error}`;
+          });
+        }
+      });
+      $("links").appendChild(anchor);
+    }
+  }
+
+  async function callTool(name, args) {
+    if (shuttingDown) throw new Error("Live Workspace is closed.");
+    if (window.openai && typeof window.openai.callTool === "function") {
+      return payload(await window.openai.callTool(name, args));
+    }
+    if (standardBridge) return payload(await standardBridge.callTool(name, args));
+    throw new Error("This host does not expose an MCP App tool bridge.");
+  }
+
+  async function refresh() {
+    if (shuttingDown || !snapshot || !snapshot.session) return;
+    try {
+      render(await callTool("workspace_snapshot", { session_id: snapshot.session.session_id }));
+      $("status").textContent = "Updated from Workgate.";
+    } catch (error) {
+      $("status").textContent = `Refresh failed: ${error instanceof Error ? error.message : error}`;
+    }
+  }
+
+  for (const button of document.querySelectorAll("[data-task-action]")) {
+    button.addEventListener("click", async () => {
+      if (!snapshot || !snapshot.session) return;
+      const revision = taskRevision();
+      if (revision === null) return;
+      const action = button.dataset.taskAction;
+      const args = {
+        session_id: snapshot.session.session_id,
+        action,
+        expected_revision: revision,
+      };
+      if (action === "next_instruction") args.instruction = $("instruction").value;
+      $("status").textContent = "Applying task update…";
+      try {
+        render(await callTool("workspace_task_control", args));
+        if (action === "next_instruction") $("instruction").value = "";
+        $("status").textContent = "Task state updated.";
+      } catch (error) {
+        $("status").textContent = `Task update failed: ${error instanceof Error ? error.message : error}`;
+      }
+    });
+  }
+
+  $("end-session").addEventListener("click", async () => {
+    if (!snapshot || !snapshot.session) return;
+    const sessionId = snapshot.session.session_id;
+    const confirmation = $("end-confirm").value.trim();
+    if (confirmation !== sessionId) {
+      $("status").textContent = "Confirmation does not exactly match the current session ID.";
+      return;
+    }
+    $("status").textContent = "Ending execution session…";
+    try {
+      await callTool("workspace_end", { session_id: sessionId, confirm_session_id: confirmation });
+      $("end-confirm").value = "";
+      await refresh();
+      $("status").textContent = "Execution session ended.";
+    } catch (error) {
+      $("status").textContent = `Session end failed: ${error instanceof Error ? error.message : error}`;
+    }
+  });
+
+  async function startHostBridge() {
+    if (window.openai && typeof window.openai.callTool === "function") {
+      render(payload(window.openai.toolOutput));
+      window.addEventListener("openai:set_globals", (event) => {
+        const globals = event && event.detail && event.detail.globals;
+        if (globals && globals.toolOutput) render(payload(globals.toolOutput));
+      });
+      return;
+    }
+
+    standardBridge = createStandardBridge();
+    standardBridge.onToolResult((result) => render(payload(result)));
+    try {
+      await standardBridge.connect();
+      $("status").textContent = "Connected to MCP App host.";
+    } catch (error) {
+      standardBridge = null;
+      $("status").textContent = `Host bridge unavailable: ${error instanceof Error ? error.message : error}`;
+    }
+  }
+
+  void startHostBridge();
+  refreshTimer = window.setInterval(() => void refresh(), 5000);
+  window.addEventListener("beforeunload", stopLiveWorkspace);
+})();
+</script>
+</body>
+</html>

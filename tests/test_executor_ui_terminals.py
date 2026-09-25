@@ -16,6 +16,30 @@ class _FakeShell:
         self.calls.append(("list_all", None))
         return "listed"
 
+    async def list(self, args: dict[str, Any]) -> str:
+        self.calls.append(("list", args))
+        return "listed-owned"
+
+    async def start(self, args: dict[str, Any]) -> str:
+        self.calls.append(("start", args))
+        return "started-owned"
+
+    async def send(self, args: dict[str, Any]) -> str:
+        self.calls.append(("send", args))
+        return "sent-owned"
+
+    async def resize(self, args: dict[str, Any]) -> str:
+        self.calls.append(("resize", args))
+        return "resized-owned"
+
+    async def read(self, args: dict[str, Any]) -> str:
+        self.calls.append(("read", args))
+        return "read-owned"
+
+    async def kill(self, args: dict[str, Any]) -> str:
+        self.calls.append(("kill", args))
+        return "killed-owned"
+
     async def start_unowned(self, args: dict[str, Any]) -> str:
         self.calls.append(("start_unowned", args))
         return "started"
@@ -60,6 +84,31 @@ async def test_ui_terminal_service_routes_shell_operations(
 
     assert result == expected
     assert shell.calls == [(method, None if method == "list_all" else args)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("op", "method", "expected"),
+    [
+        ("ui.terminals.list", "list", "listed-owned"),
+        ("ui.terminals.start", "start", "started-owned"),
+        ("ui.terminals.send", "send", "sent-owned"),
+        ("ui.terminals.resize", "resize", "resized-owned"),
+        ("ui.terminals.read", "read", "read-owned"),
+        ("ui.terminals.kill", "kill", "killed-owned"),
+    ],
+)
+async def test_ui_terminal_service_routes_session_scoped_operations(
+    op: str, method: str, expected: str
+) -> None:
+    shell = _FakeShell()
+    service = UiTerminalsService(cast(ShellService, shell))
+    args = {"session_id": "sess_1234567890123456789012", "shell_id": "shell-1"}
+
+    result = await service.execute(op, args)
+
+    assert result == expected
+    assert shell.calls == [(method, args)]
 
 
 @pytest.mark.asyncio

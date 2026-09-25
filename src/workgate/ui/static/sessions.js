@@ -7,12 +7,16 @@ export function createSessionsController({
   auditTimestamp,
   renderAuditDetailInto,
   renderAuditDetailMessage,
+  initialExecutorId = "",
+  initialSessionId = "",
 }) {
   const controllerState = {
-    sessionExecutorId: "",
-    todoSessionId: "",
+    sessionExecutorId: text(initialExecutorId, ""),
+    sessionExecutorPinned: Boolean(initialExecutorId),
+    todoSessionId: text(initialSessionId, ""),
+    sessionSelectionPinned: Boolean(initialSessionId),
     todoSessions: [],
-    sessionIncludeInactive: false,
+    sessionIncludeInactive: Boolean(initialSessionId),
     sessionLoading: false,
     sessionTerminating: false,
     todoItems: [],
@@ -73,8 +77,8 @@ export function createSessionsController({
   }
 
   function setTodoControls() {
-    const sessionReady = Boolean(controllerState.todoSessionId);
     const session = selectedSession();
+    const sessionReady = Boolean(controllerState.todoSessionId && session);
     const executorOffline = sessionAvailability(session) === "executor_offline";
     const ended = text(session && session.status, "") === "ended";
     elements.sessionExecutor.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
@@ -121,6 +125,7 @@ export function createSessionsController({
   function resetTodoWorkspace(executorId = "") {
     controllerState.sessionExecutorId = executorId;
     controllerState.todoSessionId = "";
+    controllerState.sessionSelectionPinned = false;
     controllerState.todoSessions = [];
     controllerState.sessionLoading = false;
     controllerState.sessionTerminating = false;
@@ -189,8 +194,19 @@ export function createSessionsController({
   function renderTodoSessions(sessions) {
     controllerState.todoSessions = Array.isArray(sessions) ? sessions : [];
     if (!controllerState.todoSessions.some((session) => session.session_id === controllerState.todoSessionId)) {
-      controllerState.todoSessionId = text(controllerState.todoSessions[0] && controllerState.todoSessions[0].session_id, "");
-      clearSelectedSessionResources(controllerState.todoSessionId ? "Loading selected session" : "No sessions available");
+      if (!controllerState.sessionSelectionPinned) {
+        controllerState.todoSessionId = text(
+          controllerState.todoSessions[0] && controllerState.todoSessions[0].session_id,
+          "",
+        );
+      }
+      clearSelectedSessionResources(
+        selectedSession()
+          ? "Loading selected session"
+          : controllerState.sessionSelectionPinned
+            ? "Requested session is unavailable"
+            : "No sessions available",
+      );
     }
     elements.sessionList.replaceChildren();
     if (!controllerState.todoSessions.length) {
@@ -307,6 +323,7 @@ export function createSessionsController({
   async function selectTodoSession(next) {
     if (!next || next === controllerState.todoSessionId || controllerState.todoMutationBusy || controllerState.sessionLoading) return;
     if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) return;
+    controllerState.sessionSelectionPinned = false;
     controllerState.todoSessionId = next;
     clearSelectedSessionResources("Loading selected session");
     renderTodoSessions(controllerState.todoSessions);
@@ -349,7 +366,7 @@ export function createSessionsController({
 
   async function refreshTodoContext() {
     await refreshTodoSessions();
-    if (!controllerState.todoSessionId) return null;
+    if (!controllerState.todoSessionId || !selectedSession()) return null;
     await refreshSelectedSessionResources();
     return selectedSession();
   }
@@ -357,6 +374,7 @@ export function createSessionsController({
   function renderSessionExecutors(targets) {
     const available = Array.isArray(targets) ? targets : [];
     controllerState.sessionExecutorStates = new Map();
+    elements.sessionIncludeInactive.checked = controllerState.sessionIncludeInactive;
     elements.sessionExecutor.replaceChildren();
     const all = document.createElement("option");
     all.value = "";
@@ -378,6 +396,18 @@ export function createSessionsController({
       elements.sessionExecutor.append(option);
     }
     if (!currentPresent && !controllerState.todoDirty && !controllerState.todoMutationBusy) {
+      if (controllerState.sessionExecutorPinned && controllerState.sessionExecutorId) {
+        const option = document.createElement("option");
+        option.value = controllerState.sessionExecutorId;
+        option.textContent = `${controllerState.sessionExecutorId} (unavailable)`;
+        option.disabled = true;
+        option.selected = true;
+        elements.sessionExecutor.append(option);
+        elements.sessionExecutor.value = controllerState.sessionExecutorId;
+        elements.sessionState.textContent = `Executor unavailable · ${controllerState.sessionExecutorId}`;
+        setTodoControls();
+        return;
+      }
       resetTodoWorkspace("");
       void refreshTodoContext();
       return;
@@ -821,6 +851,7 @@ export function createSessionsController({
         elements.sessionExecutor.value = controllerState.sessionExecutorId;
         return;
       }
+      controllerState.sessionExecutorPinned = false;
       resetTodoWorkspace(next);
       void refreshTodoContext();
     });

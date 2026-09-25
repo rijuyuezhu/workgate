@@ -652,7 +652,9 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
         "tree_view",
         "version",
         "view_image",
+        "workspace_open",
         "workspace_search",
+        "workspace_snapshot",
     }
     for name in read_only_tool_names:
         _assert_tool_annotations(

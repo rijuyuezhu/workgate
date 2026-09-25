@@ -3,10 +3,13 @@ export function createFilesController({
   request,
   text,
   formatFileBytes,
+  initialExecutorId = "",
+  initialPath = "",
 }) {
   const controllerState = {
-    fileExecutorId: "",
-    filePath: ".",
+    fileExecutorId: text(initialExecutorId, ""),
+    fileExecutorPinned: Boolean(initialExecutorId),
+    filePath: text(initialPath, "."),
     fileParentPath: ".",
     fileEntries: [],
     selectedFilePath: "",
@@ -62,11 +65,22 @@ export function createFilesController({
       const label = text(executor.name, executorId);
       option.textContent = online ? label : `${label} (${text(executor.status, "offline")})`;
       option.disabled = !online;
-      option.selected = online && executorId === controllerState.fileExecutorId;
+      option.selected = executorId === controllerState.fileExecutorId;
       if (option.selected) currentAvailable = true;
       elements.fileExecutor.append(option);
     }
     if (!currentAvailable) {
+      if (controllerState.fileExecutorPinned && controllerState.fileExecutorId) {
+        const option = document.createElement("option");
+        option.value = controllerState.fileExecutorId;
+        option.textContent = `${controllerState.fileExecutorId} (unavailable)`;
+        option.disabled = true;
+        option.selected = true;
+        elements.fileExecutor.append(option);
+        elements.fileExecutor.value = controllerState.fileExecutorId;
+        elements.fileState.textContent = `Executor unavailable · ${controllerState.fileExecutorId}`;
+        return;
+      }
       const firstOnline = available.find((item) => item.status === "online");
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.fileExecutorId !== nextExecutorId;
@@ -519,6 +533,7 @@ export function createFilesController({
   function bind() {
   elements.fileExecutor.addEventListener("change", () => {
     if (controllerState.fileMutationBusy) return;
+    controllerState.fileExecutorPinned = false;
     resetFileWorkspace(elements.fileExecutor.value);
     void refreshFiles();
   });

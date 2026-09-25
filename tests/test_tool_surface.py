@@ -57,6 +57,10 @@ LOCAL_MCP_TOOL_NAMES = {
     "write_todos",
     "job",
     "view_image",
+    "workspace_open",
+    "workspace_snapshot",
+    "workspace_task_control",
+    "workspace_end",
 }
 
 
@@ -102,6 +106,10 @@ async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
         "create_file_link",
         "list_file_links",
         "revoke_file_link",
+        "workspace_open",
+        "workspace_snapshot",
+        "workspace_task_control",
+        "workspace_end",
     }
 
 
