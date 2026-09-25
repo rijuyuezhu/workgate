@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from workers import DurableObject, Response, WorkerEntrypoint
 
 from workgate.config.settings import Settings
 from workgate.hosted import (
+    HOSTED_HTTP_PATHS,
     DurableObjectSqlStateStore,
     HostedControlActorCore,
     HostedHttpGateway,
@@ -17,6 +19,30 @@ from workgate.hosted import (
     build_hosted_control_actor_core,
     owner_bearer_matches,
 )
+
+
+class _RequestBodyTooLarge(Exception):
+    pass
+
+
+async def _read_bounded_text(request, limit: int) -> str:
+    body = request.body
+    if body is None:
+        return ""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in body:
+        to_bytes = getattr(chunk, "to_bytes", None)
+        data = (
+            cast(bytes, to_bytes())
+            if callable(to_bytes)
+            else bytes(cast(Any, chunk))
+        )
+        total += len(data)
+        if limit > 0 and total > limit:
+            raise _RequestBodyTooLarge
+        chunks.append(data)
+    return b"".join(chunks).decode("utf-8")
 
 
 def _response(value: HostedHttpResponse) -> Response:
@@ -110,11 +136,18 @@ class WorkgateControl(DurableObject):
                         status=413,
                         headers={"content-type": "text/plain; charset=utf-8"},
                     )
-            text = await request.text()
-            if limit > 0 and len(text.encode("utf-8")) > limit:
+            try:
+                text = await _read_bounded_text(request, limit)
+            except _RequestBodyTooLarge:
                 return Response(
                     "request body too large",
                     status=413,
+                    headers={"content-type": "text/plain; charset=utf-8"},
+                )
+            except UnicodeDecodeError:
+                return Response(
+                    "request body must be UTF-8",
+                    status=400,
                     headers={"content-type": "text/plain; charset=utf-8"},
                 )
             if text:
@@ -146,6 +179,16 @@ class Default(WorkerEntrypoint):
                 headers={
                     "content-type": "application/json",
                     "cache-control": "no-store",
+                },
+            )
+        if path not in HOSTED_HTTP_PATHS:
+            return Response(
+                '{"detail":"not found"}',
+                status=404,
+                headers={
+                    "content-type": "application/json",
+                    "cache-control": "no-store",
+                    "x-content-type-options": "nosniff",
                 },
             )
         owner_route = (

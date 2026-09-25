@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import sys
 import tomllib
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -22,6 +23,53 @@ def _load_script(relative: str, name: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _load_cloudflare_entry(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    workers = ModuleType("workers")
+    workers.__dict__.update(
+        {
+            "DurableObject": type("DurableObject", (), {}),
+            "Response": type("Response", (), {}),
+            "WorkerEntrypoint": type("WorkerEntrypoint", (), {}),
+        }
+    )
+    monkeypatch.setitem(sys.modules, "workers", workers)
+    return _load_script(
+        "deploy/cloudflare/src/entry.py", "workgate_cloudflare_entry"
+    )
+
+
+class _Chunk:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def to_bytes(self) -> bytes:
+        return self._data
+
+
+def _body(*chunks: bytes):
+    async def iterator():
+        for chunk in chunks:
+            yield _Chunk(chunk)
+
+    return iterator()
+
+
+def test_cloudflare_request_body_reader_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = _load_cloudflare_entry(monkeypatch)
+    request = SimpleNamespace(body=_body(b"abc", b"def"))
+    assert asyncio.run(entry._read_bounded_text(request, 6)) == "abcdef"
+
+    oversized = SimpleNamespace(body=_body(b"abc", b"def"))
+    with pytest.raises(entry._RequestBodyTooLarge):
+        asyncio.run(entry._read_bounded_text(oversized, 5))
+
+    invalid_utf8 = SimpleNamespace(body=_body(b"\xff"))
+    with pytest.raises(UnicodeDecodeError):
+        asyncio.run(entry._read_bounded_text(invalid_utf8, 8))
 
 
 def test_cloudflare_prepare_stages_exact_dependency_light_closure(

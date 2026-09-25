@@ -35,6 +35,22 @@ from .actor import HostedControlActorCore
 from .mcp import HostedMcpGateway
 
 _USER_CODE_ADAPTER = TypeAdapter(UserCode)
+HOSTED_HTTP_PATHS = frozenset(
+    {
+        "/healthz",
+        "/pair",
+        "/pair/lookup",
+        "/status",
+        "/mcp",
+        EXECUTOR_PAIR_START_PATH,
+        EXECUTOR_PAIR_POLL_PATH,
+        EXECUTOR_HELLO_PATH,
+        EXECUTOR_VALIDATE_PATH,
+        EXECUTOR_HEARTBEAT_PATH,
+        EXECUTOR_POLL_PATH,
+        EXECUTOR_RESULT_PATH,
+    }
+)
 
 
 class _PairingMetadataView(Protocol):

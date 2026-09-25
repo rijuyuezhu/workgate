@@ -6,7 +6,11 @@ from typing import Any, cast
 import pytest
 
 from workgate.control.pairing import PairingAttemptView
-from workgate.hosted import HostedHttpGateway, HostedHttpResponse
+from workgate.hosted import (
+    HOSTED_HTTP_PATHS,
+    HostedHttpGateway,
+    HostedHttpResponse,
+)
 from workgate.hosted.http import (
     _pairing_error,
     _transport_error,
@@ -37,6 +41,23 @@ from workgate.protocol.ids import (
     new_session_id,
 )
 from workgate.protocol.pairing import PairDecision, PairingExecutorMetadata
+
+
+def test_hosted_http_path_allowlist_is_exact() -> None:
+    assert {
+        "/healthz",
+        "/pair",
+        "/pair/lookup",
+        "/status",
+        "/mcp",
+        EXECUTOR_PAIR_START_PATH,
+        EXECUTOR_PAIR_POLL_PATH,
+        EXECUTOR_HELLO_PATH,
+        EXECUTOR_VALIDATE_PATH,
+        EXECUTOR_HEARTBEAT_PATH,
+        EXECUTOR_POLL_PATH,
+        EXECUTOR_RESULT_PATH,
+    } == HOSTED_HTTP_PATHS
 
 
 class _Sessions:
