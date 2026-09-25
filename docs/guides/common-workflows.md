@@ -69,7 +69,13 @@ Pair or select the intended executor, then start a session with its stable execu
 Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-The normal file, search, shell, job, Todo, and Audit tools all route through the executor bound to that shared session. See [Executors](remote-workers.md) for pairing, reconnect, and trust management.
+File, search, shell, job, transfer, and other machine-facing tools route through the executor bound to that shared session. Durable task/progress/plan state and the Todo compatibility view are control-owned, but they are still addressed by that same explicit `session_id`; executor disconnect or restart does not erase them. See [Executors](remote-workers.md) for pairing, reconnect, and trust management.
+
+## Keep durable task progress
+
+For substantial multi-step work, use `read_session_task` to resume the durable handoff, `report_session_progress` to update the objective, summary, findings, next action, blockers, or semantic task status, and `update_session_plan` for stable plan steps. Both mutation tools require the latest `expected_revision`; reload after a conflict instead of overwriting another client.
+
+`session_end` releases the execution context without changing semantic task status. The task document remains readable afterward as history, but it is no longer writable because the associated execution session is ended.
 
 ## Review activity
 

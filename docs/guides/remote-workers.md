@@ -42,7 +42,7 @@ Ask the MCP client to start an explicit session on the intended paired executor.
 Start a session in /home/me/project on executor gpu1, inspect the repository and its instructions, then run git status. Do not edit files yet.
 ```
 
-After `session_start`, the same opaque `session_id` is shared by control and executor. Use it with the normal read, search, edit, shell, job, Todo, and Audit tools. Use `session_change_cwd` to move that session to another allowed directory on the same executor; sessions are never silently rebound.
+After `session_start`, the same opaque `session_id` is shared by control and executor. Use it with normal read, search, edit, shell, job, Audit, transfer, and durable task/plan tools. Machine-facing operations stay bound to the selected executor/workdir; task/progress/plan state and the Todo compatibility view are control-owned under that same explicit ID and survive executor reconnects. Use `session_change_cwd` to move the execution session to another allowed directory on the same executor; sessions are never silently rebound.
 
 For long-running non-interactive commands, use asynchronous `bash` and poll the returned job. Use `pty=true` when the executor-side task genuinely needs an interactive terminal; prefer bounded commands otherwise.
 

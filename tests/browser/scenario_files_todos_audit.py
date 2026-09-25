@@ -97,9 +97,56 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             f'#session-list .session-entry[data-session-id="{session_id}"]'
         )
     ).to_have_attribute("aria-current", "true")
-    expect(page.locator("#todo-state")).to_contain_text("loaded 0 todos")
+    expect(page.locator("#todo-state")).to_contain_text("loaded 0 plan steps")
+    expect(page.locator("#task-status")).to_have_text("active")
     assert snapshot_forbidden >= 1
     page.unroute("**/api/ui/sessions/snapshot**", forbid_combined_snapshot)
+    reported = harness.api(
+        "POST",
+        "/tools/session-progress",
+        body={
+            "session_id": session_id,
+            "expected_revision": 0,
+            "objective": "Browser durable task",
+            "summary": "Visible in the Human UI",
+        },
+    )
+    assert reported["status"] == 200
+    page.locator("#todo-refresh").click()
+    expect(page.locator("#task-objective")).to_have_text("Browser durable task")
+    expect(page.locator("#task-summary")).to_have_text(
+        "Visible in the Human UI"
+    )
+
+    completed = harness.api(
+        "POST",
+        "/tools/session-progress",
+        body={
+            "session_id": session_id,
+            "expected_revision": 1,
+            "task_status": "completed",
+        },
+    )
+    assert completed["status"] == 200
+    page.locator("#todo-refresh").click()
+    expect(page.locator("#task-status")).to_have_text("completed")
+    expect(page.locator("#todo-refresh")).to_be_enabled()
+    expect(page.locator("#todo-add")).to_be_disabled()
+
+    resumed = harness.api(
+        "POST",
+        "/tools/session-progress",
+        body={
+            "session_id": session_id,
+            "expected_revision": 2,
+            "task_status": "active",
+        },
+    )
+    assert resumed["status"] == 200
+    page.locator("#todo-refresh").click()
+    expect(page.locator("#task-status")).to_have_text("active")
+    expect(page.locator("#todo-add")).to_be_enabled()
+
     session_entry_box = page.locator(
         "#session-list .session-entry"
     ).first.bounding_box()
@@ -181,6 +228,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     page.locator("#todo-save").click()
     expect(page.locator("#todo-state")).to_contain_text(f"Saved {session_id}")
+    expect(page.locator("#task-state")).to_contain_text("revision 4")
     todos = harness.api("GET", f"/api/ui/todos?session_id={session_id}")
     assert todos["status"] == 200
     assert todos["payload"]["data"]["todos"][0]["content"] == (

@@ -26,6 +26,9 @@ _SESSION_CONTROL_TOOLS = frozenset(
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
     {"create_file_link", "list_file_links", "revoke_file_link"}
 )
+_TASK_CONTROL_TOOLS = frozenset(
+    {"read_session_task", "report_session_progress", "update_session_plan"}
+)
 _TODO_CONTROL_TOOLS = frozenset({"read_todos", "write_todos"})
 _AUDIT_CONTROL_TOOLS = frozenset({"audit_tail"})
 _JOB_CONTROL_TOOLS = frozenset({"job"})
@@ -92,6 +95,30 @@ class ControlToolRouter:
                 retry=args.get("retry"),
                 include_finished=bool(args.get("include_finished", True)),
                 lines=int(args.get("lines", 200)),
+            )
+        if tool_name == "read_session_task":
+            return await self._todos.read_task(str(args["session_id"]))
+        if tool_name == "report_session_progress":
+            return await self._todos.report_progress(
+                str(args["session_id"]),
+                expected_revision=args["expected_revision"],
+                objective=args.get("objective"),
+                summary=args.get("summary"),
+                findings=args.get("findings"),
+                next_action=args.get("next_action"),
+                blockers=args.get("blockers"),
+                task_status=args.get("task_status"),
+            )
+        if tool_name == "update_session_plan":
+            return await self._todos.update_plan(
+                str(args["session_id"]),
+                expected_revision=args["expected_revision"],
+                steps=args.get("steps"),
+                step_id=args.get("step_id"),
+                status=args.get("status"),
+                content=args.get("content"),
+                priority=args.get("priority"),
+                note=args.get("note"),
             )
         if tool_name == "read_todos":
             return await self._todos.read(str(args["session_id"]))
@@ -169,6 +196,7 @@ def route_control_registry(
         _MACHINE_TOOL_NAMES
         | _SESSION_CONTROL_TOOLS
         | _DOWNLOAD_CONTROL_TOOLS
+        | _TASK_CONTROL_TOOLS
         | _TODO_CONTROL_TOOLS
         | _AUDIT_CONTROL_TOOLS
         | _JOB_CONTROL_TOOLS
@@ -199,6 +227,7 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
             _MACHINE_TOOL_NAMES
             | _SESSION_CONTROL_TOOLS
             | _DOWNLOAD_CONTROL_TOOLS
+            | _TASK_CONTROL_TOOLS
             | _TODO_CONTROL_TOOLS
             | _AUDIT_CONTROL_TOOLS
             | _JOB_CONTROL_TOOLS

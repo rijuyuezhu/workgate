@@ -15,6 +15,7 @@ export function createSessionsController({
     sessionIncludeInactive: false,
     sessionLoading: false,
     sessionTerminating: false,
+    task: null,
     todoItems: [],
     todoRevision: 0,
     todoGeneration: 0,
@@ -77,23 +78,25 @@ export function createSessionsController({
     const session = selectedSession();
     const executorOffline = sessionAvailability(session) === "executor_offline";
     const ended = text(session && session.status, "") === "ended";
+    const taskStatus = text(controllerState.task && controllerState.task.status, "");
+    const taskTerminal = taskStatus === "completed" || taskStatus === "cancelled";
     elements.sessionExecutor.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionIncludeInactive.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionRefresh.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
       controllerState.sessionLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
-    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !sessionReady || ended;
-    elements.todoAdd.disabled = controllerState.todoMutationBusy || !sessionReady || ended || controllerState.todoItems.length >= controllerState.todoLimits.todos;
-    elements.todoSave.disabled = controllerState.todoMutationBusy || !sessionReady || ended || !controllerState.todoDirty;
+    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !sessionReady;
+    elements.todoAdd.disabled = controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal || controllerState.todoItems.length >= controllerState.todoLimits.todos;
+    elements.todoSave.disabled = controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal || !controllerState.todoDirty;
     elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !sessionReady;
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
       control.disabled = controllerState.sessionAuditLoading || !sessionReady;
     }
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
-      control.disabled = controllerState.todoMutationBusy || !sessionReady || ended;
+      control.disabled = controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal;
     }
     for (const row of elements.todoList.querySelectorAll(".todo-row")) {
-      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !sessionReady || ended ? "true" : "false");
+      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal ? "true" : "false");
     }
   }
 
@@ -108,12 +111,35 @@ export function createSessionsController({
     setTodoControls();
   }
 
+  function taskListText(values) {
+    return Array.isArray(values) && values.length
+      ? values.map((value) => `• ${text(value, "")}`).join("\n")
+      : "—";
+  }
+
+  function renderTaskState() {
+    const task = controllerState.task;
+    const progress = task && task.progress && typeof task.progress === "object" ? task.progress : {};
+    elements.taskStatus.textContent = text(task && task.status);
+    elements.taskObjective.textContent = text(task && task.objective);
+    elements.taskSummary.textContent = text(progress.summary);
+    elements.taskNextAction.textContent = text(progress.next_action);
+    elements.taskFindings.textContent = taskListText(progress.findings);
+    elements.taskBlockers.textContent = taskListText(progress.blockers);
+    elements.taskState.textContent = task
+      ? `revision ${Number.isInteger(task.revision) ? task.revision : 0} · ${text(task.execution_status, "unknown execution state")}`
+      : "No durable task state";
+  }
+
   function clearSelectedSessionResources(message = "Select a session") {
+    controllerState.task = null;
     controllerState.todoItems = [];
     controllerState.todoRevision = 0;
     controllerState.todoDirty = false;
     controllerState.todoGeneration += 1;
+    renderTaskState();
     renderTodos();
+    elements.taskState.textContent = message;
     elements.todoState.textContent = message;
     resetSessionAuditWorkspace(message);
   }
@@ -437,24 +463,30 @@ export function createSessionsController({
     return label;
   }
 
+  function planStepClosed(item) {
+    return item.status === "completed" || item.status === "skipped";
+  }
+
   function visibleTodos() {
     const filter = elements.todoFilter.value;
     return controllerState.todoItems
       .map((item, index) => ({ item, index }))
       .filter(({ item }) => {
-        if (filter === "completed") return item.status === "completed";
-        if (filter === "open") return item.status !== "completed";
+        if (filter === "completed") return planStepClosed(item);
+        if (filter === "open") return !planStepClosed(item);
         return true;
       });
   }
 
   function renderTodoSummary() {
     const completed = controllerState.todoItems.filter((item) => item.status === "completed").length;
-    const open = controllerState.todoItems.length - completed;
+    const skipped = controllerState.todoItems.filter((item) => item.status === "skipped").length;
+    const open = controllerState.todoItems.length - completed - skipped;
     const labels = [
       `${controllerState.todoItems.length} total`,
       `${open} open`,
       `${completed} completed`,
+      `${skipped} skipped`,
       `revision ${controllerState.todoRevision}`,
     ];
     elements.todoSummary.replaceChildren(
@@ -473,7 +505,7 @@ export function createSessionsController({
     if (!visible.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = controllerState.todoItems.length ? "No todos match this filter." : "No todos in this session.";
+      empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this session.";
       elements.todoList.append(empty);
       setTodoControls();
       return;
@@ -496,7 +528,7 @@ export function createSessionsController({
       });
 
       const status = document.createElement("select");
-      todoOption(status, item.status, ["pending", "in_progress", "completed"]);
+      todoOption(status, item.status, ["pending", "in_progress", "blocked", "completed", "skipped"]);
       status.addEventListener("change", () => {
         controllerState.todoItems[index].status = status.value;
         setTodoDirty();
@@ -563,6 +595,7 @@ export function createSessionsController({
   }
 
   function applyTodoPayload(payload, requestedSession) {
+    controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : null;
     controllerState.todoItems = Array.isArray(payload.todos)
       ? payload.todos.map((item) => ({
           id: text(item.id, ""),
@@ -576,8 +609,9 @@ export function createSessionsController({
       controllerState.todoLimits = { ...controllerState.todoLimits, ...payload.limits };
     }
     controllerState.todoDirty = false;
+    renderTaskState();
     renderTodos();
-    elements.todoState.textContent = `${requestedSession} · loaded ${controllerState.todoItems.length} todos`;
+    elements.todoState.textContent = `${requestedSession} · loaded ${controllerState.todoItems.length} plan steps`;
   }
 
   async function refreshTodos({ force = false } = {}) {
@@ -621,7 +655,9 @@ export function createSessionsController({
       if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return;
       controllerState.todoItems = Array.isArray(payload.todos) ? payload.todos.map((item) => ({ ...item })) : [];
       controllerState.todoRevision = Number(payload.revision) || expectedRevision + 1;
+      controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : controllerState.task;
       controllerState.todoDirty = false;
+      renderTaskState();
       renderTodos();
       elements.todoState.textContent = `Saved ${requestedSession} · revision ${controllerState.todoRevision}`;
     } catch (error) {

@@ -102,6 +102,7 @@ async def test_todos_write_read_and_stale_revision_conflict(
 
     assert saved.status_code == 200
     assert saved.json()["data"]["revision"] == 1
+    assert saved.json()["data"]["task"]["revision"] == 1
     assert stale.status_code == 409
     assert stale.json()["error"] == "TodoConflictError"
     assert current.status_code == 200
@@ -212,7 +213,7 @@ async def test_todo_service_revision_guard_serializes_concurrent_replacements(
 
 
 @pytest.mark.asyncio
-async def test_todos_become_inaccessible_after_session_end(
+async def test_todos_remain_readable_but_not_writable_after_session_end(
     tmp_path, monkeypatch
 ):
     client, harness, session_id = await _client_with_session(
@@ -230,9 +231,21 @@ async def test_todos_become_inaccessible_after_session_end(
     await harness.control.session_coordinator.end_session(session_id)
 
     response = client.get("/api/ui/todos", params={"session_id": session_id})
+    denied = client.put(
+        "/api/ui/todos",
+        json={
+            "session_id": session_id,
+            "expected_revision": 1,
+            "todos": [_todo("two")],
+        },
+    )
 
-    assert response.status_code == 400
-    assert "inactive session_id" in response.text
+    assert response.status_code == 200
+    assert response.json()["data"]["todos"][0]["id"] == "one"
+    assert response.json()["data"]["task"]["execution_status"] == "ended"
+    assert denied.status_code == 400
+    assert "ended" in denied.text
+    assert "requires ['active']" in denied.text
 
 
 @pytest.mark.asyncio

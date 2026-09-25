@@ -65,9 +65,11 @@ Browse the selected workspace, preview supported files, edit bounded UTF-8 text 
 
 Some executor file operations may be unavailable when the bound executor is offline or lacks the needed capability. The UI shows the available actions instead of emulating missing operations with control-local shell commands. Use `session_copy` through an MCP client for cross-workspace transfers.
 
-### Todos
+### Task progress and plan
 
-View and update the Todo list associated with a shared workspace session. If another client changes the same list, reload the latest version instead of overwriting it.
+The Sessions view reads the same control-owned durable task document used by MCP clients. It shows semantic task status, objective, progress summary, findings, next action, blockers, and the structured plan. Plan steps keep stable IDs and share one monotonic revision with the progress report, so stale updates can be rejected instead of silently replacing newer state.
+
+The Plan editor remains compatible with the older Todo surface: `read_todos` and `write_todos` project the same plan steps rather than storing a second checklist. Ending an executor-backed session makes task state read-only but does not erase it, so the Human UI can still explain what the agent was doing after executor resources are released.
 
 ### Audit
 

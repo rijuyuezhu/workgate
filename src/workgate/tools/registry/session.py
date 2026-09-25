@@ -51,7 +51,7 @@ def _session_copy_description(_context: McpToolContext) -> str:
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. Use session_end when a task is complete so durable capacity is released without restarting the server. This is destructive for running work in that session but does not delete workspace files."""
+    return """End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. This releases execution capacity; it does not mark the semantic task completed or cancelled. Durable task/progress/plan state remains readable as history after session_end but becomes read-only. This is destructive for running work in that session but does not delete workspace files."""
 
 
 @session_tool(

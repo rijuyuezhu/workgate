@@ -1033,6 +1033,36 @@ h2 {
   margin: 0.1rem 0 0;
 }
 
+.session-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.7rem;
+  margin: 0.9rem 0 0;
+}
+
+.session-task-grid div {
+  min-width: 0;
+  border: 1px solid rgba(151, 184, 202, 0.12);
+  border-radius: 0.55rem;
+  background: rgba(2, 8, 13, 0.5);
+  padding: 0.65rem 0.75rem;
+}
+
+.session-task-grid dt {
+  color: #8297a9;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.session-task-grid dd {
+  margin: 0.3rem 0 0;
+  color: #e5eef5;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .session-audit-layout .audit-list,
 .session-audit-layout .audit-detail {
   max-height: 30rem;

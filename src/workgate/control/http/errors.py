@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from ...errors import SessionTerminationRequestedError, public_error_type
 from ...tools.local_handlers import UnknownLocalToolError
+from ..todos import TodoConflictError
 
 
 def install_error_handlers(app: FastAPI) -> None:
@@ -20,6 +21,18 @@ def install_error_handlers(app: FastAPI) -> None:
                 "error": "session_termination_requested",
                 "message": str(exc),
                 "session_id": exc.session_id,
+            },
+        )
+
+    @app.exception_handler(TodoConflictError)
+    async def todo_conflict_handler(
+        request: Request, exc: TodoConflictError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "revision_conflict",
+                "message": str(exc),
             },
         )
 

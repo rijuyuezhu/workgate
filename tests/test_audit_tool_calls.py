@@ -1,3 +1,4 @@
+import gzip
 import json
 
 import pytest
@@ -68,6 +69,134 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
     assert ends[0]["ok"] is True
     assert ends[0]["output"] == response.json()
     assert ends[0]["duration_ms"] >= 0
+
+
+def test_task_tool_audit_redacts_durable_report_and_plan_prose(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    settings = get_settings()
+    app, _harness = build_paired_http_app(settings)
+    client = TestClient(app)
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session_id = session["session_id"]
+    marker = "task-audit-secret-marker"
+    long_content = marker + "-" + ("x" * 6_000)
+
+    reported = client.post(
+        "/tools/session-progress",
+        json={
+            "session_id": session_id,
+            "expected_revision": 0,
+            "objective": f"{marker}-objective",
+            "summary": f"{marker}-summary",
+            "findings": [f"{marker}-finding"],
+            "next_action": f"{marker}-next",
+            "blockers": [f"{marker}-blocker"],
+        },
+    )
+    assert reported.status_code == 200
+    planned = client.post(
+        "/tools/session-plan",
+        json={
+            "session_id": session_id,
+            "expected_revision": 1,
+            "steps": [
+                {
+                    "id": "step-1",
+                    "content": long_content,
+                    "status": "in_progress",
+                    "priority": "high",
+                    "note": f"{marker}-note",
+                }
+            ],
+        },
+    )
+    assert planned.status_code == 200
+    rejected_extra = client.post(
+        "/tools/session-plan",
+        json={
+            "session_id": session_id,
+            "expected_revision": 2,
+            "steps": [
+                {
+                    "id": "step-1",
+                    "content": "unchanged",
+                    "private_context": f"{marker}-extra",
+                }
+            ],
+        },
+    )
+    assert rejected_extra.status_code == 400
+    assert (
+        client.get(
+            "/tools/session-task", params={"session_id": session_id}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get("/tools/todo", params={"session_id": session_id}).status_code
+        == 200
+    )
+    compat = client.post(
+        "/tools/todo",
+        json={
+            "session_id": session_id,
+            "expected_revision": 2,
+            "todos": [
+                {
+                    "id": "step-1",
+                    "content": f"{marker}-compat-content",
+                    "status": "completed",
+                    "priority": "high",
+                }
+            ],
+        },
+    )
+    assert compat.status_code == 200
+
+    audit_text = settings.audit_log_path.read_text(encoding="utf-8")
+    assert marker not in audit_text
+    for payload_path in settings.audit_payload_dir.glob("*.json.gz"):
+        with gzip.open(payload_path, "rt", encoding="utf-8") as payload_file:
+            assert marker not in payload_file.read()
+
+    records = _audit_records(settings.audit_log_path)
+    report_starts, report_ends = _tool_call_pairs(
+        records, "report_session_progress", transport="http"
+    )
+    assert report_starts[0]["input"]["session_id"] == session_id
+    assert report_starts[0]["input"]["objective"] == "<redacted>"
+    assert report_starts[0]["input"]["findings"] == "<redacted>"
+    assert report_ends[0]["output"]["objective"] == "<redacted>"
+    assert report_ends[0]["output"]["progress"]["summary"] == "<redacted>"
+
+    plan_starts, plan_ends = _tool_call_pairs(
+        records, "update_session_plan", transport="http"
+    )
+    assert plan_starts[0]["input"]["steps"][0]["id"] == "step-1"
+    assert plan_starts[0]["input"]["steps"][0]["content"] == "<redacted>"
+    assert plan_starts[0]["input"]["steps"][0]["note"] == "<redacted>"
+    assert len(plan_starts) == 2
+    assert len(plan_ends) == 2
+    assert (
+        plan_starts[1]["input"]["steps"][0]["private_context"] == "<redacted>"
+    )
+    assert plan_ends[0]["output"]["plan"]["steps"][0]["id"] == "step-1"
+    assert plan_ends[0]["output"]["plan"]["steps"][0]["content"] == "<redacted>"
+    assert plan_ends[1]["ok"] is False
+
+    todo_starts, todo_ends = _tool_call_pairs(
+        records, "write_todos", transport="http"
+    )
+    assert todo_starts[0]["input"]["todos"][0]["id"] == "step-1"
+    assert todo_starts[0]["input"]["todos"][0]["content"] == "<redacted>"
+    assert todo_ends[0]["output"]["todos"][0]["content"] == "<redacted>"
 
 
 @pytest.mark.asyncio
