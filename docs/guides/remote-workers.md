@@ -24,7 +24,7 @@ Executor machine policy is resolved locally. In particular, its configured works
 
 ## Reconnect after a restart
 
-Start the executor from its saved profile:
+For a foreground process, start the executor from its saved profile:
 
 ```bash
 workgate executor run
@@ -32,7 +32,38 @@ workgate executor run
 
 Temporary network or control outages reconnect with the same profile. Long inactivity does not itself expire executor trust. If the executor was revoked or its credential was replaced, run `workgate executor connect CONTROL_URL` and complete the owner-approved pairing or replacement flow.
 
-For unattended startup, run `workgate executor run` from the service manager appropriate for that machine. Workgate currently exposes only the `executor connect` and `executor run` executor subcommands; it does not provide the removed legacy worker service-management CLI.
+For unattended use, install Workgate's local per-user service after pairing:
+
+```bash
+workgate executor install-service
+workgate executor status
+workgate executor logs --lines 100
+```
+
+`install-service` snapshots the effective executor runtime settings into a private service config under the Workgate state directory. It does **not** copy the executor bearer credential, pairing code, OAuth material, or control URL into the service definition or argv. The managed process still loads the existing private `executor/profile.json`, so install, restart, reinstall, and uninstall do not create or replace executor identity. The normal executor profile lock remains authoritative: a manual `executor run` and the managed service cannot poll as the same profile at the same time.
+
+The lifecycle is local administration only; there is no MCP tool that installs or rewrites host services. The remaining commands are:
+
+```bash
+workgate executor start
+workgate executor stop
+workgate executor restart
+workgate executor uninstall-service
+```
+
+Platform startup semantics differ:
+
+- **Linux:** installs `workgate-executor.service` into a persistent user-unit directory advertised by the running `systemd --user` manager, enables it, starts it immediately, and restarts it after exits. This deliberately follows the manager's actual unit search path rather than a one-off shell `XDG_CONFIG_HOME`. Normally the user manager starts with the user's login. For a machine that must run before login, enable systemd lingering for that account according to the host's policy (for example `loginctl enable-linger "$USER"` when permitted).
+- **macOS:** installs a per-user LaunchAgent under `~/Library/LaunchAgents`. It starts immediately, is kept alive, and starts again when that user logs in. It does not run before the user login.
+- **Windows:** registers a current-user Scheduled Task with limited privileges. It starts immediately and again at user logon, permits battery operation, ignores duplicate starts, and retries failed runs. It does not require administrator rights in the normal per-user path and does not run before login.
+
+`status` reports a typed lifecycle state rendered as `running`, `stopped`, `failed`, `installed`, or `not-installed`, plus the native backend and bounded diagnostics. It also detects stale entrypoints and, on systemd, a manager that has loaded a different unit fragment than the one Workgate installed. `logs` returns only a bounded recent view and applies Workgate's secret redaction, including executor bearer tokens.
+
+### Upgrades and configuration changes
+
+For Python/pip/pipx installs, the service preserves the interpreter path belonging to the environment that installed Workgate and uses a private stable launcher that imports the currently installed package. In particular, Workgate does not resolve a virtualenv interpreter symlink back to the system Python. An in-place package upgrade therefore takes effect on the next service restart without changing executor identity. Self-contained release executables keep their executable path as the tracked runtime; on Windows, the Scheduled Task invokes that executable through a private PowerShell logging launcher so stdout/stderr remain available through `workgate executor logs`.
+
+If the Python environment or release executable moves to a different path, `status` reports the managed runtime as stale. Run `workgate executor install-service` again from the new installation to refresh the native definition; this rewrites only service-owned files and preserves `executor/profile.json`. Reinstall the service after changing executor settings as well, because the managed service intentionally uses the private settings snapshot rather than inheriting an interactive shell's `WORKGATE_*` environment. Installation metadata records the native service-file path only after the service manager has accepted the new definition, so a failed refresh is reported as stale rather than silently marking the new runtime current.
 
 ## Start work on an executor
 
