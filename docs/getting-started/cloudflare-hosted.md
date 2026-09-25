@@ -39,6 +39,12 @@ uv run pywrangler secret put WORKGATE_OWNER_TOKEN
 uv run pywrangler deploy
 ```
 
+If the same Worker is reachable through multiple hostnames, set the non-secret
+`WORKGATE_BASE_URL` Wrangler variable to the canonical public origin (for
+example `https://workgate.example.com`). Otherwise the adapter infers the
+pairing verification origin from the first request that constructs the Durable
+Object actor.
+
 The deployment-specific README under `deploy/cloudflare/` has the exact pairing
 and MCP client configuration.
 

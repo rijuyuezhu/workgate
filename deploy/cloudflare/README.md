@@ -19,7 +19,20 @@ python prepare.py
 ```
 
 `prepare.py` copies only the dependency-light Workgate hosted closure into
-`src/workgate/`. That directory is generated and ignored by Git.
+`src/workgate/`. That directory is generated and ignored by Git. Re-running
+`prepare.py` updates files in place, so it is safe while `pywrangler dev`
+is watching the tree.
+
+For local development:
+
+```bash
+python prepare.py
+uv run pywrangler dev
+```
+
+After changing provider-neutral code under `src/workgate/hosted/` or another
+module in the staged closure, rerun `python prepare.py`; pywrangler will reload
+only the changed staged files.
 
 ## Owner token
 
@@ -46,6 +59,23 @@ uv run pywrangler deploy
 
 The Worker routes requests to the Durable Object named `personal`, so one
 deployment represents one personal Workgate control actor.
+
+If the Worker is reachable through more than one hostname (for example a
+`workers.dev` hostname plus a custom domain), configure the canonical public
+origin explicitly in `wrangler.jsonc`:
+
+```jsonc
+{
+  // ...the existing Workgate configuration...
+  "vars": {
+    "WORKGATE_BASE_URL": "https://workgate.example.com"
+  }
+}
+```
+
+That value is not secret. It is used for the pairing verification URL. When it
+is omitted, Workgate infers the origin from the first request that constructs
+the Durable Object actor.
 
 ## Pair an executor
 

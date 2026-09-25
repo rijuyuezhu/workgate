@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
+from contextlib import suppress
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,20 +45,56 @@ MODULES = (
 )
 
 
+def _same_contents(left: Path, right: Path) -> bool:
+    if not right.is_file():
+        return False
+    if left.stat().st_size != right.stat().st_size:
+        return False
+    return left.read_bytes() == right.read_bytes()
+
+
+def _atomic_copy(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if _same_contents(src, dst):
+        return
+    staged = dst.with_name(f".{dst.name}.workgate-stage-{os.getpid()}")
+    try:
+        shutil.copy2(src, staged)
+        staged.replace(dst)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
+def _remove_stale(dest: Path, expected: set[Path]) -> None:
+    if not dest.exists():
+        return
+    files = tuple(path for path in dest.rglob("*") if path.is_file())
+    for path in files:
+        if path.relative_to(dest) not in expected:
+            path.unlink()
+    directories = sorted(
+        (path for path in dest.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for path in directories:
+        with suppress(OSError):
+            path.rmdir()
+
+
 def stage(dest: Path = DEFAULT_DEST) -> tuple[Path, ...]:
-    """Copy the exact hosted source closure into a deployment tree."""
+    """Copy the exact hosted source closure without removing the live package."""
     source = ROOT / "src" / "workgate"
-    if dest.exists():
-        shutil.rmtree(dest)
+    expected = {Path(relative) for relative in MODULES}
     copied: list[Path] = []
     for relative in MODULES:
         src = source / relative
         if not src.is_file():
             raise FileNotFoundError(f"missing hosted source module: {relative}")
         dst = dest / relative
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        _atomic_copy(src, dst)
         copied.append(dst)
+    _remove_stale(dest, expected)
     return tuple(copied)
 
 

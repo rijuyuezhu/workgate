@@ -94,5 +94,11 @@ class WorkgateControl(DurableObject):
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
+        parsed = urlsplit(str(request.url))
+        if str(request.method).upper() == "GET" and parsed.path == "/healthz":
+            return Response(
+                '{"ok":true}',
+                headers={"content-type": "application/json"},
+            )
         stub = self.env.WORKGATE_CONTROL.getByName("personal")
         return await stub.fetch(request)

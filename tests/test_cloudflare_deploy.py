@@ -43,6 +43,29 @@ def test_cloudflare_prepare_stages_exact_dependency_light_closure(
     assert not (dest / "tools").exists()
 
 
+def test_cloudflare_prepare_updates_in_place_and_cleans_stale_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepare = _load_script(
+        "deploy/cloudflare/prepare.py", "workgate_cloudflare_prepare_in_place"
+    )
+    dest = tmp_path / "workgate"
+    prepare.stage(dest)
+    package_init = dest / "__init__.py"
+    stale = dest / "stale.py"
+    stale.write_text("old\n", encoding="utf-8")
+
+    def fail_tree_removal(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("stage must not remove the live package tree")
+
+    monkeypatch.setattr(prepare.shutil, "rmtree", fail_tree_removal)
+    prepare.stage(dest)
+
+    assert package_init.is_file()
+    assert not stale.exists()
+
+
 def test_cloudflare_tool_manifest_matches_canonical_mcp_definitions() -> None:
     generator = _load_script(
         "scripts/generation/generate-hosted-tool-manifest.py",
