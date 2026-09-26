@@ -26,6 +26,7 @@ async def test_connector_tools_use_custom_mcp_error_handler(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
     async def failing_search(query: str):
@@ -64,6 +65,7 @@ async def test_connector_tool_timeout_uses_custom_mcp_error_handler(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
     async def hanging_search(query: str):
@@ -78,8 +80,6 @@ async def test_connector_tool_timeout_uses_custom_mcp_error_handler(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
     session_id = session["session_id"]
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    clear_settings_cache()
 
     search_payload = mcp_structured(
         await mcp.call_tool(

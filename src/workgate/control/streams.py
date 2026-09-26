@@ -1,7 +1,5 @@
 """Process-local terminal stream rendezvous owned by control."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import hashlib

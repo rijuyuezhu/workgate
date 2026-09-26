@@ -1,9 +1,15 @@
 from pathlib import Path
 
+import pytest
+
+from workgate.config.control import get_control_config, resolve_control_config
+from workgate.config.executor import (
+    get_executor_config,
+    resolve_executor_config,
+)
+from workgate.config.role_config import use_role_config
 from workgate.config.settings import Settings
-from workgate.control.config import resolve_control_config
 from workgate.control.runtime import build_control_runtime
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 
 
@@ -88,3 +94,44 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
         == executor_settings.workspace_root.resolve(strict=False)
     )
     assert not hasattr(executor, "legacy_settings")
+
+
+def test_executor_config_context_is_explicit_and_role_checked(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        workspace_root=tmp_path / "workspace",
+        state_dir=tmp_path / "state",
+    )
+    executor = resolve_executor_config(settings)
+    control = resolve_control_config(settings)
+
+    with pytest.raises(RuntimeError, match="not configured"):
+        get_executor_config()
+
+    with (
+        use_role_config(control),
+        pytest.raises(RuntimeError, match="not executor-owned"),
+    ):
+        get_executor_config()
+
+    with use_role_config(executor):
+        assert get_executor_config() is executor
+
+
+def test_control_config_context_is_role_checked(tmp_path: Path) -> None:
+    settings = Settings(
+        workspace_root=tmp_path / "workspace",
+        state_dir=tmp_path / "state",
+    )
+    control = resolve_control_config(settings)
+    executor = resolve_executor_config(settings)
+
+    with use_role_config(control):
+        assert get_control_config() is control
+
+    with (
+        use_role_config(executor),
+        pytest.raises(RuntimeError, match="not control-owned"),
+    ):
+        get_control_config()

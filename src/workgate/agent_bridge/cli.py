@@ -18,6 +18,7 @@ from mcp.client.auth.utils import (
 from mcp.shared.auth import OAuthMetadata, ProtectedResourceMetadata
 
 from ..config.cli import register_config_and_setting_args, settings_from_args
+from ..config.control import CONTROL_SETTING_NAMES
 from ..config.settings import Settings
 from .auth import (
     build_stored_oauth_provider,
@@ -40,7 +41,10 @@ def register_mcp_cli(subparsers: Any) -> argparse.ArgumentParser:
         help="Manage Agent Bridge MCP credentials and OAuth authorization",
         description="Manage Agent Bridge MCP credentials and OAuth authorization.",
     )
-    register_config_and_setting_args(mcp_parser)
+    register_config_and_setting_args(
+        mcp_parser,
+        setting_names=CONTROL_SETTING_NAMES,
+    )
     mcp_subparsers = mcp_parser.add_subparsers(
         dest="mcp_command", required=True
     )

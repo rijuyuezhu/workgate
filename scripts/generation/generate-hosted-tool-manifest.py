@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Generate the dependency-light hosted MCP tool manifest from canonical tools."""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import json
@@ -11,6 +9,7 @@ from pathlib import Path
 from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 from mcp.types import LATEST_PROTOCOL_VERSION
 
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings
 from workgate.control.mcp.app import build_mcp
 from workgate.tools.catalog import build_tool_catalog
@@ -91,7 +90,9 @@ def _validate_input_schema(schema: object, *, path: str) -> None:
 
 
 async def build_manifest() -> list[dict[str, object]]:
-    mcp = build_mcp(tool_catalog=build_tool_catalog(Settings()))
+    mcp = build_mcp(
+        tool_catalog=build_tool_catalog(resolve_control_config(Settings()))
+    )
     by_name = {tool.name: tool for tool in await mcp.list_tools()}
     missing = sorted(set(HOSTED_TOOL_NAMES) - by_name.keys())
     if missing:
@@ -123,7 +124,6 @@ def render(manifest: list[dict[str, object]]) -> str:
     latest = repr(LATEST_PROTOCOL_VERSION)
     return (
         '"""Generated hosted MCP manifest. Do not edit by hand."""\n\n'
-        "from __future__ import annotations\n\n"
         "import json\n\n"
         f"LATEST_MCP_PROTOCOL_VERSION = {latest}\n"
         f"SUPPORTED_MCP_PROTOCOL_VERSIONS = frozenset({versions})\n\n"

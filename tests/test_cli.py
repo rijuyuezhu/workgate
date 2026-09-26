@@ -16,14 +16,19 @@ import workgate.ui.cli as tui_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.app_paths import app_paths
-from workgate.config.roles import EXECUTOR_SETTING_NAMES
+from workgate.config.executor import ExecutorConfig
+from workgate.config.roles import (
+    CONTROL_SETTING_NAMES,
+    EXECUTOR_ONLY_SETTING_NAMES,
+    EXECUTOR_SETTING_NAMES,
+    SHARED_SETTING_NAMES,
+)
 from workgate.config.settings import Settings, load_settings
 from workgate.config.surface import (
     SETTING_SPECS,
     cli_overrides_from_args,
     register_setting_cli_args,
 )
-from workgate.executor.config import ExecutorConfig
 
 
 def _command_parser(name: str) -> argparse.ArgumentParser:
@@ -201,7 +206,7 @@ def test_control_help_omits_executor_machine_policy(capsys):
     excluded_flags = {
         spec.cli_flag
         for spec in SETTING_SPECS
-        if spec.name in server_cli.CONTROL_EXCLUDED_SETTING_NAMES
+        if spec.name not in CONTROL_SETTING_NAMES
     }
     for flag in excluded_flags:
         assert flag not in help_text
@@ -209,23 +214,41 @@ def test_control_help_omits_executor_machine_policy(capsys):
 
 
 def test_control_cli_excludes_every_executor_only_setting():
-    shared_role_settings = {
-        "state_dir",
-        "ui_terminal_idle_timeout_s",
-        "ui_terminal_max_connections",
+    parser = _command_parser("control")
+    option_strings = {
+        option for action in parser._actions for option in action.option_strings
+    }
+    for spec in SETTING_SPECS:
+        assert (spec.cli_flag in option_strings) == (
+            spec.name in CONTROL_SETTING_NAMES
+        )
+    assert EXECUTOR_ONLY_SETTING_NAMES.isdisjoint(CONTROL_SETTING_NAMES)
+
+
+def test_agent_bridge_cli_exposes_only_control_role_settings():
+    parser = _command_parser("mcp")
+    option_strings = {
+        option for action in parser._actions for option in action.option_strings
+    }
+    for spec in SETTING_SPECS:
+        assert (spec.cli_flag in option_strings) == (
+            spec.name in CONTROL_SETTING_NAMES
+        )
+
+
+def test_resolved_control_config_matches_explicit_role_surface():
+    from workgate.config.control import ControlConfig
+
+    derived_control_fields = {
+        "resolved_base_url",
         "agent_config_dir",
         "agent_auth_dir",
-        "agent_mcp_probe_timeout_s",
-        "agent_mcp_call_timeout_s",
+        "audit_log_path",
+        "audit_payload_dir",
     }
-    executor_derived_fields = {"temp_dir"}
-    executor_only_settings = (
-        set(ExecutorConfig.__dataclass_fields__)
-        - shared_role_settings
-        - executor_derived_fields
-    )
-
-    assert executor_only_settings == server_cli.CONTROL_EXCLUDED_SETTING_NAMES
+    assert (
+        set(ControlConfig.__dataclass_fields__) - derived_control_fields
+    ) == CONTROL_SETTING_NAMES
 
 
 def test_standalone_executor_child_settings_match_executor_config():
@@ -238,6 +261,136 @@ def test_standalone_executor_child_settings_match_executor_config():
     assert (
         set(ExecutorConfig.__dataclass_fields__) - derived_executor_fields
     ) == EXECUTOR_SETTING_NAMES
+    assert SHARED_SETTING_NAMES <= EXECUTOR_SETTING_NAMES
+
+
+def test_executor_cli_exposes_only_executor_role_settings():
+    for command in ("connect", "run"):
+        executor = _command_parser("executor")
+        actions = next(
+            action
+            for action in executor._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        parser = actions.choices[command]
+        option_strings = {
+            option
+            for action in parser._actions
+            for option in action.option_strings
+        }
+        for spec in SETTING_SPECS:
+            assert (spec.cli_flag in option_strings) == (
+                spec.name in EXECUTOR_SETTING_NAMES
+            )
+
+
+def test_role_cli_loading_does_not_import_foreign_config_values(
+    tmp_path, monkeypatch
+):
+    from workgate.config.cli import settings_from_args
+
+    config = tmp_path / "config.yaml"
+    workspace = tmp_path / "executor-workspace"
+    config.write_text(
+        "\n".join(
+            (
+                f"workspace_root: {workspace}",
+                "oauth_admin_pin: yaml-control-secret",
+                "port: 9876",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "env-control-secret")
+    monkeypatch.setenv("WORKGATE_COMMAND_DENYLIST", "executor-env-policy")
+
+    executor_args = cli._build_parser().parse_args(
+        ["executor", "run", "--config", str(config)]
+    )
+    executor_settings = settings_from_args(executor_args)
+    assert executor_settings.workspace_root == workspace
+    assert executor_settings.command_denylist == ["executor-env-policy"]
+    assert executor_settings.oauth_admin_pin is None
+    assert executor_settings.port == Settings().port
+
+    control_args = cli._build_parser().parse_args(
+        ["control", "--config", str(config)]
+    )
+    control_settings = settings_from_args(control_args)
+    assert control_settings.oauth_admin_pin == "env-control-secret"
+    assert control_settings.port == 9876
+    assert control_settings.workspace_root != workspace
+    assert "executor-env-policy" not in control_settings.command_denylist
+
+
+def test_control_and_executor_discover_distinct_default_yaml_files(
+    tmp_path, monkeypatch
+):
+    from workgate.config.cli import settings_from_args
+
+    config_home = tmp_path / "config-home"
+    workgate_config = config_home / "workgate"
+    executor_config_dir = workgate_config / "executor"
+    executor_config_dir.mkdir(parents=True)
+    control_config = workgate_config / "config.yaml"
+    executor_config = executor_config_dir / "config.yaml"
+    workspace = tmp_path / "executor-workspace"
+    control_config.write_text(
+        "port: 9876\noauth_admin_pin: control-only-secret\n",
+        encoding="utf-8",
+    )
+    executor_config.write_text(
+        f"workspace_root: {workspace}\ncommand_denylist: [executor-only]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
+    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_OAUTH_ADMIN_PIN", raising=False)
+    monkeypatch.delenv("WORKGATE_COMMAND_DENYLIST", raising=False)
+    monkeypatch.delenv("WORKGATE_STATE_DIR", raising=False)
+
+    control_args = cli._build_parser().parse_args(["control"])
+    control = settings_from_args(control_args)
+    assert control.port == 9876
+    assert control.oauth_admin_pin == "control-only-secret"
+    assert control.workspace_root != workspace
+
+    executor_args = cli._build_parser().parse_args(["executor", "run"])
+    executor = settings_from_args(executor_args)
+    assert executor.workspace_root == workspace
+    from workgate.app_paths import app_paths
+
+    assert executor.state_dir == app_paths().executor_state_dir
+    assert executor.command_denylist == ["executor-only"]
+    assert executor.oauth_admin_pin is None
+    assert executor.port == Settings().port
+
+
+def test_workgate_config_overrides_executor_default_yaml(tmp_path, monkeypatch):
+    from workgate.config.cli import settings_from_args
+
+    config_home = tmp_path / "config-home"
+    workgate_config = config_home / "workgate"
+    executor_config_dir = workgate_config / "executor"
+    executor_config_dir.mkdir(parents=True)
+    (executor_config_dir / "config.yaml").write_text(
+        f"workspace_root: {tmp_path / 'default-workspace'}\n",
+        encoding="utf-8",
+    )
+    explicit = tmp_path / "selected.yaml"
+    selected_workspace = tmp_path / "selected-workspace"
+    explicit.write_text(
+        f"workspace_root: {selected_workspace}\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("WORKGATE_CONFIG", str(explicit))
+    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+
+    args = cli._build_parser().parse_args(["executor", "run"])
+    assert settings_from_args(args).workspace_root == selected_workspace
 
 
 def test_version_option_prints_package_version(capsys):
@@ -373,16 +526,41 @@ def test_tui_subcommand_parses_loopback_api_base():
     assert args.api_base == "https://localhost:9443/api/ui"
 
 
-def test_tui_handler_uses_configured_port_and_settings(monkeypatch):
+def test_tui_cli_exposes_only_control_role_settings():
+    parser = _command_parser("tui")
+    option_strings = {
+        option for action in parser._actions for option in action.option_strings
+    }
+    for spec in SETTING_SPECS:
+        assert (spec.cli_flag in option_strings) == (
+            spec.name in CONTROL_SETTING_NAMES
+        )
+
+
+def test_tui_handler_uses_configured_port_and_settings(monkeypatch, tmp_path):
+    from workgate.config.control import get_control_config
+    from workgate.persistence import get_state_store
+
     calls = []
 
     def fake_run(api_base, *, settings):
+        assert get_control_config() is settings
+        assert get_state_store().layout.root == settings.state_dir
         calls.append((api_base, settings.port, settings.ui_tui_command))
         return 0
 
     monkeypatch.setattr(tui_cli, "run_tui", fake_run)
+    state_dir = tmp_path / "tui-state"
     args = cli._build_parser().parse_args(
-        ["tui", "--port", "9555", "--ui-tui-command", "/opt/tui"]
+        [
+            "tui",
+            "--port",
+            "9555",
+            "--state-dir",
+            str(state_dir),
+            "--ui-tui-command",
+            "/opt/tui",
+        ]
     )
 
     with pytest.raises(SystemExit) as exc_info:
@@ -465,8 +643,7 @@ def test_control_handler_initializes_only_control_owned_directories(
     configured = []
     dispatched = []
 
-    def load_from_args(_args, *, configure):
-        assert configure is False
+    def load_from_args(_args):
         return settings
 
     monkeypatch.setattr(server_cli, "settings_from_args", load_from_args)
@@ -504,7 +681,7 @@ def test_control_handler_rejects_a_second_writer(tmp_path, monkeypatch):
     monkeypatch.setattr(
         server_cli,
         "settings_from_args",
-        lambda _args, *, configure: settings,
+        lambda _args: settings,
     )
     monkeypatch.setattr(
         server_cli, "configure_settings", lambda _settings: None

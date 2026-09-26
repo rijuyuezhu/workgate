@@ -11,17 +11,22 @@ from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Mount
 
 from ...audit import audit
-from ...config.control import ControlSettingsView
+from ...config.control import ControlConfig, resolve_control_config
 from ...config.settings import get_settings
 from ...http.public_routes import public_http_routes
 from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
+from ...persistence import FileStateStore
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
+from ..execution_context import (
+    ControlExecutionContextMiddleware,
+    control_execution_context,
+)
 from ..http.executor_admin import executor_admin_routes
 from ..http.executor_routes import executor_routes
 from ..http.stream_routes import terminal_stream_routes
@@ -31,6 +36,18 @@ from .instructions import SERVER_INSTRUCTIONS
 from .session_limits import McpSessionLimitMiddleware
 from .transport_security import transport_security_settings
 from .watchdogs import install_mcp_tool_watchdogs
+
+
+def _control_state_store(
+    runtime: ControlRuntime | None, settings: ControlConfig
+):
+    services = None if runtime is None else getattr(runtime, "services", None)
+    store = None if services is None else getattr(services, "state_store", None)
+    return (
+        store
+        if store is not None
+        else FileStateStore(lambda: settings.state_dir)
+    )
 
 
 def _make_read_only_tool_annotations() -> ToolAnnotations:
@@ -53,7 +70,11 @@ def build_mcp(
     auto_runtime = runtime is None and tool_catalog is None
     if auto_runtime:
         runtime = build_control_runtime(get_settings())
-    settings = runtime.config if runtime is not None else get_settings()
+    settings = (
+        runtime.config
+        if runtime is not None
+        else resolve_control_config(get_settings())
+    )
     if tool_catalog is not None:
         catalog = tool_catalog
     elif runtime is not None:
@@ -89,14 +110,27 @@ def build_mcp(
     )
     catalog.register_mcp(mcp, context)
     install_tool_safety_annotations(mcp)
-    install_mcp_tool_watchdogs(mcp)
+    state_store = _control_state_store(runtime, settings)
+    install_mcp_tool_watchdogs(
+        mcp,
+        settings,
+        state_store,
+        oauth_state=None
+        if runtime is None
+        else getattr(runtime, "oauth_state", None),
+        managed_jobs_runtime=(
+            None
+            if runtime is None
+            else getattr(runtime, "managed_jobs_runtime", None)
+        ),
+    )
     return mcp
 
 
 def _add_public_routes_to_mcp_http_app(
     mcp_app: Starlette,
     *,
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
     runtime: ControlRuntime | None = None,
 ) -> tuple[Starlette, list[BaseRoute]]:
     """Serve health/OAuth routes directly and send everything else to MCP."""
@@ -105,7 +139,7 @@ def _add_public_routes_to_mcp_http_app(
         if settings is not None
         else runtime.config
         if runtime is not None
-        else get_settings()
+        else resolve_control_config(get_settings())
     )
 
     @asynccontextmanager
@@ -121,7 +155,7 @@ def _add_public_routes_to_mcp_http_app(
             yield
 
     public_routes: list[BaseRoute] = [
-        *public_http_routes(settings),
+        *public_http_routes(active_settings),
         *(
             [
                 *executor_routes(
@@ -165,7 +199,7 @@ def _build_authenticated_mcp_http_app(
     *,
     session_manager: object | None = None,
     mcp_path: str = "/mcp",
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
     runtime: ControlRuntime | None = None,
 ) -> Starlette:
     """Add resource limits and OAuth protection around the MCP HTTP app."""
@@ -174,7 +208,7 @@ def _build_authenticated_mcp_http_app(
         if settings is not None
         else runtime.config
         if runtime is not None
-        else get_settings()
+        else resolve_control_config(get_settings())
     )
     app, public_routes = _add_public_routes_to_mcp_http_app(
         mcp_app,
@@ -195,6 +229,20 @@ def _build_authenticated_mcp_http_app(
     )
     if active_settings.auth_mode != "none":
         app.add_middleware(AuthMiddleware, public_routes=public_routes)
+    state_store = _control_state_store(runtime, active_settings)
+    app.add_middleware(
+        ControlExecutionContextMiddleware,
+        config=active_settings,
+        state_store=state_store,
+        oauth_state=None
+        if runtime is None
+        else getattr(runtime, "oauth_state", None),
+        managed_jobs_runtime=(
+            None
+            if runtime is None
+            else getattr(runtime, "managed_jobs_runtime", None)
+        ),
+    )
     return app
 
 
@@ -212,7 +260,9 @@ def build_mcp_http_app(
             ControlRuntime | None, getattr(mcp, "_workgate_runtime", None)
         )
     settings = (
-        active_runtime.config if active_runtime is not None else get_settings()
+        active_runtime.config
+        if active_runtime is not None
+        else resolve_control_config(get_settings())
     )
     if hasattr(mcp, "streamable_http_app"):
         inner: Starlette = mcp.streamable_http_app()
@@ -222,13 +272,17 @@ def build_mcp_http_app(
         ):
             idle_timeout_s = max(1, settings.mcp_session_idle_timeout_s)
             session_manager.session_idle_timeout = idle_timeout_s
-            maximum_tool_watchdog_s = tool_timeout_s("bash")
+            maximum_tool_watchdog_s = tool_timeout_s("bash", config=settings)
             if idle_timeout_s <= maximum_tool_watchdog_s:
-                audit(
-                    "mcp_session_idle_timeout_risk",
-                    idle_timeout_s=idle_timeout_s,
-                    maximum_tool_watchdog_s=maximum_tool_watchdog_s,
-                )
+                with control_execution_context(
+                    config=settings,
+                    state_store=_control_state_store(active_runtime, settings),
+                ):
+                    audit(
+                        "mcp_session_idle_timeout_risk",
+                        idle_timeout_s=idle_timeout_s,
+                        maximum_tool_watchdog_s=maximum_tool_watchdog_s,
+                    )
         mcp_settings = getattr(mcp, "settings", None)
         return _build_authenticated_mcp_http_app(
             inner,

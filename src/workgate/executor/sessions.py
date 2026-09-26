@@ -1,14 +1,12 @@
 """Executor-authoritative shared session resources for protocol v1."""
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from typing import Any
 
+from ..config.executor import ExecutorConfig
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
-from .config import ExecutorConfig
 from .errors import ExecutorOperationFailure
 from .path import resolve_path_with_policy
 from .session_orientation import change_session_cwd, session_output

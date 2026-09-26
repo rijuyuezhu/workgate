@@ -1,10 +1,9 @@
 """Build executor protocol hello state for the final v1 resource namespace."""
 
-from __future__ import annotations
-
 import platform
 
 from .. import __version__
+from ..config.executor import ExecutorConfig
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
@@ -13,7 +12,6 @@ from ..protocol.executor import (
     SessionInventorySummary,
     ShellInventorySummary,
 )
-from .config import ExecutorConfig
 
 
 def build_executor_hello(

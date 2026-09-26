@@ -6,11 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ...config.executor import ExecutorConfig
 from ...jobs import status as job_status
 from ...jobs.persistence import attempt_paths as _attempt_paths
 from ...jobs.state import JobAttemptPaths, MutableJobRow
 from ...utils.private_files import write_private_text
-from ..config import ExecutorConfig
 from ..shell import check_command_policy
 
 _adopt_pending_retry = job_status._adopt_pending_retry

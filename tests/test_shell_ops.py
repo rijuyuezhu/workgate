@@ -20,12 +20,15 @@ from tests.helpers import (
     mcp_structured,
 )
 from tests.helpers import (
+    get_test_tool_session_store as get_tool_session_store,
+)
+from tests.helpers import (
     python_shell_command as _python_shell_command,
 )
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.tool_timeouts import tool_timeout_s
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.shell import (
     _shared_tail_bytes,
     _shell_command_args,
@@ -39,7 +42,6 @@ from workgate.executor.shell import (
     run_shell_command_timeout,
     send_persistent_shell_input_execute,
 )
-from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.schemas.result_models.shell import CommandResult
 
 # Test-only providers preserve legacy regression injection points while the
@@ -654,9 +656,9 @@ from types import SimpleNamespace
 
 import workgate.executor.shell as shell_ops
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
+from workgate.config.executor import resolve_executor_config
 from workgate.executor.services import build_runtime_services
-from workgate.persistence import configure_state_store
+from workgate.persistence import use_state_store
 
 workspace = Path(__import__("sys").argv[1])
 active_path = Path(__import__("sys").argv[2])
@@ -666,7 +668,6 @@ shell_name = __import__("sys").argv[5]
 clear_settings_cache()
 config = resolve_executor_config(get_settings())
 services = build_runtime_services(config)
-configure_state_store(services.state_store)
 store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: False
@@ -706,11 +707,12 @@ shell_ops.tmux = fake_tmux
 while not barrier_path.exists():
     time.sleep(0.01)
 try:
-    output = asyncio.run(
-        shell_ops.start_persistent_shell_execute(
-            config, store, ".", shell_name, "sleep 1"
+    with use_state_store(services.state_store):
+        output = asyncio.run(
+            shell_ops.start_persistent_shell_execute(
+                config, store, ".", shell_name, "sleep 1"
+            )
         )
-    )
 except Exception as exc:
     result_path.write_text(f"error:{exc}", encoding="utf-8")
 else:
@@ -796,10 +798,13 @@ import workgate.executor.shell as shell_ops
 import workgate.executor.terminal.conpty as conpty
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.tool_timeouts import tool_timeout_s
-from workgate.executor.config import resolve_executor_config
+from workgate.config.executor import resolve_executor_config
 from workgate.executor.services import build_runtime_services
-from workgate.executor.terminal.runtime import build_terminal_runtime
-from workgate.persistence import configure_state_store
+from workgate.executor.terminal.runtime import (
+    build_terminal_runtime,
+    use_terminal_runtime,
+)
+from workgate.persistence import use_state_store
 
 workspace = Path(__import__("sys").argv[1])
 barrier_path = Path(__import__("sys").argv[2])
@@ -809,7 +814,6 @@ owner_bound = __import__("sys").argv[5] == "1"
 clear_settings_cache()
 config = resolve_executor_config(get_settings())
 services = build_runtime_services(config)
-configure_state_store(services.state_store)
 store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: True
@@ -850,19 +854,20 @@ async def main():
     runtime = build_terminal_runtime(services.state_store, workspace_root=Path.cwd())
     await runtime.start()
     try:
-        output = await shell_ops.start_persistent_shell_execute(
-            config, store, ".", shell_name, "echo ready",
-            owner_session_id=owner_session_id,
-        )
+        with use_terminal_runtime(runtime):
+            output = await shell_ops.start_persistent_shell_execute(
+                config, store, ".", shell_name, "echo ready",
+                owner_session_id=owner_session_id,
+            )
+            result_path.write_text(f"ok:{output.shell_id}", encoding="utf-8")
+            await asyncio.sleep(0.75)
     except Exception as exc:
         result_path.write_text(f"error:{exc}", encoding="utf-8")
-    else:
-        result_path.write_text(f"ok:{output.shell_id}", encoding="utf-8")
-        await asyncio.sleep(0.75)
     finally:
         await runtime.aclose()
 
-asyncio.run(main())
+with use_state_store(services.state_store):
+    asyncio.run(main())
 """
     processes = [
         subprocess.Popen(
@@ -1625,11 +1630,11 @@ def test_rest_tool_watchdog_returns_timeout(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
-    async def hanging_call_local_tool(*args, **kwargs):
+    async def hanging_call_tool(*args, **kwargs):
         await asyncio.sleep(5)
 
     monkeypatch.setattr(
-        http_tool_routes_module, "call_http_tool", hanging_call_local_tool
+        http_tool_routes_module, "call_http_tool", hanging_call_tool
     )
 
     response = TestClient(build_http_app()).post(
@@ -1643,14 +1648,12 @@ def test_rest_tool_watchdog_returns_timeout(tmp_path, monkeypatch):
 def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.05")
     clear_settings_cache()
 
     app, harness = build_paired_http_app(get_settings())
     client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
-
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    clear_settings_cache()
 
     original_call = harness.call
 
@@ -1714,15 +1717,13 @@ def test_rest_readyz_does_not_expose_workspace_root(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
     mcp, harness = build_paired_mcp(get_settings())
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
-
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    clear_settings_cache()
 
     original_call = harness.call
 

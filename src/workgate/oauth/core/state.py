@@ -1,6 +1,8 @@
-"""Controller-owned OAuth authorization and dynamic-client live state."""
+"""Control-owned OAuth authorization and dynamic-client live state."""
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from threading import RLock
 
@@ -72,26 +74,33 @@ class OAuthState:
         return self.codes
 
 
-_OAUTH_STATE: OAuthState | None = None
+_OAUTH_STATE_CONTEXT: ContextVar[OAuthState | None] = ContextVar(
+    "workgate_oauth_state_context", default=None
+)
 
 
-def configure_oauth_state(state: OAuthState | None) -> OAuthState | None:
-    """Install a non-owning compatibility binding and return the previous binding."""
-    global _OAUTH_STATE
-    previous = _OAUTH_STATE
-    _OAUTH_STATE = state
-    return previous
+@contextmanager
+def use_oauth_state(state: OAuthState) -> Generator[None]:
+    """Bind one control-owned OAuth state to the current execution context."""
+    token = _OAUTH_STATE_CONTEXT.set(state)
+    try:
+        yield
+    finally:
+        _OAUTH_STATE_CONTEXT.reset(token)
 
 
 def oauth_state() -> OAuthState:
-    """Return the OAuth state bound by the current controller/test composition root."""
-    if _OAUTH_STATE is None:
-        raise RuntimeError("OAuth state is not configured")
-    return _OAUTH_STATE
+    """Return the OAuth state bound to the current execution context."""
+    state = _OAUTH_STATE_CONTEXT.get()
+    if state is None:
+        raise RuntimeError(
+            "OAuth state is not configured in this execution context"
+        )
+    return state
 
 
 def build_oauth_state(
     state_dir: Path, *, state_store: StateStore | None = None
 ) -> OAuthState:
-    """Construct OAuth live state without installing process compatibility bindings."""
+    """Construct OAuth live state without installing ambient process bindings."""
     return OAuthState(state_dir, state_store=state_store)

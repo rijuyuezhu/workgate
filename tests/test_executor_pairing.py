@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 
@@ -99,6 +97,21 @@ def _hello() -> ExecutorHelloRequest:
         shells=(),
         jobs=(),
     )
+
+
+def test_pairing_rejects_nonpositive_capacity(tmp_path: Path) -> None:
+    state = _state(tmp_path)
+    transport = ExecutorTransport(state, max_pending_commands=4)
+    with pytest.raises(
+        ValueError, match="max_pending_attempts must be positive"
+    ):
+        ExecutorPairingService(
+            state,
+            transport,
+            verification_uri="https://control.test/pair",
+            max_pending_attempts=0,
+            ttl_s=60,
+        )
 
 
 @pytest.mark.asyncio

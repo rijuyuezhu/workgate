@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from workgate.config.executor import ExecutorConfig, resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor import environment as env_ops
-from workgate.executor.config import ExecutorConfig, resolve_executor_config
 from workgate.schemas.result_models.session import SessionToolProbe
 
 

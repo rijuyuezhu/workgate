@@ -1,6 +1,6 @@
 import pytest
 
-from workgate.config.control import ControlSettingsView
+from workgate.config.control import ControlConfig, resolve_control_config
 from workgate.config.settings import Settings
 from workgate.tools.catalog import (
     BUILTIN_TOOL_REGISTRY_FACTORIES,
@@ -75,7 +75,7 @@ async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
     class BoundSearchRegistry(ToolRegistry):
         name = "search"
 
-        def __init__(self, settings: ControlSettingsView | None) -> None:
+        def __init__(self, settings: ControlConfig | None) -> None:
             self.settings = settings
 
         def http_handlers(self):
@@ -87,7 +87,7 @@ async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
 
             return {"search": search_handler}
 
-    settings = Settings()
+    settings = resolve_control_config(Settings())
     catalog = build_tool_catalog(
         settings,
         factory_overrides={"search": BoundSearchRegistry},
@@ -98,7 +98,7 @@ async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
 
     assert isinstance(registry, BoundSearchRegistry)
     assert registry.settings is settings
-    result = await catalog.local_handlers()["search"]({"query": "needle"})
+    result = await catalog.handlers()["search"]({"query": "needle"})
     assert result == {"dependency": dependency, "query": "needle"}
 
 
@@ -109,7 +109,7 @@ def test_catalog_rejects_unknown_factory_override() -> None:
         )
 
 
-def test_catalog_rejects_duplicate_local_handler_names() -> None:
+def test_catalog_rejects_duplicate_handler_names() -> None:
     async def handler(_args):
         return None
 
@@ -123,7 +123,5 @@ def test_catalog_rejects_duplicate_local_handler_names() -> None:
 
     catalog = ToolCatalog((FirstRegistry(), SecondRegistry()))
 
-    with pytest.raises(
-        ValueError, match="Duplicate local tool handler: duplicate"
-    ):
-        catalog.local_handlers()
+    with pytest.raises(ValueError, match="Duplicate tool handler: duplicate"):
+        catalog.handlers()

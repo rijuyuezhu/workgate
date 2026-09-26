@@ -1,17 +1,17 @@
 """Public CLI for the final Workgate executor process."""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import sys
 from typing import Any
 
 from ..agent_bridge.redaction import _redact_text
+from ..app_paths import app_paths
 from ..config.cli import register_config_and_setting_args, settings_from_args
-from ..persistence import get_state_store
+from ..config.executor import EXECUTOR_SETTING_NAMES, resolve_executor_config
+from ..config.settings import initialize_runtime_directories
+from ..persistence import FileStateStore
 from ..protocol.errors import ProtocolErrorCode
-from .config import resolve_executor_config
 from .control_client import ExecutorControlClient, ExecutorControlError
 from .pairing import (
     ExecutorPairingClient,
@@ -38,8 +38,11 @@ def _run_async(coro: Any) -> Any:
 
 
 async def _connect(args: argparse.Namespace) -> None:
-    settings_from_args(args, configure=True)
-    profile_store = ExecutorProfileStore(get_state_store())
+    settings = settings_from_args(args)
+    initialize_runtime_directories(settings)
+    profile_store = ExecutorProfileStore(
+        FileStateStore(lambda: settings.state_dir)
+    )
     control_url = normalize_control_url(str(args.control_url))
     existing = profile_store.load()
     existing_executor_id: str | None = None
@@ -96,7 +99,8 @@ async def _connect(args: argparse.Namespace) -> None:
 
 
 async def _run(args: argparse.Namespace) -> None:
-    settings = settings_from_args(args, configure=True)
+    settings = settings_from_args(args)
+    initialize_runtime_directories(settings)
     runtime = build_executor_runtime(resolve_executor_config(settings))
     async with runtime.lifespan():
         connection = runtime.connection
@@ -131,12 +135,22 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
     )
     connect.add_argument("control_url")
     connect.add_argument("--name", default=None)
-    register_config_and_setting_args(connect)
+    register_config_and_setting_args(
+        connect,
+        setting_names=EXECUTOR_SETTING_NAMES,
+        default_config_path=app_paths().executor_config_file,
+        setting_defaults={"state_dir": app_paths().executor_state_dir},
+    )
     connect.set_defaults(handler=_connect_from_args)
 
     run = actions.add_parser(
         "run", help="Run using the stored executor profile"
     )
-    register_config_and_setting_args(run)
+    register_config_and_setting_args(
+        run,
+        setting_names=EXECUTOR_SETTING_NAMES,
+        default_config_path=app_paths().executor_config_file,
+        setting_defaults={"state_dir": app_paths().executor_state_dir},
+    )
     run.set_defaults(handler=_run_from_args)
     return executor

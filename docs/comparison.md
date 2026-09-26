@@ -3,7 +3,7 @@
 Workgate originated as a fork of
 [`fwerkor/local-shell-mcp`](https://github.com/fwerkor/local-shell-mcp) and is now
 independently named and maintained. Both projects provide controlled shell,
-filesystem, remote-worker, job, file-link, audit, Skill, and human-interface
+filesystem, remote-execution, job, file-link, audit, Skill, and human-interface
 capabilities for MCP clients, but they are no longer drop-in replacements for one
 another.
 
@@ -33,7 +33,7 @@ state recovery, and UI behavior in each project.
 | Workspace context | Requires `session_start`; operations are owned by a durable `session_id`, and `session_end` explicitly releases the session. | Tools are invoked directly against the configured workspace, with optional machine selection where supported. | Workgate is better suited to clients that need explicit, inspectable context instead of relying on conversational memory to remember cwd, machine, and related state. |
 | Executor-backed execution | Starts a workspace session on a paired executor, then reuses the same shared `session_id` for read, edit, shell, job, PTY, Todo, Audit, and transfer tools. | Normal execution tools can select a remote machine directly; separate remote administration tools manage workers. | Workgate has a uniform control/executor session contract, while upstream avoids a mandatory session-creation step. |
 | Public tool surface | Uses compact session-owned tools such as `bash`, `read`, `search`, `job`, and `session_copy`, plus persistent-shell companion tools. | Uses direct domain tools such as `run_shell_tool`, `grep_search`, `shell_*`, `job_*`, and `transfer_path`. | Prompts and integrations written for one project generally need adaptation for the other. |
-| Jobs and lifecycle recovery | Unifies shell jobs and controller-managed work, including background copies, in one durable `job` surface with retry, cancel, lost-state recovery, ownership leases, and session-retention protection. | Provides tracked jobs and persistent shells through its direct tool model. | Workgate treats long-running work and its owning context as one lifecycle domain, including across controller restarts and multiple server processes. |
+| Jobs and lifecycle recovery | Unifies shell jobs and control-managed work, including background copies, in one durable `job` surface with retry, cancel, lost-state recovery, ownership leases, and session-retention protection. | Provides tracked jobs and persistent shells through its direct tool model. | Workgate treats long-running work and its owning context as one lifecycle domain, including across control restarts and multiple control processes. |
 | Cross-workspace transfer | `session_copy` copies between two existing sessions on the same or different executors. Large cross-executor transfers can use private resumable HTTP streaming while retaining durable retry state. | `transfer_path` moves files or directories between controller and worker endpoints using the upstream machine-oriented model. | Both support transfer, but Workgate binds both endpoints and retry state to explicit shared sessions and managed jobs. |
 | Agent capabilities | Keeps the dynamic Agent Bridge: clients can discover Skills, inspect configured upstream MCP servers, authorize them, and invoke selected bridged tools through server-managed credentials. | Provides a fixed three-tool Skills workflow and intentionally removed the earlier dynamic MCP bridge. | Choose Workgate when one control server must broker reusable Skills and additional MCP servers; choose upstream when a fixed, smaller capability surface is preferred. |
 | Browser automation | Does not expose public structured browser-automation tools. Browser tooling may still be run through an authorized shell, and real Chromium E2E is used to test the Human UI. | Exposes structured page-text extraction, capture, and Playwright script tools locally and on capable remote workers. | Upstream is the direct choice when browser automation must be a first-class MCP API. |
@@ -64,7 +64,7 @@ Prefer Workgate when you need:
 
 - explicit local or remote workspace sessions;
 - session-owned cwd, jobs, Todos, Audit, and transfers;
-- durable controller-managed work and teardown semantics;
+- durable control-managed work and teardown semantics;
 - the dynamic Agent Bridge for configured MCP servers;
 - Workgate's browser-native operations UI and release matrix.
 

@@ -76,7 +76,7 @@ def _run(
 def _policy() -> dict[str, Any]:
     return {
         "adapter_files": [
-            "src/workgate/tools/local_handlers.py",
+            "src/workgate/tools/tool_handlers.py",
         ],
         "adapter_prefixes": [
             "src/workgate/control/",

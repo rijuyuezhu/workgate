@@ -1,7 +1,5 @@
 """Authenticated owner administration for final executors and pairing."""
 
-from __future__ import annotations
-
 import time
 from typing import Any
 

@@ -2,6 +2,7 @@
 
 import os
 import re
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -15,7 +16,6 @@ from ..persistence import StateLayout
 AUDIT_LOG_STATE_DIR_NAME = "audit_log"
 AUDIT_PAYLOAD_STATE_DIR_NAME = "payloads"
 AGENT_AUTH_STATE_DIR_NAME = "agent_auth"
-REMOTE_TRANSFER_STATE_DIR_NAME = "remote_transfers"
 ENV_PREFIX = "WORKGATE_"
 _CONFIG_PATH_FIELDS = frozenset({"workspace_root", "state_dir", "data_dir"})
 _RESERVED_UI_PATHS = (
@@ -417,8 +417,34 @@ class Settings(BaseSettings):
         return self
 
 
-def read_config_file(path: str | Path | None) -> dict[str, Any]:
-    """Read optional YAML configuration values."""
+def _selected_setting_names(
+    setting_names: Collection[str] | None,
+) -> frozenset[str]:
+    """Return validated Settings names selected for one process role."""
+    fields = frozenset(Settings.model_fields)
+    if setting_names is None:
+        return fields
+    selected = frozenset(setting_names)
+    unknown = selected - fields
+    if unknown:
+        raise ValueError(f"Unknown Settings names: {sorted(unknown)}")
+    return selected
+
+
+def _default_setting_values() -> dict[str, Any]:
+    """Materialize every default so BaseSettings cannot import foreign env fields."""
+    return {
+        name: field.get_default(call_default_factory=True)
+        for name, field in Settings.model_fields.items()
+    }
+
+
+def read_config_file(
+    path: str | Path | None,
+    *,
+    setting_names: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Read optional YAML configuration values for one role-owned field set."""
     if not path:
         return {}
     config_path = Path(path).expanduser()
@@ -429,6 +455,14 @@ def read_config_file(path: str | Path | None) -> dict[str, Any]:
         return {}
     if not isinstance(loaded, dict):
         raise ValueError(f"Config file must contain a mapping: {config_path}")
+    known = frozenset(Settings.model_fields)
+    unknown = frozenset(loaded) - known
+    if unknown:
+        raise ValueError(
+            f"Unknown config settings in {config_path}: {sorted(unknown)}"
+        )
+    selected = _selected_setting_names(setting_names)
+    loaded = {name: value for name, value in loaded.items() if name in selected}
     for name in _CONFIG_PATH_FIELDS.intersection(loaded):
         value = loaded[name]
         if value is None:
@@ -442,18 +476,24 @@ def read_config_file(path: str | Path | None) -> dict[str, Any]:
     return loaded
 
 
-def env_overrides() -> dict[str, Any]:
-    """Return settings explicitly present in the process environment."""
+def env_overrides(
+    setting_names: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Return explicitly present environment values for one role-owned field set."""
+    selected = _selected_setting_names(setting_names)
     present = {
         name: field_name
-        for field_name in Settings.model_fields
+        for field_name in selected
         if (name := f"{ENV_PREFIX}{field_name.upper()}") in os.environ
     }
     if not present:
         return {}
-    env_settings = Settings()
+    values = _default_setting_values()
+    for env_name, field_name in present.items():
+        values[field_name] = os.environ[env_name]
+    parsed = Settings(**values)
     return {
-        field_name: getattr(env_settings, field_name)
+        field_name: getattr(parsed, field_name)
         for field_name in present.values()
     }
 
@@ -468,20 +508,47 @@ def initialize_runtime_directories(settings: Settings) -> None:
 def load_settings(
     config_path: str | Path | None = None,
     overrides: dict[str, Any] | None = None,
+    *,
+    setting_names: Collection[str] | None = None,
+    default_config_path: str | Path | None = None,
+    default_overrides: Mapping[str, Any] | None = None,
 ) -> Settings:
-    """Load settings without mutating the runtime filesystem."""
+    """Load settings without mutating the runtime filesystem.
+
+    When ``setting_names`` is provided, YAML/environment values owned by another
+    process role are not imported into this process. Foreign fields still get
+    model defaults so the transitional monolithic Settings type remains usable
+    during composition cleanup.
+    """
+    selected = _selected_setting_names(setting_names)
     selected_config: str | Path | None = config_path
     if selected_config is None:
         selected_config = os.getenv("WORKGATE_CONFIG")
-    if (
-        selected_config is None
-        and os.getenv("WORKGATE_REMOTE_WORKER_RUNTIME") != "1"
-    ):
-        default_config = app_paths().config_file
+    if selected_config is None:
+        default_config = (
+            Path(default_config_path).expanduser()
+            if default_config_path is not None
+            else app_paths().config_file
+        )
         selected_config = default_config if default_config.is_file() else None
-    values = read_config_file(selected_config)
-    values.update(env_overrides())
+
+    values = _default_setting_values()
+    if default_overrides:
+        foreign_defaults = frozenset(default_overrides) - selected
+        if foreign_defaults:
+            raise ValueError(
+                "Settings role defaults are not owned by this role: "
+                f"{sorted(foreign_defaults)}"
+            )
+        values.update(default_overrides)
+    values.update(read_config_file(selected_config, setting_names=selected))
+    values.update(env_overrides(selected))
     if overrides:
+        foreign = frozenset(overrides) - selected
+        if foreign:
+            raise ValueError(
+                f"Settings overrides are not owned by this role: {sorted(foreign)}"
+            )
         values.update(overrides)
     return Settings(**values)
 

@@ -7,8 +7,8 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 import workgate.control.mcp.app as mcp_app
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings, configure_settings
-from workgate.control.config import resolve_control_config
 from workgate.control.mcp.session_limits import (
     McpSessionLimitMiddleware,
 )
@@ -137,24 +137,46 @@ def test_build_mcp_http_app_does_not_restore_legacy_remote_routes():
     assert "/remote/poll" not in paths
 
 
-def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
+def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
+    monkeypatch, tmp_path
+):
+    from workgate.config.control import get_control_config
+    from workgate.persistence import get_state_store
+
     configure_settings(
         Settings(
             mode="mcp",
             auth_mode="none",
+            state_dir=tmp_path / "ambient-state",
             mcp_max_sessions=2,
             max_http_request_bytes=100,
             mcp_session_idle_timeout_s=60,
+            tool_timeout_s=1,
         )
     )
     runtime_settings = Settings(
         mode="mcp",
         auth_mode="oauth",
         base_url="https://runtime.example",
+        state_dir=tmp_path / "runtime-state",
         mcp_max_sessions=17,
         max_http_request_bytes=4321,
-        mcp_session_idle_timeout_s=987,
+        mcp_session_idle_timeout_s=10,
+        tool_timeout_s=20,
     )
+    observed_audit_context = []
+
+    def fake_audit(event, **fields):
+        observed_audit_context.append(
+            (
+                event,
+                get_control_config().tool_timeout_s,
+                get_state_store().layout.root,
+                fields,
+            )
+        )
+
+    monkeypatch.setattr(mcp_app, "audit", fake_audit)
     runtime = cast(Any, _runtime_stub(runtime_settings))
     session_manager = SimpleNamespace(
         stateless=False,
@@ -176,7 +198,15 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient():
     assert "/api/ui/pair" in paths
     assert "/api/ui/executors" in paths
     assert "/api/ui/executors/{action}" in paths
-    assert session_manager.session_idle_timeout == 987
+    assert session_manager.session_idle_timeout == 10
+    assert observed_audit_context == [
+        (
+            "mcp_session_idle_timeout_risk",
+            20,
+            runtime_settings.state_dir.resolve(strict=False),
+            {"idle_timeout_s": 10, "maximum_tool_watchdog_s": 20},
+        )
+    ]
 
     auth = next(
         entry for entry in app.user_middleware if entry.cls is AuthMiddleware

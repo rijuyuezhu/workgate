@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
-from ..config.control import ControlSettingsView
+from ..config.control import ControlConfig, get_control_config
 from ..errors import SessionTerminationRequestedError
 from ..oauth.core.context import (
     MissingOAuthScopeError,
@@ -31,7 +31,7 @@ from .metadata import oauth_security_meta
 type McpSecurityProfile = Literal["oauth", "connector_compatible"]
 type ToolAnnotation = Literal["read_only"]
 type ToolDescription = str | Callable[[McpToolContext], str]
-type ToolEnabled = Callable[[ControlSettingsView], bool]
+type ToolEnabled = Callable[[ControlConfig], bool]
 type ToolFunc = Callable[..., Awaitable[Any]]
 type McpErrorHandler = Callable[
     [Exception, tuple[Any, ...], dict[str, Any]], Any
@@ -69,7 +69,7 @@ def mcp_handler_error_handler(
     return value
 
 
-class LocalToolDecoratorFactory(Protocol):
+class ToolDecoratorFactory(Protocol):
     """Decorator factory for tool registration."""
 
     def __call__(
@@ -88,7 +88,7 @@ class LocalToolDecoratorFactory(Protocol):
     ) -> Callable[[ToolFunc], ToolDefinition]: ...
 
 
-def _always_enabled(settings: ControlSettingsView) -> bool:
+def _always_enabled(settings: ControlConfig) -> bool:
     return True
 
 
@@ -161,7 +161,7 @@ class ToolDefinition:
         """Return the fully resolved public signature advertised to adapters."""
         return inspect.signature(self.func, eval_str=True)
 
-    def is_enabled(self, settings: ControlSettingsView) -> bool:
+    def is_enabled(self, settings: ControlConfig) -> bool:
         """Return whether this tool should be exposed for current settings."""
         return self.enabled(settings)
 
@@ -265,7 +265,7 @@ class ToolDefinition:
 class DeclarativeToolRegistry(ToolRegistry):
     """Registry base for tool registries that are in a declarative fashion."""
 
-    def __init__(self, settings: ControlSettingsView | None = None) -> None:
+    def __init__(self, settings: ControlConfig | None = None) -> None:
         self._configured_settings = settings
         self._context: McpToolContext | None = None
 
@@ -286,10 +286,10 @@ class DeclarativeToolRegistry(ToolRegistry):
         return tool
 
     @classmethod
-    def get_tool_decorator(cls) -> LocalToolDecoratorFactory:
+    def get_tool_decorator(cls) -> ToolDecoratorFactory:
         """Return a decorator factory that registers tools on this registry."""
 
-        def registry_local_tool(
+        def registry_tool(
             *,
             http_method: HttpMethod | None,
             http_path: str | None,
@@ -321,20 +321,18 @@ class DeclarativeToolRegistry(ToolRegistry):
 
             return decorator
 
-        return registry_local_tool
+        return registry_tool
 
     def _enabled_tools(self) -> tuple[ToolDefinition, ...]:
         settings = self._settings()
         return tuple(tool for tool in self.tools if tool.is_enabled(settings))
 
-    def _settings(self) -> ControlSettingsView:
+    def _settings(self) -> ControlConfig:
         if self._context is not None:
             return self._context.settings
         if self._configured_settings is not None:
             return self._configured_settings
-        from ..config.settings import get_settings
-
-        return get_settings()
+        return get_control_config()
 
     def http_routes(self) -> Iterable[HttpToolRoute]:
         """Return enabled declarative REST routes."""

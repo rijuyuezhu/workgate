@@ -1,7 +1,5 @@
 """Private final executor connection profile and single-instance lock."""
 
-from __future__ import annotations
-
 import ipaddress
 from collections.abc import Generator
 from contextlib import contextmanager

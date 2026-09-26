@@ -1,7 +1,5 @@
 """Executor bearer generation and verifier helpers."""
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import secrets

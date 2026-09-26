@@ -1,13 +1,11 @@
 """Executor-owned shell and persistent-terminal orchestration."""
 
-from __future__ import annotations
-
 from typing import Any
 
+from ..config.executor import ExecutorConfig
 from ..protocol.executor import JobInventorySummary, ShellInventorySummary
 from ..schemas.result_models.shell import ListPersistentShellsOutput
 from .bash import bash_execute, run_python_code_execute
-from .config import ExecutorConfig
 from .errors import ExecutorResourceInventoryUnavailable
 from .jobs import ExecutorJobService
 from .shell import (

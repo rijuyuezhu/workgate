@@ -1,7 +1,5 @@
 """Outbound executor WebSocket client for ephemeral terminal byte streams."""
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import contextlib

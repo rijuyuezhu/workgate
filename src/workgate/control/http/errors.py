@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ...errors import SessionTerminationRequestedError, public_error_type
-from ...tools.local_handlers import UnknownLocalToolError
+from ...tools.tool_handlers import UnknownToolError
 
 
 def install_error_handlers(app: FastAPI) -> None:
@@ -46,9 +46,9 @@ def install_error_handlers(app: FastAPI) -> None:
             },
         )
 
-    @app.exception_handler(UnknownLocalToolError)
+    @app.exception_handler(UnknownToolError)
     async def unknown_tool_handler(
-        request: Request, exc: UnknownLocalToolError
+        request: Request, exc: UnknownToolError
     ) -> JSONResponse:
         return JSONResponse(
             status_code=404,

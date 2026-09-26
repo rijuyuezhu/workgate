@@ -1,42 +1,23 @@
 import pytest
 
-import workgate.executor.services as executor_services
-from tests.helpers import build_tool_session_store
-from workgate.composition.services import (
-    build_control_services,
-    install_control_services,
-)
+from workgate.config.control import resolve_control_config
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.control.runtime import build_control_runtime
+from workgate.control.services import build_control_services
 from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
-from workgate.executor.services import (
-    build_runtime_services,
-    install_runtime_services,
-)
-from workgate.executor.tool_session import (
-    configure_tool_session_store,
-    get_tool_session_store,
-)
+from workgate.executor.services import build_runtime_services
 from workgate.jobs.managed import (
     ManagedJobsRuntime,
-    configure_managed_jobs_runtime,
     managed_jobs_runtime,
+    use_managed_jobs_runtime,
 )
-from workgate.oauth.core.state import (
-    OAuthState,
-    configure_oauth_state,
-    oauth_state,
-)
+from workgate.oauth.core.state import OAuthState, oauth_state, use_oauth_state
 from workgate.persistence import (
     FileStateStore,
-    configure_state_store,
     get_state_store,
-)
-from workgate.ui.http.live_state import (
-    build_human_ui_runtime,
-    human_ui_runtime,
+    use_state_store,
 )
 
 
@@ -45,12 +26,10 @@ def _outer_services(tmp_path):
         workspace_root=tmp_path,
         state_dir=tmp_path / "outer-state",
     )
-    state_store = FileStateStore(lambda: settings.state_dir)
-    session_store = build_tool_session_store(settings, state_store=state_store)
-    return settings, state_store, session_store
+    return settings, FileStateStore(lambda: settings.state_dir)
 
 
-def test_executor_runtime_services_install_explicit_store_dependencies(
+def test_executor_runtime_services_construct_explicit_store_dependencies(
     tmp_path,
 ):
     settings = Settings(
@@ -59,15 +38,9 @@ def test_executor_runtime_services_install_explicit_store_dependencies(
     )
     services = build_runtime_services(resolve_executor_config(settings))
 
-    installation = install_runtime_services(services)
-    try:
+    assert services.state_store.layout.root == settings.state_dir
+    with use_state_store(services.state_store):
         assert get_state_store() is services.state_store
-        assert get_tool_session_store() is services.tool_session_store
-        assert services.state_store.layout.root == settings.state_dir
-    finally:
-        installation.close()
-        configure_tool_session_store(None)
-        configure_state_store(None)
 
 
 def test_control_services_do_not_construct_machine_session_authority(tmp_path):
@@ -75,75 +48,42 @@ def test_control_services_do_not_construct_machine_session_authority(tmp_path):
         workspace_root=tmp_path / "executor-workspace-must-not-be-used",
         state_dir=tmp_path / "control-state",
     )
-    services = build_control_services(settings)
+    services = build_control_services(resolve_control_config(settings))
 
     assert services.state_store.layout.root == settings.state_dir
     assert not hasattr(services, "tool_session_store")
 
 
-def test_role_service_construction_does_not_install_globals(tmp_path):
-    outer_settings, outer_state_store, outer_session_store = _outer_services(
-        tmp_path
-    )
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    try:
+def test_role_service_construction_does_not_rebind_state_context(tmp_path):
+    outer_settings, outer_state_store = _outer_services(tmp_path)
+    with use_state_store(outer_state_store):
         control = build_control_services(
-            Settings(
-                workspace_root=tmp_path / "unused-control-workspace",
-                state_dir=tmp_path / "control-state",
+            resolve_control_config(
+                Settings(
+                    workspace_root=tmp_path / "unused-control-workspace",
+                    state_dir=tmp_path / "control-state",
+                )
             )
         )
-        executor_settings = Settings(
-            workspace_root=tmp_path,
-            state_dir=tmp_path / "executor-state",
-        )
         executor = build_runtime_services(
-            resolve_executor_config(executor_settings)
+            resolve_executor_config(
+                Settings(
+                    workspace_root=tmp_path,
+                    state_dir=tmp_path / "executor-state",
+                )
+            )
         )
 
         assert control.state_store is not outer_state_store
         assert executor.state_store is not outer_state_store
-        assert executor.tool_session_store is not outer_session_store
+        assert executor.tool_session_store is not None
         assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
         assert outer_settings.state_dir == outer_state_store.layout.root
-    finally:
-        configure_tool_session_store(None)
-        configure_state_store(None)
-
-
-def test_control_service_installation_never_rebinds_tool_sessions(tmp_path):
-    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    services = build_control_services(
-        Settings(
-            workspace_root=tmp_path / "unused",
-            state_dir=tmp_path / "control-state",
-        )
-    )
-
-    installation = install_control_services(services)
-    try:
-        assert get_state_store() is services.state_store
-        assert get_tool_session_store() is outer_session_store
-    finally:
-        installation.close()
-        installation.close()
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-        configure_tool_session_store(None)
-        configure_state_store(None)
 
 
 @pytest.mark.asyncio
-async def test_control_runtime_lifespan_restores_state_without_session_binding(
-    tmp_path,
-):
-    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
+async def test_control_runtime_lifespan_does_not_rebind_state_context(tmp_path):
+    _, outer_state_store = _outer_services(tmp_path)
     runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path / "control-must-not-use-workspace",
@@ -151,30 +91,20 @@ async def test_control_runtime_lifespan_restores_state_without_session_binding(
             auth_mode="none",
         )
     )
-    try:
-        assert not hasattr(runtime.services, "tool_session_store")
+    with use_state_store(outer_state_store):
         async with runtime.lifespan() as active:
             assert active is runtime
-            assert get_state_store() is runtime.services.state_store
-            assert get_tool_session_store() is outer_session_store
-
+            assert get_state_store() is outer_state_store
         assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-        with pytest.raises(RuntimeError, match="cannot be restarted"):
-            await runtime.start()
-    finally:
-        await runtime.aclose()
-        configure_tool_session_store(None)
-        configure_state_store(None)
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        await runtime.start()
 
 
 @pytest.mark.asyncio
-async def test_executor_runtime_lifespan_restores_bindings_after_exception(
+async def test_executor_runtime_lifespan_does_not_rebind_state_context(
     tmp_path,
 ):
-    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
+    _, outer_state_store = _outer_services(tmp_path)
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
@@ -184,63 +114,19 @@ async def test_executor_runtime_lifespan_restores_bindings_after_exception(
         ),
         enable_control_connection=False,
     )
-    try:
+    with use_state_store(outer_state_store):
         with pytest.raises(RuntimeError, match="boom"):
             async with runtime.lifespan():
-                assert get_state_store() is runtime.services.state_store
-                assert (
-                    get_tool_session_store()
-                    is runtime.services.tool_session_store
-                )
+                assert get_state_store() is outer_state_store
                 raise RuntimeError("boom")
-
         assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-    finally:
-        await runtime.aclose()
-        configure_tool_session_store(None)
-        configure_state_store(None)
-
-
-def test_executor_service_installation_rolls_back_partial_startup(
-    tmp_path, monkeypatch
-):
-    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
-    executor_settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "executor-state",
-    )
-    services = build_runtime_services(
-        resolve_executor_config(executor_settings)
-    )
-
-    def fail_session_install(_store):
-        raise RuntimeError("session install failed")
-
-    monkeypatch.setattr(
-        executor_services,
-        "configure_tool_session_store",
-        fail_session_install,
-    )
-    try:
-        with pytest.raises(RuntimeError, match="session install failed"):
-            install_runtime_services(services)
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-    finally:
-        configure_tool_session_store(None)
-        configure_state_store(None)
 
 
 @pytest.mark.asyncio
-async def test_executor_terminal_start_failure_restores_store_bindings(
+async def test_executor_terminal_start_failure_preserves_state_context(
     tmp_path, monkeypatch
 ):
-    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
+    _, outer_state_store = _outer_services(tmp_path)
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
@@ -255,29 +141,21 @@ async def test_executor_terminal_start_failure_restores_store_bindings(
         raise RuntimeError("terminal start failed")
 
     monkeypatch.setattr(runtime.terminal_runtime, "start", fail_terminal_start)
-    try:
+    with use_state_store(outer_state_store):
         with pytest.raises(RuntimeError, match="terminal start failed"):
             await runtime.start()
         assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
         assert runtime._closed is True
-    finally:
-        await runtime.aclose()
-        configure_tool_session_store(None)
-        configure_state_store(None)
+    await runtime.aclose()
 
 
 @pytest.mark.asyncio
-async def test_control_runtime_owns_and_restores_ui_oauth_and_managed_jobs(
+async def test_control_runtime_does_not_rebind_oauth_or_managed_jobs_context(
     tmp_path,
 ) -> None:
-    outer_ui = build_human_ui_runtime()
-    await outer_ui.start()
     outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
-    previous_oauth = configure_oauth_state(outer_oauth)
     outer_jobs = ManagedJobsRuntime()
     await outer_jobs.start()
-    previous_jobs = configure_managed_jobs_runtime(outer_jobs)
     runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path / "unused-control-workspace",
@@ -285,39 +163,31 @@ async def test_control_runtime_owns_and_restores_ui_oauth_and_managed_jobs(
             auth_mode="none",
         )
     )
+    assert runtime.managed_jobs_runtime.role_config is runtime.config
     try:
-        assert human_ui_runtime() is outer_ui
-        assert oauth_state() is outer_oauth
-        assert managed_jobs_runtime() is outer_jobs
-        async with runtime.lifespan():
-            assert human_ui_runtime() is runtime.human_ui_runtime
-            assert oauth_state() is runtime.oauth_state
-            assert managed_jobs_runtime() is runtime.managed_jobs_runtime
-            assert (
-                SESSION_COPY_MANAGED_KIND
-                in runtime.managed_jobs_runtime.handlers
-            )
-
-        assert human_ui_runtime() is outer_ui
-        assert oauth_state() is outer_oauth
-        assert managed_jobs_runtime() is outer_jobs
+        with use_oauth_state(outer_oauth), use_managed_jobs_runtime(outer_jobs):
+            assert oauth_state() is outer_oauth
+            assert managed_jobs_runtime() is outer_jobs
+            async with runtime.lifespan():
+                assert oauth_state() is outer_oauth
+                assert managed_jobs_runtime() is outer_jobs
+                assert (
+                    SESSION_COPY_MANAGED_KIND
+                    in runtime.managed_jobs_runtime.handlers
+                )
+            assert oauth_state() is outer_oauth
+            assert managed_jobs_runtime() is outer_jobs
     finally:
         await runtime.aclose()
-        await outer_ui.aclose()
         await outer_jobs.aclose()
-        configure_oauth_state(previous_oauth)
-        configure_managed_jobs_runtime(previous_jobs)
 
 
 @pytest.mark.asyncio
 async def test_control_human_ui_start_failure_rolls_back_control_dependencies(
     tmp_path, monkeypatch
 ) -> None:
-    _, outer_state_store, outer_session_store = _outer_services(tmp_path)
-    configure_state_store(outer_state_store)
-    configure_tool_session_store(outer_session_store)
+    _, outer_state_store = _outer_services(tmp_path)
     outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
-    previous_oauth = configure_oauth_state(outer_oauth)
     runtime = build_control_runtime(
         Settings(
             workspace_root=tmp_path / "unused-control-workspace",
@@ -331,15 +201,76 @@ async def test_control_human_ui_start_failure_rolls_back_control_dependencies(
 
     monkeypatch.setattr(runtime.human_ui_runtime, "start", fail_ui_start)
     try:
-        with pytest.raises(RuntimeError, match="Human UI start failed"):
-            await runtime.start()
-        assert get_state_store() is outer_state_store
-        assert get_tool_session_store() is outer_session_store
-        assert oauth_state() is outer_oauth
+        with use_state_store(outer_state_store), use_oauth_state(outer_oauth):
+            with pytest.raises(RuntimeError, match="Human UI start failed"):
+                await runtime.start()
+            assert get_state_store() is outer_state_store
+            assert oauth_state() is outer_oauth
         assert runtime.oauth_state._closed is True
         assert runtime._closed is True
     finally:
         await runtime.aclose()
-        configure_oauth_state(previous_oauth)
-        configure_tool_session_store(None)
-        configure_state_store(None)
+
+
+@pytest.mark.asyncio
+async def test_control_runtime_close_can_retry_failed_owned_cleanup(
+    tmp_path,
+) -> None:
+    runtime = build_control_runtime(
+        Settings(
+            workspace_root=tmp_path / "unused-control-workspace",
+            state_dir=tmp_path / "control-state",
+            auth_mode="none",
+        )
+    )
+    await runtime.start()
+    original_close = runtime.managed_jobs_runtime.aclose
+    calls = 0
+
+    async def fail_once() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("close failed once")
+        await original_close()
+
+    runtime.managed_jobs_runtime.aclose = fail_once  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="close failed once"):
+        await runtime.aclose()
+    await runtime.aclose()
+    assert calls == 2
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_executor_runtime_close_can_retry_failed_owned_cleanup(
+    tmp_path,
+) -> None:
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                workspace_root=tmp_path,
+                state_dir=tmp_path / "executor-state",
+            )
+        ),
+        enable_control_connection=False,
+    )
+    await runtime.start()
+    original_close = runtime.terminal_runtime.aclose
+    calls = 0
+
+    async def fail_once() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("close failed once")
+        await original_close()
+
+    runtime.terminal_runtime.aclose = fail_once  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="close failed once"):
+        await runtime.aclose()
+    await runtime.aclose()
+    assert calls == 2
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        await runtime.start()

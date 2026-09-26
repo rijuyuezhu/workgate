@@ -5,6 +5,8 @@ import textwrap
 from collections import defaultdict
 from pathlib import Path
 
+from workgate.config.roles import EXECUTOR_ONLY_SETTING_NAMES
+
 _PROJECT_ROOT = Path(__file__).parents[1]
 _PACKAGE_ROOT = _PROJECT_ROOT / "src" / "workgate"
 _PACKAGE_NAME = "workgate"
@@ -32,7 +34,6 @@ _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
         ("workgate.main", "workgate.control.cli"),
         # Optional hosted adapters consume the stable control-side core but
         # must not become a dependency of control itself.
-        ("workgate.hosted.actor", "workgate.control.config"),
         ("workgate.hosted.actor", "workgate.control.executor_transport"),
         ("workgate.hosted.actor", "workgate.control.pairing"),
         ("workgate.hosted.actor", "workgate.control.sessions"),
@@ -499,41 +500,7 @@ def test_agent_bridge_models_are_a_dependency_leaf() -> None:
     assert actual == frozenset()
 
 
-_EXECUTOR_POLICY_FIELDS = frozenset(
-    {
-        "workspace_root",
-        "allow_full_control",
-        "command_denylist",
-        "path_denylist",
-        "run_shell_default_timeout_s",
-        "run_shell_max_timeout_s",
-        "max_output_bytes",
-        "max_job_log_bytes",
-        "max_jobs",
-        "max_file_read_bytes",
-        "max_session_snapshots",
-        "max_session_snapshot_bytes",
-        "max_transfer_archive_entries",
-        "max_transfer_unpacked_bytes",
-        "max_tmp_files",
-        "max_tmp_bytes",
-        "max_file_write_bytes",
-        "max_view_image_bytes",
-        "max_grep_results",
-        "max_glob_results",
-        "max_tree_entries",
-        "max_directory_entries",
-        "max_skills",
-        "max_skill_related_files",
-        "max_skill_scan_entries",
-        "max_skill_path_bytes",
-        "shell_executable",
-        "tmux_bin",
-        "rg_bin",
-        "git_bin",
-        "python_bin",
-    }
-)
+_EXECUTOR_POLICY_FIELDS = EXECUTOR_ONLY_SETTING_NAMES
 
 
 def test_machine_session_and_shell_job_implementations_are_executor_owned() -> (
@@ -559,7 +526,6 @@ def test_shared_mechanism_layers_do_not_depend_on_executor_implementation() -> (
 ):
     shared_prefixes = (
         f"{_PACKAGE_NAME}.agent_bridge",
-        f"{_PACKAGE_NAME}.composition",
         f"{_PACKAGE_NAME}.jobs",
         f"{_PACKAGE_NAME}.tools",
     )
@@ -653,3 +619,228 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
 
 def test_source_dependency_graph_has_no_cycles() -> None:
     assert _dependency_cycles() == _ALLOWED_DEPENDENCY_CYCLES
+
+
+def test_executor_runtime_code_does_not_consult_ambient_settings() -> None:
+    """Executor policy must enter through ExecutorConfig, not get_settings()."""
+    violations: list[tuple[str, int]] = []
+    root = _PACKAGE_ROOT / "executor"
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "get_settings"
+            ):
+                violations.append(
+                    (str(path.relative_to(_PROJECT_ROOT)), node.lineno)
+                )
+    assert violations == []
+
+
+def test_executor_runtime_never_imports_monolithic_settings_authority() -> None:
+    """Executor code may use bootstrap helpers, but not ambient Settings authority."""
+    forbidden = {"Settings", "get_settings", "configure_settings"}
+    actual: list[tuple[str, str]] = []
+    root = _PACKAGE_ROOT / "executor"
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            target = _resolve_import_from(_module_name(path), path, node)
+            if target != f"{_PACKAGE_NAME}.config.settings":
+                continue
+            actual.extend(
+                (str(path.relative_to(_PROJECT_ROOT)), alias.name)
+                for alias in node.names
+                if alias.name in forbidden
+            )
+    assert actual == []
+
+
+def test_executor_production_code_has_no_tool_session_global_api() -> None:
+    names = ("configure_tool_session_store", "get_tool_session_store")
+    violations: list[tuple[str, str]] = []
+    for path in sorted((_PACKAGE_ROOT / "executor").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for name in names:
+            if name in source:
+                violations.append((str(path.relative_to(_PROJECT_ROOT)), name))
+
+    assert violations == []
+
+
+def test_production_has_no_process_global_runtime_owner_bindings() -> None:
+    forbidden = (
+        "configure_state_store",
+        "_STATE_STORE =",
+        "configure_oauth_state",
+        "_OAUTH_STATE =",
+        "configure_managed_jobs_runtime",
+        "_MANAGED_JOBS_RUNTIME =",
+        "configure_human_ui_runtime",
+        "_HUMAN_UI_RUNTIME =",
+        "install_control_services",
+        "install_runtime_services",
+        "configure_conpty_registry",
+        "_CONPTY_REGISTRY =",
+        "configure_terminal_bridge_registry",
+        "_TERMINAL_BRIDGE_REGISTRY =",
+    )
+    violations: list[tuple[str, str]] = []
+    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            if token in source:
+                violations.append((str(path.relative_to(_PROJECT_ROOT)), token))
+
+    assert violations == []
+
+
+def test_normal_runtime_policy_does_not_read_ambient_settings() -> None:
+    """Only explicit config/bootstrap composition may access the ambient getter."""
+    allowed = {
+        Path("config/control.py"),
+        Path("config/role_config.py"),
+        Path("config/settings.py"),
+        Path("control/http/app.py"),
+        Path("control/mcp/app.py"),
+    }
+    settings_module = f"{_PACKAGE_NAME}.config.settings"
+    config_module = f"{_PACKAGE_NAME}.config"
+    violations: list[str] = []
+    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+        relative = path.relative_to(_PACKAGE_ROOT)
+        if relative in allowed:
+            continue
+        module = _module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == settings_module:
+                        violations.append(
+                            f"{relative}:{node.lineno}: imports ambient settings module"
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                target = _resolve_import_from(module, path, node)
+                if target == settings_module and any(
+                    alias.name == "get_settings" for alias in node.names
+                ):
+                    violations.append(
+                        f"{relative}:{node.lineno}: imports ambient get_settings"
+                    )
+                if target == config_module and any(
+                    alias.name == "settings" for alias in node.names
+                ):
+                    violations.append(
+                        f"{relative}:{node.lineno}: imports ambient settings module"
+                    )
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "get_settings"
+            ):
+                violations.append(
+                    f"{relative}:{node.lineno}: ambient get_settings()"
+                )
+
+    assert violations == []
+
+
+def test_only_control_bootstrap_installs_ambient_settings() -> None:
+    """Process-wide Settings installation is a control-bootstrap compatibility seam."""
+    allowed = {
+        Path("config/settings.py"),
+        Path("control/cli.py"),
+    }
+    settings_module = f"{_PACKAGE_NAME}.config.settings"
+    violations: list[str] = []
+    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+        relative = path.relative_to(_PACKAGE_ROOT)
+        if relative in allowed:
+            continue
+        module = _module_name(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                target = _resolve_import_from(module, path, node)
+                if target == settings_module and any(
+                    alias.name == "configure_settings" for alias in node.names
+                ):
+                    violations.append(
+                        f"{relative}:{node.lineno}: imports configure_settings"
+                    )
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "configure_settings"
+            ):
+                violations.append(
+                    f"{relative}:{node.lineno}: installs ambient Settings"
+                )
+
+    assert violations == []
+
+
+def test_removed_control_executor_migration_surfaces_do_not_return() -> None:
+    """Retired split-migration shims must not become normal architecture again."""
+    forbidden = (
+        "WORKGATE_REMOTE_WORKER_RUNTIME",
+        "ControlSettingsView",
+        "ui.dashboard.snapshot",
+        "call_local_tool",
+        "UnknownLocalToolError",
+    )
+    violations: list[tuple[str, str]] = []
+    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            if token in source:
+                violations.append((str(path.relative_to(_PROJECT_ROOT)), token))
+
+    assert not (_PACKAGE_ROOT / "tools" / "local_handlers.py").exists()
+    assert violations == []
+
+
+def test_control_cli_imports_without_executor_dependencies() -> None:
+    script = textwrap.dedent(
+        """
+        import importlib.abc
+        import sys
+
+        class BlockExecutorImports(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "winpty" or fullname.startswith("workgate.executor"):
+                    raise ModuleNotFoundError(f"blocked executor dependency: {fullname}")
+                return None
+
+        sys.meta_path.insert(0, BlockExecutorImports())
+        import workgate.control.cli
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_config_layer_does_not_depend_on_runtime_role_packages() -> None:
+    forbidden_prefixes = (
+        f"{_PACKAGE_NAME}.control.",
+        f"{_PACKAGE_NAME}.executor.",
+    )
+    actual = frozenset(
+        (importer, target)
+        for importer, target in _local_imports()
+        if importer.startswith(f"{_PACKAGE_NAME}.config")
+        and target.startswith(forbidden_prefixes)
+    )
+
+    assert actual == frozenset()

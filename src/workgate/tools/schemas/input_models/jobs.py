@@ -65,7 +65,7 @@ JobCancelIdsArg = Annotated[
     list[str] | None,
     Field(
         default=None,
-        description="Tracked bash job ids, or controller-managed job ids, in this session to stop because they are stalled, hung, or no longer needed.",
+        description="Tracked bash job ids, or control-managed job ids, in this session to stop because they are stalled, hung, or no longer needed.",
     ),
 ]
 JobRetryIdsArg = Annotated[

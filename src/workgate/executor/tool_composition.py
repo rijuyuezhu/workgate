@@ -3,8 +3,8 @@
 import asyncio
 from typing import Any, cast
 
+from ..config.executor import ExecutorConfig
 from .agent import ExecutorAgentBridgeService
-from .config import ExecutorConfig
 from .dashboard import dashboard_snapshot
 from .dispatch import ExecutorDispatcher, build_executor_dispatcher
 from .files import files_config_from_executor_config
@@ -18,7 +18,7 @@ from .transfer_composition import build_transfer_handlers
 from .workspace_connector import WorkspaceConnectorService
 
 
-def build_executor_dispatcher_with_search(
+def build_executor_tool_dispatcher(
     config: ExecutorConfig,
     store: ToolSessionStore,
     *,

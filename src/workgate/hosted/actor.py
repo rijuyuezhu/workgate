@@ -1,12 +1,10 @@
 """Stateful hosted-control actor core without provider-specific HTTP glue."""
 
-from __future__ import annotations
-
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 
+from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
-from ..control.config import ControlConfig, resolve_control_config
 from ..control.executor_transport import ExecutorTransport
 from ..control.pairing import ExecutorPairingService
 from ..control.sessions import ControlSessionCoordinator

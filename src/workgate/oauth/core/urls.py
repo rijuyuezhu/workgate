@@ -2,23 +2,23 @@
 
 from urllib.parse import urlparse, urlunparse
 
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 
 
 def base_url() -> str:
     """Return the canonical public base URL."""
-    return get_settings().resolved_base_url
+    return get_control_config().resolved_base_url
 
 
 def issuer_url() -> str:
     """Return the OAuth issuer URL."""
-    settings = get_settings()
+    settings = get_control_config()
     return (settings.oauth_issuer or base_url()).rstrip("/")
 
 
 def resource_url() -> str:
     """Return the OAuth resource identifier for the MCP endpoint."""
-    settings = get_settings()
+    settings = get_control_config()
     if settings.oauth_resource:
         return settings.oauth_resource.rstrip("/")
     return f"{base_url()}/mcp"

@@ -18,9 +18,9 @@ from workgate.tools.contracts import (
     ToolRegistry,
 )
 from workgate.tools.declarative import _normalize_description
-from workgate.tools.local_handlers import (
-    UnknownLocalToolError,
-    call_local_tool,
+from workgate.tools.tool_handlers import (
+    UnknownToolError,
+    call_tool,
 )
 
 LOCAL_MCP_TOOL_NAMES = {
@@ -187,7 +187,7 @@ def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):
     catalog = build_tool_catalog()
     registry_names = {registry.name for registry in catalog.registries}
     route_names = {route.tool_name for route in catalog.http_routes()}
-    handler_names = set(catalog.local_handlers())
+    handler_names = set(catalog.handlers())
 
     assert "remote" not in registry_names
     assert "remote_admin" not in route_names
@@ -482,11 +482,11 @@ def test_http_tool_unexpected_error_returns_json_error(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    async def broken_call_local_tool(*args, **kwargs):
+    async def broken_call_tool(*args, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        http_tool_routes_module, "call_http_tool", broken_call_local_tool
+        http_tool_routes_module, "call_http_tool", broken_call_tool
     )
 
     response = TestClient(build_http_app(), raise_server_exceptions=False).post(
@@ -573,20 +573,18 @@ def test_http_tool_routes_reject_unsupported_methods():
 
 
 @pytest.mark.asyncio
-async def test_local_handlers_report_unknown_tool():
+async def test_tool_handlers_report_unknown_tool():
     class EmptyRegistry(ToolRegistry):
         pass
 
     catalog = ToolCatalog((EmptyRegistry(),))
 
-    with pytest.raises(
-        UnknownLocalToolError, match="Unknown local tool: example_tool"
-    ):
-        await call_local_tool("example_tool", {}, catalog=catalog)
+    with pytest.raises(UnknownToolError, match="Unknown tool: example_tool"):
+        await call_tool("example_tool", {}, catalog=catalog)
 
 
 @pytest.mark.asyncio
-async def test_local_handlers_are_collected_from_explicit_catalog():
+async def test_tool_handlers_are_collected_from_explicit_catalog():
     async def example_handler(args):
         return {"from_registry": args["value"]}
 
@@ -596,9 +594,9 @@ async def test_local_handlers_are_collected_from_explicit_catalog():
 
     catalog = ToolCatalog((ExampleRegistry(),))
 
-    assert await call_local_tool(
-        "example_tool", {"value": 42}, catalog=catalog
-    ) == {"from_registry": 42}
+    assert await call_tool("example_tool", {"value": 42}, catalog=catalog) == {
+        "from_registry": 42
+    }
 
 
 @pytest.mark.asyncio
@@ -616,7 +614,7 @@ async def test_mcp_tools_have_matching_http_routes_and_handlers(
         tool.name for tool in await build_mcp(tool_catalog=catalog).list_tools()
     }
     route_tool_names = {route.tool_name for route in catalog.http_routes()}
-    handler_tool_names = set(catalog.local_handlers())
+    handler_tool_names = set(catalog.handlers())
     transfer_registry = next(
         registry
         for registry in catalog.registries

@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ..audit import audit
-from ..config.control import ControlSettingsView
+from ..config.control import ControlConfig
 from ..control.download_store import ClaimedDownload, release_claim
 from ..control.downloads import DOWNLOAD_PREFIX, claim_download
 
@@ -59,7 +59,7 @@ def _stream_claim(claim: ClaimedDownload) -> Iterator[bytes]:
 
 
 async def download_endpoint(
-    request: Request, *, settings: ControlSettingsView | None = None
+    request: Request, *, settings: ControlConfig | None = None
 ) -> Response:
     """Serve a tokenized immutable snapshot without requiring bearer auth."""
     token = request.path_params.get("token", "")
@@ -100,7 +100,7 @@ async def download_endpoint(
 
 
 def download_routes(
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> list[Route]:
     """Return public Starlette routes for generated download links."""
     endpoint = (

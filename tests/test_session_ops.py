@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import pytest
 
 from tests.helpers import build_paired_control_harness

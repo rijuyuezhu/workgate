@@ -1,7 +1,5 @@
 """Search and tree-view tool registry."""
 
-from __future__ import annotations
-
 from ...schemas.input_models.search import (
     CaseSensitiveArg,
     GlobMaxResultsArg,

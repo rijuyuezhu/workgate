@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from ..config.control import ControlSettingsView
+from ..config.control import ControlConfig
 from .contracts import HttpToolRoute, McpToolContext, ToolHandler, ToolRegistry
 from .registry.agent import AgentBridgeToolRegistry
 from .registry.audit import AuditToolRegistry
@@ -23,7 +23,7 @@ from .registry.transfer import TransferToolRegistry
 from .registry.version import VersionToolRegistry
 from .registry.workspace_connector import WorkspaceConnectorToolRegistry
 
-type ToolRegistryFactory = Callable[[ControlSettingsView | None], ToolRegistry]
+type ToolRegistryFactory = Callable[[ControlConfig | None], ToolRegistry]
 
 
 BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
@@ -62,15 +62,13 @@ class ToolCatalog:
             for route in registry.http_routes()
         )
 
-    def local_handlers(self) -> Mapping[str, ToolHandler]:
-        """Return the enabled local invocation handlers with duplicate checks."""
+    def handlers(self) -> Mapping[str, ToolHandler]:
+        """Return enabled invocation handlers with duplicate checks."""
         handlers: dict[str, ToolHandler] = {}
         for registry in self.registries:
             for tool_name, handler in registry.http_handlers().items():
                 if tool_name in handlers:
-                    raise ValueError(
-                        f"Duplicate local tool handler: {tool_name}"
-                    )
+                    raise ValueError(f"Duplicate tool handler: {tool_name}")
                 handlers[tool_name] = handler
         return MappingProxyType(handlers)
 
@@ -81,7 +79,7 @@ class ToolCatalog:
 
 
 def build_tool_catalog(
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
     *,
     factory_overrides: Mapping[str, ToolRegistryFactory] | None = None,
 ) -> ToolCatalog:

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.tool_session.snapshots import SnapshotRepository
 from workgate.executor.tool_session.store import (
     SessionTerminationRequestedError,

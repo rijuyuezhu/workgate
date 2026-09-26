@@ -5,7 +5,7 @@ from typing import Any
 
 import jwt
 
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ..core.security import oauth_signing_secret
 from ..core.urls import issuer_url, resource_url
 
@@ -19,7 +19,7 @@ def issue_access_token(
     *, client_id: str, scope: str, resource: str, subject: str = "local-user"
 ) -> str:
     """Create a signed bearer credential for an approved client, scope, resource, and subject."""
-    settings = get_settings()
+    settings = get_control_config()
     now = int(time.time())
     payload = {
         "iss": issuer_url(),

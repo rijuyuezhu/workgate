@@ -1,44 +1,32 @@
 """Control composition owner for long-lived server processes."""
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
-from ..composition.services import (
-    ControlServiceInstallation,
-    ControlServices,
-    build_control_services,
-    install_control_services,
-)
+from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
-from ..jobs.managed import (
-    ManagedJobsRuntime,
-    configure_managed_jobs_runtime,
-)
-from ..oauth.core.state import (
-    OAuthState,
-    build_oauth_state,
-    configure_oauth_state,
-)
+from ..jobs.managed import ManagedJobsRuntime
+from ..oauth.core.state import OAuthState, build_oauth_state
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .audit import ControlAuditService
-from .config import ControlConfig, resolve_control_config
 from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
 from .jobs import ControlJobService
 from .pairing import ExecutorPairingService
-from .search_composition import build_control_tool_catalog
+from .services import ControlServices, build_control_services
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
 from .streams import ControlStreamHub
 from .todos import ControlTodoService
+from .tool_composition import build_control_tool_catalog
 
 
 @dataclass
 class ControlRuntime:
-    """Own the control's composed services and compatibility lifecycle."""
+    """Own the control process's composed services and lifecycle."""
 
     config: ControlConfig
     """Resolved control-owned authority for new composition code."""
@@ -72,167 +60,89 @@ class ControlRuntime:
     """Control-owned dynamic-client and authorization-code live state."""
     tool_catalog: ToolCatalog
     """Control tool catalog with the migrated Search service already bound."""
-    _installation: ControlServiceInstallation | None = field(
-        default=None, init=False, repr=False
-    )
-    _previous_managed_jobs_runtime: ManagedJobsRuntime | None = field(
-        default=None, init=False, repr=False
-    )
-    _managed_jobs_binding_installed: bool = field(
-        default=False, init=False, repr=False
-    )
-    _previous_oauth_state: OAuthState | None = field(
-        default=None, init=False, repr=False
-    )
-    _oauth_binding_installed: bool = field(
-        default=False, init=False, repr=False
-    )
+    _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _close_complete: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
-        """Install control-owned compatibility bindings inside the async lifespan."""
+        """Start services owned by this control runtime."""
         if self._closed:
             raise RuntimeError("ControlRuntime cannot be restarted after close")
-        if self._installation is not None:
+        if self._started:
             return
-        installation = install_control_services(self.services)
+
         managed_jobs_started = False
-        managed_jobs_bound = False
         oauth_started = False
-        oauth_bound = False
         human_ui_started = False
         executor_transport_started = False
-        previous_managed_jobs_runtime: ManagedJobsRuntime | None = None
-        previous_oauth_state: OAuthState | None = None
         try:
             self.control_state.start()
             self.executor_transport.start()
             executor_transport_started = True
             await self.managed_jobs_runtime.start()
             managed_jobs_started = True
-            previous_managed_jobs_runtime = configure_managed_jobs_runtime(
-                self.managed_jobs_runtime
-            )
-            managed_jobs_bound = True
             self.oauth_state.start()
             oauth_started = True
-            previous_oauth_state = configure_oauth_state(self.oauth_state)
-            oauth_bound = True
             await self.human_ui_runtime.start()
             human_ui_started = True
         except BaseException:
-            try:
+            with suppress(BaseException):
                 await self.stream_hub.aclose()
-            finally:
-                try:
-                    if human_ui_started:
-                        await self.human_ui_runtime.aclose()
-                finally:
-                    try:
-                        if oauth_bound:
-                            configure_oauth_state(previous_oauth_state)
-                    finally:
-                        try:
-                            if oauth_started:
-                                await self.oauth_state.aclose()
-                        finally:
-                            try:
-                                if managed_jobs_bound:
-                                    configure_managed_jobs_runtime(
-                                        previous_managed_jobs_runtime
-                                    )
-                            finally:
-                                try:
-                                    if managed_jobs_started:
-                                        await self.managed_jobs_runtime.aclose()
-                                finally:
-                                    try:
-                                        await self.session_copy_service.aclose()
-                                    finally:
-                                        try:
-                                            await self.executor_pairing.aclose()
-                                        finally:
-                                            try:
-                                                await self.session_coordinator.aclose()
-                                            finally:
-                                                try:
-                                                    if executor_transport_started:
-                                                        await self.executor_transport.aclose()
-                                                finally:
-                                                    try:
-                                                        self.control_state.close()
-                                                    finally:
-                                                        installation.close()
-                                                    self._closed = True
+            if human_ui_started:
+                with suppress(BaseException):
+                    await self.human_ui_runtime.aclose()
+            if oauth_started:
+                with suppress(BaseException):
+                    await self.oauth_state.aclose()
+            if managed_jobs_started:
+                with suppress(BaseException):
+                    await self.managed_jobs_runtime.aclose()
+            with suppress(BaseException):
+                await self.session_copy_service.aclose()
+            with suppress(BaseException):
+                await self.executor_pairing.aclose()
+            with suppress(BaseException):
+                await self.session_coordinator.aclose()
+            if executor_transport_started:
+                with suppress(BaseException):
+                    await self.executor_transport.aclose()
+            with suppress(BaseException):
+                self.control_state.close()
+            self._closed = True
             raise
-        self._installation = installation
-        self._previous_managed_jobs_runtime = previous_managed_jobs_runtime
-        self._managed_jobs_binding_installed = True
-        self._previous_oauth_state = previous_oauth_state
-        self._oauth_binding_installed = True
+
+        self._started = True
 
     async def aclose(self) -> None:
-        """Restore prior control bindings; repeated close is harmless."""
-        installation = self._installation
-        self._installation = None
+        """Close every control-owned service; repeated close is harmless."""
+        if self._close_complete:
+            return
         self._closed = True
-        managed_jobs_error: BaseException | None = None
-        stream_hub_error: BaseException | None = None
-        human_ui_error: BaseException | None = None
-        oauth_error: BaseException | None = None
+        errors: list[BaseException] = []
+
+        async def close_async(close) -> None:
+            try:
+                await close()
+            except BaseException as exc:
+                errors.append(exc)
+
+        await close_async(self.managed_jobs_runtime.aclose)
+        await close_async(self.stream_hub.aclose)
+        await close_async(self.human_ui_runtime.aclose)
+        await close_async(self.oauth_state.aclose)
+        await close_async(self.session_copy_service.aclose)
+        await close_async(self.executor_pairing.aclose)
+        await close_async(self.session_coordinator.aclose)
+        await close_async(self.executor_transport.aclose)
         try:
-            try:
-                await self.managed_jobs_runtime.aclose()
-            except BaseException as exc:
-                managed_jobs_error = exc
-            try:
-                await self.stream_hub.aclose()
-            except BaseException as exc:
-                stream_hub_error = exc
-            try:
-                await self.human_ui_runtime.aclose()
-            except BaseException as exc:
-                human_ui_error = exc
-            try:
-                await self.oauth_state.aclose()
-            except BaseException as exc:
-                oauth_error = exc
-        finally:
-            if self._managed_jobs_binding_installed:
-                configure_managed_jobs_runtime(
-                    self._previous_managed_jobs_runtime
-                )
-                self._managed_jobs_binding_installed = False
-                self._previous_managed_jobs_runtime = None
-            if self._oauth_binding_installed:
-                configure_oauth_state(self._previous_oauth_state)
-                self._oauth_binding_installed = False
-                self._previous_oauth_state = None
-            try:
-                await self.session_copy_service.aclose()
-            finally:
-                try:
-                    await self.executor_pairing.aclose()
-                finally:
-                    try:
-                        await self.session_coordinator.aclose()
-                    finally:
-                        try:
-                            await self.executor_transport.aclose()
-                        finally:
-                            try:
-                                self.control_state.close()
-                            finally:
-                                if installation is not None:
-                                    installation.close()
-        if managed_jobs_error is not None:
-            raise managed_jobs_error
-        if stream_hub_error is not None:
-            raise stream_hub_error
-        if human_ui_error is not None:
-            raise human_ui_error
-        if oauth_error is not None:
-            raise oauth_error
+            self.control_state.close()
+        except BaseException as exc:
+            errors.append(exc)
+
+        self._started = False
+        if errors:
+            raise errors[0]
+        self._close_complete = True
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[ControlRuntime]:
@@ -245,9 +155,9 @@ class ControlRuntime:
 
 
 def build_control_runtime(settings: Settings) -> ControlRuntime:
-    """Construct one control graph without installing process globals yet."""
-    services = build_control_services(settings)
+    """Construct one control graph from one resolved role configuration."""
     config = resolve_control_config(settings)
+    services = build_control_services(config)
     control_state = ControlState(services.state_store)
     executor_transport = ExecutorTransport(
         control_state,
@@ -290,8 +200,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )
+    managed_jobs_runtime = ManagedJobsRuntime(services.state_store, config)
     job_service = ControlJobService(
         session_coordinator,
+        managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
     todo_service = ControlTodoService(
@@ -302,7 +214,6 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,
         before_terminate=job_service.stop_referencing_jobs,
     )
-    managed_jobs_runtime = ManagedJobsRuntime(services.state_store)
     managed_kind, managed_handler = (
         session_copy_service.managed_job_registration()
     )

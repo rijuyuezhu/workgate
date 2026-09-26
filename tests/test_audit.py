@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 import workgate.audit.payloads as audit_payload_module
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.audit import (
     audit,
     audit_call_context,
@@ -30,7 +31,6 @@ from workgate.audit.core import (
 )
 from workgate.audit.payloads import AUDIT_PAYLOAD_KEY
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.tool_session import get_tool_session_store
 from workgate.protocol.ids import new_session_id
 
 

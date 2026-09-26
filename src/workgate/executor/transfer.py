@@ -1,4 +1,4 @@
-"""Binary-safe transactional primitives for session and remote-worker transfers."""
+"""Binary-safe transactional primitives for executor session transfers."""
 
 import base64
 import binascii
@@ -27,6 +27,7 @@ from pydantic import (
     model_validator,
 )
 
+from ..config.executor import ExecutorConfig
 from ..protocol.transfer import (
     DEFAULT_TRANSFER_CHUNK_BYTES,
     normalize_chunk_size,
@@ -50,7 +51,6 @@ from ..utils.path_policy import (
     resolve_path_with_policy,
 )
 from ..utils.private_files import atomic_write_private_text
-from .config import ExecutorConfig
 from .path import prune_temp_dir, temp_dir
 from .tool_session.store import ToolSessionStore
 
@@ -1202,7 +1202,7 @@ def transfer_copy_file(
     destination_workdir: str | None = None,
     context: TransferContext,
 ) -> TransferCopyFileOutput:
-    """Stream a file within one worker and atomically publish the destination."""
+    """Stream a file within one executor and atomically publish the destination."""
     source = _resolve_transfer_path(
         source_path,
         must_exist=True,

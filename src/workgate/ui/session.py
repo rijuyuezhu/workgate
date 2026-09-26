@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import idna
 import jwt
 
-from ..config.settings import get_settings
+from ..config.control import get_control_config
 from ..oauth.core.security import oauth_signing_secret
 from ..oauth.core.urls import base_url, issuer_url
 
@@ -39,7 +39,7 @@ def _session_signing_key() -> bytes:
 
 def ui_session_audience(origin: str | None = None) -> str:
     """Return the origin-bound audience used by Human UI session tokens."""
-    settings = get_settings()
+    settings = get_control_config()
     resolved_origin = (
         ui_origin() if origin is None else canonical_ui_origin(origin)
     )
@@ -202,7 +202,7 @@ def issue_ui_session(
     """Issue a signed Human UI session token and its double-submit CSRF value."""
     if not is_valid_ui_session_binding_token(binding_token):
         raise ValueError("Invalid Human UI session binding token")
-    settings = get_settings()
+    settings = get_control_config()
     now = int(time.time())
     configured_expiry = now + (
         settings.oauth_access_token_ttl_s

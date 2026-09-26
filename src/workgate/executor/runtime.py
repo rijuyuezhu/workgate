@@ -1,7 +1,5 @@
 """Executor composition owner for the long-lived machine process."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager, suppress
@@ -9,6 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..config.executor import ExecutorConfig
+from ..config.role_config import use_role_config
+from ..persistence import use_state_store
 from ..protocol.executor import (
     SESSION_CHANGE_CWD_OP,
     SESSION_CREATE_OP,
@@ -17,19 +18,17 @@ from ..protocol.executor import (
 )
 from ..utils.path_policy import resolve_path_with_policy
 from .agent import ExecutorAgentBridgeService
-from .config import ExecutorConfig
 from .dispatch import ExecutorDispatcher
 from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
-from .search_composition import build_executor_dispatcher_with_search
-from .services import (
-    RuntimeServiceInstallation,
-    RuntimeServices,
-    build_runtime_services,
-    install_runtime_services,
-)
+from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
-from .terminal.runtime import TerminalRuntime, build_terminal_runtime
+from .terminal.runtime import (
+    TerminalRuntime,
+    build_terminal_runtime,
+    use_terminal_runtime,
+)
+from .tool_composition import build_executor_tool_dispatcher
 from .ui_files import UiFilesService
 from .ui_terminals import UiTerminalsService
 
@@ -42,7 +41,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class ExecutorRuntime:
-    """Own the executor's composed services and compatibility lifecycle."""
+    """Own the executor process's composed services and lifecycle."""
 
     config: ExecutorConfig
     """Resolved executor-owned machine authority for new composition code."""
@@ -63,7 +62,7 @@ class ExecutorRuntime:
     ui_terminals: UiTerminalsService
     """Executor-owned internal Human UI terminal operations."""
     profile_store: ExecutorProfileStore | None
-    """Final v1 profile store, absent for the temporary legacy worker runtime."""
+    """Final v1 profile store, absent when no persistent profile is configured."""
     connection: ExecutorConnection | None = field(default=None, init=False)
     """Live final executor v1 reconnect loop when a final profile exists."""
     _terminal_stream_tasks: set[asyncio.Task[None]] = field(
@@ -72,43 +71,45 @@ class ExecutorRuntime:
     _profile_lock: ExitStack | None = field(
         default=None, init=False, repr=False
     )
-    _installation: RuntimeServiceInstallation | None = field(
-        default=None, init=False, repr=False
-    )
+    _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     async def _build_reconnect_hello(self) -> ExecutorHelloRequest:
         """Build one complete authoritative executor resource inventory."""
         from .hello import build_executor_hello
 
-        for _attempt in range(2):
-            before = self.sessions.inventory()
-            session_ids = frozenset(str(row.session_id) for row in before)
-            shells, jobs = await self.shell.reconnect_inventory(session_ids)
-            sessions = self.sessions.inventory()
-            if (
-                frozenset(str(row.session_id) for row in sessions)
-                == session_ids
-            ):
-                return build_executor_hello(
-                    self.config,
-                    sessions=sessions,
-                    shells=shells,
-                    jobs=jobs,
-                )
+        with (
+            use_role_config(self.config),
+            use_state_store(self.services.state_store),
+            use_terminal_runtime(self.terminal_runtime),
+        ):
+            for _attempt in range(2):
+                before = self.sessions.inventory()
+                session_ids = frozenset(str(row.session_id) for row in before)
+                shells, jobs = await self.shell.reconnect_inventory(session_ids)
+                sessions = self.sessions.inventory()
+                if (
+                    frozenset(str(row.session_id) for row in sessions)
+                    == session_ids
+                ):
+                    return build_executor_hello(
+                        self.config,
+                        sessions=sessions,
+                        shells=shells,
+                        jobs=jobs,
+                    )
         raise ExecutorResourceInventoryUnavailable(
             "session inventory changed while reconnect snapshot was built"
         )
 
     async def start(self) -> None:
-        """Install compatibility bindings inside the executor's owning loop."""
+        """Start resources owned by this executor runtime."""
         if self._closed:
             raise RuntimeError(
                 "ExecutorRuntime cannot be restarted after close"
             )
-        if self._installation is not None:
+        if self._started:
             return
-        installation = install_runtime_services(self.services)
         profile_lock = ExitStack()
         terminal_started = False
         connection: ExecutorConnection | None = None
@@ -163,14 +164,24 @@ class ExecutorRuntime:
             profile_lock.close()
             if terminal_started:
                 await self.terminal_runtime.aclose()
-            installation.close()
             self._closed = True
             raise
         self.connection = connection
         self._profile_lock = profile_lock
-        self._installation = installation
+        self._started = True
 
     async def _execute_protocol_command(self, command: ExecutorCommand):
+        """Execute one final command under this executor's state context."""
+        with (
+            use_role_config(self.config),
+            use_state_store(self.services.state_store),
+            use_terminal_runtime(self.terminal_runtime),
+        ):
+            return await self._execute_protocol_command_with_state(command)
+
+    async def _execute_protocol_command_with_state(
+        self, command: ExecutorCommand
+    ):
         """Adapt final v1 envelopes to executor-owned operation services."""
         if command.op == "terminal.attach":
             if command.session_id is not None:
@@ -215,16 +226,11 @@ class ExecutorRuntime:
                 "backend": stream.backend,
                 "connected": True,
             }
-        ui_legacy_aliases = {
-            "ui.dashboard.snapshot": "dashboard_snapshot",
-        }
-        legacy_ui_tool = ui_legacy_aliases.get(command.op)
-        if legacy_ui_tool is not None:
-            if command.session_id is not None:
-                raise ValueError(f"{command.op} must not carry session_id")
-            return await self.dispatcher.execute(
-                legacy_ui_tool, dict(command.args)
-            )
+        if (
+            command.op == "dashboard_snapshot"
+            and command.session_id is not None
+        ):
+            raise ValueError("dashboard_snapshot must not carry session_id")
         if command.op.startswith("ui.files."):
             if command.session_id is not None:
                 raise ValueError(
@@ -284,14 +290,13 @@ class ExecutorRuntime:
             task.exception()
 
     async def aclose(self) -> None:
-        """Restore prior compatibility bindings; repeated close is harmless."""
-        installation = self._installation
-        self._installation = None
+        """Close executor-owned live resources; failed cleanup remains retryable."""
         connection = self.connection
         self.connection = None
         profile_lock = self._profile_lock
         self._profile_lock = None
         self._closed = True
+        self._started = False
         try:
             if connection is not None:
                 await connection.aclose()
@@ -309,11 +314,7 @@ class ExecutorRuntime:
                 try:
                     await self.terminal_runtime.aclose()
                 finally:
-                    try:
-                        self.agent_bridge.close()
-                    finally:
-                        if installation is not None:
-                            installation.close()
+                    self.agent_bridge.close()
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[ExecutorRuntime]:
@@ -328,7 +329,7 @@ class ExecutorRuntime:
 def build_executor_runtime(
     config: ExecutorConfig, *, enable_control_connection: bool = True
 ) -> ExecutorRuntime:
-    """Construct one executor graph without installing process globals yet."""
+    """Construct one executor-owned runtime graph."""
     from .standalone_bootstrap import apply_standalone_executor_paths
 
     config = apply_standalone_executor_paths(config)
@@ -373,7 +374,7 @@ def build_executor_runtime(
             idle_timeout_s=config.ui_terminal_idle_timeout_s,
             max_connections=config.ui_terminal_max_connections,
         ),
-        dispatcher=build_executor_dispatcher_with_search(
+        dispatcher=build_executor_tool_dispatcher(
             config,
             services.tool_session_store,
             shell_service=shell_service,

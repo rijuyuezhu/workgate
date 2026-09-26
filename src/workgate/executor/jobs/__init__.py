@@ -1,9 +1,8 @@
 """Executor-owned shell-job orchestration."""
 
-from __future__ import annotations
-
 from typing import Any
 
+from ...config.executor import ExecutorConfig
 from ...jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ...protocol.executor import JobInventorySummary
 from ...schemas.result_models.jobs import (
@@ -14,7 +13,6 @@ from ...schemas.result_models.jobs import (
     JobStopOutput,
     JobTailOutput,
 )
-from ..config import ExecutorConfig
 from ..errors import ExecutorResourceInventoryUnavailable
 from ..tool_session.lifecycle import session_lifecycle_lock
 from ..tool_session.store import ToolSessionStore

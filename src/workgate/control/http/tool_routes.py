@@ -1,4 +1,4 @@
-"""REST routes and middleware for local tool invocations."""
+"""REST routes and middleware for tool invocations."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -69,8 +69,8 @@ def install_tools_timeout_middleware(
 
 
 def register_http_tool_routes(app: FastAPI, catalog: ToolCatalog) -> None:
-    """Register REST tool endpoints from the local tool routing table."""
-    handlers = catalog.local_handlers()
+    """Register REST tool endpoints from the tool routing table."""
+    handlers = catalog.handlers()
     for route in catalog.http_routes():
         match route.method:
             case "GET":

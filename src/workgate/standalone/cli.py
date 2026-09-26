@@ -1,7 +1,5 @@
 """CLI registration for the offline two-process standalone mode."""
 
-from __future__ import annotations
-
 import argparse
 from typing import Any
 
@@ -41,7 +39,7 @@ def register_standalone_cli(subparsers: Any) -> argparse.ArgumentParser:
 
 def run_standalone_from_args(args: argparse.Namespace) -> None:
     """Resolve one user config without installing ambient parent settings."""
-    settings = settings_from_args(args, configure=False)
+    settings = settings_from_args(args)
     try:
         run_standalone(settings)
     except StandaloneAlreadyRunningError as exc:

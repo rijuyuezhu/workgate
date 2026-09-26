@@ -7,7 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ...control.todos import TodoConflictError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
@@ -79,7 +79,7 @@ def _bounded_text(
 def _todo_items(value: Any) -> list[dict[str, str]]:
     if not isinstance(value, list):
         raise ValueError("todos must be a JSON array")
-    settings = get_settings()
+    settings = get_control_config()
     if len(value) > settings.max_todos:
         raise ValueError(
             f"Refusing to write {len(value)} todos; max is {settings.max_todos}"
@@ -137,7 +137,7 @@ def _final_payload(
     record: Any,
     result: ReadTodosOutput | WriteTodosOutput,
 ) -> dict[str, Any]:
-    settings = get_settings()
+    settings = get_control_config()
     session_id = str(record.session_id)
     return {
         "session_id": session_id,

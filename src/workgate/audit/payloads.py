@@ -12,7 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..config.settings import Settings
+from ..config.role_config import SharedRoleConfig
+from ..persistence import StateLayout
 from ..utils.private_files import atomic_write_private_bytes
 
 AUDIT_PAYLOAD_KEY = "$workgate_audit_payload"
@@ -41,14 +42,16 @@ def _deterministic_gzip(data: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _payload_path(settings: Settings, digest: str) -> Path:
+def _payload_path(settings: SharedRoleConfig, digest: str) -> Path:
     if not _DIGEST_RE.fullmatch(digest):
         raise ValueError("invalid audit payload digest")
-    return settings.audit_payload_dir / f"{digest}.json.gz"
+    return (
+        StateLayout(settings.state_dir).audit_payload_dir / f"{digest}.json.gz"
+    )
 
 
-def _prepare_payload_root(settings: Settings) -> Path:
-    root = settings.audit_payload_dir
+def _prepare_payload_root(settings: SharedRoleConfig) -> Path:
+    root = StateLayout(settings.state_dir).audit_payload_dir
     if root.is_symlink():
         raise OSError("audit payload directory is a symlink")
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -106,7 +109,7 @@ def payload_reference_digests(value: Any) -> set[str]:
 def externalize_sanitized_value(
     value: Any,
     *,
-    settings: Settings,
+    settings: SharedRoleConfig,
     preview: Any,
     created_at: float,
 ) -> Any:
@@ -192,7 +195,7 @@ def _unresolved_reference(
     return {AUDIT_PAYLOAD_KEY: {**metadata, "status": status}}
 
 
-def resolve_payload_reference(value: Any, settings: Settings) -> Any:
+def resolve_payload_reference(value: Any, settings: SharedRoleConfig) -> Any:
     """Resolve one reference after validating retention, compression, size, and digest."""
     metadata = _reference_metadata(value)
     if metadata is None:
@@ -249,7 +252,7 @@ def resolve_payload_reference(value: Any, settings: Settings) -> Any:
         return _unresolved_reference(metadata, "corrupt")
 
 
-def resolve_payload_references(value: Any, settings: Settings) -> Any:
+def resolve_payload_references(value: Any, settings: SharedRoleConfig) -> Any:
     """Resolve references in one coalesced audit result without reinterpreting payload data."""
     metadata = _reference_metadata(value)
     if metadata is not None:
@@ -264,15 +267,15 @@ def resolve_payload_references(value: Any, settings: Settings) -> Any:
     return value
 
 
-def payload_files(settings: Settings) -> list[Path]:
+def payload_files(settings: SharedRoleConfig) -> list[Path]:
     """List bounded-store payload candidates without following directories or symlinks."""
-    root = settings.audit_payload_dir
+    root = StateLayout(settings.state_dir).audit_payload_dir
     if not root.exists() or root.is_symlink() or not root.is_dir():
         return []
     return list(root.glob("*.json.gz"))
 
 
-def payload_file_sizes(settings: Settings) -> dict[str, int]:
+def payload_file_sizes(settings: SharedRoleConfig) -> dict[str, int]:
     """Return regular content-addressed payload sizes keyed by digest."""
     sizes: dict[str, int] = {}
     for path in payload_files(settings):
@@ -287,7 +290,7 @@ def payload_file_sizes(settings: Settings) -> dict[str, int]:
 
 
 def prune_payload_files(
-    settings: Settings,
+    settings: SharedRoleConfig,
     *,
     referenced: set[str],
     active_references: set[str],

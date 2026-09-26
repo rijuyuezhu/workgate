@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor.agent import (
     activate_agent_skill_execute,
     list_agent_skills_execute,
     read_agent_skill_file_execute,
 )
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 
 

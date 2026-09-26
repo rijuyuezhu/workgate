@@ -54,7 +54,7 @@ ADAPTER_PREFIXES = (
 )
 ADAPTER_FILES = frozenset(
     {
-        f"{SOURCE_PREFIX}tools/local_handlers.py",
+        f"{SOURCE_PREFIX}tools/tool_handlers.py",
     }
 )
 

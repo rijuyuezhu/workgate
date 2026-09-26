@@ -12,6 +12,7 @@ from pathlib import Path
 
 from workgate import __version__
 from workgate.app_paths import app_paths
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings
 from workgate.ui.runtime import (
     embedded_tui_payload,
@@ -66,7 +67,9 @@ def main(argv: list[str] | None = None) -> int:
             "installed wheel does not contain an embedded OpenTUI payload"
         )
 
-    settings = Settings(state_dir=args.state_dir, ui_tui_command=None)
+    settings = resolve_control_config(
+        Settings(state_dir=args.state_dir, ui_tui_command=None)
+    )
     first = resolve_tui_command(settings)
     second = resolve_tui_command(settings)
     if first != second or len(first) != 1:

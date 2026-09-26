@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from workgate.control.http.errors import install_error_handlers
 from workgate.executor.tool_session import SessionTerminationRequestedError
-from workgate.tools.local_handlers import UnknownLocalToolError
+from workgate.tools.tool_handlers import UnknownToolError
 
 
 def test_control_http_error_handlers_preserve_session_and_unknown_tool_shapes() -> (
@@ -18,7 +18,7 @@ def test_control_http_error_handlers_preserve_session_and_unknown_tool_shapes() 
 
     @app.get("/unknown")
     async def unknown():
-        raise UnknownLocalToolError("Unknown local tool: missing")
+        raise UnknownToolError("Unknown tool: missing")
 
     client = TestClient(app, raise_server_exceptions=False)
 
@@ -35,5 +35,5 @@ def test_control_http_error_handlers_preserve_session_and_unknown_tool_shapes() 
     assert unknown_response.status_code == 404
     assert unknown_response.json() == {
         "error": "unknown_tool",
-        "message": "Unknown local tool: missing",
+        "message": "Unknown tool: missing",
     }

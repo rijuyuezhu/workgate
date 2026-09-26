@@ -1,7 +1,5 @@
 """Provider-neutral HTTP routing for the first hosted Workgate surface."""
 
-from __future__ import annotations
-
 import hmac
 from collections.abc import Mapping
 from dataclasses import dataclass

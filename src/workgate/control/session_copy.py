@@ -1,7 +1,5 @@
 """Control-orchestrated copy between two existing final shared sessions."""
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import contextlib

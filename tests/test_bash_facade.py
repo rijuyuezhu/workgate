@@ -6,17 +6,15 @@ import pytest
 import workgate.executor.bash as shell_ops
 from tests.helpers import (
     build_paired_control_harness,
+    get_test_tool_session_store,
     mcp_structured,
     python_shell_command,
 )
+from workgate.config.executor import ExecutorConfig, resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
-from workgate.executor.config import ExecutorConfig, resolve_executor_config
 from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
-from workgate.executor.tool_session.store import (
-    ToolSessionStore,
-    get_tool_session_store,
-)
+from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.schemas.result_models.jobs import JobStartOutput
 from workgate.schemas.result_models.shell import (
     RunShellCommandOutput,
@@ -28,7 +26,7 @@ def _create_session(
     workdir: str = ".",
 ) -> tuple[ExecutorConfig, ToolSessionStore, str]:
     config = resolve_executor_config(get_settings())
-    store = get_tool_session_store()
+    store = get_test_tool_session_store()
     store.clear()
     session_id = "sess_0000000000000000000001"
     target = Path(workdir)
@@ -177,7 +175,7 @@ async def test_shell_execution_rejects_cwd_escape(tmp_path, monkeypatch):
 async def test_shell_execution_routes_async_to_session_job(monkeypatch):
     calls = []
     config = resolve_executor_config(get_settings())
-    store = get_tool_session_store()
+    store = get_test_tool_session_store()
 
     async def fake_job_start(session_id, command, cwd=".", name=None):
         calls.append((session_id, command, cwd, name))
@@ -309,7 +307,7 @@ async def test_shell_execution_is_exposed_in_mcp(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
-    get_tool_session_store().clear()
+    get_test_tool_session_store().clear()
 
     mcp = build_mcp(
         runtime=build_paired_control_harness(get_settings()).control
