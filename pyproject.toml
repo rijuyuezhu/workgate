@@ -83,6 +83,7 @@ source-include = [
     "scripts/README.md",
     "scripts/validation/check-coverage.py",
     "scripts/validation/check-native-provenance.py",
+    "scripts/validation/check-no-future-annotations.py",
     "scripts/validation/check-release-matrix.py",
     "scripts/release/smoke-platform-wheel.py",
     "scripts/validation/coverage-baseline.json",

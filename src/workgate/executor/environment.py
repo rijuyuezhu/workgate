@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import __version__
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.session import (
     SessionCapabilitiesEnvironment,
     SessionEnvironment,
@@ -25,7 +26,6 @@ from ..schemas.result_models.session import (
     SessionWorkspaceEnvironment,
 )
 from ..version import package_version
-from .config import ExecutorConfig
 from .terminal.conpty import is_available as conpty_available
 from .terminal.tmux import resolve_tmux
 

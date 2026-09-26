@@ -5,8 +5,8 @@ import pytest
 from tests.helpers import build_tool_session_store
 from workgate import persistence
 from workgate.config import settings as settings_module
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.search import service as search_service_module
 from workgate.executor.search.composition import (
     build_local_search_runner,
@@ -52,7 +52,7 @@ async def test_search_service_does_not_reacquire_ambient_dependencies(
     service = build_search_service(resolve_executor_config(settings), store)
 
     monkeypatch.setattr(settings_module, "get_settings", _boom)
-    monkeypatch.setattr(store_module, "get_tool_session_store", _boom)
+    assert not hasattr(store_module, "get_tool_session_store")
     monkeypatch.setattr(persistence, "get_state_store", _boom)
 
     result = await service.search(

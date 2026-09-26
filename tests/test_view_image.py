@@ -12,13 +12,13 @@ from tests.helpers import (
     build_tool_session_store,
     mcp_structured,
 )
+from workgate.config.executor import ExecutorConfig, resolve_executor_config
 from workgate.config.settings import (
     Settings,
     clear_settings_cache,
     get_settings,
 )
 from workgate.control.mcp.app import build_mcp
-from workgate.executor.config import ExecutorConfig, resolve_executor_config
 from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.utils.image_types import detect_image_type
 

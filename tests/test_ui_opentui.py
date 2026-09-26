@@ -8,23 +8,17 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import workgate.ui.http.opentui as opentui
-from workgate.config.settings import clear_settings_cache
+from workgate.config.control import resolve_control_config
+from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
-from workgate.ui.http.live_state import (
-    build_human_ui_runtime,
-    configure_human_ui_runtime,
-)
 
 
 @pytest.fixture(autouse=True)
 def _reset_settings() -> Generator[None]:
     clear_settings_cache()
-    runtime = build_human_ui_runtime()
-    previous = configure_human_ui_runtime(runtime)
     try:
         yield
     finally:
-        configure_human_ui_runtime(previous)
         clear_settings_cache()
 
 
@@ -89,7 +83,7 @@ def test_opentui_websocket_streams_process_output_and_closes(
     monkeypatch.setattr(
         opentui,
         "spawn_opentui_process",
-        lambda cols, rows, cell_aspect: process,
+        lambda cols, rows, cell_aspect, **_kwargs: process,
     )
     client = TestClient(build_http_app())
 
@@ -114,7 +108,7 @@ def test_opentui_websocket_reports_abnormal_process_exit(
     monkeypatch.setattr(
         opentui,
         "spawn_opentui_process",
-        lambda cols, rows, cell_aspect: process,
+        lambda cols, rows, cell_aspect, **_kwargs: process,
     )
     client = TestClient(build_http_app())
 
@@ -161,7 +155,9 @@ def test_spawn_opentui_process_keeps_local_token_in_environment(
         opentui, "get_or_create_ui_local_token", lambda: "private-token"
     )
 
-    opentui.spawn_opentui_process(100, 30, 2.5)
+    opentui.spawn_opentui_process(
+        100, 30, 2.5, settings=resolve_control_config(Settings())
+    )
 
     assert captured["command"] == ["fake-tui"]
     assert "private-token" not in captured["command"]

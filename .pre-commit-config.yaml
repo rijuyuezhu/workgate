@@ -7,6 +7,13 @@ repos:
       - id: ruff-format
   - repo: local
     hooks:
+      - id: no-future-annotations
+        name: no postponed annotations future import
+        entry: uv run python scripts/validation/check-no-future-annotations.py
+        language: system
+        pass_filenames: false
+        files: ^(src|tests|deploy|scripts)/.*\.py$
+
       - id: generate-config-examples
         name: generate config examples
         entry: uv run python scripts/generation/generate-config-examples.py

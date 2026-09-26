@@ -1,7 +1,5 @@
 """Control catalog adapters that route machine-facing tools to bound executors."""
 
-from __future__ import annotations
-
 from dataclasses import replace
 from functools import wraps
 from typing import Any

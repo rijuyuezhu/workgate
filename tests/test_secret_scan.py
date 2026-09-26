@@ -1,7 +1,7 @@
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.files import files_config_from_executor_config
 from workgate.executor.files_service import FilesService
 from workgate.executor.secret_scan import (

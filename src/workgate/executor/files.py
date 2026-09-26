@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditLinesOutput,
@@ -24,7 +25,6 @@ from ..schemas.result_models.files import (
     WriteFileOutput,
 )
 from ..utils.path_locks import path_lock, path_locks
-from .config import ExecutorConfig
 from .path import (
     relative_display_from_root,
     resolve_path_with_policy,

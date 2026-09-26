@@ -1,4 +1,4 @@
-"""HTTP transport invocation helpers for local tools."""
+"""HTTP transport invocation helpers for routed tools."""
 
 import time
 from typing import Any

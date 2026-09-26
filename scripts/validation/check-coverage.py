@@ -52,11 +52,7 @@ ADAPTER_PREFIXES = (
     f"{SOURCE_PREFIX}tools/registry/",
     f"{SOURCE_PREFIX}ui/http/",
 )
-ADAPTER_FILES = frozenset(
-    {
-        f"{SOURCE_PREFIX}tools/local_handlers.py",
-    }
-)
+ADAPTER_FILES: frozenset[str] = frozenset()
 
 
 class CoverageDataError(ValueError):

@@ -9,13 +9,12 @@ from typing import Any, cast
 
 from pydantic import JsonValue, TypeAdapter
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.control.runtime import ControlRuntime, build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import operation_error_from_exception
 from workgate.executor.runtime import ExecutorRuntime, build_executor_runtime
-from workgate.executor.services import install_runtime_services
 from workgate.executor.tool_session.store import ToolSessionStore
 from workgate.persistence import FileStateStore, StateStore, use_state_store
 from workgate.protocol.credentials import (
@@ -27,6 +26,26 @@ from workgate.protocol.ids import new_command_id, new_executor_id
 from workgate.utils.serialization import to_jsonable
 
 _JSON_VALUE = TypeAdapter(JsonValue)
+
+
+_TEST_TOOL_SESSION_STORE: ToolSessionStore | None = None
+
+
+def configure_test_tool_session_store(
+    store: ToolSessionStore | None,
+) -> ToolSessionStore | None:
+    """Install the pytest harness session store and return the previous one."""
+    global _TEST_TOOL_SESSION_STORE
+    previous = _TEST_TOOL_SESSION_STORE
+    _TEST_TOOL_SESSION_STORE = store
+    return previous
+
+
+def get_test_tool_session_store() -> ToolSessionStore:
+    """Return the session store owned by the current pytest fixture."""
+    if _TEST_TOOL_SESSION_STORE is None:
+        raise RuntimeError("test tool-session store is not configured")
+    return _TEST_TOOL_SESSION_STORE
 
 
 def build_tool_session_store(
@@ -78,26 +97,20 @@ class PairedControlHarness:
             session_id=session_id,
             args=args or {},
         )
-        installation = install_runtime_services(self.executor.services)
-        try:
-            with use_state_store(self.executor.services.state_store):
-                try:
-                    value = await self.executor._execute_protocol_command(
-                        command
-                    )
-                except Exception as exc:
-                    return ExecutorResult(
-                        id=command.id,
-                        ok=False,
-                        error=operation_error_from_exception(exc),
-                    )
+        with use_state_store(self.executor.services.state_store):
+            try:
+                value = await self.executor._execute_protocol_command(command)
+            except Exception as exc:
                 return ExecutorResult(
                     id=command.id,
-                    ok=True,
-                    result=_JSON_VALUE.validate_python(to_jsonable(value)),
+                    ok=False,
+                    error=operation_error_from_exception(exc),
                 )
-        finally:
-            installation.close()
+            return ExecutorResult(
+                id=command.id,
+                ok=True,
+                result=_JSON_VALUE.validate_python(to_jsonable(value)),
+            )
 
 
 def build_paired_control_harness(

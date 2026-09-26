@@ -6,7 +6,7 @@ from authlib.oauth2.rfc6749.errors import MissingAuthorizationError, OAuth2Error
 from fastapi import HTTPException, Request
 
 from ...audit import audit
-from ...config.settings import Settings, get_settings
+from ...config.control import ControlConfig, get_control_config
 from ..core.urls import protected_resource_metadata_url
 from ..protocol.bearer import bearer_resource_protector
 
@@ -22,10 +22,10 @@ def is_localhost(request: Request) -> bool:
 
 
 def request_authentication_is_bypassed(
-    request: Request, settings: Settings | None = None
+    request: Request, settings: ControlConfig | None = None
 ) -> bool:
     """Return whether configured policy bypasses credentials for this request."""
-    resolved = settings or get_settings()
+    resolved = settings or get_control_config()
     return resolved.auth_mode == "none" or (
         resolved.auth_mode == "oauth"
         and resolved.auth_bypass_localhost
@@ -71,7 +71,7 @@ def verify_oauth(request: Request) -> dict[str, Any]:
 
 def verify_request(request: Request) -> dict[str, Any] | None:
     """Verify one HTTP request according to the configured auth mode. It returns the bearer claims if the request is authenticated, or None if not."""
-    settings = get_settings()
+    settings = get_control_config()
     if request_authentication_is_bypassed(request, settings):
         return None
     match settings.auth_mode:

@@ -8,15 +8,17 @@ from fastapi import FastAPI
 from starlette.routing import BaseRoute
 
 from ... import __version__
-from ...config.control import ControlSettingsView
+from ...config.control import ControlConfig, resolve_control_config
 from ...config.settings import get_settings
 from ...http.public_routes import public_http_routes
 from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
+from ...persistence import FileStateStore
 from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
+from ..execution_context import ControlExecutionContextMiddleware
 from ..runtime import ControlRuntime, build_control_runtime
 from .errors import install_error_handlers
 from .executor_admin import executor_admin_routes
@@ -50,7 +52,7 @@ def _fastapi_documentation_routes(app: FastAPI) -> list[BaseRoute]:
 
 def _install_public_routes(
     app: FastAPI,
-    settings: ControlSettingsView,
+    settings: ControlConfig,
     *,
     runtime: ControlRuntime | None = None,
 ) -> list[BaseRoute]:
@@ -95,7 +97,11 @@ def build_http_app(
     """Construct the authenticated REST API from one explicit tool catalog."""
     if runtime is None and tool_catalog is None:
         runtime = build_control_runtime(get_settings())
-    settings = runtime.config if runtime is not None else get_settings()
+    settings = (
+        runtime.config
+        if runtime is not None
+        else resolve_control_config(get_settings())
+    )
     if tool_catalog is not None:
         catalog = tool_catalog
     elif runtime is not None:
@@ -134,6 +140,20 @@ def build_http_app(
     if settings.auth_mode != "none":
         app.add_middleware(AuthMiddleware, public_routes=public_routes)
     install_tool_cache_control_middleware(app)
+    state_store = (
+        runtime.state_store
+        if runtime is not None
+        else FileStateStore(lambda: settings.state_dir)
+    )
+    app.add_middleware(
+        ControlExecutionContextMiddleware,
+        config=settings,
+        state_store=state_store,
+        oauth_state=None if runtime is None else runtime.oauth_state,
+        managed_jobs_runtime=(
+            None if runtime is None else runtime.managed_jobs_runtime
+        ),
+    )
     return app
 
 

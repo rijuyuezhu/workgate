@@ -4,6 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
     CallAgentMcpToolOutput,
@@ -12,7 +13,6 @@ from ..schemas.result_models.agent import (
     ListAgentSkillsOutput,
     ReadAgentSkillFileOutput,
 )
-from .config import ExecutorConfig
 from .tool_session.store import ToolSessionStore
 
 if TYPE_CHECKING:

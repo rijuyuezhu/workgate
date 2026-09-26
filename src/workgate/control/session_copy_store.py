@@ -1,7 +1,5 @@
 """Feature-specific durable checkpoints for cross-executor session copy."""
 
-from __future__ import annotations
-
 import time
 from pathlib import Path
 from typing import Annotated, Any, Literal

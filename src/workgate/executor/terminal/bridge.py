@@ -19,6 +19,8 @@ import signal
 import subprocess
 import threading
 import time
+from collections.abc import Generator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -420,24 +422,28 @@ class TerminalBridgeRegistry:
                 ) from errors[0]
 
 
-_TERMINAL_BRIDGE_REGISTRY: TerminalBridgeRegistry | None = None
+_TERMINAL_BRIDGE_CONTEXT: ContextVar[TerminalBridgeRegistry | None] = (
+    ContextVar("workgate_terminal_bridge_context", default=None)
+)
 
 
-def configure_terminal_bridge_registry(
-    registry: TerminalBridgeRegistry | None,
-) -> TerminalBridgeRegistry | None:
-    """Install a non-owning compatibility binding and return the previous one."""
-    global _TERMINAL_BRIDGE_REGISTRY
-    previous = _TERMINAL_BRIDGE_REGISTRY
-    _TERMINAL_BRIDGE_REGISTRY = registry
-    return previous
+@contextlib.contextmanager
+def use_terminal_bridge_registry(
+    registry: TerminalBridgeRegistry,
+) -> Generator[None]:
+    """Bind one executor-owned bridge registry to this execution context."""
+    token = _TERMINAL_BRIDGE_CONTEXT.set(registry)
+    try:
+        yield
+    finally:
+        _TERMINAL_BRIDGE_CONTEXT.reset(token)
 
 
 def _bridge_registry() -> TerminalBridgeRegistry:
-    registry = _TERMINAL_BRIDGE_REGISTRY
+    registry = _TERMINAL_BRIDGE_CONTEXT.get()
     if registry is None:
         raise RuntimeError(
-            "terminal bridge registry is not configured; start TerminalRuntime"
+            "terminal bridge registry is not configured in this execution context"
         )
     return registry
 

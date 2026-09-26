@@ -1,4 +1,4 @@
-"""Lifecycle ownership for controller-side Human UI live connection state."""
+"""Lifecycle ownership for control-side Human UI live connection state."""
 
 import asyncio
 import itertools
@@ -10,7 +10,7 @@ from typing import Any
 
 
 class UiTerminalConnectionRegistry:
-    """Own active Human UI terminal connection admission for one controller."""
+    """Own active Human UI terminal connection admission for one control runtime."""
 
     def __init__(self) -> None:
         self._connection_ids = itertools.count(1)
@@ -20,7 +20,7 @@ class UiTerminalConnectionRegistry:
         self._closed = False
 
     async def start(self) -> None:
-        """Bind active connection tasks to the controller's owning event loop."""
+        """Bind active connection tasks to the control runtime's owning event loop."""
         if self._closed:
             raise RuntimeError(
                 "Human UI terminal connection registry is closed"
@@ -61,7 +61,7 @@ class UiTerminalConnectionRegistry:
             self._active.pop(marker, None)
 
     def stop_admission(self) -> None:
-        """Reject new WebSocket connections before controller shutdown drains work."""
+        """Reject new WebSocket connections before control shutdown drains work."""
         self._closed = True
 
     def active_count(self) -> int:
@@ -98,49 +98,31 @@ class UiTerminalConnectionRegistry:
 
 @dataclass
 class HumanUiRuntime:
-    """Own controller-side Human UI connection admission state."""
+    """Own control-side Human UI connection admission state."""
 
     terminal_connections: UiTerminalConnectionRegistry
-    _previous: HumanUiRuntime | None = field(
-        default=None, init=False, repr=False
-    )
-    _binding_installed: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
-        """Start UI admission state and install its non-owning compatibility binding."""
+        """Start UI admission state on the owning event loop."""
         if self._closed:
             raise RuntimeError("HumanUiRuntime cannot be restarted after close")
-        if self._binding_installed:
-            return
-        started = False
         try:
             await self.terminal_connections.start()
-            started = True
-            previous = configure_human_ui_runtime(self)
         except BaseException:
-            if started:
-                await self.terminal_connections.aclose()
+            await self.terminal_connections.aclose()
             self._closed = True
             raise
-        self._previous = previous
-        self._binding_installed = True
 
     def stop_admission(self) -> None:
         """Stop Human UI connections from accepting new work."""
         self.terminal_connections.stop_admission()
 
     async def aclose(self) -> None:
-        """Close terminal connections and restore the compatibility binding."""
+        """Close all terminal connection admission state."""
         self._closed = True
         self.stop_admission()
-        try:
-            await self.terminal_connections.aclose()
-        finally:
-            if self._binding_installed:
-                configure_human_ui_runtime(self._previous)
-                self._binding_installed = False
-                self._previous = None
+        await self.terminal_connections.aclose()
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[HumanUiRuntime]:
@@ -152,29 +134,6 @@ class HumanUiRuntime:
             await self.aclose()
 
 
-_HUMAN_UI_RUNTIME: HumanUiRuntime | None = None
-
-
-def configure_human_ui_runtime(
-    runtime: HumanUiRuntime | None,
-) -> HumanUiRuntime | None:
-    """Install a non-owning compatibility binding and return the previous runtime."""
-    global _HUMAN_UI_RUNTIME
-    previous = _HUMAN_UI_RUNTIME
-    _HUMAN_UI_RUNTIME = runtime
-    return previous
-
-
-def human_ui_runtime() -> HumanUiRuntime:
-    """Return the currently bound Human UI owner or fail outside its lifespan."""
-    runtime = _HUMAN_UI_RUNTIME
-    if runtime is None:
-        raise RuntimeError(
-            "Human UI runtime is not configured; start ControlRuntime"
-        )
-    return runtime
-
-
 def build_human_ui_runtime() -> HumanUiRuntime:
-    """Construct fresh controller-side Human UI live state."""
+    """Construct fresh control-side Human UI live state."""
     return HumanUiRuntime(terminal_connections=UiTerminalConnectionRegistry())

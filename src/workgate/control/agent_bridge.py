@@ -1,7 +1,5 @@
 """Control-owned Agent Bridge routing across network and executor-local transports."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from ..agent_bridge.mcp import AgentMcpClientManager
@@ -12,7 +10,7 @@ from ..agent_bridge.service import (
     list_agent_mcp_servers_payload,
     list_agent_mcp_tools_payload,
 )
-from ..config.control import ControlSettingsView
+from ..config.control import ControlConfig
 from ..schemas.result_models.agent import (
     CallAgentMcpToolOutput,
     ListAgentMcpServersOutput,
@@ -25,7 +23,7 @@ class ControlAgentBridgeService:
     """Keep network MCP on control and route session-bound stdio MCP to executors."""
 
     def __init__(
-        self, settings: ControlSettingsView, sessions: ControlSessionCoordinator
+        self, settings: ControlConfig, sessions: ControlSessionCoordinator
     ) -> None:
         self._settings = settings
         self._sessions = sessions

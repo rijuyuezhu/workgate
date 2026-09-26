@@ -1,11 +1,10 @@
 """Executor-owned half of protected standalone local bootstrap."""
 
-from __future__ import annotations
-
 import os
 from dataclasses import replace
 from pathlib import Path
 
+from ..config.executor import ExecutorConfig
 from ..protocol.standalone import (
     STANDALONE_BOOTSTRAP_ENV,
     STANDALONE_CONTROL_URL_ENV,
@@ -16,7 +15,6 @@ from ..protocol.standalone import (
     StandaloneExecutorBootstrap,
 )
 from ..utils.private_files import atomic_write_private_text
-from .config import ExecutorConfig
 from .profile import ExecutorProfile, ExecutorProfileStore
 
 _BOOTSTRAP_MAX_BYTES = 16 * 1024

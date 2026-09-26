@@ -674,23 +674,3 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-_STORE: ToolSessionStore | None = None
-
-
-def configure_tool_session_store(
-    store: ToolSessionStore | None,
-) -> ToolSessionStore | None:
-    """Install a process-wide tool-session store and return the previous binding."""
-    global _STORE
-    previous = _STORE
-    _STORE = store
-    return previous
-
-
-def get_tool_session_store() -> ToolSessionStore:
-    """Return the explicitly configured executor session store."""
-    if _STORE is None:
-        raise RuntimeError("executor tool-session store is not configured")
-    return _STORE

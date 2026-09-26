@@ -1,11 +1,11 @@
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executor.config import resolve_executor_config
-from workgate.executor.search_composition import (
-    build_executor_dispatcher_with_search,
-)
 from workgate.executor.services import build_runtime_services
+from workgate.executor.tool_composition import (
+    build_executor_tool_dispatcher,
+)
 from workgate.tools.registry.files import FileToolRegistry
 from workgate.tools.registry.read import ReadToolRegistry
 
@@ -30,7 +30,7 @@ async def test_composed_files_cover_read_write_edit_hashline_and_delete(
     services = build_runtime_services(config)
     store = services.tool_session_store
     session = store.create_session(session_id=_session_id(1), workdir=tmp_path)
-    dispatcher = build_executor_dispatcher_with_search(config, store)
+    dispatcher = build_executor_tool_dispatcher(config, store)
 
     written = await dispatcher.execute(
         "write_file",
@@ -93,7 +93,7 @@ async def test_composed_files_resolve_fresh_session_workdir_each_call(
     first.mkdir()
     second.mkdir()
     session = store.create_session(session_id=_session_id(2), workdir=first)
-    dispatcher = build_executor_dispatcher_with_search(config, store)
+    dispatcher = build_executor_tool_dispatcher(config, store)
 
     await dispatcher.execute(
         "write_file",

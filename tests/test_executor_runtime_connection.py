@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 from pydantic import JsonValue
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.profile import (
     ExecutorAlreadyRunningError,
     ExecutorProfile,
@@ -102,7 +102,7 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
     ("op", "session_id", "args", "message"),
     [
         (
-            "ui.dashboard.snapshot",
+            "dashboard_snapshot",
             "sess_0000000000000000000001",
             {},
             "must not carry",

@@ -6,11 +6,11 @@ import pytest
 
 import workgate.executor.terminal.bridge as bridge_module
 import workgate.executor.terminal.conpty as conpty_module
-import workgate.executor.terminal.runtime as terminal_runtime_module
 from workgate.executor.terminal.bridge import TerminalBridgeError, _Bridge
 from workgate.executor.terminal.conpty import _ConPtySession
 from workgate.executor.terminal.runtime import (
     build_terminal_runtime,
+    use_terminal_runtime,
 )
 from workgate.persistence import get_state_store
 
@@ -66,31 +66,28 @@ class _Lease:
 
 
 @pytest.mark.asyncio
-async def test_terminal_runtime_installs_and_restores_nested_bindings() -> None:
+async def test_terminal_runtime_context_is_nested_and_reversible() -> None:
     outer = build_terminal_runtime(get_state_store(), workspace_root=Path.cwd())
     inner = build_terminal_runtime(get_state_store(), workspace_root=Path.cwd())
 
     await outer.start()
+    await inner.start()
     try:
-        assert bridge_module._bridge_registry() is outer.bridges
-        assert conpty_module._conpty_registry() is outer.conpty
-
-        await inner.start()
-        try:
-            assert bridge_module._bridge_registry() is inner.bridges
-            assert conpty_module._conpty_registry() is inner.conpty
-        finally:
-            await inner.aclose()
-
-        assert bridge_module._bridge_registry() is outer.bridges
-        assert conpty_module._conpty_registry() is outer.conpty
-        await inner.aclose()
+        with use_terminal_runtime(outer):
+            assert bridge_module._bridge_registry() is outer.bridges
+            assert conpty_module._conpty_registry() is outer.conpty
+            with use_terminal_runtime(inner):
+                assert bridge_module._bridge_registry() is inner.bridges
+                assert conpty_module._conpty_registry() is inner.conpty
+            assert bridge_module._bridge_registry() is outer.bridges
+            assert conpty_module._conpty_registry() is outer.conpty
     finally:
+        await inner.aclose()
         await outer.aclose()
 
-    with pytest.raises(RuntimeError, match="not configured"):
+    with pytest.raises(RuntimeError, match="execution context"):
         bridge_module._bridge_registry()
-    with pytest.raises(RuntimeError, match="not configured"):
+    with pytest.raises(RuntimeError, match="execution context"):
         conpty_module._conpty_registry()
 
 
@@ -111,46 +108,43 @@ async def test_terminal_runtime_start_is_idempotent_and_close_is_terminal() -> (
 
 
 @pytest.mark.asyncio
-async def test_terminal_runtime_lifespan_owns_and_releases_bindings() -> None:
+async def test_terminal_runtime_lifespan_owns_resources_not_ambient_context() -> (
+    None
+):
     runtime = build_terminal_runtime(
         get_state_store(), workspace_root=Path.cwd()
     )
 
     async with runtime.lifespan() as active:
         assert active is runtime
-        assert bridge_module._bridge_registry() is runtime.bridges
-        assert conpty_module._conpty_registry() is runtime.conpty
+        with pytest.raises(RuntimeError, match="execution context"):
+            bridge_module._bridge_registry()
+        with use_terminal_runtime(runtime):
+            assert bridge_module._bridge_registry() is runtime.bridges
+            assert conpty_module._conpty_registry() is runtime.conpty
 
-    with pytest.raises(RuntimeError, match="not configured"):
+    with pytest.raises(RuntimeError, match="execution context"):
         bridge_module._bridge_registry()
-    with pytest.raises(RuntimeError, match="not configured"):
-        conpty_module._conpty_registry()
 
 
 @pytest.mark.asyncio
-async def test_terminal_runtime_rolls_back_when_bridge_binding_fails(
+async def test_terminal_runtime_rolls_back_when_bridge_start_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = build_terminal_runtime(
         get_state_store(), workspace_root=Path.cwd()
     )
 
-    def fail_bridge_binding(_registry: object) -> object:
-        raise RuntimeError("bridge binding failed")
+    async def fail_bridge_start() -> None:
+        raise RuntimeError("bridge start failed")
 
-    monkeypatch.setattr(
-        terminal_runtime_module,
-        "configure_terminal_bridge_registry",
-        fail_bridge_binding,
-    )
+    monkeypatch.setattr(runtime.bridges, "start", fail_bridge_start)
 
-    with pytest.raises(RuntimeError, match="bridge binding failed"):
+    with pytest.raises(RuntimeError, match="bridge start failed"):
         await runtime.start()
 
-    assert runtime.bridges._closed is True
     assert runtime.conpty._closed is True
-    with pytest.raises(RuntimeError, match="not configured"):
-        conpty_module._conpty_registry()
+    assert runtime._closed is True
 
 
 @pytest.mark.asyncio
@@ -277,7 +271,7 @@ async def test_terminal_runtime_reports_bridge_close_failure_after_conpty_close(
     assert bridge_process.closed is True
     assert runtime.bridges.bridges == {}
     assert runtime.conpty._closed is True
-    with pytest.raises(RuntimeError, match="not configured"):
+    with pytest.raises(RuntimeError, match="execution context"):
         bridge_module._bridge_registry()
 
 

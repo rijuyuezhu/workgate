@@ -3,8 +3,7 @@
 import contextlib
 import secrets
 
-from ...config.control import ControlSettingsView
-from ...config.settings import get_settings
+from ...config.control import ControlConfig, get_control_config
 from ...persistence import StateLayout
 from ...utils.private_files import atomic_write_private_text, private_file_lock
 
@@ -24,9 +23,9 @@ _WEAK_SIGNING_SECRETS = {
 }
 
 
-def oauth_signing_secret(settings: ControlSettingsView | None = None) -> str:
+def oauth_signing_secret(settings: ControlConfig | None = None) -> str:
     """Return a strong persisted signing key, generating one under a private lock."""
-    settings = settings or get_settings()
+    settings = settings or get_control_config()
     layout = StateLayout(settings.state_dir)
     path = layout.oauth_signing_secret_path
     lock_path = layout.oauth_signing_lock_path
@@ -57,10 +56,10 @@ def oauth_signing_secret(settings: ControlSettingsView | None = None) -> str:
 
 
 def validate_public_oauth_configuration(
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> None:
     """Reject weak approval credentials before serving a configured public OAuth URL."""
-    settings = settings or get_settings()
+    settings = settings or get_control_config()
     if settings.auth_mode != "oauth" or not settings.base_url:
         return
 

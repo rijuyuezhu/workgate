@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -8,6 +6,7 @@ import pytest
 
 import workgate.control.jobs as control_jobs
 from workgate.control.jobs import ControlJobService
+from workgate.jobs.managed import ManagedJobsRuntime
 from workgate.schemas.result_models.jobs import (
     JobInfo,
     JobListOutput,
@@ -75,9 +74,21 @@ class FakeSessions:
         yield ()
 
 
+def _service(
+    sessions: FakeSessions,
+    *,
+    managed_retry_availability=None,
+) -> ControlJobService:
+    return ControlJobService(
+        sessions,  # type: ignore[arg-type]
+        ManagedJobsRuntime(),
+        managed_retry_availability=managed_retry_availability,
+    )
+
+
 @pytest.mark.asyncio
 async def test_control_job_rejects_conflicting_actions() -> None:
-    service = ControlJobService(FakeSessions())  # type: ignore[arg-type]
+    service = _service(FakeSessions())
 
     with pytest.raises(ValueError, match="list_jobs cannot be combined"):
         await service.execute(
@@ -108,7 +119,7 @@ async def test_control_job_list_merges_executor_and_managed_rows(
         return JobListOutput(jobs=[managed_job], counts={"running": 1})
 
     monkeypatch.setattr(control_jobs, "managed_job_list_execute", managed_list)
-    service = ControlJobService(sessions)  # type: ignore[arg-type]
+    service = _service(sessions)
 
     result = await service.execute(
         session_id="sess_a", list_jobs=True, lines=17
@@ -135,7 +146,7 @@ async def test_control_job_list_keeps_managed_rows_when_executor_unavailable(
         return JobListOutput(jobs=[managed_job], counts={"running": 1})
 
     monkeypatch.setattr(control_jobs, "managed_job_list_execute", managed_list)
-    service = ControlJobService(sessions)  # type: ignore[arg-type]
+    service = _service(sessions)
 
     result = await service.execute(session_id="sess_a")
 
@@ -171,7 +182,7 @@ async def test_control_job_cancel_preserves_requested_managed_executor_order(
         "stop_managed_job_without_session_admission",
         stop_managed,
     )
-    service = ControlJobService(sessions)  # type: ignore[arg-type]
+    service = _service(sessions)
 
     result = await service.execute(
         session_id="sess_a",
@@ -213,7 +224,7 @@ async def test_control_job_retry_admits_referenced_sessions(
         "retry_managed_job_without_session_admission",
         retry_managed,
     )
-    service = ControlJobService(sessions)  # type: ignore[arg-type]
+    service = _service(sessions)
 
     result = await service.execute(session_id="sess_a", retry=["job_managed"])
 
@@ -255,8 +266,8 @@ async def test_control_job_retry_uses_feature_availability_without_source_execut
         "retry_managed_job_without_session_admission",
         retry_managed,
     )
-    service = ControlJobService(
-        sessions,  # type: ignore[arg-type]
+    service = _service(
+        sessions,
         managed_retry_availability=lambda _job_id, _session_ids: ("sess_b",),
     )
 
@@ -293,7 +304,7 @@ async def test_control_job_cleanup_hooks_use_both_session_copy_references(
         "job_stop_managed_references_execute",
         stop_refs,
     )
-    service = ControlJobService(sessions)  # type: ignore[arg-type]
+    service = _service(sessions)
 
     assert await service.auto_cleanup_blocked("sess_a") is True
     assert await service.stop_referencing_jobs("sess_a") == ["job_same"]

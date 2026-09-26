@@ -7,6 +7,7 @@ import pytest
 
 import workgate.control.http.app as http_app
 import workgate.control.mcp.app as mcp_app
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings, configure_settings
 from workgate.oauth.core.security import (
     MIN_OAUTH_SIGNING_SECRET_BYTES,
@@ -40,7 +41,7 @@ def test_public_oauth_rejects_missing_placeholder_and_short_pins(tmp_path, pin):
     settings = _settings(tmp_path, pin=pin)
 
     with pytest.raises(RuntimeError, match="at least 8 characters"):
-        validate_public_oauth_configuration(settings)
+        validate_public_oauth_configuration(resolve_control_config(settings))
 
     assert not (settings.state_dir / OAUTH_SIGNING_SECRET_FILE_NAME).exists()
 
@@ -50,7 +51,7 @@ def test_public_oauth_accepts_eight_character_pin_and_generates_strong_secret(
 ):
     settings = _settings(tmp_path, pin="12345678")
 
-    validate_public_oauth_configuration(settings)
+    validate_public_oauth_configuration(resolve_control_config(settings))
 
     path = settings.state_dir / OAUTH_SIGNING_SECRET_FILE_NAME
     secret = path.read_text(encoding="utf-8").strip()
@@ -73,7 +74,7 @@ def test_non_public_or_unauthenticated_configuration_skips_credential_gate(
         pin=None,
     )
 
-    validate_public_oauth_configuration(settings)
+    validate_public_oauth_configuration(resolve_control_config(settings))
 
     assert not (settings.state_dir / OAUTH_SIGNING_SECRET_FILE_NAME).exists()
 
@@ -92,7 +93,7 @@ def test_weak_persisted_oauth_signing_secret_is_rejected(tmp_path, secret):
     path.write_text(secret + "\n", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="at least 32 UTF-8 bytes"):
-        oauth_signing_secret(settings)
+        oauth_signing_secret(resolve_control_config(settings))
 
     assert path.read_text(encoding="utf-8").strip() == secret
 
@@ -102,7 +103,12 @@ def test_concurrent_signing_secret_initialization_reuses_one_value(tmp_path):
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         values = list(
-            pool.map(lambda _index: oauth_signing_secret(settings), range(8))
+            pool.map(
+                lambda _index: oauth_signing_secret(
+                    resolve_control_config(settings)
+                ),
+                range(8),
+            )
         )
 
     assert len(set(values)) == 1

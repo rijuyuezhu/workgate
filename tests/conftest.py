@@ -44,10 +44,10 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
         monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setattr(tempfile, "tempdir", str(system_tmp))
     clear_settings_cache()
+    from tests.helpers import configure_test_tool_session_store
     from workgate.config.settings import get_settings
-    from workgate.executor.tool_session import configure_tool_session_store
     from workgate.executor.tool_session.store import ToolSessionStore
-    from workgate.persistence import FileStateStore
+    from workgate.persistence import FileStateStore, use_state_store
     from workgate.utils.path_policy import resolve_path_with_policy
 
     initial_settings = get_settings()
@@ -80,11 +80,12 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
         max_session_snapshots=initial_settings.max_session_snapshots,
         max_session_snapshot_bytes=initial_settings.max_session_snapshot_bytes,
     )
-    previous_tool_session_store = configure_tool_session_store(test_store)
+    previous_tool_session_store = configure_test_tool_session_store(test_store)
     try:
-        yield
+        with use_state_store(state_store):
+            yield
     finally:
-        configure_tool_session_store(previous_tool_session_store)
+        configure_test_tool_session_store(previous_tool_session_store)
         clear_settings_cache()
 
 
@@ -93,18 +94,15 @@ async def managed_jobs_runtime_owner():
     from workgate.jobs import recovery as job_recovery
     from workgate.jobs.managed import (
         ManagedJobsRuntime,
-        configure_managed_jobs_runtime,
+        use_managed_jobs_runtime,
     )
 
     runtime = ManagedJobsRuntime()
     await runtime.start()
-    previous = configure_managed_jobs_runtime(runtime)
     _reset_managed_deferred_sequence(job_recovery)
     try:
-        yield runtime
+        with use_managed_jobs_runtime(runtime):
+            yield runtime
     finally:
-        try:
-            await runtime.aclose()
-        finally:
-            configure_managed_jobs_runtime(previous)
-            _reset_managed_deferred_sequence(job_recovery)
+        await runtime.aclose()
+        _reset_managed_deferred_sequence(job_recovery)

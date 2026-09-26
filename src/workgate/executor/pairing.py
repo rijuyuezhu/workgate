@@ -1,7 +1,5 @@
 """Executor-side device pairing and profile provisioning."""
 
-from __future__ import annotations
-
 import asyncio
 import platform
 from collections.abc import Awaitable, Callable

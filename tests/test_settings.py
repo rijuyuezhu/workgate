@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from workgate.config.settings import (
     Settings,
     initialize_runtime_directories,
@@ -79,7 +81,7 @@ def test_settings_rejects_non_mapping_config(tmp_path):
         raise AssertionError("expected ValueError")
 
 
-def test_config_file_uses_flat_keys_only(monkeypatch, tmp_path):
+def test_config_file_rejects_nested_unknown_keys(monkeypatch, tmp_path):
     config = tmp_path / "config.yaml"
     config.write_text(
         """
@@ -90,10 +92,8 @@ auth:
     )
     monkeypatch.delenv("WORKGATE_AUTH_MODE", raising=False)
 
-    settings = load_settings(config)
-
-    assert settings.host == "127.0.0.1"
-    assert settings.auth_mode == "oauth"
+    with pytest.raises(ValueError, match="Unknown config settings.*auth"):
+        load_settings(config)
 
 
 def test_none_overrides_clear_config_and_env_values(monkeypatch, tmp_path):

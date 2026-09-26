@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..audit import audit
+from ..config.executor import ExecutorConfig
 from ..errors import (
     ShellExecutableNotFoundError,
     process_start_not_found_error,
@@ -32,7 +33,6 @@ from ..schemas.result_models.shell import (
 )
 from ..utils.processes import new_process_group_kwargs, user_subprocess_env
 from .bounded_runner import bounded_runner_argv
-from .config import ExecutorConfig
 from .path import (
     relative_display_from_root,
     resolve_path_with_policy,

@@ -2,12 +2,12 @@ import shutil
 
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executor.config import resolve_executor_config
-from workgate.executor.search_composition import (
-    build_executor_dispatcher_with_search,
-)
 from workgate.executor.services import build_runtime_services
+from workgate.executor.tool_composition import (
+    build_executor_tool_dispatcher,
+)
 from workgate.tools.registry.search import SearchToolRegistry
 from workgate.tools.registry.workspace_connector import (
     WorkspaceConnectorToolRegistry,
@@ -36,7 +36,7 @@ async def test_executor_dispatcher_uses_composed_search_discovery_and_connector(
     services = build_runtime_services(config)
     store = services.tool_session_store
     session = store.create_session(session_id=_session_id(1), workdir=tmp_path)
-    dispatcher = build_executor_dispatcher_with_search(config, store)
+    dispatcher = build_executor_tool_dispatcher(config, store)
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "demo.txt").write_text(
         "alpha\nneedle here\ngamma\n", encoding="utf-8"
@@ -100,7 +100,7 @@ async def test_composed_search_resolves_each_operation_from_session_workdir(
     (first / "one.txt").write_text("needle first\n", encoding="utf-8")
     (second / "two.txt").write_text("needle second\n", encoding="utf-8")
     session = store.create_session(session_id=_session_id(2), workdir=first)
-    dispatcher = build_executor_dispatcher_with_search(config, store)
+    dispatcher = build_executor_tool_dispatcher(config, store)
 
     first_result = await dispatcher.execute(
         "workspace_search",

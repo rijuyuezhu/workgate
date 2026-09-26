@@ -66,7 +66,7 @@ class JobRow(TypedDict, total=False):
     managed_payload: dict[str, Any]
     """Bounded extensible JSON payload supplied to a managed handler."""
     runtime_instance_id: str
-    """Controller runtime instance that most recently owned the managed task."""
+    """Control runtime instance that most recently owned the managed task."""
     managed_lease_version: int
     """Managed-job lease protocol version persisted with liveness metadata."""
     progress: dict[str, Any] | None

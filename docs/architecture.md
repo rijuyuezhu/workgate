@@ -135,8 +135,8 @@ this persistence seam is intentionally not a command database or workflow log.
 Executor trust and delivery state follow the same ownership rule. `ControlRuntime`
 constructs the control state, executor transport, pairing service, and session
 coordinator explicitly. The control lifespan stops admission and interrupts
-pending executor calls before restoring compatibility state-store bindings; no
-module-level remote-manager runtime or local-execution fallback participates.
+pending executor calls before closing owned durable/live services; no module-level
+runtime owner or local-execution fallback participates.
 
 Managed background Jobs are control-owned rather than module-owned.
 `ControlRuntime` constructs one `ManagedJobsRuntime`; its handler registry,
@@ -146,7 +146,7 @@ composition. Executor shell-backed jobs have a separate executor-owned runtime.
 Shutdown stops managed-job admission and cancels/awaits owned tasks before UI,
 OAuth, executor transport, or shared-store teardown, so cancellation can commit
 `stopped` (or durably journal the deferred store update) before its lease is
-released. The remaining compatibility binding is reversible and non-owning.
+released. Runtime ownership is carried explicitly by the composed control graph.
 
 Terminal live state is similarly process-owned rather than module-owned.
 `ControlRuntime` and `ExecutorRuntime` each construct a fresh `TerminalRuntime`.
@@ -154,8 +154,8 @@ Its bridge and ConPTY registries bind async work to the owning event loop and
 stop admission together during shutdown. Raw bridge operations are cancelled
 and bridge timers/process attachments are closed before ConPTY sessions are
 force-closed, because a bridge may hold a raw attachment to one of those shells.
-The terminal modules retain only reversible, non-owning compatibility pointers
-for legacy consumers that have not yet moved to explicit registry capabilities.
+Terminal registry access is execution-context scoped; runtime startup does not
+install process-global registry owners.
 
 Rejected alternatives:
 
@@ -192,12 +192,12 @@ Rejected ownership alternatives:
 
 ## `control/http`: REST/tool HTTP control adapter
 
-The `control/http` package owns the FastAPI application that exposes local tool
+The `control/http` package owns the FastAPI application that exposes routed tool
 registries as REST endpoints. It defines the REST error representation, applies
 tool-route timeout and cache policy, records HTTP-routed tool invocations, and
 composes public route contributions and authentication into one runnable app.
 
-Allowed dependencies include tools, operations, OAuth adapters, remote route
+Allowed dependencies include tools, operations, OAuth adapters, executor route
 contributions, delivery-adapter-neutral `http` infrastructure, framework-specific
 FastAPI/Starlette types, and the explicit `ui.http.routes.human_ui_routes`
 composition contract. Lower-level packages must not import this control adapter.
@@ -217,7 +217,7 @@ Rejected ownership alternatives:
 
 The `http` package contains ASGI and HTTP behavior needed by more than one control
 delivery adapter. It does not decide which adapter runs and does not own REST tools,
-MCP protocol behavior, OAuth business rules, remote-worker business logic, or
+MCP protocol behavior, OAuth business rules, executor business logic, or
 Human UI workflows.
 
 Allowed dependencies include configuration contracts, audit recording,
@@ -348,8 +348,7 @@ The `ui/static` directory owns the immutable HTML, CSS, JavaScript, third-party
 license, syntax-highlighting, and terminal-rendering assets served by
 `ui/http/routes.py`. Keeping the assets under the UI domain makes their product
 ownership explicit while preserving their package-data role; they contain no
-Python modules and are deliberately excluded from the trimmed remote-worker
-runtime.
+Python modules and are not imported by executor machine-runtime logic.
 
 The directory contains exactly the browser shell (`index.html`), Human UI styles
 (`web.css`), the classic bootstrap controller (`web.js`), feature ES modules such
@@ -364,7 +363,7 @@ The browser controller presents agent state through one Sessions control surface
 machine and recent/all session selection precede session details, Todo, and the
 session-local Audit view. The separate Global Audit panel deliberately retains
 machine-wide lifecycle, control-plane, and other events that are not owned by one
-session. The browser never exposes worker-internal session identifiers.
+session. The browser never exposes executor-internal session identifiers.
 
 Rejected ownership alternatives:
 
@@ -395,10 +394,10 @@ Rejected ownership alternatives:
 - `utils`: validation and normalization here implement the Human UI HTTP schema,
   not generally reusable primitives.
 
-## `terminal`: interactive terminal backends and lifecycle
+## `executor/terminal`: interactive terminal backends and lifecycle
 
-The `terminal` package owns terminal-emulation backends and the bounded lifecycle
-operations needed by local tools, legacy remote-worker execution, and Human UI adapters. It
+The `executor/terminal` package owns terminal-emulation backends and the bounded lifecycle
+operations used by executor shell tools and Human UI terminal adapters. It
 may depend on configuration, audit, schemas, and low-level operation helpers, but
 it must not depend on control delivery adapters, HTTP route adapters, or UI presentation.
 

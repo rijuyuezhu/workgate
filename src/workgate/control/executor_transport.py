@@ -1,7 +1,5 @@
 """Ephemeral ordinary-RPC coordination for executor protocol v1."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import time

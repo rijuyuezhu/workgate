@@ -7,17 +7,20 @@ from pathlib import Path
 import pytest
 
 import workgate.ui.runtime as runtime
+from workgate.config.control import ControlConfig, resolve_control_config
 from workgate.config.settings import Settings
 
 
-def _settings(tmp_path: Path, **overrides: object) -> Settings:
-    return Settings.model_validate(
-        {
-            "workspace_root": tmp_path / "workspace",
-            "state_dir": tmp_path / "state",
-            "auth_mode": "none",
-            **overrides,
-        }
+def _settings(tmp_path: Path, **overrides: object) -> ControlConfig:
+    return resolve_control_config(
+        Settings.model_validate(
+            {
+                "workspace_root": tmp_path / "workspace",
+                "state_dir": tmp_path / "state",
+                "auth_mode": "none",
+                **overrides,
+            }
+        )
     )
 
 

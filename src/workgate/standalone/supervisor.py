@@ -1,7 +1,5 @@
 """Lifecycle-only supervisor for offline standalone control/executor children."""
 
-from __future__ import annotations
-
 import os
 import secrets
 import signal

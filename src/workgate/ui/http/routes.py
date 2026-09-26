@@ -17,8 +17,7 @@ from starlette.responses import (
 )
 from starlette.routing import BaseRoute, Route, WebSocketRoute
 
-from ...config.control import ControlSettingsView
-from ...config.settings import get_settings
+from ...config.control import ControlConfig
 from ...oauth.core.scopes import default_scope
 from ...oauth.core.urls import issuer_url, resource_url
 from ...version import version_info
@@ -95,7 +94,7 @@ def _ui_asset_revision() -> str:
     return digest.hexdigest()[:16]
 
 
-def _ui_index_html(settings: ControlSettingsView, origin: str) -> str:
+def _ui_index_html(settings: ControlConfig, origin: str) -> str:
     """Load the browser shell and inject non-sensitive runtime configuration."""
     path = _assets_dir() / "index.html"
     if not path.is_file():
@@ -164,7 +163,7 @@ def _index_headers() -> dict[str, str]:
 
 async def ui_index(request: Request) -> Response:
     """Serve the public browser shell; API calls remain authenticated."""
-    settings = get_settings()
+    settings = _control_runtime(request).config
     try:
         origin = ui_request_origin(request)
     except UnicodeError, ValueError:
@@ -265,7 +264,7 @@ async def _executor_targets(request: Request) -> dict[str, Any]:
 
 async def api_bootstrap(request: Request) -> Response:
     """Return initial authenticated state for browser and native UI clients."""
-    settings = get_settings()
+    settings = _control_runtime(request).config
     return _json_ok(
         {
             "version": version_info(),
@@ -299,7 +298,7 @@ async def api_bootstrap(request: Request) -> Response:
 
 
 def human_ui_routes(
-    settings: ControlSettingsView,
+    settings: ControlConfig,
 ) -> tuple[list[BaseRoute], list[BaseRoute]]:
     """Return all Human UI routes and the subset that must remain public."""
     if not settings.ui_enabled:

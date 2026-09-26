@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from .config import ExecutorConfig
+from ..config.executor import ExecutorConfig
 from .dispatch import ExecutorHandler
 from .tool_session.store import ToolSessionStore
 from .transfer import (

@@ -2,14 +2,16 @@ import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 
 import pytest
 
 import workgate.executor.files as files_ops
 from tests.helpers import build_paired_mcp, mcp_structured, nested_mcp_text
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.files import (
     _delete_file_or_dir_local,
     _list_files_local,
@@ -22,7 +24,7 @@ from workgate.executor.files_service import FilesService
 from workgate.executor.shell import check_command_policy
 from workgate.executor.tool_session.bindings import SessionBinding
 from workgate.executor.tool_session.resolver import SessionResolver
-from workgate.executor.tool_session.store import get_tool_session_store
+from workgate.persistence import get_state_store, use_state_store
 from workgate.utils.path_policy import resolve_path_with_policy
 
 _SESSION_COUNTER = 0
@@ -348,17 +350,23 @@ def test_concurrent_overwrite_false_creates_file_once(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
     barrier = threading.Barrier(2)
+    state_store = get_state_store()
 
     def write(content: str) -> str:
-        barrier.wait(timeout=5)
-        try:
-            write_file_execute("shared.txt", content, overwrite=False)
-        except FileExistsError:
-            return "exists"
-        return "created"
+        with use_state_store(state_store):
+            barrier.wait(timeout=5)
+            try:
+                write_file_execute("shared.txt", content, overwrite=False)
+            except FileExistsError:
+                return "exists"
+            return "created"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = list(pool.map(write, ["first", "second"]))
+        futures = [
+            pool.submit(copy_context().run, write, content)
+            for content in ("first", "second")
+        ]
+        outcomes = [future.result() for future in futures]
 
     assert sorted(outcomes) == ["created", "exists"]
     assert (tmp_path / "shared.txt").read_text(encoding="utf-8") in {
@@ -378,25 +386,31 @@ def test_concurrent_snapshot_edits_reject_stale_writer(tmp_path, monkeypatch):
     )
     assert snapshot.snapshot_id is not None
     barrier = threading.Barrier(2)
+    state_store = get_state_store()
 
     def edit(replacement: str) -> str:
-        barrier.wait(timeout=5)
-        try:
-            _edit_lines(
-                "shared.txt",
-                2,
-                2,
-                replacement,
-                snapshot_id=snapshot.snapshot_id,
-                session_id=session_id,
-            )
-        except ValueError as exc:
-            assert "file changed since snapshot" in str(exc)
-            return "stale"
-        return "edited"
+        with use_state_store(state_store):
+            barrier.wait(timeout=5)
+            try:
+                _edit_lines(
+                    "shared.txt",
+                    2,
+                    2,
+                    replacement,
+                    snapshot_id=snapshot.snapshot_id,
+                    session_id=session_id,
+                )
+            except ValueError as exc:
+                assert "file changed since snapshot" in str(exc)
+                return "stale"
+            return "edited"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = list(pool.map(edit, ["BETA-ONE", "BETA-TWO"]))
+        futures = [
+            pool.submit(copy_context().run, edit, replacement)
+            for replacement in ("BETA-ONE", "BETA-TWO")
+        ]
+        outcomes = [future.result() for future in futures]
 
     assert sorted(outcomes) == ["edited", "stale"]
     assert path.read_text(encoding="utf-8") in {

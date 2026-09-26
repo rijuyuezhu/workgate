@@ -1,7 +1,5 @@
 """Small authenticated HTTP client for executor protocol v1."""
 
-from __future__ import annotations
-
 import contextlib
 from dataclasses import dataclass
 

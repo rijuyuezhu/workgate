@@ -6,9 +6,9 @@ from dataclasses import dataclass
 
 from mcp.types import CallToolResult, ImageContent, TextContent
 
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.image import ViewImageOutput
 from ..utils.image_types import detect_image_type
-from .config import ExecutorConfig
 from .path import relative_display_from_root
 from .tool_session.store import AgentSession, ToolSessionStore
 

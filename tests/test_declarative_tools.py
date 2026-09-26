@@ -87,11 +87,12 @@ async def test_tool_definition_call_from_mapping_ignores_varargs_and_kwargs():
 
 
 def _sample_context():
+    from workgate.config.control import resolve_control_config
     from workgate.config.settings import Settings
     from workgate.tools.contracts import McpToolContext
 
     return McpToolContext(
-        settings=Settings(),
+        settings=resolve_control_config(Settings()),
         read_only_tool_annotations=ToolAnnotations(readOnlyHint=True),
     )
 

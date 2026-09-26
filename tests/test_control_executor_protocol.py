@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import ast
 import base64
 import re
@@ -120,6 +118,9 @@ def test_executor_credential_uses_verifier_and_has_no_inactivity_expiry() -> (
     )
     assert not executor_credential_is_trusted(
         new_executor_credential(), verifier, revoked_at=None
+    )
+    assert not executor_credential_is_trusted(
+        credential, "not-a-verifier", revoked_at=None
     )
 
 

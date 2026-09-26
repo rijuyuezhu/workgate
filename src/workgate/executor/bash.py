@@ -4,13 +4,13 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.jobs import JobStartOutput
 from ..schemas.result_models.shell import (
     RunPythonCodeOutput,
     ShellExecutionOutput,
 )
 from ..utils.serialization import to_jsonable
-from .config import ExecutorConfig
 from .shell import (
     _command_with_env,
     _effective_python_executable,

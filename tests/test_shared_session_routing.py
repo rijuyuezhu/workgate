@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 from pathlib import Path
@@ -10,12 +8,12 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from tests.helpers import mcp_text
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import ExecutorConnection
 from workgate.executor.control_client import ExecutorControlClient
 from workgate.executor.profile import ExecutorProfile
@@ -187,7 +185,7 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
             executor_workspace / "copied-in-background.txt"
         ).read_text() == ("crossed executor protocol\n")
         assert not (control_workspace / "copied-in-background.txt").exists()
-        assert not hasattr(control.services, "tool_session_store")
+        assert not hasattr(control, "tool_session_store")
 
         await connection.aclose()
         connection = None
