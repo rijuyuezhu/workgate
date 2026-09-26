@@ -141,7 +141,7 @@ def build_http_app(
         app.add_middleware(AuthMiddleware, public_routes=public_routes)
     install_tool_cache_control_middleware(app)
     state_store = (
-        runtime.services.state_store
+        runtime.state_store
         if runtime is not None
         else FileStateStore(lambda: settings.state_dir)
     )

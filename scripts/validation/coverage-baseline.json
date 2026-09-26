@@ -250,11 +250,6 @@
       "num_statements": 4,
       "percent_covered": 100.0
     },
-    "src/workgate/control/services.py": {
-      "num_branches": 4,
-      "num_statements": 47,
-      "percent_covered": 92.156863
-    },
     "src/workgate/control/session_copy.py": {
       "num_branches": 42,
       "num_statements": 180,
@@ -1175,11 +1170,6 @@
       "num_statements": 14,
       "percent_covered": 100.0
     },
-    "src/workgate/tools/tool_handlers.py": {
-      "num_branches": 0,
-      "num_statements": 14,
-      "percent_covered": 100.0
-    },
     "src/workgate/ui/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
@@ -1347,9 +1337,7 @@
     }
   },
   "policy": {
-    "adapter_files": [
-      "src/workgate/tools/tool_handlers.py"
-    ],
+    "adapter_files": [],
     "adapter_prefixes": [
       "src/workgate/control/",
       "src/workgate/http/",

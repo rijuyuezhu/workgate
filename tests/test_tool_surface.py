@@ -18,10 +18,6 @@ from workgate.tools.contracts import (
     ToolRegistry,
 )
 from workgate.tools.declarative import _normalize_description
-from workgate.tools.tool_handlers import (
-    UnknownToolError,
-    call_tool,
-)
 
 LOCAL_MCP_TOOL_NAMES = {
     "audit_tail",
@@ -570,33 +566,6 @@ def test_http_tool_routes_reject_unsupported_methods():
 
     with pytest.raises(ValueError, match="Unsupported HTTP tool method 'PUT'"):
         build_http_app(tool_catalog=catalog)
-
-
-@pytest.mark.asyncio
-async def test_tool_handlers_report_unknown_tool():
-    class EmptyRegistry(ToolRegistry):
-        pass
-
-    catalog = ToolCatalog((EmptyRegistry(),))
-
-    with pytest.raises(UnknownToolError, match="Unknown tool: example_tool"):
-        await call_tool("example_tool", {}, catalog=catalog)
-
-
-@pytest.mark.asyncio
-async def test_tool_handlers_are_collected_from_explicit_catalog():
-    async def example_handler(args):
-        return {"from_registry": args["value"]}
-
-    class ExampleRegistry(ToolRegistry):
-        def http_handlers(self):
-            return {"example_tool": example_handler}
-
-    catalog = ToolCatalog((ExampleRegistry(),))
-
-    assert await call_tool("example_tool", {"value": 42}, catalog=catalog) == {
-        "from_registry": 42
-    }
 
 
 @pytest.mark.asyncio

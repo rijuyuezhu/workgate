@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
 import workgate.control.http.tool_routes as http_tool_routes_module
+import workgate.control.mcp.watchdogs as mcp_watchdogs
 import workgate.executor.shell as shell_ops
 from tests.helpers import (
     build_paired_http_app,
@@ -1648,12 +1649,14 @@ def test_rest_tool_watchdog_returns_timeout(tmp_path, monkeypatch):
 def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.05")
     clear_settings_cache()
 
     app, harness = build_paired_http_app(get_settings())
     client = TestClient(app)
     session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    monkeypatch.setattr(
+        http_tool_routes_module, "tool_timeout_s", lambda _name: 0.01
+    )
 
     original_call = harness.call
 
@@ -1717,13 +1720,13 @@ def test_rest_readyz_does_not_expose_workspace_root(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
     mcp, harness = build_paired_mcp(get_settings())
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
+    monkeypatch.setattr(mcp_watchdogs, "tool_timeout_s", lambda _name: 0.01)
 
     original_call = harness.call
 

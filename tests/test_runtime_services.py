@@ -1,10 +1,8 @@
 import pytest
 
-from workgate.config.control import resolve_control_config
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.control.runtime import build_control_runtime
-from workgate.control.services import build_control_services
 from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.services import build_runtime_services
@@ -43,26 +41,14 @@ def test_executor_runtime_services_construct_explicit_store_dependencies(
         assert get_state_store() is services.state_store
 
 
-def test_control_services_do_not_construct_machine_session_authority(tmp_path):
-    settings = Settings(
-        workspace_root=tmp_path / "executor-workspace-must-not-be-used",
-        state_dir=tmp_path / "control-state",
-    )
-    services = build_control_services(resolve_control_config(settings))
-
-    assert services.state_store.layout.root == settings.state_dir
-    assert not hasattr(services, "tool_session_store")
-
-
-def test_role_service_construction_does_not_rebind_state_context(tmp_path):
+def test_role_runtime_construction_does_not_rebind_state_context(tmp_path):
     outer_settings, outer_state_store = _outer_services(tmp_path)
     with use_state_store(outer_state_store):
-        control = build_control_services(
-            resolve_control_config(
-                Settings(
-                    workspace_root=tmp_path / "unused-control-workspace",
-                    state_dir=tmp_path / "control-state",
-                )
+        control = build_control_runtime(
+            Settings(
+                workspace_root=tmp_path / "unused-control-workspace",
+                state_dir=tmp_path / "control-state",
+                auth_mode="none",
             )
         )
         executor = build_runtime_services(
@@ -75,6 +61,7 @@ def test_role_service_construction_does_not_rebind_state_context(tmp_path):
         )
 
         assert control.state_store is not outer_state_store
+        assert not hasattr(control, "tool_session_store")
         assert executor.state_store is not outer_state_store
         assert executor.tool_session_store is not None
         assert get_state_store() is outer_state_store

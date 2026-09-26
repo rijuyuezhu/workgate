@@ -8,6 +8,7 @@ from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
 from ..jobs.managed import ManagedJobsRuntime
 from ..oauth.core.state import OAuthState, build_oauth_state
+from ..persistence import FileStateStore
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .audit import ControlAuditService
@@ -15,7 +16,6 @@ from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
 from .jobs import ControlJobService
 from .pairing import ExecutorPairingService
-from .services import ControlServices, build_control_services
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
@@ -29,9 +29,9 @@ class ControlRuntime:
     """Own the control process's composed services and lifecycle."""
 
     config: ControlConfig
-    """Resolved control-owned authority for new composition code."""
-    services: ControlServices
-    """Explicit shared state services owned by this runtime."""
+    """Resolved control-owned authority."""
+    state_store: FileStateStore
+    """Control-private durable state owned by this runtime."""
     control_state: ControlState
     """Restart-critical durable control facts backed by the shared state store."""
     executor_transport: ExecutorTransport
@@ -59,7 +59,7 @@ class ControlRuntime:
     oauth_state: OAuthState
     """Control-owned dynamic-client and authorization-code live state."""
     tool_catalog: ToolCatalog
-    """Control tool catalog with the migrated Search service already bound."""
+    """Control-owned public tool catalog."""
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
@@ -157,8 +157,8 @@ class ControlRuntime:
 def build_control_runtime(settings: Settings) -> ControlRuntime:
     """Construct one control graph from one resolved role configuration."""
     config = resolve_control_config(settings)
-    services = build_control_services(config)
-    control_state = ControlState(services.state_store)
+    state_store = FileStateStore(lambda: config.state_dir)
+    control_state = ControlState(state_store)
     executor_transport = ExecutorTransport(
         control_state,
         max_pending_commands=config.executor_max_pending_commands,
@@ -179,7 +179,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
         executor_transport,
-        services.state_store,
+        state_store,
         config.data_dir,
     )
 
@@ -200,15 +200,13 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )
-    managed_jobs_runtime = ManagedJobsRuntime(services.state_store, config)
+    managed_jobs_runtime = ManagedJobsRuntime(state_store, config)
     job_service = ControlJobService(
         session_coordinator,
         managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
-    todo_service = ControlTodoService(
-        control_state, services.state_store, config
-    )
+    todo_service = ControlTodoService(control_state, state_store, config)
     audit_service = ControlAuditService(session_coordinator)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,
@@ -230,12 +228,10 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     executor_transport.set_executor_invalidated_callback(
         stream_hub.close_executor
     )
-    oauth_state = build_oauth_state(
-        config.state_dir, state_store=services.state_store
-    )
+    oauth_state = build_oauth_state(config.state_dir, state_store=state_store)
     return ControlRuntime(
         config=config,
-        services=services,
+        state_store=state_store,
         control_state=control_state,
         executor_transport=executor_transport,
         executor_pairing=executor_pairing,

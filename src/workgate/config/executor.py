@@ -10,7 +10,7 @@ from .settings import Settings
 
 @dataclass(frozen=True, slots=True)
 class ExecutorConfig(SharedRoleConfig):
-    """Executor-owned machine policy needed by new executor composition code."""
+    """Executor-owned machine policy."""
 
     workspace_root: Path
     allow_full_control: bool
@@ -65,7 +65,7 @@ def get_executor_config() -> ExecutorConfig:
 
 
 def resolve_executor_config(settings: Settings) -> ExecutorConfig:
-    """Snapshot executor-owned authority from the transitional user-facing settings."""
+    """Snapshot executor-owned authority from user-facing settings."""
     return ExecutorConfig(
         state_dir=settings.state_dir.resolve(strict=False),
         workspace_root=settings.workspace_root.resolve(strict=False),

@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+import workgate.control.mcp.watchdogs as mcp_watchdogs
 from tests.helpers import build_paired_mcp, mcp_structured
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.dispatch import ExecutorDispatcher
@@ -26,7 +27,6 @@ async def test_connector_tools_use_custom_mcp_error_handler(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
     async def failing_search(query: str):
@@ -65,7 +65,6 @@ async def test_connector_tool_timeout_uses_custom_mcp_error_handler(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
 
     async def hanging_search(query: str):
@@ -80,6 +79,7 @@ async def test_connector_tool_timeout_uses_custom_mcp_error_handler(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
     session_id = session["session_id"]
+    monkeypatch.setattr(mcp_watchdogs, "tool_timeout_s", lambda _name: 0.01)
 
     search_payload = mcp_structured(
         await mcp.call_tool(

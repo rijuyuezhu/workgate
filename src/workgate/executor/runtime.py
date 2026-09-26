@@ -44,7 +44,7 @@ class ExecutorRuntime:
     """Own the executor process's composed services and lifecycle."""
 
     config: ExecutorConfig
-    """Resolved executor-owned machine authority for new composition code."""
+    """Resolved executor-owned machine authority."""
     services: RuntimeServices
     """Explicit shared state services owned by this executor."""
     agent_bridge: ExecutorAgentBridgeService
@@ -56,15 +56,15 @@ class ExecutorRuntime:
     shell: ShellService
     """Executor-owned public shell and tracked-job resource service."""
     sessions: ExecutorSessionService
-    """Executor-authoritative final shared-session resource service."""
+    """Executor-authoritative shared-session resource service."""
     ui_files: UiFilesService
     """Executor-owned internal Human UI file operations."""
     ui_terminals: UiTerminalsService
     """Executor-owned internal Human UI terminal operations."""
     profile_store: ExecutorProfileStore | None
-    """Final v1 profile store, absent when no persistent profile is configured."""
+    """Persistent executor profile store, when configured."""
     connection: ExecutorConnection | None = field(default=None, init=False)
-    """Live final executor v1 reconnect loop when a final profile exists."""
+    """Live control reconnect loop when a profile exists."""
     _terminal_stream_tasks: set[asyncio.Task[None]] = field(
         default_factory=set, init=False, repr=False
     )
@@ -182,7 +182,7 @@ class ExecutorRuntime:
     async def _execute_protocol_command_with_state(
         self, command: ExecutorCommand
     ):
-        """Adapt final v1 envelopes to executor-owned operation services."""
+        """Adapt executor protocol envelopes to owned operation services."""
         if command.op == "terminal.attach":
             if command.session_id is not None:
                 raise ValueError("terminal.attach must not carry session_id")

@@ -40,12 +40,10 @@ from .watchdogs import install_mcp_tool_watchdogs
 
 def _control_state_store(
     runtime: ControlRuntime | None, settings: ControlConfig
-):
-    services = None if runtime is None else getattr(runtime, "services", None)
-    store = None if services is None else getattr(services, "state_store", None)
+) -> FileStateStore:
     return (
-        store
-        if store is not None
+        runtime.state_store
+        if runtime is not None
         else FileStateStore(lambda: settings.state_dir)
     )
 

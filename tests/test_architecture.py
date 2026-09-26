@@ -603,8 +603,8 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
                 ui_enabled=False,
             )
         )
-        assert runtime.services.state_store.layout.root == root / "control-state"
-        assert not hasattr(runtime.services, "tool_session_store")
+        assert runtime.state_store.layout.root == root / "control-state"
+        assert not hasattr(runtime, "tool_session_store")
         """
     )
     completed = subprocess.run(
@@ -619,24 +619,6 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
 
 def test_source_dependency_graph_has_no_cycles() -> None:
     assert _dependency_cycles() == _ALLOWED_DEPENDENCY_CYCLES
-
-
-def test_executor_runtime_code_does_not_consult_ambient_settings() -> None:
-    """Executor policy must enter through ExecutorConfig, not get_settings()."""
-    violations: list[tuple[str, int]] = []
-    root = _PACKAGE_ROOT / "executor"
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "get_settings"
-            ):
-                violations.append(
-                    (str(path.relative_to(_PROJECT_ROOT)), node.lineno)
-                )
-    assert violations == []
 
 
 def test_executor_runtime_never_imports_monolithic_settings_authority() -> None:

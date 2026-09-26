@@ -1,4 +1,4 @@
-"""Executor-side composition for migrated domain services."""
+"""Executor-owned tool service composition."""
 
 import asyncio
 from typing import Any, cast

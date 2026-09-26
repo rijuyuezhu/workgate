@@ -516,9 +516,8 @@ def load_settings(
     """Load settings without mutating the runtime filesystem.
 
     When ``setting_names`` is provided, YAML/environment values owned by another
-    process role are not imported into this process. Foreign fields still get
-    model defaults so the transitional monolithic Settings type remains usable
-    during composition cleanup.
+    process role are not imported into this process. Unselected fields retain
+    model defaults.
     """
     selected = _selected_setting_names(setting_names)
     selected_config: str | Path | None = config_path

@@ -1,4 +1,4 @@
-"""Build executor protocol hello state for the final v1 resource namespace."""
+"""Build executor protocol hello state."""
 
 import platform
 
@@ -21,7 +21,7 @@ def build_executor_hello(
     shells: tuple[ShellInventorySummary, ...] = (),
     jobs: tuple[JobInventorySummary, ...] = (),
 ) -> ExecutorHelloRequest:
-    """Return one complete thin inventory for executor-owned v1 resources."""
+    """Return one complete inventory of executor-owned resources."""
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(
             workgate_version=__version__,

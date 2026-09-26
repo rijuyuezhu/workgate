@@ -7,6 +7,7 @@ import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 import workgate.agent_bridge.cli as agent_cli
+import workgate.config.settings as settings_module
 import workgate.control.cli as server_cli
 import workgate.executor.cli as executor_cli
 import workgate.executor.jobs.cli as jobs_cli
@@ -15,7 +16,7 @@ import workgate.standalone.cli as standalone_cli
 import workgate.ui.cli as tui_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
-from workgate.app_paths import app_paths
+from workgate.app_paths import AppPaths, app_paths
 from workgate.config.executor import ExecutorConfig
 from workgate.config.roles import (
     CONTROL_SETTING_NAMES,
@@ -330,8 +331,16 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
 ):
     from workgate.config.cli import settings_from_args
 
-    config_home = tmp_path / "config-home"
-    workgate_config = config_home / "workgate"
+    workgate_config = tmp_path / "config"
+    paths = AppPaths(
+        config_dir=workgate_config,
+        state_dir=tmp_path / "state",
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        runtime_dir=tmp_path / "runtime",
+    )
+    monkeypatch.setattr(settings_module, "app_paths", lambda: paths)
+    monkeypatch.setattr(executor_cli, "app_paths", lambda: paths)
     executor_config_dir = workgate_config / "executor"
     executor_config_dir.mkdir(parents=True)
     control_config = workgate_config / "config.yaml"
@@ -345,7 +354,6 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
         f"workspace_root: {workspace}\ncommand_denylist: [executor-only]\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
     monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
     monkeypatch.delenv("WORKGATE_OAUTH_ADMIN_PIN", raising=False)
@@ -361,9 +369,7 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
     executor_args = cli._build_parser().parse_args(["executor", "run"])
     executor = settings_from_args(executor_args)
     assert executor.workspace_root == workspace
-    from workgate.app_paths import app_paths
-
-    assert executor.state_dir == app_paths().executor_state_dir
+    assert executor.state_dir == paths.executor_state_dir
     assert executor.command_denylist == ["executor-only"]
     assert executor.oauth_admin_pin is None
     assert executor.port == Settings().port

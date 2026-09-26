@@ -1,4 +1,4 @@
-"""Typed filesystem and process-start errors shared across local and worker runtimes."""
+"""Typed filesystem and process-start errors shared across Workgate runtimes."""
 
 import os
 from pathlib import Path

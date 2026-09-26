@@ -35,8 +35,8 @@ async def test_control_runtime_restores_only_durable_product_facts(
     )
     first = build_control_runtime(settings)
 
-    assert first.control_state.state_store is first.services.state_store
-    assert first.oauth_state.state_store is first.services.state_store
+    assert first.control_state.state_store is first.state_store
+    assert first.oauth_state.state_store is first.state_store
 
     await first.start()
     executor_id = new_executor_id()

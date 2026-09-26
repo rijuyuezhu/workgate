@@ -185,7 +185,7 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
             executor_workspace / "copied-in-background.txt"
         ).read_text() == ("crossed executor protocol\n")
         assert not (control_workspace / "copied-in-background.txt").exists()
-        assert not hasattr(control.services, "tool_session_store")
+        assert not hasattr(control, "tool_session_store")
 
         await connection.aclose()
         connection = None

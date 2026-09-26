@@ -121,11 +121,11 @@ def _run_from_args(args: argparse.Namespace) -> None:
 
 
 def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
-    """Register final executor provisioning and runtime commands."""
+    """Register executor provisioning and runtime commands."""
     executor = subparsers.add_parser(
         "executor",
         help="Pair or run this machine as a Workgate executor",
-        description="Pair or run the final Workgate executor process.",
+        description="Pair or run the Workgate executor process.",
     )
     actions = executor.add_subparsers(dest="executor_command", required=True)
 

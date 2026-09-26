@@ -49,7 +49,7 @@ def current_role_config() -> SharedRoleConfig | None:
 
 
 def resolve_shared_role_config(settings) -> SharedRoleConfig:
-    """Snapshot shared policy from the transitional flat Settings surface."""
+    """Snapshot shared role policy from user-facing settings."""
     return SharedRoleConfig(
         state_dir=settings.state_dir.resolve(strict=False),
         ui_terminal_idle_timeout_s=settings.ui_terminal_idle_timeout_s,

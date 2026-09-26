@@ -14,6 +14,7 @@ from workgate.control.mcp.session_limits import (
 )
 from workgate.http.request_limits import RequestBodyLimitMiddleware
 from workgate.oauth.http.middleware import AuthMiddleware
+from workgate.persistence import FileStateStore
 from workgate.ui.security import (
     UI_LOCAL_TOKEN_HEADER,
     get_or_create_ui_local_token,
@@ -53,8 +54,10 @@ class _EmptyCatalog:
 
 
 def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
+    config = resolve_control_config(settings)
     return SimpleNamespace(
-        config=resolve_control_config(settings),
+        config=config,
+        state_store=FileStateStore(lambda: config.state_dir),
         tool_catalog=tool_catalog,
         control_state=object(),
         executor_transport=object(),
