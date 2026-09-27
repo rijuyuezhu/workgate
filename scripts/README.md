@@ -5,20 +5,12 @@ Scripts are grouped by the lifecycle they own rather than by implementation
 language. Moving a script must update workflow, pre-commit, source-package,
 provenance, test, and documentation references in the same change.
 
-## Root deployment interfaces
+## Root files
 
-Only two tracked files may live directly under `scripts/`:
-
-| File | Responsibility | Why it remains at the root |
-| --- | --- | --- |
-| `README.md` | Records the ownership, lifecycle, and compatibility contract for repository automation. | The ownership map describes the complete `scripts` tree rather than one automation lifecycle. |
-| `run-with-cloudflare-tunnel.sh` | Loads checkout configuration, starts the MCP process, runs the named Cloudflare tunnel, and cleans up the background server. | Quickstart, tunnel setup, and the documented systemd service invoke this exact checkout path, so it is a stable user-facing deployment interface rather than internal automation. |
-
-New repository automation should normally be placed in `generation`, `release`,
-`testing`, or `validation`; adding another root script requires an explicit public
-deployment compatibility rationale and behavior-level consumer coverage where
-appropriate. The Cloudflare helper is smoke-tested as valid Bash and must retain
-its executable Git mode in a source checkout.
+`README.md` is the only tracked file that lives directly under `scripts/`.
+Repository automation belongs in `generation`, `release`, `testing`, or
+`validation`. User-facing deployment artifacts belong under `deploy/`, where
+their lifecycle can remain separate from checkout-only automation.
 
 ## `release`
 

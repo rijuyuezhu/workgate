@@ -1,15 +1,16 @@
 # Cloudflare Tunnel
 
-Use Cloudflare Tunnel when the Workgate **control** runs on your own machine or
-VPS but needs a public HTTPS origin. The tunnel is an edge adapter: it does not
-change control/executor trust or move machine execution into Cloudflare.
+Use Cloudflare Tunnel when a self-hosted Workgate **control** needs a public HTTPS
+origin without accepting inbound Internet traffic directly. cloudflared is an
+optional edge process; it does not own Workgate configuration, executor trust,
+or machine execution.
 
-For a server with a normal public reverse proxy, use [VPS deployment](vps.md)
+For a VPS with a normal public reverse proxy, use [VPS deployment](vps.md)
 instead.
 
 ## 1. Configure Workgate
 
-Keep Workgate's durable configuration in its normal YAML file. For example,
+Keep Workgate configuration in its normal YAML file. For example,
 `~/.config/workgate/config.yaml`:
 
 ```yaml
@@ -23,44 +24,78 @@ oauth_admin_pin: replace-with-a-long-random-secret
 
 `base_url` is the public origin only; do not append `/mcp`.
 
-Start the control normally:
+Start control and verify the loopback origin before involving Cloudflare:
 
 ```bash
 workgate control
-```
-
-Verify the loopback service before adding the tunnel:
-
-```bash
 curl --fail http://127.0.0.1:8765/healthz
 ```
 
 ## 2. Create the tunnel
 
-Follow Cloudflare's
-[remote tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/)
-to create a tunnel and publish `mcp.example.com` to:
+Create a remotely managed tunnel in the Cloudflare dashboard using
+[Cloudflare's tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/),
+then publish `mcp.example.com` to:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-The tunnel token belongs to **cloudflared**, not to Workgate configuration.
-Keep it in the secret mechanism used to launch cloudflared rather than adding it
-to `config.yaml`.
+The tunnel token belongs to **cloudflared**, not to Workgate. Do not put it in
+`config.yaml`, Workgate state, or `.env`.
 
-For an interactive smoke test, use the connector command Cloudflare provides,
-for example:
+## 3. Smoke-test in the foreground
+
+Use cloudflared 2025.4.0 or newer; that release line supports
+[`--token-file`](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/)
+so the credential can stay in a private file instead of an environment
+variable or command-line token:
 
 ```bash
-cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN"
+cloudflared tunnel --no-autoupdate run --token-file /path/to/private/tunnel.token
 ```
 
-The repository still contains `scripts/run-with-cloudflare-tunnel.sh` as a
-development helper, but it is not the canonical production lifecycle. A
-first-class managed cloudflared lifecycle is tracked separately.
+Stop the foreground process with Ctrl-C. Workgate control keeps running.
 
-## 3. Verify the public origin
+## 4. Run cloudflared as a Linux service
+
+Production Linux deployments should run cloudflared independently from Workgate
+under systemd. The repository provides the canonical unit and setup notes in
+`deploy/cloudflared/`.
+
+The supplied unit:
+
+- runs cloudflared as a dedicated `cloudflared` account;
+- reads the tunnel token from `/etc/cloudflared/workgate.token`;
+- restarts cloudflared after failures;
+- logs through journald;
+- does not start, stop, configure, or hold credentials for Workgate.
+
+After installing the unit as described in the repository file
+`deploy/cloudflared/README.md`, operate it with:
+
+```bash
+sudo systemctl status workgate-cloudflared.service
+sudo systemctl restart workgate-cloudflared.service
+sudo systemctl stop workgate-cloudflared.service
+journalctl -u workgate-cloudflared.service
+```
+
+Restart cloudflared after replacing the tunnel token. Restarting Workgate is not
+required for token rotation.
+
+## Failure behavior
+
+The two services fail independently:
+
+- if cloudflared is down, the public hostname is unavailable while local Workgate
+  control continues running;
+- if Workgate control is down, cloudflared can remain connected but the loopback
+  origin is unavailable;
+- temporary network loss is handled by cloudflared and Workgate executor
+  reconnect behavior rather than by one process supervising the other.
+
+## Verify the public origin
 
 From another network:
 
@@ -68,7 +103,7 @@ From another network:
 curl --fail https://mcp.example.com/healthz
 ```
 
-The public MCP endpoint is:
+The MCP endpoint is:
 
 ```text
 https://mcp.example.com/mcp
@@ -80,10 +115,11 @@ and the Human UI all use the same control origin.
 ## Common mistakes
 
 - putting `/mcp` in `base_url`;
-- publishing the tunnel to the wrong local port;
+- publishing the tunnel to the wrong loopback port;
 - changing the public hostname without updating `base_url`;
 - exposing a public origin with `auth_mode: none`;
-- treating the cloudflared token as a Workgate secret/config field.
+- treating the cloudflared tunnel token as a Workgate setting or state file;
+- coupling Workgate and cloudflared into one wrapper process.
 
 Continue with [ChatGPT connector](chatgpt-connector.md) or
 [Troubleshooting](../troubleshooting.md).
