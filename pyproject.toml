@@ -80,6 +80,8 @@ source-include = [
     "deploy/cloudflare/src/entry.py",
     "deploy/cloudflare/uv.lock",
     "deploy/cloudflare/wrangler.jsonc",
+    "deploy/cloudflared/README.md",
+    "deploy/cloudflared/workgate-cloudflared.service",
     "scripts/README.md",
     "scripts/validation/check-coverage.py",
     "scripts/validation/check-native-provenance.py",

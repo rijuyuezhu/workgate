@@ -16,14 +16,6 @@ from workgate.config.surface import (
     yaml_default,
 )
 
-TUNNEL_HELPER_SPECS: tuple[tuple[str, str, str], ...] = (
-    (
-        "CLOUDFLARE_TUNNEL_TOKEN",
-        "",
-        "Optional token consumed by scripts/run-with-cloudflare-tunnel.sh. This uses Cloudflare Tunnel only, not Cloudflare Access.",
-    ),
-)
-
 
 def _wrap_comment(text: str, *, width: int = 100) -> list[str]:
     """Wrap a comment into shell/YAML comment lines."""
@@ -91,12 +83,6 @@ def generate_env_example() -> str:
                 lines.append(f"# {_env_line(spec.env_var, spec.example)}")
             else:
                 lines.append(_env_line(spec.env_var, spec.example))
-
-    lines.extend(["", "# Development-only Cloudflare tunnel helper settings."])
-    for name, default, help_text in TUNNEL_HELPER_SPECS:
-        for comment in _wrap_comment(help_text):
-            lines.append(f"# {comment}")
-        lines.append(f"{name}={default}")
 
     return "\n".join(lines) + "\n"
 
@@ -262,17 +248,6 @@ def _settings_sections() -> list[dict[str, Any]]:
                     "rows": rows,
                 }
             )
-    sections.append(
-        {
-            "kind": "table",
-            "heading": "Cloudflare tunnel helper settings",
-            "headers": ["Environment", "Default", "Description"],
-            "rows": [
-                [_code(name), _code(default or "unset"), help_text]
-                for name, default, help_text in TUNNEL_HELPER_SPECS
-            ],
-        }
-    )
     return sections
 
 
@@ -288,10 +263,6 @@ def generate_config_reference_json() -> str:
         ],
         "section_order": list(SECTION_ORDER),
         "settings": [_setting_doc(spec) for spec in SETTING_SPECS],
-        "tunnel_helper_settings": [
-            {"env": name, "default": default, "description": help_text}
-            for name, default, help_text in TUNNEL_HELPER_SPECS
-        ],
         "sections": _settings_sections(),
     }
     return (

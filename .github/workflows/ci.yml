@@ -300,6 +300,8 @@ jobs:
           test -f "$source_dir/deploy/cloudflare/package-lock.json"
           test -f "$source_dir/deploy/cloudflare/uv.lock"
           test -f "$source_dir/deploy/cloudflare/pylock.toml"
+          test -f "$source_dir/deploy/cloudflared/README.md"
+          test -f "$source_dir/deploy/cloudflared/workgate-cloudflared.service"
           test ! -e "$source_dir/deploy/cloudflare/node_modules"
           test ! -e "$source_dir/deploy/cloudflare/python_modules"
           test ! -e "$source_dir/deploy/cloudflare/src/workgate"

@@ -1848,26 +1848,6 @@
           "Python executable; the POSIX default maps to the running interpreter on Windows."
         ]
       ]
-    },
-    {
-      "headers": [
-        "Environment",
-        "Default",
-        "Description"
-      ],
-      "heading": "Cloudflare tunnel helper settings",
-      "kind": "table",
-      "rows": [
-        [
-          {
-            "code": "CLOUDFLARE_TUNNEL_TOKEN"
-          },
-          {
-            "code": "unset"
-          },
-          "Optional token consumed by scripts/run-with-cloudflare-tunnel.sh. This uses Cloudflare Tunnel only, not Cloudflare Access."
-        ]
-      ]
     }
   ],
   "settings": [
@@ -3039,13 +3019,6 @@
       "section": "Tool executables",
       "type": "string",
       "unset_cli": null
-    }
-  ],
-  "tunnel_helper_settings": [
-    {
-      "default": "",
-      "description": "Optional token consumed by scripts/run-with-cloudflare-tunnel.sh. This uses Cloudflare Tunnel only, not Cloudflare Access.",
-      "env": "CLOUDFLARE_TUNNEL_TOKEN"
     }
   ]
 }

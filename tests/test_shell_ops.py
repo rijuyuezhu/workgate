@@ -2250,14 +2250,13 @@ async def test_run_shell_command_filters_server_environment(
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "should-not-leak")
     monkeypatch.setenv("PYTHONPATH", "/app/src")
     monkeypatch.setenv("DOCKER_AUTH_CONFIG", "should-not-leak")
-    monkeypatch.setenv("CLOUDFLARE_TUNNEL_TOKEN", "should-not-leak")
     clear_settings_cache()
 
     result = await run_shell(
         _executor_config(),
         _python_shell_command(
             "import os; "
-            "blocked = ('PYTHONPATH', 'CLOUDFLARE_TUNNEL_TOKEN'); "
+            "blocked = ('PYTHONPATH',); "
             "keys = [key for key in sorted(os.environ) "
             "if key in blocked or key.startswith('WORKGATE_') "
             "or key.startswith('DOCKER_')]; "

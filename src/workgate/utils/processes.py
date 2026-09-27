@@ -29,10 +29,7 @@ def _restore_or_remove_loader_var(env: dict[str, str], name: str) -> None:
 
 def user_subprocess_env(*, frozen: bool | None = None) -> dict[str, str]:
     """Return a sanitized environment for commands launched on behalf of users."""
-    blocked_names = {
-        "CLOUDFLARE_TUNNEL_TOKEN",
-        "PYTHONPATH",
-    }
+    blocked_names = {"PYTHONPATH"}
     env = {
         key: value
         for key, value in os.environ.items()

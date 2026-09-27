@@ -194,7 +194,7 @@ def _persistent_shell_args(
 
 
 def _subprocess_env() -> dict[str, str]:
-    blocked_names = {"CLOUDFLARE_TUNNEL_TOKEN", "PYTHONPATH"}
+    blocked_names = {"PYTHONPATH"}
     env = {
         key: value
         for key, value in os.environ.items()
