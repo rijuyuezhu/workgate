@@ -1,21 +1,13 @@
 # Architecture and ownership boundaries
 
-This page records the stable architecture contracts of the project: process
-composition, dependency direction, runtime ownership, session authority,
-durability, executor trust, machine-runtime constraints, and protocol/UI
-boundaries. Architecture tests exact-freeze membership only where membership is
-itself a security, packaging, public-surface, or process contract. Ordinary
-internal files may move or split without being added to a central filename
-inventory as long as the dependency and ownership invariants remain true.
-
-!!! note
-    This page describes the architecture currently implemented during the
-    #123 migration. The canonical target contracts for that migration live in
-    [Control/executor architecture](architecture/control-executor.md).
+This page describes the implementation and package boundaries that enforce
+Workgate's runtime ownership model. The canonical control/executor protocol,
+trust, session, and failure contracts live in
+[Control/executor architecture](architecture/control-executor.md).
 
 ## Dependency direction
 
-The target application structure separates process entry points, control delivery
+The application structure separates process entry points, control delivery
 adapters, shared HTTP infrastructure, Human UI behavior, transport-neutral
 operations, and domain services:
 
@@ -69,10 +61,10 @@ General rules:
 - `http` must not import control delivery adapters or Human UI implementations.
 - UI core must not import control delivery adapters. `ui/http` may depend on UI
   core and explicit control-side adapter seams.
-- `tools`, `jobs`, `agent_bridge`, and `composition` are shared mechanism/contract
-  layers. They must not depend on executor implementation modules. Machine
-  behavior belongs under `executor`; public declarations stay fail-closed until
-  role composition binds them to their owner.
+- `tools`, `jobs`, and `agent_bridge` are shared mechanism/contract layers.
+  They must not depend on executor implementation modules. Machine behavior
+  belongs under `executor`; public declarations stay fail-closed until role
+  composition binds them to their owner.
 - `schemas`, `protocol`, and small `utils` modules remain dependency-light shared
   contracts/primitives and must not become alternate homes for machine policy.
 - `utils` is for small dependency-leaf technical primitives, not a holding area
@@ -116,15 +108,13 @@ the SDK enters it once per MCP session, which is a narrower lifecycle than the
 control process.
 
 `ControlRuntime` and `ExecutorRuntime` each expose a frozen role-specific
-configuration snapshot. Newly migrated root decisions read those views: control
-owns server/auth/UI/state/admission policy, while executor owns workspace,
-path/command policy, machine concurrency, and executable paths. Both runtimes
-temporarily retain a clearly named `legacy_settings` bridge for components that
-still consume the monolithic `Settings`; that bridge is migration debt, not a
-shared-authority contract.
+configuration snapshot. Control owns server/auth/UI/state/admission policy,
+while executor owns workspace, path/command policy, machine concurrency, and
+executable paths. Normal post-composition runtime code reads those role-owned
+views rather than re-reading the ambient monolithic `Settings` adapter.
 
 `ControlRuntime` also owns one `ControlState` backed by the same synchronous
-`StateStore` used by the existing durable domains. It restores final executor
+`StateStore` used by the existing durable domains. It restores executor
 trust/revocation and control session binding/lifecycle facts before live actors
 start; executor bearer plaintext and presence are not part of that registry.
 Approved OAuth clients use that same store, while authorization codes remain in

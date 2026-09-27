@@ -5,7 +5,7 @@
 ## Recommended deployment
 
 - Run under a dedicated OS account or inside a disposable VM when stronger isolation is needed.
-- Expose public deployments through HTTPS with `WORKGATE_AUTH_MODE=oauth`.
+- Expose public deployments through HTTPS with `auth_mode: oauth`.
 - Do not expose container-runtime control sockets or unrestricted host roots to the service account.
 - Do not mount unrestricted SSH keys or all of `~/.ssh`.
 - Use single-repository deploy keys or short-lived GitHub App installation tokens.
@@ -16,7 +16,7 @@ Cloudflare Tunnel is a convenient public transport. Cloudflare Access is optiona
 
 ## OAuth security
 
-The built-in OAuth implementation is designed for a single local operator connecting an MCP client, such as ChatGPT, to a high-risk shell server. It is not a general-purpose multi-user identity provider. Keep `WORKGATE_AUTH_MODE=oauth` for public HTTP deployments and use `WORKGATE_AUTH_MODE=none` only for trusted local testing.
+The built-in OAuth implementation is designed for a single local operator connecting an MCP client, such as ChatGPT, to a high-risk shell server. It is not a general-purpose multi-user identity provider. Keep `auth_mode: oauth` for public HTTP deployments and use `auth_mode: none` only for trusted local testing.
 
 ### Standards alignment
 
@@ -38,15 +38,15 @@ The HTTP OAuth flow follows the security boundaries required by the [MCP authori
 - The authorization request must include `response_type=code`, `client_id`, `redirect_uri`, and `resource`; the `resource` must match this server.
 - Dynamically registered clients bind authorization codes to registered redirect URIs. Token exchange must present the same `client_id`, `redirect_uri`, `resource`, and PKCE verifier.
 - Authorization codes are short-lived, one-time-use in-memory records. Reusing a code returns `invalid_grant`.
-- Access tokens are signed locally with a randomly generated secret stored in `state_dir/oauth-jwt-secret` with mode `0600`. Initialization is serialized across processes, and existing non-placeholder secrets shorter than 32 UTF-8 bytes are rejected rather than silently reused. Token lifetime is controlled by `WORKGATE_OAUTH_ACCESS_TOKEN_TTL_S`.
-- The local approval form escapes reflected fields before rendering HTML and can require `WORKGATE_OAUTH_ADMIN_PIN` before issuing authorization codes.
+- Access tokens are signed locally with a randomly generated secret stored in `state_dir/oauth-jwt-secret` with mode `0600`. Initialization is serialized across processes, and existing non-placeholder secrets shorter than 32 UTF-8 bytes are rejected rather than silently reused. Token lifetime is controlled by `oauth_access_token_ttl_s`.
+- The local approval form escapes reflected fields before rendering HTML and can require `oauth_admin_pin` before issuing authorization codes.
 - Failed PIN attempts, client registration, code issuance, token issuance, invalid bearer tokens, and successful authenticated requests are audited.
 
 ### Operational requirements
 
-- Serve public deployments over HTTPS and set `WORKGATE_BASE_URL` to the externally visible origin. This keeps metadata, issuer, resource, redirect, and transport allowlist calculations stable behind a tunnel or reverse proxy.
-- When OAuth and `WORKGATE_BASE_URL` are configured together, startup requires `WORKGATE_OAUTH_ADMIN_PIN` to be a non-placeholder value of at least 8 characters. Use a substantially longer random value in production and treat it as an approval secret, not as a user account password.
-- Keep `WORKGATE_AUTH_BYPASS_LOCALHOST=false` for shared hosts or any environment where local processes are not fully trusted.
+- Serve public deployments over HTTPS and set `base_url` to the externally visible origin. This keeps metadata, issuer, resource, redirect, and transport allowlist calculations stable behind a tunnel or reverse proxy.
+- When OAuth and `base_url` are configured together, startup requires `oauth_admin_pin` to be a non-placeholder value of at least 8 characters. Use a substantially longer random value in production and treat it as an approval secret, not as a user account password.
+- Keep `auth_bypass_localhost: false` for shared hosts or any environment where local processes are not fully trusted.
 - Keep the state directory private. It contains the JWT signing secret and may coexist with audit logs that include sensitive request context.
 - Prefer short access-token lifetimes for public deployments. There is no refresh-token flow and no server-side token revocation list, so token expiry is the primary recovery mechanism after bearer-token disclosure.
 - Review audit logs and rotate the state directory when moving a server between trust domains.
@@ -94,7 +94,7 @@ When OAuth authentication is enabled, protected MCP and REST routes authenticate
 ## Full-control mode
 
 `allow_full_control: true` is an explicit **executor** machine-policy mode
-(also available to the executor through `WORKGATE_ALLOW_FULL_CONTROL=true`).
+(also available to the executor through `allow_full_control: true`).
 It disables that executor's built-in command and path denylists, but MCP safety
 annotations remain conservative and continue to identify destructive or
 open-world tools. The control CLI does not accept `--allow-full-control`.
@@ -164,12 +164,12 @@ Treat generated URLs as bearer secrets: anyone with the URL can read the snapsho
 
 Operational guidance:
 
-- Set `WORKGATE_BASE_URL` for public deployments so generated links use the externally reachable HTTPS origin.
+- Set `base_url` for public deployments so generated links use the externally reachable HTTPS origin.
 - Use short TTLs for sensitive artifacts and prefer `max_downloads=1` for one-time handoff.
 - Keep `inline=false` unless the user explicitly needs in-browser rendering.
-- Set `WORKGATE_FILE_DOWNLOAD_MAX_FILE_BYTES` to bound executor-to-control snapshot transfer size.
+- Set `file_download_max_file_bytes` to bound executor-to-control snapshot transfer size.
 - Keep both `state_dir` and `data_dir` private: link-management metadata lives in state while immutable payload bytes live in data.
-- Disable the feature with `WORKGATE_FILE_DOWNLOAD_ENABLED=false` when public artifact URLs are not needed.
+- Disable the feature with `file_download_enabled: false` when public artifact URLs are not needed.
 - Remember that audit logs record link creation, revocation, and serving events, but the tokenized URL itself should still be treated as sensitive until expiry.
 
 ## Session-to-session transfers
@@ -211,7 +211,7 @@ Managed-job logs are appended before metadata accounting. If bounded lock retrie
 
 ## Executor pairing and machine trust
 
-New machines establish trust with `workgate executor connect CONTROL_URL`. Pairing uses a high-entropy device code plus a separate short user code: the owner approves the request through authenticated Human UI, while the issued executor bearer is returned only to the polling executor and is never exposed to the browser. Control-side durable state stores only the credential verifier. The executor atomically saves its private profile before an auth-only credential proof; that proof authenticates without publishing presence or resource inventory. Keep that state directory owner-private and revoke or explicitly replace the credential if it may be compromised. The old remote invite, `/join`, and `workgate worker` provisioning surfaces are removed.
+New machines establish trust with `workgate executor connect CONTROL_URL`. Pairing uses a high-entropy device code plus a separate short user code: the owner approves the request through authenticated Human UI, while the issued executor bearer is returned only to the polling executor and is never exposed to the browser. Control-side durable state stores only the credential verifier. The executor atomically saves its private profile before an auth-only credential proof; that proof authenticates without publishing presence or resource inventory. Keep that state directory owner-private and revoke or explicitly replace the credential if it may be compromised.
 
 Executor trust does not expire merely because the machine is suspended, rebooted, or offline for a long time. Temporary transport failures reconnect with the same saved credential. Trust ends only through explicit revoke/replacement, loss/reset of the control trust state, loss of the local executor profile, or a deliberate incompatible trust migration.
 

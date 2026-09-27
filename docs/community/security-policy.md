@@ -8,4 +8,5 @@ Please report suspected vulnerabilities privately to the maintainers rather than
 
 ## Supported line
 
-Security fixes target the current `main` branch and latest released `3.x` line unless otherwise noted.
+Security fixes target the current `main` branch and latest published release
+unless otherwise noted.

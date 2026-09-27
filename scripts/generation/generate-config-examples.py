@@ -70,7 +70,8 @@ def generate_env_example() -> str:
     lines: list[str] = [
         "# shellcheck shell=sh",
         "# shellcheck disable=SC2034",
-        "# Copy it with: cp .env.example .env",
+        "# Optional environment-override reference.",
+        "# Prefer config.example.yaml / config.yaml for durable configuration.",
     ]
     specs_by_section: dict[str, list[SettingSpec]] = {
         section: [] for section in SECTION_ORDER
@@ -91,7 +92,7 @@ def generate_env_example() -> str:
             else:
                 lines.append(_env_line(spec.env_var, spec.example))
 
-    lines.extend(["", "# Optional Cloudflare tunnel helper settings."])
+    lines.extend(["", "# Development-only Cloudflare tunnel helper settings."])
     for name, default, help_text in TUNNEL_HELPER_SPECS:
         for comment in _wrap_comment(help_text):
             lines.append(f"# {comment}")
@@ -129,7 +130,7 @@ def generate_yaml_example() -> str:
     """Generate config.example.yaml content."""
     validate_setting_specs()
     lines: list[str] = [
-        "# Full YAML config example.",
+        "# Primary durable Workgate configuration example.",
         "# Effective precedence: defaults < config file < WORKGATE_* environment variables < CLI arguments.",
     ]
     specs_by_section = {section: [] for section in SECTION_ORDER}

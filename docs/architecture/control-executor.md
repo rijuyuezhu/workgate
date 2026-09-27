@@ -1,9 +1,8 @@
 # Control/executor architecture
 
-This document is the canonical architecture contract for the control/executor
-refactor tracked by [#123](https://github.com/rijuyuezhu/workgate/issues/123).
-The issue remains the detailed design record and implementation checklist; this
-page intentionally keeps only contracts that later code must preserve.
+This document is the canonical architecture contract for Workgate's
+control/executor model. [#123](https://github.com/rijuyuezhu/workgate/issues/123)
+remains the detailed design history and implementation checklist.
 
 ## Core invariants
 
@@ -31,7 +30,7 @@ generic workflow engine, or distributed exactly-once machinery for this model.
 
 ## Packages and dependency direction
 
-The target roots are:
+The primary roots are:
 
 ```text
 workgate.protocol   dependency-light shared wire/data contracts
@@ -387,17 +386,17 @@ v1 does not require a plugin/factory framework or universal operation metadata.
 
 ## Deployment and non-goals
 
-The first hosted target is an ordinary Linux VPS behind Caddy/nginx, with
-executors making outbound HTTPS/WSS connections only. No Redis, Postgres, broker,
-object store, or Kubernetes is required. Standalone is the same architecture on
-loopback under a lifecycle-only supervisor. Plain HTTP executor transport is
-therefore valid only on loopback; a remote executor bearer must never be sent
-over cleartext HTTP.
+The baseline self-hosted deployment is an ordinary Linux VPS behind Caddy/nginx,
+with executors making outbound HTTPS/WSS connections only. No Redis, Postgres,
+broker, object store, or Kubernetes is required. Standalone uses the same
+architecture on loopback under a lifecycle-only supervisor. Plain HTTP executor
+transport is therefore valid only on loopback; a remote executor bearer must
+never be sent over cleartext HTTP.
 
-Optional hosted/Cloudflare work comes only after VPS and standalone are stable
-and must adapt to this core rather than reshape it. The current feasibility
-result and its explicit unsupported/degraded surfaces are documented in
-[Hosted / Cloudflare feasibility](hosted-cloudflare.md).
+The Cloudflare-hosted control is an optional adapter with an intentionally
+smaller feature surface; it adapts to these contracts rather than defining a
+second core architecture. See
+[Hosted / Cloudflare architecture](hosted-cloudflare.md).
 
 Explicit non-goals include active-active control, distributed leader election,
 generic durable command queues, transparent ordinary-RPC restart recovery,

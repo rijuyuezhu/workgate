@@ -1,4 +1,4 @@
-# Full YAML config example.
+# Primary durable Workgate configuration example.
 # Effective precedence: defaults < config file < WORKGATE_* environment variables < CLI arguments.
 
 # Server.

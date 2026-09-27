@@ -18,7 +18,7 @@ http://127.0.0.1:8765/ui
 
 When the service is exposed through a public hostname, use the corresponding public `/ui` URL and sign in through OAuth. Do not expose an unauthenticated HTTP service to a shared or public network.
 
-The UI path and enablement can be changed through `WORKGATE_UI_PATH` and `WORKGATE_UI_ENABLED`. See [Configuration](../reference/configuration.md).
+The `ui_path` and `ui_enabled` settings control the browser UI. See [Configuration](../reference/configuration.md).
 
 ## Start OpenTUI
 
@@ -51,7 +51,7 @@ View health, resource usage, recent activity, and alerts for the selected execut
 
 ### Executors
 
-Approve pairing requests, inspect or rename executors, see whether they are online, and revoke trust from the **Executors** page. Pairing and reconnect behavior are covered in [Executors](remote-workers.md).
+Approve pairing requests, inspect or rename executors, see whether they are online, and revoke trust from the **Executors** page. Pairing and reconnect behavior are covered in [Executors](executors.md).
 
 ### Terminals
 

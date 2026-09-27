@@ -57,9 +57,9 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Comparison with upstream: comparison.md
   - Getting started:
       - Quickstart: getting-started/quickstart.md
+      - Choose a deployment: getting-started/deployment.md
       - Standalone local mode: getting-started/standalone.md
       - VPS deployment: getting-started/vps.md
       - Cloudflare Tunnel: getting-started/cloudflare-tunnel.md
@@ -69,7 +69,7 @@ nav:
   - Guides:
       - Common workflows: guides/common-workflows.md
       - Human interface: guides/human-interface.md
-      - Executors: guides/remote-workers.md
+      - Executors: guides/executors.md
       - Agent capability bridge: guides/agent-bridge.md
       - Audit log: guides/audit-log.md
       - Example prompts: guides/example-prompts.md
@@ -81,11 +81,12 @@ nav:
   - Security: security.md
   - Troubleshooting: troubleshooting.md
   - Architecture:
-      - Current implementation: architecture.md
-      - Control/executor target: architecture/control-executor.md
+      - Implementation boundaries: architecture.md
+      - Control/executor contract: architecture/control-executor.md
       - Hosted / Cloudflare: architecture/hosted-cloudflare.md
   - Development: development.md
   - Maintenance:
+      - Product comparison: comparison.md
       - Fork and upstream differences: maintenance/fork-upstream-differences.md
       - Upstream commit review: maintenance/upstream-commit-review.md
       - Native artifact provenance: maintenance/native-artifact-provenance.md

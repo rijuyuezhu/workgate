@@ -1,55 +1,89 @@
 # Cloudflare Tunnel
 
-A remote MCP client needs a public HTTPS endpoint. Cloudflare Tunnel can forward a public hostname to the local `workgate control` service while the control's own OAuth flow protects `/mcp`.
+Use Cloudflare Tunnel when the Workgate **control** runs on your own machine or
+VPS but needs a public HTTPS origin. The tunnel is an edge adapter: it does not
+change control/executor trust or move machine execution into Cloudflare.
 
-## Create the tunnel and obtain its token
+For a server with a normal public reverse proxy, use [VPS deployment](vps.md)
+instead.
 
-Follow Cloudflare's [Create a tunnel in the dashboard](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/) guide:
+## 1. Configure Workgate
 
-1. sign in to Cloudflare and open **Networking → Tunnels**;
-2. create a remotely managed tunnel and give it a recognizable name;
-3. copy the installation command shown for the connector; the long `eyJ...` value after `--token` is the tunnel token; and
-4. add a **Published application** route for a hostname such as `mcp.example.com`.
+Keep Workgate's durable configuration in its normal YAML file. For example,
+`~/.config/workgate/config.yaml`:
 
-The token authorizes a connector to run this tunnel, so keep it private. Cloudflare also documents how to [retrieve a tunnel token later](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/remote-tunnel-permissions/#get-the-tunnel-token).
+```yaml
+mode: mcp
+host: 127.0.0.1
+port: 8765
+base_url: https://mcp.example.com
+auth_mode: oauth
+oauth_admin_pin: replace-with-a-long-random-secret
+```
 
-## Choose the service target
+`base_url` is the public origin only; do not append `/mcp`.
 
-For the [local source setup](quickstart.md#3-smoke-test-locally), set the published application's service URL to:
+Start the control normally:
+
+```bash
+workgate control
+```
+
+Verify the loopback service before adding the tunnel:
+
+```bash
+curl --fail http://127.0.0.1:8765/healthz
+```
+
+## 2. Create the tunnel
+
+Follow Cloudflare's
+[remote tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/)
+to create a tunnel and publish `mcp.example.com` to:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-Add the public origin and copied token to `.env`:
+The tunnel token belongs to **cloudflared**, not to Workgate configuration.
+Keep it in the secret mechanism used to launch cloudflared rather than adding it
+to `config.yaml`.
 
-```env
-CLOUDFLARE_TUNNEL_TOKEN=eyJ...
-WORKGATE_BASE_URL=https://mcp.example.com
-```
-
-`WORKGATE_BASE_URL` is the origin only. Do not append `/mcp`. Return to [Quickstart](quickstart.md#4-create-and-start-the-tunnel) to start the service and tunnel.
-
-## Verify
-
-From another network, check:
+For an interactive smoke test, use the connector command Cloudflare provides,
+for example:
 
 ```bash
-curl -i https://mcp.example.com/healthz
+cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN"
 ```
 
-Use this URL in the MCP client:
+The repository still contains `scripts/run-with-cloudflare-tunnel.sh` as a
+development helper, but it is not the canonical production lifecycle. A
+first-class managed cloudflared lifecycle is tracked separately.
+
+## 3. Verify the public origin
+
+From another network:
+
+```bash
+curl --fail https://mcp.example.com/healthz
+```
+
+The public MCP endpoint is:
 
 ```text
 https://mcp.example.com/mcp
 ```
 
+Pair executors against `https://mcp.example.com`; executor traffic, MCP, OAuth,
+and the Human UI all use the same control origin.
+
 ## Common mistakes
 
-- The connector URL does not end in `/mcp`.
-- `WORKGATE_BASE_URL` incorrectly includes `/mcp`.
-- The tunnel target does not point to the local control address and port.
-- The public hostname changed but `.env` still contains the old origin.
-- OAuth is disabled on a public hostname.
+- putting `/mcp` in `base_url`;
+- publishing the tunnel to the wrong local port;
+- changing the public hostname without updating `base_url`;
+- exposing a public origin with `auth_mode: none`;
+- treating the cloudflared token as a Workgate secret/config field.
 
-Continue with [ChatGPT connector](chatgpt-connector.md) or see [Troubleshooting](../troubleshooting.md).
+Continue with [ChatGPT connector](chatgpt-connector.md) or
+[Troubleshooting](../troubleshooting.md).
