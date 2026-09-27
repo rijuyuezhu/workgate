@@ -39,8 +39,7 @@ Create `/etc/systemd/system/workgate-control.service`:
 ```ini
 [Unit]
 Description=Workgate Control
-Wants=network-online.target
-After=network-online.target
+After=network.target
 
 [Service]
 Type=simple
@@ -159,8 +158,7 @@ Then run it under systemd:
 ```ini
 [Unit]
 Description=Workgate Executor (alice)
-Wants=network-online.target
-After=network-online.target
+After=network.target
 
 [Service]
 Type=simple

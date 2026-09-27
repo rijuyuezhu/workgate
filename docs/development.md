@@ -39,7 +39,7 @@ uv run pytest tests/test_tool_surface.py -q
 uv run pre-commit run --all-files
 uv run pyright
 uv run pytest -q
-uv run mkdocs build --strict
+uv run --group docs mkdocs build --strict
 ```
 
 The CI coverage ratchet is implemented by
