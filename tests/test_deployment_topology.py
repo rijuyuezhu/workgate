@@ -150,6 +150,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
         seen_before_restart = (await _executor_row(base_url, executor_id))[
             "last_seen_at"
         ]
+        assert isinstance(seen_before_restart, int | float)
         stop_process(executor)
         restarted_executor = start_executor_process(
             executor_config,
@@ -166,8 +167,8 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
             stderr_path=logs / "executor-2.stderr.log",
             timeout_s=20,
         )
-        # A fresh hello publishes presence; a later activity proves the new
-        # delivery poll is live rather than the old poll's grace-period state.
+        # A fresh hello publishes presence. Wait for later authenticated
+        # activity before the read below proves that command delivery recovered.
         await wait_for_executor_online(
             base_url,
             restarted_executor,

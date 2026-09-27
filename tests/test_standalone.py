@@ -1334,6 +1334,7 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
 
 
 @pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="real standalone process restart coverage is exercised on POSIX",
@@ -1408,6 +1409,7 @@ def test_two_real_standalone_instances_share_xdg_roots_without_state_collision(
 
 
 @pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="real standalone process restart coverage is exercised on POSIX",
@@ -1462,6 +1464,7 @@ def test_real_supervisor_restarts_control_and_executor_independently(
 
 
 @pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="real standalone owner-action process exit is exercised on POSIX",

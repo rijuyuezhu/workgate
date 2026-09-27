@@ -347,7 +347,7 @@ async def wait_for_executor_online(
                 pass
             if asyncio.get_running_loop().time() >= deadline:
                 raise AssertionError(
-                    f"executor {executor_id} did not publish a fresh hello at {base_url}"
+                    f"executor {executor_id} did not publish fresh authenticated activity at {base_url}"
                 )
             await asyncio.sleep(0.05)
 
@@ -383,8 +383,7 @@ async def wait_for_http_ready(
             except httpx.HTTPError, json.JSONDecodeError:
                 pass
             if asyncio.get_running_loop().time() >= deadline:
-                process.terminate()
-                process.wait(timeout=2)
+                stop_process(process)
                 stdout, stderr = _captured_process_output(
                     process,
                     stdout_path=stdout_path,
