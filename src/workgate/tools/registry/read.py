@@ -1,7 +1,5 @@
 """High-level read tool registry."""
 
-from __future__ import annotations
-
 from ...schemas.input_models.read import ReadPathArg
 from ...schemas.input_models.session import SessionIdArg
 from ...schemas.result_models.read import ReadOutput

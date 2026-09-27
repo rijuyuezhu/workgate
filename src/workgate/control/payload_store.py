@@ -1,7 +1,5 @@
 """Control-owned immutable payload bytes shared by feature-specific resources."""
 
-from __future__ import annotations
-
 import contextlib
 import hashlib
 import os

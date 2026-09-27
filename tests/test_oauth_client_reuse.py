@@ -14,8 +14,8 @@ from workgate.oauth.core.models import OAuthClient
 from workgate.oauth.core.requests import RegistrationRequest
 from workgate.oauth.core.state import (
     build_oauth_state,
-    configure_oauth_state,
     oauth_state,
+    use_oauth_state,
 )
 
 BASE_URL = "https://workgate.example.com"
@@ -28,11 +28,10 @@ CLIENT_NAME = "Reusable public client"
 def _reset_oauth_state(tmp_path):
     clear_settings_cache()
     state = build_oauth_state(tmp_path / ".state")
-    previous = configure_oauth_state(state)
     try:
-        yield
+        with use_oauth_state(state):
+            yield
     finally:
-        configure_oauth_state(previous)
         clear_settings_cache()
 
 
@@ -188,8 +187,7 @@ def test_registration_reuses_approved_client_after_memory_reload(
 
     reloaded_state = build_oauth_state(tmp_path / ".state")
     assert reloaded_state.start() == 1
-    previous = configure_oauth_state(reloaded_state)
-    try:
+    with use_oauth_state(reloaded_state):
         reloaded_client = TestClient(
             _add_public_routes_to_mcp_http_app(Starlette())[0]
         )
@@ -203,8 +201,6 @@ def test_registration_reuses_approved_client_after_memory_reload(
         assert repeated.json()["client_id"] == client_id
         assert oauth_state().clients[client_id].approved_at is not None
         assert len(oauth_state().clients) == 1
-    finally:
-        configure_oauth_state(previous)
 
 
 def test_concurrent_matching_registrations_create_exactly_one_client(
@@ -228,9 +224,12 @@ def test_concurrent_matching_registrations_create_exactly_one_client(
     monkeypatch.setattr(oauth_service, "_new_client_id", slow_client_id)
     monkeypatch.setattr(oauth_service, "audit", lambda *args, **kwargs: None)
 
+    state = oauth_state()
+
     def register():
-        barrier.wait()
-        return oauth_service.register_dynamic_client(request)
+        with use_oauth_state(state):
+            barrier.wait()
+            return oauth_service.register_dynamic_client(request)
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         results = list(executor.map(lambda _: register(), range(workers)))

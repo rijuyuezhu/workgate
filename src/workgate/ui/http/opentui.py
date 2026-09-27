@@ -14,7 +14,7 @@ from typing import Any, Protocol
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ... import __version__
-from ...config.settings import get_settings
+from ...config.control import ControlConfig
 from ..runtime import resolve_tui_command
 from ..security import (
     UI_API_PREFIX,
@@ -24,8 +24,7 @@ from ..security import (
 from .terminals import (
     UI_TERMINAL_SUBPROTOCOL,
     _authorize_websocket,
-    _release_connection,
-    _reserve_connection,
+    _runtime,
     _websocket_protocols,
 )
 
@@ -276,9 +275,10 @@ def spawn_opentui_process(
     cols: int,
     rows: int,
     cell_aspect: float = 2.0,
+    *,
+    settings: ControlConfig,
 ) -> OpenTuiProcess:
-    """Start OpenTUI with a private loopback API credential in its environment."""
-    settings = get_settings()
+    """Start OpenTUI with explicit control config and a private API credential."""
     env = os.environ.copy()
     env.update(
         {
@@ -332,11 +332,13 @@ async def ui_opentui_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=4400, reason=str(exc)[:120])
         return
 
+    runtime = _runtime(websocket)
     authorized, close_code, reason = _authorize_websocket(websocket, "local")
     if not authorized:
         await websocket.close(code=close_code, reason=reason[:120])
         return
-    marker = _reserve_connection()
+    connections = runtime.human_ui_runtime.terminal_connections
+    marker = connections.reserve(runtime.config.ui_terminal_max_connections)
     if marker is None:
         await websocket.close(
             code=4429, reason="Too many Human UI terminal connections"
@@ -351,9 +353,11 @@ async def ui_opentui_websocket(websocket: WebSocket) -> None:
     )
     try:
         await websocket.accept(subprotocol=subprotocol)
-        process = spawn_opentui_process(cols, rows, cell_aspect)
+        process = spawn_opentui_process(
+            cols, rows, cell_aspect, settings=runtime.config
+        )
     except Exception as exc:
-        _release_connection(marker)
+        connections.release(marker)
         _LOGGER.exception("Unable to start OpenTUI")
         detail = f"{type(exc).__name__}: {exc}"
         with contextlib.suppress(Exception):
@@ -363,7 +367,7 @@ async def ui_opentui_websocket(websocket: WebSocket) -> None:
             await websocket.close(code=1011, reason=detail[:120])
         return
 
-    settings = get_settings()
+    settings = runtime.config
     loop = asyncio.get_running_loop()
     last_activity = loop.time()
 
@@ -455,7 +459,7 @@ async def ui_opentui_websocket(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        _release_connection(marker)
+        connections.release(marker)
         await process.close()
         with contextlib.suppress(Exception):
             await websocket.close()

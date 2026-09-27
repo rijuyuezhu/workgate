@@ -1,6 +1,6 @@
 """Narrow explicit composition helpers for the Search vertical."""
 
-from ..config import ExecutorConfig
+from ...config.executor import ExecutorConfig
 from ..tool_session.resolver import SessionResolver
 from ..tool_session.store import ToolSessionStore
 from .core import SearchConfig

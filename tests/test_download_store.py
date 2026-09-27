@@ -74,25 +74,29 @@ def test_concurrent_processes_do_not_lose_links(tmp_path, monkeypatch):
 import hashlib
 import sys
 from pathlib import Path
-from workgate.config.settings import clear_settings_cache
+from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.download_snapshot import DownloadSnapshot, new_staging_path, open_private_staging
 from workgate.control.downloads import _register_snapshot
+from workgate.persistence import FileStateStore, use_state_store
 clear_settings_cache()
+settings = get_settings()
+state_store = FileStateStore(lambda: settings.state_dir)
 source = Path(sys.argv[1])
 data = source.read_bytes()
 staging = new_staging_path()
 with open_private_staging(staging) as handle:
     handle.write(data)
-_register_snapshot(
-    DownloadSnapshot(
-        staging_path=staging,
-        display_path=str(source),
-        source_name=source.name,
-        size=len(data),
-        sha256=hashlib.sha256(data).hexdigest(),
-    ),
-    ttl_s=60, filename=None, max_downloads=None, inline=False, session_id=None,
-)
+with use_state_store(state_store):
+    _register_snapshot(
+        DownloadSnapshot(
+            staging_path=staging,
+            display_path=str(source),
+            source_name=source.name,
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        ),
+        ttl_s=60, filename=None, max_downloads=None, inline=False, session_id=None,
+    )
 """
     environment = os.environ.copy()
     processes = [

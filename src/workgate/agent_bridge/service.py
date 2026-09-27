@@ -7,8 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..config.control import ControlSettingsView
-from ..config.settings import get_settings
+from ..config.control import ControlConfig, get_control_config
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
     AgentConfigStatusOutput,
@@ -45,7 +44,7 @@ _shared_mcp_manager_key: tuple[str, str, float, bool] | None = None
 
 
 def _shared_agent_mcp_client_manager(
-    settings: ControlSettingsView,
+    settings: ControlConfig,
     *,
     allow_stdio: bool = True,
 ) -> AgentMcpClientManager:
@@ -91,11 +90,11 @@ atexit.register(_close_shared_agent_mcp_client_manager)
 
 
 def build_network_agent_registry_from_settings(
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
     client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
 ) -> AgentCapabilityRegistry:
     """Build the control-owned HTTP/SSE registry without machine/Skill policy."""
-    active_settings: ControlSettingsView = settings or get_settings()
+    active_settings: ControlConfig = settings or get_control_config()
     if client_manager_factory is AgentMcpClientManager:
         client_manager = _shared_agent_mcp_client_manager(
             active_settings, allow_stdio=False

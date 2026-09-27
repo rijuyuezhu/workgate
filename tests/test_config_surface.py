@@ -147,6 +147,35 @@ def test_config_file_errors(tmp_path):
     }
 
 
+def test_role_scoped_config_rejects_unknown_keys_before_filtering(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "executor.yaml"
+    config.write_text(
+        "workspace_rooot: /tmp/typo\noauth_admin_pin: known-control-only\n",
+        encoding="utf-8",
+    )
+
+    from workgate.config.roles import EXECUTOR_SETTING_NAMES
+
+    with pytest.raises(ValueError, match="workspace_rooot"):
+        load_settings(config, setting_names=EXECUTOR_SETTING_NAMES)
+
+
+def test_role_scoped_config_ignores_known_foreign_role_keys(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "executor.yaml"
+    config.write_text(
+        "oauth_admin_pin: control-only-secret\n", encoding="utf-8"
+    )
+
+    from workgate.config.roles import EXECUTOR_SETTING_NAMES
+
+    loaded = load_settings(config, setting_names=EXECUTOR_SETTING_NAMES)
+    assert loaded.oauth_admin_pin is None
+
+
 def test_settings_expose_platform_owned_namespaces() -> None:
     settings = Settings()
     paths = settings_module.app_paths()
@@ -203,48 +232,6 @@ def test_default_config_is_discovered_from_platform_config_dir(
     assert settings.port == 8123
 
 
-def test_worker_runtime_does_not_discover_ambient_default_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    config_dir = settings_module.app_paths().config_dir
-    config_dir.mkdir(parents=True)
-    ambient_workspace = tmp_path / "ambient-workspace"
-    (config_dir / "config.yaml").write_text(
-        yaml.safe_dump(
-            {"workspace_root": str(ambient_workspace), "port": 8123}
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
-    monkeypatch.setenv("WORKGATE_REMOTE_WORKER_RUNTIME", "1")
-
-    settings = load_settings()
-
-    assert settings.workspace_root == tmp_path.resolve()
-    assert settings.port != 8123
-
-
-def test_worker_runtime_honors_explicit_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    config = tmp_path / "worker.yaml"
-    workspace = tmp_path / "configured-workspace"
-    config.write_text(
-        yaml.safe_dump({"workspace_root": str(workspace), "port": 8123}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("WORKGATE_REMOTE_WORKER_RUNTIME", "1")
-    monkeypatch.setenv("WORKGATE_CONFIG", str(config))
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
-
-    settings = load_settings()
-
-    assert settings.workspace_root == workspace
-    assert settings.port == 8123
-
-
 def test_yaml_paths_must_be_absolute_after_expansion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -275,3 +262,101 @@ def test_relative_env_and_cli_paths_remain_invocation_relative(
     assert load_settings(
         overrides={"workspace_root": "cli-workspace"}
     ).workspace_root == (tmp_path / "cli-workspace")
+
+
+def test_role_scoped_load_ignores_foreign_yaml_and_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from workgate.config.roles import (
+        CONTROL_SETTING_NAMES,
+        EXECUTOR_SETTING_NAMES,
+    )
+
+    config = tmp_path / "config.yaml"
+    control_state = tmp_path / "control-state"
+    executor_state = tmp_path / "executor-state"
+    workspace = tmp_path / "workspace"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "state_dir": str(control_state),
+                "workspace_root": str(workspace),
+                "oauth_admin_pin": "control-secret-pin",
+                "command_denylist": ["executor-only-command"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "env-control-secret")
+    monkeypatch.setenv("WORKGATE_COMMAND_DENYLIST", "env-executor-command")
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(executor_state))
+
+    executor = load_settings(config, setting_names=EXECUTOR_SETTING_NAMES)
+    assert executor.state_dir == executor_state
+    assert executor.workspace_root == workspace
+    assert executor.command_denylist == ["env-executor-command"]
+    assert executor.oauth_admin_pin is None
+
+    control = load_settings(config, setting_names=CONTROL_SETTING_NAMES)
+    assert control.state_dir == executor_state
+    assert control.oauth_admin_pin == "env-control-secret"
+    assert control.workspace_root != workspace
+    assert "executor-only-command" not in control.command_denylist
+    assert "env-executor-command" not in control.command_denylist
+
+
+def test_role_scoped_load_ignores_foreign_invalid_yaml_path(
+    tmp_path: Path,
+) -> None:
+    from workgate.config.roles import CONTROL_SETTING_NAMES
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        'workspace_root: "./executor-relative"\nport: 9123\n',
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config, setting_names=CONTROL_SETTING_NAMES)
+    assert settings.port == 9123
+
+
+def test_role_scoped_load_rejects_foreign_explicit_override(
+    tmp_path: Path,
+) -> None:
+    from workgate.config.roles import CONTROL_SETTING_NAMES
+
+    with pytest.raises(ValueError, match="not owned by this role"):
+        load_settings(
+            overrides={"workspace_root": str(tmp_path)},
+            setting_names=CONTROL_SETTING_NAMES,
+        )
+
+
+def test_executor_role_defaults_are_private_and_explicit_values_win(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from workgate.app_paths import app_paths
+    from workgate.config.roles import EXECUTOR_SETTING_NAMES
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.delenv("WORKGATE_STATE_DIR", raising=False)
+
+    defaults = {"state_dir": app_paths().executor_state_dir}
+    loaded = load_settings(
+        setting_names=EXECUTOR_SETTING_NAMES,
+        default_config_path=app_paths().executor_config_file,
+        default_overrides=defaults,
+    )
+    assert loaded.state_dir == app_paths().executor_state_dir
+
+    explicit = tmp_path / "explicit-state"
+    config = tmp_path / "executor.yaml"
+    config.write_text(f"state_dir: {explicit}\n", encoding="utf-8")
+    loaded = load_settings(
+        config,
+        setting_names=EXECUTOR_SETTING_NAMES,
+        default_config_path=app_paths().executor_config_file,
+        default_overrides=defaults,
+    )
+    assert loaded.state_dir == explicit

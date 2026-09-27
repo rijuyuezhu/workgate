@@ -3,12 +3,12 @@ import shutil
 
 import pytest
 
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.files import files_config_from_executor_config
 from workgate.executor.files_service import FilesService
 from workgate.executor.search.composition import build_search_service
-from workgate.executor.tool_session.store import get_tool_session_store
 
 _SESSION_COUNTER = 0
 

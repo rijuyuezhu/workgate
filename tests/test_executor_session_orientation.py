@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import subprocess
 from pathlib import Path
 
 from tests.helpers import build_tool_session_store
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.session_orientation import (
     _git_info,
     _git_output,

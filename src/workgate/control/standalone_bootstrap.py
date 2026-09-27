@@ -1,7 +1,5 @@
 """Control-owned half of protected standalone local executor bootstrap."""
 
-from __future__ import annotations
-
 import json
 import os
 import secrets

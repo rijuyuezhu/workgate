@@ -11,7 +11,7 @@ from authlib.oauth2.rfc6749.errors import InvalidRequestError
 from starlette.datastructures import FormData, QueryParams
 from starlette.requests import Request
 
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ..core.requests import (
     AuthorizationRequestInput,
     RegistrationRequest,
@@ -79,7 +79,7 @@ async def parse_authorization_form(
 
 async def parse_registration_request(request: Request) -> RegistrationRequest:
     """Parse dynamic client registration JSON into a typed service input."""
-    settings = get_settings()
+    settings = get_control_config()
     max_body_bytes = settings.oauth_registration_max_body_bytes
     content_length = request.headers.get("content-length")
     if max_body_bytes > 0 and content_length:

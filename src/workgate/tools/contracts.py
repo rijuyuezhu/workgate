@@ -7,7 +7,7 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from ..config.control import ControlSettingsView
+from ..config.control import ControlConfig
 
 type ToolHandler = Callable[[dict[str, Any]], Awaitable[Any]]
 
@@ -23,7 +23,7 @@ class HttpToolRoute:
     path: str
     """Absolute REST path registered on the FastAPI app."""
     tool_name: str
-    """Local tool name dispatched by this route."""
+    """Canonical tool name dispatched by this route."""
     timeout_cancellable: bool = True
     """Whether the REST watchdog may cancel this invocation on timeout."""
 
@@ -32,7 +32,7 @@ class HttpToolRoute:
 class McpToolContext:
     """Shared MCP registration context prepared by the app assembler."""
 
-    settings: ControlSettingsView
+    settings: ControlConfig
     """Resolved control-owned settings exposed to public tool metadata."""
     read_only_tool_annotations: ToolAnnotations
     """MCP annotation applied to read-only tools."""

@@ -4,11 +4,16 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Awaitable, Callable, Generator, Mapping
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
 from ..audit import audit
-from ..config.settings import get_settings
+from ..config.role_config import (
+    SharedRoleConfig,
+    get_role_config,
+    use_role_config,
+)
 from ..errors import public_error_type
 from ..persistence import StateStore, use_state_store
 from ..schemas.result_models.jobs import (
@@ -89,8 +94,13 @@ type ManagedJobHandler = Callable[
 class ManagedJobsRuntime:
     """Own process-local managed-job handlers, tasks, and liveness leases."""
 
-    def __init__(self, state_store: StateStore | None = None) -> None:
+    def __init__(
+        self,
+        state_store: StateStore | None = None,
+        role_config: SharedRoleConfig | None = None,
+    ) -> None:
         self.state_store = state_store
+        self.role_config = role_config
         self.handlers: dict[str, ManagedJobHandler] = {}
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.leases: dict[str, ManagedJobLease] = {}
@@ -205,33 +215,42 @@ class ManagedJobsRuntime:
             raise lease_error
 
 
-_MANAGED_JOBS_RUNTIME: ManagedJobsRuntime | None = None
+_MANAGED_JOBS_CONTEXT: ContextVar[ManagedJobsRuntime | None] = ContextVar(
+    "workgate_managed_jobs_context", default=None
+)
 
 
-def configure_managed_jobs_runtime(
-    runtime: ManagedJobsRuntime | None,
-) -> ManagedJobsRuntime | None:
-    """Install a non-owning compatibility binding and return the prior owner."""
-    global _MANAGED_JOBS_RUNTIME
-    previous = _MANAGED_JOBS_RUNTIME
-    _MANAGED_JOBS_RUNTIME = runtime
-    return previous
+@contextlib.contextmanager
+def use_managed_jobs_runtime(
+    runtime: ManagedJobsRuntime,
+) -> Generator[None]:
+    """Bind one managed-jobs owner and its resolved role policy."""
+    token = _MANAGED_JOBS_CONTEXT.set(runtime)
+    try:
+        if runtime.role_config is None:
+            yield
+        else:
+            with use_role_config(runtime.role_config):
+                yield
+    finally:
+        _MANAGED_JOBS_CONTEXT.reset(token)
 
 
 def managed_jobs_runtime() -> ManagedJobsRuntime:
-    """Return the controller-owned managed Jobs runtime compatibility binding."""
-    if _MANAGED_JOBS_RUNTIME is None:
+    """Return the managed-jobs runtime bound to this execution context."""
+    runtime = _MANAGED_JOBS_CONTEXT.get()
+    if runtime is None:
         raise RuntimeError(
-            "managed jobs runtime is not configured; start ControlRuntime"
+            "managed jobs runtime is not configured in this execution context"
         )
-    return _MANAGED_JOBS_RUNTIME
+    return runtime
 
 
 @contextlib.contextmanager
 def _managed_state_scope() -> Generator[None]:
     """Pin managed-job persistence to its owning control runtime."""
-    runtime = _MANAGED_JOBS_RUNTIME
-    if runtime is None or runtime.state_store is None:
+    runtime = managed_jobs_runtime()
+    if runtime.state_store is None:
         yield
         return
     with use_state_store(runtime.state_store):
@@ -296,7 +315,7 @@ def _refresh_job_status(
 
 
 def register_managed_job_handler(kind: str, handler: ManagedJobHandler) -> None:
-    """Register a handler on the configured controller-owned Jobs runtime."""
+    """Register a handler on the configured control-owned Jobs runtime."""
     managed_jobs_runtime().register_handler(kind, handler)
 
 
@@ -340,7 +359,7 @@ def _append_managed_log(
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = message if message.endswith("\n") else message + "\n"
     encoded = payload.encode("utf-8", errors="replace")
-    max_bytes = max(1, int(get_settings().max_job_log_bytes))
+    max_bytes = max(1, int(get_role_config().max_job_log_bytes))
     with target.open("a+b") as handle:
         with contextlib.suppress(OSError):
             target.chmod(0o600)
@@ -554,7 +573,7 @@ async def _start_managed_job_unlocked(
     command: str | None = None,
     cwd: str = ".",
 ) -> JobStartOutput:
-    """Start one controller-managed task owned by an explicit agent session."""
+    """Start one control-managed task owned by an explicit agent session."""
     runtime = managed_jobs_runtime()
     runtime.require_admission()
     normalized_kind = kind.strip()
@@ -704,7 +723,7 @@ async def _stop_managed_job_without_session_admission(
                     job=_public_job(job), killed=False, stderr=""
                 )
             if str(job.get("kind") or "shell") != "managed":
-                raise RuntimeError(f"job is not controller-managed: {job_id}")
+                raise RuntimeError(f"job is not control-managed: {job_id}")
             if not _managed_job_has_local_task(job):
                 return JobStopOutput(
                     job=_public_job(job),
@@ -902,7 +921,7 @@ async def managed_job_list_execute(
     session_id: str,
     include_finished: bool,
 ) -> JobListOutput:
-    """List only controller-managed jobs owned by one explicit session."""
+    """List only control-managed jobs owned by one explicit session."""
     now = _utc()
     with _store_transaction() as store:
         for row in store.get("jobs", []):
@@ -940,7 +959,7 @@ async def managed_job_tail_execute(
             _find_session_job(store, session_id, job_id), set()
         )
         if str(job.get("kind") or "shell") != "managed":
-            raise RuntimeError(f"job is not controller-managed: {job_id}")
+            raise RuntimeError(f"job is not control-managed: {job_id}")
         public = _public_job(job)
         log_path = str(job.get("log_path") or "")
     output = job_status._read_log_tail(log_path, lines)
@@ -1002,7 +1021,7 @@ def managed_job_has_active_reference(
 
 
 def managed_job_id_set(session_id: str, job_ids: list[str]) -> set[str]:
-    """Return requested identifiers owned by controller-managed jobs."""
+    """Return requested identifiers owned by control-managed jobs."""
     requested = set(job_ids)
     if not requested:
         return set()

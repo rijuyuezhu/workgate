@@ -9,19 +9,20 @@ from typing import Any, cast
 
 import pytest
 
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from tests.helpers import python_shell_command
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.jobs import ExecutorJobService, runner_bootstrap
 from workgate.executor.jobs import lifecycle as job_lifecycle
 from workgate.executor.jobs import runner as job_runner
 from workgate.executor.jobs import shell as job_shell
-from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.jobs import managed as job_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as job_recovery
 from workgate.jobs import state as job_state
 from workgate.jobs import status as job_status
+from workgate.persistence import get_state_store, use_state_store
 from workgate.protocol.ids import new_session_id
 from workgate.schemas.result_models.jobs import (
     JobInfo,
@@ -1124,8 +1125,13 @@ def test_concurrent_job_store_transactions_do_not_lose_records(
 ):
     _configure_job_state(tmp_path, monkeypatch, max_jobs=100)
 
+    state_store = get_state_store()
+
     def append(index: int) -> None:
-        with job_recovery.store_transaction() as store:
+        with (
+            use_state_store(state_store),
+            job_recovery.store_transaction() as store,
+        ):
             store["jobs"].append(
                 {
                     "job_id": f"job-{index}",

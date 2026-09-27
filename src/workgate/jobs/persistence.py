@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..audit import audit
-from ..config.settings import get_settings
+from ..config.role_config import get_role_config
 from ..persistence import get_state_store
 from ..utils.private_files import atomic_write_private_text
 from .state import JobAttemptPaths, JobRow, JobStore, MutableJobStore
@@ -167,7 +167,7 @@ def prune_store(store: MutableJobStore, *, max_jobs: int | None = None) -> None:
     ]
     limit = max(
         0,
-        int(get_settings().max_jobs if max_jobs is None else max_jobs),
+        int(get_role_config().max_jobs if max_jobs is None else max_jobs),
     )
     active = [row for row in jobs if not job_is_retention_terminal(row)]
     finished = sorted(

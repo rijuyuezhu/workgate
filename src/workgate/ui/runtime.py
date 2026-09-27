@@ -15,8 +15,7 @@ from urllib.parse import urlsplit
 
 from .. import __version__
 from ..app_paths import app_paths, ensure_private_directory
-from ..config.control import ControlSettingsView
-from ..config.settings import get_settings
+from ..config.control import ControlConfig, get_control_config
 from .contracts import TUI_EXECUTABLE_NAME
 from .security import (
     UI_API_PREFIX,
@@ -206,9 +205,9 @@ def _tui_sidecar_candidates() -> tuple[Path, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
-def tui_runtime_available(settings: ControlSettingsView | None = None) -> bool:
+def tui_runtime_available(settings: ControlConfig | None = None) -> bool:
     """Return whether OpenTUI can be started without materializing a payload."""
-    active = settings or get_settings()
+    active = settings or get_control_config()
     if active.ui_tui_command:
         return True
     return (
@@ -219,10 +218,10 @@ def tui_runtime_available(settings: ControlSettingsView | None = None) -> bool:
 
 
 def resolve_tui_command(
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> list[str]:
     """Resolve a configured, released, embedded, or Bun source OpenTUI runtime."""
-    active = settings or get_settings()
+    active = settings or get_control_config()
     if active.ui_tui_command:
         return split_tui_command(active.ui_tui_command)
 
@@ -276,10 +275,10 @@ def validate_tui_api_base(value: str) -> str:
 def run_tui(
     api_base: str,
     *,
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> int:
     """Launch OpenTUI with its loopback API credential confined to the environment."""
-    active = settings or get_settings()
+    active = settings or get_control_config()
     env = os.environ.copy()
     env.update(
         {

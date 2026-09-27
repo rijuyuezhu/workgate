@@ -21,11 +21,6 @@ from workgate.protocol.terminal import (
     TERMINAL_BROWSER_SUBPROTOCOL,
     TERMINAL_BROWSER_TOKEN_PROTOCOL_PREFIX,
 )
-from workgate.ui.http.live_state import (
-    build_human_ui_runtime,
-    configure_human_ui_runtime,
-    human_ui_runtime,
-)
 from workgate.ui.session import (
     UI_SESSION_BINDING_HEADER,
     UI_SESSION_BINDING_PROTOCOL_PREFIX,
@@ -49,12 +44,9 @@ def test_terminal_settings_are_bounded():
 @pytest.fixture(autouse=True)
 def _reset_settings_and_connections():
     clear_settings_cache()
-    runtime = build_human_ui_runtime()
-    previous = configure_human_ui_runtime(runtime)
     try:
         yield
     finally:
-        configure_human_ui_runtime(previous)
         clear_settings_cache()
 
 
@@ -229,14 +221,16 @@ def _bearer_protocol(scope: str) -> str:
 
 
 def test_terminal_connection_limit(monkeypatch, tmp_path):
-    _configure(monkeypatch, tmp_path, ui_terminal_max_connections=1)
-    marker = terminal_module._reserve_connection()
+    _client_obj, _backend, harness = _client(
+        monkeypatch, tmp_path, ui_terminal_max_connections=1
+    )
+    connections = harness.control.human_ui_runtime.terminal_connections
+    marker = connections.reserve(1)
     assert marker is not None
-    assert terminal_module._reserve_connection() is None
-    terminal_module._release_connection(marker)
-    replacement = terminal_module._reserve_connection()
-    assert replacement is not None
-    terminal_module._release_connection(replacement)
+    try:
+        assert connections.reserve(1) is None
+    finally:
+        connections.release(marker)
 
 
 def test_terminal_http_surface_dispatches_final_executor_ops(
@@ -544,7 +538,7 @@ def test_terminal_websocket_rejects_shell_missing_from_executor_inventory(
 def test_terminal_websocket_streams_snapshot_and_orders_controls(
     monkeypatch, tmp_path
 ):
-    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, harness = _client(monkeypatch, tmp_path, auth_mode="oauth")
     backend.read_output = "\x1b[32mprompt$ \x1b[0m"
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
@@ -582,11 +576,14 @@ def test_terminal_websocket_streams_snapshot_and_orders_controls(
     assert send_call in backend.calls
     assert resize_call in backend.calls
     assert backend.calls.index(send_call) < backend.calls.index(resize_call)
-    assert human_ui_runtime().terminal_connections.active_count() == 0
+    assert (
+        harness.control.human_ui_runtime.terminal_connections.active_count()
+        == 0
+    )
 
 
 def test_terminal_websocket_rejects_legacy_raw_pty_mode(monkeypatch, tmp_path):
-    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    client, backend, harness = _client(monkeypatch, tmp_path, auth_mode="oauth")
     bearer = _bearer_protocol(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
 
     with (
@@ -602,7 +599,10 @@ def test_terminal_websocket_rejects_legacy_raw_pty_mode(monkeypatch, tmp_path):
     assert not any(
         op.startswith("ui.terminals.bridge.") for op, _ in backend.calls
     )
-    assert human_ui_runtime().terminal_connections.active_count() == 0
+    assert (
+        harness.control.human_ui_runtime.terminal_connections.active_count()
+        == 0
+    )
 
 
 def test_terminal_websocket_snapshot_compatibility(monkeypatch, tmp_path):

@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 import workgate.executor.patch.envelope as patch_ops
+from workgate.config.executor import ExecutorConfig, resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import ExecutorConfig, resolve_executor_config
 from workgate.executor.patch import (
     APPLY_PATCH_PHASE_TIMEOUT_S,
     _git_apply_args,

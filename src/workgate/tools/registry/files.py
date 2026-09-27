@@ -1,7 +1,5 @@
 """File operation tool registry."""
 
-from __future__ import annotations
-
 from ...schemas.input_models.files import (
     EditEndLineArg,
     EditStartLineArg,

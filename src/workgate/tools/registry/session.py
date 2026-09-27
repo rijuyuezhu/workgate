@@ -24,7 +24,7 @@ from ..declarative import DeclarativeToolRegistry
 
 def _unrouted_session_tool(name: str) -> RuntimeError:
     return RuntimeError(
-        f"{name} requires the control-plane session router; direct local execution is disabled"
+        f"{name} requires the control-plane session router; machine execution is executor-routed"
     )
 
 

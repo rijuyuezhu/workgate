@@ -14,8 +14,8 @@ from workgate.oauth.core.models import AuthCode, OAuthClient
 from workgate.oauth.core.requests import RegistrationRequest
 from workgate.oauth.core.state import (
     OAuthState,
-    configure_oauth_state,
     oauth_state,
+    use_oauth_state,
 )
 from workgate.persistence import FileStateStore
 
@@ -140,7 +140,6 @@ async def test_queued_client_mutation_rechecks_shutdown_admission(
 ) -> None:
     state = OAuthState(tmp_path / "state")
     assert state.start() == 0
-    previous = configure_oauth_state(state)
     admitted = Event()
     original_require_open = state.require_open
 
@@ -152,13 +151,16 @@ async def test_queued_client_mutation_rechecks_shutdown_admission(
     executor = ThreadPoolExecutor(max_workers=1)
     try:
         with state.client_lock:
-            future = executor.submit(
-                oauth_service.register_dynamic_client,
-                RegistrationRequest(
-                    redirect_uris=("https://client.example/callback",),
-                    client_name="queued",
-                ),
+            request = RegistrationRequest(
+                redirect_uris=("https://client.example/callback",),
+                client_name="queued",
             )
+
+            def register_queued_client():
+                with use_oauth_state(state):
+                    return oauth_service.register_dynamic_client(request)
+
+            future = executor.submit(register_queued_client)
             assert admitted.wait(timeout=1)
             state.stop_admission()
 
@@ -167,19 +169,18 @@ async def test_queued_client_mutation_rechecks_shutdown_admission(
         assert state.clients == {}
     finally:
         executor.shutdown(wait=True)
-        configure_oauth_state(previous)
         await state.aclose()
 
 
-def test_oauth_state_compatibility_binding_is_reversible(tmp_path) -> None:
+def test_oauth_state_context_is_nested_and_reversible(tmp_path) -> None:
     outer = OAuthState(tmp_path / "outer")
     inner = OAuthState(tmp_path / "inner")
-    previous = configure_oauth_state(outer)
-    try:
+
+    with use_oauth_state(outer):
         assert oauth_state() is outer
-        assert configure_oauth_state(inner) is outer
-        assert oauth_state() is inner
-        assert configure_oauth_state(outer) is inner
+        with use_oauth_state(inner):
+            assert oauth_state() is inner
         assert oauth_state() is outer
-    finally:
-        configure_oauth_state(previous)
+
+    with pytest.raises(RuntimeError, match="execution context"):
+        oauth_state()

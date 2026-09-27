@@ -1,4 +1,4 @@
-"""Typed input annotations for worker-side transfer tools."""
+"""Typed input annotations for executor-side transfer tools."""
 
 from typing import Annotated
 
@@ -7,7 +7,7 @@ from pydantic import Field
 TransferPathArg = Annotated[
     str,
     Field(
-        description="File or directory path for a worker-side transfer operation."
+        description="File or directory path for an executor-side transfer operation."
     ),
 ]
 TransferArchivePathArg = Annotated[

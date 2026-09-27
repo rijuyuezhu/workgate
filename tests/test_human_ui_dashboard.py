@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-import workgate.executor.search_composition as executor_composition
+import workgate.executor.tool_composition as executor_composition
 import workgate.ui.dashboard as dashboard_module
 import workgate.ui.http.dashboard as ui_dashboard_module
 from tests.helpers import build_paired_control_harness, build_paired_http_app

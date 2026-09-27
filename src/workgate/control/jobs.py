@@ -1,12 +1,11 @@
 """Control-side hybrid routing for executor jobs and managed orchestration jobs."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable
 from typing import Any
 
 from ..jobs.managed import (
+    ManagedJobsRuntime,
     job_stop_managed_references_execute,
     managed_job_has_active_reference,
     managed_job_id_set,
@@ -15,6 +14,7 @@ from ..jobs.managed import (
     managed_job_tail_execute,
     retry_managed_job_without_session_admission,
     stop_managed_job_without_session_admission,
+    use_managed_jobs_runtime,
 )
 from ..schemas.result_models.jobs import JobOutput
 from .session_copy import SESSION_COPY_MANAGED_KIND
@@ -51,11 +51,13 @@ class ControlJobService:
     def __init__(
         self,
         sessions: ControlSessionCoordinator,
+        managed_jobs_runtime: ManagedJobsRuntime,
         *,
         managed_retry_availability: ManagedRetryAvailabilityResolver
         | None = None,
     ) -> None:
         self._sessions = sessions
+        self._managed_jobs_runtime = managed_jobs_runtime
         self._managed_retry_availability = managed_retry_availability
 
     async def execute(
@@ -68,6 +70,28 @@ class ControlJobService:
         retry: list[str] | None = None,
         include_finished: bool = True,
         lines: int = 200,
+    ) -> JobOutput:
+        with use_managed_jobs_runtime(self._managed_jobs_runtime):
+            return await self._execute_scoped(
+                session_id=session_id,
+                list_jobs=list_jobs,
+                poll=poll,
+                cancel=cancel,
+                retry=retry,
+                include_finished=include_finished,
+                lines=lines,
+            )
+
+    async def _execute_scoped(
+        self,
+        *,
+        session_id: str,
+        list_jobs: bool,
+        poll: list[str] | None,
+        cancel: list[str] | None,
+        retry: list[str] | None,
+        include_finished: bool,
+        lines: int,
     ) -> JobOutput:
         selected = [poll is not None, cancel is not None, retry is not None]
         if list_jobs and any(selected):
@@ -181,25 +205,27 @@ class ControlJobService:
 
     async def auto_cleanup_blocked(self, session_id: str) -> bool:
         """Protect sessions referenced by live control-managed copy work."""
-        return await asyncio.to_thread(
-            managed_job_has_active_reference,
-            session_id,
-            managed_kind=SESSION_COPY_MANAGED_KIND,
-            payload_keys=("src_session_id", "dst_session_id"),
-        )
+        with use_managed_jobs_runtime(self._managed_jobs_runtime):
+            return await asyncio.to_thread(
+                managed_job_has_active_reference,
+                session_id,
+                managed_kind=SESSION_COPY_MANAGED_KIND,
+                payload_keys=("src_session_id", "dst_session_id"),
+            )
 
     async def stop_referencing_jobs(self, session_id: str) -> list[str]:
         """Cancel live managed copies before their referenced session disappears."""
-        stopped: list[str] = []
-        for payload_key in ("src_session_id", "dst_session_id"):
-            stopped.extend(
-                await job_stop_managed_references_execute(
-                    session_id,
-                    managed_kind=SESSION_COPY_MANAGED_KIND,
-                    payload_key=payload_key,
+        with use_managed_jobs_runtime(self._managed_jobs_runtime):
+            stopped: list[str] = []
+            for payload_key in ("src_session_id", "dst_session_id"):
+                stopped.extend(
+                    await job_stop_managed_references_execute(
+                        session_id,
+                        managed_kind=SESSION_COPY_MANAGED_KIND,
+                        payload_key=payload_key,
+                    )
                 )
-            )
-        return list(dict.fromkeys(stopped))
+            return list(dict.fromkeys(stopped))
 
     async def _list(
         self,

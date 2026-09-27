@@ -1,7 +1,5 @@
 """Public WebSocket rendezvous routes for ephemeral terminal streams."""
 
-from __future__ import annotations
-
 import re
 
 from starlette.routing import BaseRoute, WebSocketRoute

@@ -26,7 +26,7 @@ class JobInfo(BaseModel):
     )
     kind: Literal["shell", "managed"] = Field(
         default="shell",
-        description="Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered controller operation.",
+        description="Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered control operation.",
     )
     name: str = Field(
         description="Human-readable job name, or the generated job_id when no name was provided."

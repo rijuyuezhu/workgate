@@ -8,6 +8,8 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Generator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -440,24 +442,26 @@ class ConPtyRegistry:
             ) from errors[0]
 
 
-_CONPTY_REGISTRY: ConPtyRegistry | None = None
+_CONPTY_REGISTRY_CONTEXT: ContextVar[ConPtyRegistry | None] = ContextVar(
+    "workgate_conpty_registry_context", default=None
+)
 
 
-def configure_conpty_registry(
-    registry: ConPtyRegistry | None,
-) -> ConPtyRegistry | None:
-    """Install a non-owning compatibility binding and return the previous one."""
-    global _CONPTY_REGISTRY
-    previous = _CONPTY_REGISTRY
-    _CONPTY_REGISTRY = registry
-    return previous
+@contextlib.contextmanager
+def use_conpty_registry(registry: ConPtyRegistry) -> Generator[None]:
+    """Bind one executor-owned ConPTY registry to this execution context."""
+    token = _CONPTY_REGISTRY_CONTEXT.set(registry)
+    try:
+        yield
+    finally:
+        _CONPTY_REGISTRY_CONTEXT.reset(token)
 
 
 def _conpty_registry() -> ConPtyRegistry:
-    registry = _CONPTY_REGISTRY
+    registry = _CONPTY_REGISTRY_CONTEXT.get()
     if registry is None:
         raise RuntimeError(
-            "ConPTY registry is not configured; start TerminalRuntime"
+            "ConPTY registry is not configured in this execution context"
         )
     return registry
 

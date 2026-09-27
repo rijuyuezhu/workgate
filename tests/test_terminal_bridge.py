@@ -21,7 +21,10 @@ from workgate.executor.terminal.bridge import (
     resize_terminal_bridge_execute,
     write_terminal_bridge_execute,
 )
-from workgate.executor.terminal.runtime import build_terminal_runtime
+from workgate.executor.terminal.runtime import (
+    build_terminal_runtime,
+    use_terminal_runtime,
+)
 from workgate.persistence import get_state_store
 
 
@@ -34,7 +37,8 @@ async def _terminal_runtime(monkeypatch, tmp_path):
     )
     await runtime.start()
     try:
-        yield
+        with use_terminal_runtime(runtime):
+            yield
     finally:
         await runtime.aclose()
 

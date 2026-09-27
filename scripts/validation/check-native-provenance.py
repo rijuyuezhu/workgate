@@ -14,7 +14,7 @@ EXPECTED_HASHES = {
     "ui-opentui/scripts/executable-contract.ts": "ac972b10fbf21ccef6e94ece2a9bc44a701607d822a1333cf991a68c91d45b13",
     "ui-opentui/scripts/compile-tui.ts": "df87f2c0e891651a44dbda60b5d3cda6007592ee008235bc958ca111e27ad298",
     "scripts/release/build-platform-wheel.py": "a4861240c4189475ae3023a8db93a660faa6cc6acb47b0c6d457cea91405c947",
-    "scripts/release/smoke-platform-wheel.py": "ccaa53cb2dbaeead919a3fa1bdaac4b74ca8e87faacab96eefb71d97f6e54756",
+    "scripts/release/smoke-platform-wheel.py": "b729eb1f88b6d51e72770c38319ad70a2707f2ce20a7a023b0ee875a288a2d92",
     "src/workgate/helpers/opentui.NOTICES": "ddccf8cb0fa731bdca8e0f499a4a2e06deaf155d587cff3af77379201cd00e35",
     "src/workgate/helpers/bun-1.3.14.LICENSE.md": "2c6160ec8fb853f7e8f97d9b249e756c9b0ac44860a68b6bf4f1b0bcbc5c3741",
 }

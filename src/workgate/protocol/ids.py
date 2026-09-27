@@ -1,7 +1,5 @@
 """Opaque identifiers used by the control/executor protocol."""
 
-from __future__ import annotations
-
 import secrets
 from typing import Annotated
 

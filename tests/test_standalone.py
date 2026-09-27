@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import signal
@@ -17,13 +15,13 @@ import pytest
 import yaml
 
 import workgate.standalone.supervisor as standalone_supervisor
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.control.standalone_bootstrap import (
     maybe_write_standalone_bootstrap,
     prepare_standalone_control_settings,
 )
 from workgate.control.state import ControlState
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.profile import ExecutorProfileStore
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.standalone_bootstrap import (

@@ -15,9 +15,14 @@ from ...audit import (
     audit_tool_call_start,
     new_audit_call_id,
 )
+from ...config.control import ControlConfig
 from ...errors import public_error_type
+from ...jobs.managed import ManagedJobsRuntime
+from ...oauth.core.state import OAuthState
+from ...persistence import StateStore
 from ...tools.declarative import mcp_handler_error_handler
 from ...utils.serialization import to_jsonable
+from ..execution_context import control_execution_context
 from ..tool_timeouts import tool_timeout_s
 
 
@@ -47,7 +52,12 @@ def _mcp_tool_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
 
 
 def _mcp_tool_audit_watchdog_wrapper(
-    original: Callable[..., Awaitable[Any]], tool_name: str
+    original: Callable[..., Awaitable[Any]],
+    tool_name: str,
+    config: ControlConfig,
+    state_store: StateStore,
+    oauth_state: OAuthState | None,
+    managed_jobs_runtime: ManagedJobsRuntime | None,
 ) -> AuditedMcpToolFn:
     """Return a wrapper that audits every MCP tool call and enforces the tool timeout."""
 
@@ -55,6 +65,15 @@ def _mcp_tool_audit_watchdog_wrapper(
 
     @wraps(original)
     async def wrapped(*args: Any, **kwargs: Any) -> Any:
+        with control_execution_context(
+            config=config,
+            state_store=state_store,
+            oauth_state=oauth_state,
+            managed_jobs_runtime=managed_jobs_runtime,
+        ):
+            return await _wrapped_with_state(*args, **kwargs)
+
+    async def _wrapped_with_state(*args: Any, **kwargs: Any) -> Any:
         call_id = new_audit_call_id()
         start = time.time()
         session_ids = audit_tool_call_start(
@@ -136,10 +155,32 @@ def _mcp_tool_audit_watchdog_wrapper(
     return audited
 
 
-def install_mcp_tool_watchdogs(mcp: FastMCP) -> None:
-    """Wrap FastMCP execution paths so public tools are audited and return structured timeout errors."""
-    cast(Any, mcp)._workgate_install_tool_watchdogs = install_mcp_tool_watchdogs
+def install_mcp_tool_watchdogs(
+    mcp: FastMCP,
+    config: ControlConfig,
+    state_store: StateStore,
+    *,
+    oauth_state: OAuthState | None = None,
+    managed_jobs_runtime: ManagedJobsRuntime | None = None,
+) -> None:
+    """Wrap MCP tools under the explicit control execution context."""
+    cast(Any, mcp)._workgate_install_tool_watchdogs = lambda target: (
+        install_mcp_tool_watchdogs(
+            target,
+            config,
+            state_store,
+            oauth_state=oauth_state,
+            managed_jobs_runtime=managed_jobs_runtime,
+        )
+    )
     for tool in mcp._tool_manager._tools.values():
         if getattr(tool.fn, "__workgate_audit_watchdog__", False):
             continue
-        tool.fn = _mcp_tool_audit_watchdog_wrapper(tool.fn, tool.name)
+        tool.fn = _mcp_tool_audit_watchdog_wrapper(
+            tool.fn,
+            tool.name,
+            config,
+            state_store,
+            oauth_state,
+            managed_jobs_runtime,
+        )

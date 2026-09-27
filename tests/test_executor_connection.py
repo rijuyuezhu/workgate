@@ -3,8 +3,8 @@ import threading
 
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import (
     ExecutorConnection,
     executor_retry_delay,

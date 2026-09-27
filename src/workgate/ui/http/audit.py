@@ -15,7 +15,7 @@ from ...audit import (
     query_audit,
     summarize_audit_entry,
 )
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_FULL,
@@ -243,7 +243,7 @@ def _audit_view_image_detail(
     detail = {**entry, "output": {**output, "content": sanitized_content}}
     try:
         raw = base64.b64decode(str(source_item["data"]), validate=True)
-        maximum = max(1, int(get_settings().max_view_image_bytes))
+        maximum = max(1, int(get_control_config().max_view_image_bytes))
         if not raw:
             raise ValueError("Image payload is empty")
         if len(raw) > maximum:

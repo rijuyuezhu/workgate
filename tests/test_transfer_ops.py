@@ -13,11 +13,11 @@ from typing import Any
 import pytest
 
 import workgate.executor.transfer as transfer_ops
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp.app import build_mcp
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.path import temp_dir as _executor_temp_dir
-from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.executor.transfer import TransferContext
 
 _TRANSFER_CONTEXT: TransferContext | None = None

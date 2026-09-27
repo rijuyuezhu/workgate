@@ -18,8 +18,8 @@ from workgate.oauth.core.models import AuthCode, OAuthClient
 from workgate.oauth.core.requests import AuthorizationRequestInput
 from workgate.oauth.core.state import (
     build_oauth_state,
-    configure_oauth_state,
     oauth_state,
+    use_oauth_state,
 )
 
 BASE_URL = "https://workgate.example.com"
@@ -32,11 +32,10 @@ ADMIN_PIN = "1234"
 def _reset_oauth_state(tmp_path):
     clear_settings_cache()
     state = build_oauth_state(tmp_path / ".state")
-    previous = configure_oauth_state(state)
     try:
-        yield
+        with use_oauth_state(state):
+            yield
     finally:
-        configure_oauth_state(previous)
         clear_settings_cache()
 
 
@@ -416,12 +415,15 @@ def test_concurrent_authorization_respects_pending_code_capacity(
     )
     monkeypatch.setattr(oauth_service, "audit", lambda *args, **kwargs: None)
 
+    state = oauth_state()
+
     def issue() -> str:
-        try:
-            oauth_service.issue_authorization_response(request)
-        except oauth_service.OAuthStateCapacityError:
-            return "capacity"
-        return "issued"
+        with use_oauth_state(state):
+            try:
+                oauth_service.issue_authorization_response(request)
+            except oauth_service.OAuthStateCapacityError:
+                return "capacity"
+            return "issued"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: issue(), range(2)))

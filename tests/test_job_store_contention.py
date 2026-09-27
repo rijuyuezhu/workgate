@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.config.settings import clear_settings_cache
-from workgate.executor.tool_session.store import get_tool_session_store
 from workgate.jobs import managed as jobs_managed
 from workgate.jobs import persistence as job_persistence
 from workgate.jobs import recovery as jobs_recovery

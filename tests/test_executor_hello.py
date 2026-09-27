@@ -1,7 +1,7 @@
 from pathlib import Path
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.hello import build_executor_hello
 from workgate.protocol.executor import (
     EXECUTOR_CAPABILITY_SESSIONS,

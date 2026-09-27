@@ -1,7 +1,5 @@
 """Durable private management state for public file links."""
 
-from __future__ import annotations
-
 import contextlib
 import json
 import threading

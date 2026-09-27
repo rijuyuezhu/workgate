@@ -1,7 +1,5 @@
 """Executor protocol v1 wire models."""
 
-from __future__ import annotations
-
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator

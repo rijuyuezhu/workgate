@@ -1,7 +1,5 @@
 """Small shared error vocabulary for executor protocol v1."""
 
-from __future__ import annotations
-
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field

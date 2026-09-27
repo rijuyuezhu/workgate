@@ -5,8 +5,8 @@ import pytest
 
 import workgate.executor.transfer as transfer_ops
 import workgate.executor.transfer_composition as transfer_composition
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.tool_session.store import ToolSessionStore
 

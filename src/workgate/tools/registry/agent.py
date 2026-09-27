@@ -12,7 +12,7 @@ from ...agent_bridge.service import (
     list_agent_mcp_tools_payload,
 )
 from ...agent_bridge.tools import register_agent_bridge_dynamic_tools
-from ...config.control import ControlSettingsView
+from ...config.control import ControlConfig
 from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
 from ...schemas.input_models.agent import (
     AgentMcpSessionIdArg,
@@ -44,7 +44,7 @@ def _agent_registry() -> AgentCapabilityRegistry:
     )
 
 
-def _agent_bridge_enabled(settings: ControlSettingsView) -> bool:
+def _agent_bridge_enabled(settings: ControlConfig) -> bool:
     return settings.agent_bridge_enabled
 
 

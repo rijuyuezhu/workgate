@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ...audit import audit
+from ...config.executor import ExecutorConfig
 from ...errors import public_error_type
 from ...jobs import status as job_status
 from ...jobs.persistence import (
@@ -62,7 +63,6 @@ from ...schemas.result_models.jobs import (
     JobStopOutput,
     JobTailOutput,
 )
-from ..config import ExecutorConfig
 from ..shell import (
     authoritative_persistent_shell_ids_execute,
     kill_persistent_shell_execute,

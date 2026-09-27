@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 import argparse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
 
+from workgate.app_paths import app_paths
 from workgate.config.settings import Settings
 from workgate.executor import cli as executor_cli
 from workgate.executor.control_client import (
@@ -77,8 +76,11 @@ async def test_run_requires_paired_executor(
         async def lifespan(self):
             yield
 
+    def fake_settings_from_args(*_args, **_kwargs):
+        return settings
+
     monkeypatch.setattr(
-        executor_cli, "settings_from_args", lambda *_a, **_k: settings
+        executor_cli, "settings_from_args", fake_settings_from_args
     )
     monkeypatch.setattr(
         executor_cli, "build_executor_runtime", lambda _config: Runtime()
@@ -86,6 +88,9 @@ async def test_run_requires_paired_executor(
 
     with pytest.raises(RuntimeError, match="executor is not paired"):
         await executor_cli._run(argparse.Namespace())
+
+    assert settings.workspace_root.is_dir()
+    assert settings.state_dir.is_dir()
 
 
 def test_root_parser_exposes_final_executor_connect_and_run() -> None:
@@ -96,10 +101,15 @@ def test_root_parser_exposes_final_executor_connect_and_run() -> None:
     assert connect.executor_command == "connect"
     assert connect.control_url == "https://control.test"
     assert connect.name == "Laptop"
+    assert (
+        connect._workgate_default_config_path
+        == app_paths().executor_config_file
+    )
 
     run = _build_parser().parse_args(["executor", "run"])
     assert run.command == "executor"
     assert run.executor_command == "run"
+    assert run._workgate_default_config_path == app_paths().executor_config_file
 
 
 @pytest.mark.asyncio
@@ -121,7 +131,6 @@ async def test_connect_rejects_existing_profile_for_different_control_url(
     monkeypatch.setattr(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
-    monkeypatch.setattr(executor_cli, "get_state_store", lambda: store)
     monkeypatch.setattr(
         executor_cli, "ExecutorPairingClient", PairingMustNotStart
     )
@@ -162,7 +171,6 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
     monkeypatch.setattr(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
-    monkeypatch.setattr(executor_cli, "get_state_store", lambda: store)
     monkeypatch.setattr(executor_cli, "ExecutorControlClient", ExistingClient)
     monkeypatch.setattr(
         executor_cli, "ExecutorPairingClient", PairingMustNotStart
@@ -223,7 +231,6 @@ async def test_connect_does_not_repair_transient_or_protocol_incompatible_profil
     monkeypatch.setattr(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
-    monkeypatch.setattr(executor_cli, "get_state_store", lambda: store)
     monkeypatch.setattr(executor_cli, "ExecutorControlClient", RejectedClient)
     monkeypatch.setattr(
         executor_cli, "ExecutorPairingClient", PairingMustNotStart
@@ -308,7 +315,6 @@ async def test_revoked_profile_starts_pairing_with_existing_id_hint_without_secr
     monkeypatch.setattr(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
-    monkeypatch.setattr(executor_cli, "get_state_store", lambda: store)
     monkeypatch.setattr(executor_cli, "ExecutorControlClient", RevokedClient)
     monkeypatch.setattr(executor_cli, "ExecutorPairingClient", PairingClient)
     monkeypatch.setattr(executor_cli, "wait_for_pairing", fake_wait)

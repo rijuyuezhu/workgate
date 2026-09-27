@@ -1,13 +1,11 @@
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
 import httpx
 import pytest
 
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.control_client import (
     ExecutorControlClient,
     ExecutorControlError,

@@ -28,8 +28,8 @@ workgate executor --help
 
 The control CLI intentionally does **not** expose executor machine-policy
 settings such as `--workspace-root`, `--allow-full-control`, command/path
-denylists, shell executables, or local tool binary paths. Those settings belong
-to the executor process.
+denylists, shell executables, or executor tool binary paths. Those settings
+belong to the executor process.
 
 ## Development examples
 

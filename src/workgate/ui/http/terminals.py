@@ -10,7 +10,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.websockets import WebSocket
 
 from ...audit import audit
-from ...config.settings import get_settings
 from ...control.ui_executor import call_ui_executor
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
@@ -27,7 +26,6 @@ from ...protocol.terminal import (
 )
 from .common import bounded_text as _bounded_text
 from .common import json_error as _json_error
-from .live_state import human_ui_runtime
 from .session import has_valid_ui_origin, ui_session_claims
 from .terminal_protocol import (
     UI_TERMINAL_DEFAULT_LINES,
@@ -252,7 +250,8 @@ def _authorize_websocket(
     websocket: WebSocket, executor_id: str
 ) -> tuple[bool, int, str]:
     """Authorize a browser WebSocket without trusting localhost proxy hops."""
-    if get_settings().auth_mode == "none":
+    runtime = _runtime(websocket)
+    if runtime.config.auth_mode == "none":
         return True, 1000, ""
 
     token = _websocket_token(websocket)
@@ -279,15 +278,6 @@ def _authorize_websocket(
         if scope not in granted:
             return False, 4403, f"Missing required OAuth scope: {scope}"
     return True, 1000, ""
-
-
-def _reserve_connection() -> int | None:
-    maximum = get_settings().ui_terminal_max_connections
-    return human_ui_runtime().terminal_connections.reserve(maximum)
-
-
-def _release_connection(marker: int) -> None:
-    human_ui_runtime().terminal_connections.release(marker)
 
 
 async def api_terminals(request: Request) -> Response:
@@ -433,13 +423,15 @@ async def ui_terminal_websocket(websocket: WebSocket) -> None:
             runtime, executor_id, shell_id, cols, rows
         ),
     )
+    connections = runtime.human_ui_runtime.terminal_connections
+    maximum_connections = runtime.config.ui_terminal_max_connections
     await serve_terminal_websocket(
         websocket,
         request,
         backend=backend,
         authorize=_authorize_websocket,
-        reserve_connection=_reserve_connection,
-        release_connection=_release_connection,
-        idle_timeout_s=get_settings().ui_terminal_idle_timeout_s,
+        reserve_connection=lambda: connections.reserve(maximum_connections),
+        release_connection=connections.release,
+        idle_timeout_s=runtime.config.ui_terminal_idle_timeout_s,
         audit_event=audit,
     )

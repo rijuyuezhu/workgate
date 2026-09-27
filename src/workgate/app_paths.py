@@ -1,7 +1,5 @@
 """Platform-aware filesystem locations for Workgate-owned application data."""
 
-from __future__ import annotations
-
 import contextlib
 import os
 import secrets
@@ -56,8 +54,28 @@ class AppPaths:
 
     @property
     def config_file(self) -> Path:
-        """Return the default per-user YAML configuration file."""
+        """Return the default control/general YAML configuration file."""
         return self.config_dir / "config.yaml"
+
+    @property
+    def executor_config_dir(self) -> Path:
+        """Return the executor-owned configuration namespace."""
+        return self.config_dir / "executor"
+
+    @property
+    def executor_config_file(self) -> Path:
+        """Return the default executor-owned YAML configuration file."""
+        return self.executor_config_dir / "config.yaml"
+
+    @property
+    def executor_agent_config_dir(self) -> Path:
+        """Return executor-local declarative Agent Bridge configuration."""
+        return self.executor_config_dir / "agent"
+
+    @property
+    def executor_state_dir(self) -> Path:
+        """Return the default executor-private durable state root."""
+        return self.state_dir / "executor-runtime"
 
     @property
     def agent_config_dir(self) -> Path:

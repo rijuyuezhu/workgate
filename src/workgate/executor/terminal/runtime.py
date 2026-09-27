@@ -1,16 +1,13 @@
 """Lifecycle owner for terminal bridge and ConPTY live process registries."""
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...persistence import StateStore
-from .bridge import (
-    TerminalBridgeRegistry,
-    configure_terminal_bridge_registry,
-)
-from .conpty import ConPtyRegistry, configure_conpty_registry
+from .bridge import TerminalBridgeRegistry, use_terminal_bridge_registry
+from .conpty import ConPtyRegistry, use_conpty_registry
 
 
 @dataclass
@@ -23,51 +20,30 @@ class TerminalRuntime:
         default_factory=TerminalBridgeRegistry
     )
     """Raw-terminal bridge state owned by this runtime."""
-    _previous_bridges: TerminalBridgeRegistry | None = field(
-        default=None, init=False, repr=False
-    )
-    _previous_conpty: ConPtyRegistry | None = field(
-        default=None, init=False, repr=False
-    )
-    _bindings_installed: bool = field(default=False, init=False, repr=False)
+    _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _close_complete: bool = field(default=False, init=False, repr=False)
 
     async def start(self) -> None:
-        """Bind terminal registries to this runtime's owning event loop."""
+        """Start terminal registries owned by this runtime."""
         if self._closed:
             raise RuntimeError(
                 "TerminalRuntime cannot be restarted after close"
             )
-        if self._bindings_installed:
+        if self._started:
             return
 
         conpty_started = False
-        bridges_started = False
-        previous_conpty: ConPtyRegistry | None = None
-        conpty_bound = False
         try:
             await self.conpty.start()
             conpty_started = True
             await self.bridges.start()
-            bridges_started = True
-            previous_conpty = configure_conpty_registry(self.conpty)
-            conpty_bound = True
-            previous_bridges = configure_terminal_bridge_registry(self.bridges)
         except BaseException:
-            if conpty_bound:
-                configure_conpty_registry(previous_conpty)
-            try:
-                if bridges_started:
-                    await self.bridges.aclose()
-            finally:
-                if conpty_started:
-                    await self.conpty.aclose()
-                self._closed = True
+            if conpty_started:
+                await self.conpty.aclose()
+            self._closed = True
             raise
-
-        self._previous_conpty = previous_conpty
-        self._previous_bridges = previous_bridges
-        self._bindings_installed = True
+        self._started = True
 
     def stop_admission(self) -> None:
         """Reject new terminal work before dependent shutdown begins."""
@@ -75,32 +51,28 @@ class TerminalRuntime:
         self.conpty.stop_admission()
 
     async def aclose(self) -> None:
-        """Close bridge dependents before ConPTY shells and restore bindings."""
+        """Close bridge dependents before ConPTY shells."""
+        if self._close_complete:
+            return
         self._closed = True
+        self._started = False
         self.stop_admission()
         bridge_error: BaseException | None = None
         conpty_error: BaseException | None = None
         try:
-            try:
-                await self.bridges.aclose()
-            except BaseException as exc:
-                bridge_error = exc
-            try:
-                await self.conpty.aclose()
-            except BaseException as exc:
-                conpty_error = exc
-        finally:
-            if self._bindings_installed:
-                configure_terminal_bridge_registry(self._previous_bridges)
-                configure_conpty_registry(self._previous_conpty)
-                self._bindings_installed = False
-                self._previous_bridges = None
-                self._previous_conpty = None
+            await self.bridges.aclose()
+        except BaseException as exc:
+            bridge_error = exc
+        try:
+            await self.conpty.aclose()
+        except BaseException as exc:
+            conpty_error = exc
 
         if bridge_error is not None:
             raise bridge_error
         if conpty_error is not None:
             raise conpty_error
+        self._close_complete = True
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[TerminalRuntime]:
@@ -110,6 +82,16 @@ class TerminalRuntime:
             yield self
         finally:
             await self.aclose()
+
+
+@contextmanager
+def use_terminal_runtime(runtime: TerminalRuntime) -> Generator[None]:
+    """Bind one executor terminal runtime to the current execution context."""
+    with (
+        use_conpty_registry(runtime.conpty),
+        use_terminal_bridge_registry(runtime.bridges),
+    ):
+        yield
 
 
 def build_terminal_runtime(

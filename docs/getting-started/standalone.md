@@ -257,7 +257,7 @@ back to execution inside the control process.
 
 Standalone is not:
 
-- a hidden direct-local execution mode;
+- a hidden in-process machine-execution mode;
 - an in-process control/executor composition;
 - an unauthenticated localhost server;
 - a second kind of executor identity;

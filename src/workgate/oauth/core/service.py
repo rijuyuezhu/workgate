@@ -20,7 +20,7 @@ from authlib.oauth2.rfc7636.challenge import (
 )
 
 from ...audit import audit
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ..protocol.adapters import LocalOAuthClient
 from ..protocol.token_codec import issue_access_token
 from .client_store import persist_approved_clients
@@ -296,7 +296,7 @@ def _prune_clients(
     current.require_open()
     with current.client_lock:
         current.require_open()
-        settings = get_settings()
+        settings = get_control_config()
         if settings.oauth_client_ttl_s <= 0:
             return
         current_time = int(time.time()) if now is None else now
@@ -332,7 +332,7 @@ def register_dynamic_client(
                 reused=True,
             )
         else:
-            settings = get_settings()
+            settings = get_control_config()
             max_clients = settings.oauth_max_dynamic_clients
             pending_clients = sum(
                 client.approved_at is None for client in state.clients.values()
@@ -457,7 +457,7 @@ def _approve_client(
 
 def _ensure_pending_code_capacity(state: OAuthState) -> None:
     """Reject new codes without evicting valid pending authorization state."""
-    max_codes = get_settings().oauth_max_pending_codes
+    max_codes = get_control_config().oauth_max_pending_codes
     pending_codes = len(state.codes)
     if max_codes <= 0 or pending_codes < max_codes:
         return
@@ -547,7 +547,7 @@ def _prune_codes(
     current.require_open()
     with current.code_lock:
         current.require_open()
-        settings = get_settings()
+        settings = get_control_config()
         current_time = int(time.time()) if now is None else now
         for code, code_obj in list(current.codes.items()):
             if code == keep:
@@ -577,7 +577,7 @@ def exchange_authorization_code(
     redirect_uri = request_input.redirect_uri or ""
     verifier = request_input.code_verifier
 
-    settings = get_settings()
+    settings = get_control_config()
     with state.code_lock:
         state.require_open()
         _prune_codes(state=state)

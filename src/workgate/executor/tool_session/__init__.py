@@ -13,9 +13,7 @@ from .resolver import SessionResolver
 from .store import (
     AgentSession,
     UnknownAgentSessionError,
-    configure_tool_session_store,
     file_sha256,
-    get_tool_session_store,
 )
 
 __all__ = [
@@ -26,8 +24,6 @@ __all__ = [
     "SESSION_TERMINATION_PROMPT",
     "SessionTerminationRequestedError",
     "UnknownAgentSessionError",
-    "configure_tool_session_store",
     "file_sha256",
-    "get_tool_session_store",
     "tool_input_session_ids",
 ]

@@ -285,7 +285,7 @@ async def test_agent_config_status_redacts_serialized_configured_values(
 async def test_activate_agent_skill_returns_skill_content(
     tmp_path, monkeypatch
 ):
-    config_dir = app_paths().agent_config_dir
+    config_dir = app_paths().executor_agent_config_dir
     skill_dir = config_dir / "skills" / "debugging"
     skill_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
@@ -345,7 +345,7 @@ async def test_control_exposes_no_dynamic_skill_aliases(tmp_path, monkeypatch):
 async def test_session_bound_stdio_mcp_runs_on_executor_with_executor_secret(
     tmp_path, monkeypatch
 ):
-    config_dir = app_paths().agent_config_dir
+    config_dir = app_paths().executor_agent_config_dir
     config_dir.mkdir(parents=True)
     workspace = tmp_path / "workspace"
     workspace.mkdir()

@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from ..config.settings import get_settings
+from ..config.role_config import get_role_config
 from .reconciliation import (
     JobObservation,
     JobOperationKind,
@@ -195,7 +195,9 @@ def _read_log_tail(
     byte_limit = max(
         1,
         int(
-            get_settings().max_job_log_bytes if max_bytes is None else max_bytes
+            get_role_config().max_job_log_bytes
+            if max_bytes is None
+            else max_bytes
         ),
     )
     try:

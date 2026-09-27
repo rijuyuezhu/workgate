@@ -285,7 +285,7 @@ async def _snapshot(request: Request, executor_id: str) -> dict[str, Any]:
     resolved_executor_id, value = await call_ui_executor(
         runtime,
         executor_id,
-        "ui.dashboard.snapshot",
+        "dashboard_snapshot",
     )
     if not isinstance(value, dict):
         raise RuntimeError(

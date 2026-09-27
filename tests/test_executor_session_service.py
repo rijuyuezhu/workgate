@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -7,8 +5,8 @@ from typing import Any, cast
 import pytest
 
 from tests.helpers import build_tool_session_store
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.errors import ExecutorOperationFailure
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.sessions import ExecutorSessionService

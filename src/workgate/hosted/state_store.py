@@ -1,7 +1,5 @@
 """Synchronous StateStore adapter for SQLite-backed stateful hosting actors."""
 
-from __future__ import annotations
-
 import json
 from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager

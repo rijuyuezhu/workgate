@@ -371,48 +371,26 @@ class FileStateStore:
             self._release_thread_lock(key)
 
 
-_STATE_STORE: StateStore | None = None
-_STATE_STORE_OVERRIDE: ContextVar[StateStore | None] = ContextVar(
-    "workgate_state_store_override", default=None
+_STATE_STORE_CONTEXT: ContextVar[StateStore | None] = ContextVar(
+    "workgate_state_store_context", default=None
 )
-
-
-def _default_state_root() -> Path:
-    """Resolve the compatibility fallback state root without an import cycle."""
-    return (
-        __import__(
-            "workgate.config.settings",
-            fromlist=["get_settings"],
-        )
-        .get_settings()
-        .state_dir
-    )
-
-
-def configure_state_store(store: StateStore | None) -> StateStore | None:
-    """Install a process-wide state store and return the previous binding."""
-    global _STATE_STORE
-    previous = _STATE_STORE
-    _STATE_STORE = store
-    return previous
 
 
 @contextmanager
 def use_state_store(store: StateStore) -> Generator[None]:
     """Temporarily bind one state-store owner to the current async/thread context."""
-    token = _STATE_STORE_OVERRIDE.set(store)
+    token = _STATE_STORE_CONTEXT.set(store)
     try:
         yield
     finally:
-        _STATE_STORE_OVERRIDE.reset(token)
+        _STATE_STORE_CONTEXT.reset(token)
 
 
 def get_state_store() -> StateStore:
-    """Return context-owned state first, then the compatibility process binding."""
-    override = _STATE_STORE_OVERRIDE.get()
-    if override is not None:
-        return override
-    global _STATE_STORE
-    if _STATE_STORE is None:
-        _STATE_STORE = FileStateStore(_default_state_root)
-    return _STATE_STORE
+    """Return the StateStore bound to the current execution context."""
+    store = _STATE_STORE_CONTEXT.get()
+    if store is None:
+        raise RuntimeError(
+            "state store is not configured in this execution context"
+        )
+    return store

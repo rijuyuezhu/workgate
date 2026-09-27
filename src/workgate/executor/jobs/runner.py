@@ -120,7 +120,7 @@ def run_job_runner_from_args(args: Any) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Run one durable job attempt without importing the controller CLI."""
+    """Run one durable job attempt without importing the control CLI."""
     parser = configure_job_runner_parser(
         argparse.ArgumentParser(
             description="Run one durable tracked-job attempt. Internal interface."

@@ -19,8 +19,8 @@ from workgate.control.state import ExecutorTrustRecord
 from workgate.oauth.core.scopes import default_scope
 from workgate.oauth.core.state import (
     OAuthState,
-    configure_oauth_state,
     oauth_state,
+    use_oauth_state,
 )
 from workgate.oauth.protocol.token_codec import (
     issue_access_token,
@@ -56,12 +56,11 @@ UI_SESSION_BINDING = "b" * 43
 @pytest.fixture(autouse=True)
 def _reset_human_ui_state(tmp_path):
     state = OAuthState(tmp_path / ".oauth-state")
-    previous = configure_oauth_state(state)
     clear_settings_cache()
     try:
-        yield state
+        with use_oauth_state(state):
+            yield state
     finally:
-        configure_oauth_state(previous)
         clear_settings_cache()
 
 

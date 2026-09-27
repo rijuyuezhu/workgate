@@ -1,7 +1,5 @@
 """Generated hosted MCP manifest. Do not edit by hand."""
 
-from __future__ import annotations
-
 import json
 
 LATEST_MCP_PROTOCOL_VERSION = '2025-11-25'

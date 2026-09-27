@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 
 from ...audit import audit
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ..core.requests import AuthorizationRequestInput
 from ..core.service import (
     AuthorizationFormContext,
@@ -64,7 +64,7 @@ def _authorize_form(
         form_context = authorization_form_context(
             authorization_input_from_mapping(context)
         )
-    settings = get_settings()
+    settings = get_control_config()
     error_html = (
         f'<p style="color:#b00020">{html_lib.escape(error)}</p>'
         if error
@@ -116,7 +116,7 @@ async def authorize_post(request: Request) -> Response:
         )
 
     form_context = authorization_form_context(request_input, auth_request)
-    settings = get_settings()
+    settings = get_control_config()
     expected_pin = settings.oauth_admin_pin
     if not expected_pin:
         audit("oauth_pin_missing", client_id=request_input.client_id)

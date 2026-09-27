@@ -7,10 +7,13 @@ import pytest
 
 import workgate.executor.shell as shell_ops
 import workgate.executor.terminal.conpty as conpty
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
-from workgate.executor.terminal.runtime import build_terminal_runtime
+from workgate.executor.terminal.runtime import (
+    build_terminal_runtime,
+    use_terminal_runtime,
+)
 from workgate.persistence import get_state_store
 from workgate.schemas.result_models.shell import (
     KillPersistentShellOutput,
@@ -103,7 +106,8 @@ async def _terminal_runtime(monkeypatch):
     )
     await runtime.start()
     try:
-        yield
+        with use_terminal_runtime(runtime):
+            yield
     finally:
         await runtime.aclose()
 

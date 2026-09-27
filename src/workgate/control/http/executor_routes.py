@@ -1,7 +1,5 @@
 """Authenticated executor protocol v1 HTTP routes owned by control."""
 
-from __future__ import annotations
-
 import json
 
 from pydantic import ValidationError

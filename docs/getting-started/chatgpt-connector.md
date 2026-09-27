@@ -28,7 +28,7 @@ https://your-public-host.example.com/mcp
 3. Complete the OAuth approval flow with the configured admin PIN.
 4. Refresh the connector's tools after changing the server tool surface.
 
-Use a ChatGPT mode that exposes full MCP tools when you need shell, filesystem, Git, remote-worker, or Agent Bridge operations. A limited connector mode may expose only search-style tools.
+Use a ChatGPT mode that exposes full MCP tools when you need shell, filesystem, Git, executor, or Agent Bridge operations. A limited connector mode may expose only search-style tools.
 
 ## Test it
 

@@ -33,8 +33,8 @@ from workgate.oauth.core.scopes import supported_scopes
 from workgate.oauth.core.service import _prune_clients, _prune_codes
 from workgate.oauth.core.state import (
     OAuthState,
-    configure_oauth_state,
     oauth_state,
+    use_oauth_state,
 )
 from workgate.oauth.core.urls import resource_url
 from workgate.oauth.http.authorization import _authorize_form
@@ -60,11 +60,8 @@ def _s256_challenge(verifier: str) -> str:
 @pytest.fixture(autouse=True)
 def _oauth_state_owner(tmp_path):
     state = OAuthState(tmp_path / ".state")
-    previous = configure_oauth_state(state)
-    try:
+    with use_oauth_state(state):
         yield state
-    finally:
-        configure_oauth_state(previous)
 
 
 def test_oauth_supported_scopes_include_feature_scopes():

@@ -8,7 +8,7 @@ from typing import Any
 
 from ..app_paths import ensure_private_directory
 from ..config.cli import register_config_and_setting_args, settings_from_args
-from ..config.roles import CONTROL_EXCLUDED_SETTING_NAMES
+from ..config.control import CONTROL_SETTING_NAMES
 from ..config.settings import configure_settings
 from ..utils.private_files import private_file_lock
 from .http.app import run_http
@@ -29,7 +29,7 @@ def register_control_cli(subparsers: Any) -> argparse.ArgumentParser:
     )
     register_config_and_setting_args(
         parser,
-        exclude_setting_names=CONTROL_EXCLUDED_SETTING_NAMES,
+        setting_names=CONTROL_SETTING_NAMES,
     )
     parser.set_defaults(handler=run_control_from_args)
     return parser
@@ -74,7 +74,7 @@ def _dispatch_control(settings: Any) -> None:
 
 def run_control_from_args(args: argparse.Namespace) -> None:
     """Load production control settings without acquiring executor workspace authority."""
-    settings = settings_from_args(args, configure=False)
+    settings = settings_from_args(args)
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.data_dir)
     ensure_private_directory(settings.audit_log_path.parent)

@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ...config.settings import get_settings
+from ...config.control import get_control_config
 from ...persistence import FileStateStore, StateLayout, StateStore
 from .models import OAuthClient
 
@@ -16,7 +16,7 @@ CLIENT_STORE_VERSION = 1
 
 def client_store_path(*, state_dir: Path | None = None) -> Path:
     """Return the configured persistent OAuth client registry path."""
-    root = get_settings().state_dir if state_dir is None else state_dir
+    root = get_control_config().state_dir if state_dir is None else state_dir
     return StateLayout(root).oauth_clients_path
 
 
@@ -25,7 +25,7 @@ def _state_store(
 ) -> StateStore:
     if state_store is not None:
         return state_store
-    root = get_settings().state_dir if state_dir is None else state_dir
+    root = get_control_config().state_dir if state_dir is None else state_dir
     return FileStateStore(lambda: root)
 
 

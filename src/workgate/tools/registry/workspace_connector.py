@@ -23,7 +23,7 @@ class WorkspaceConnectorToolRegistry(DeclarativeToolRegistry):
     search tools. Regular ChatGPT custom connectors and Deep Research-style
     clients often expose only a document-source pattern: search for result cards,
     then fetch one result by id. They may not surface general-purpose tools such
-    as code search, file reads, shell commands, edits, or remote-worker operations unless
+    as code search, file reads, shell commands, edits, or executor operations unless
     the client is in Developer Mode or otherwise supports the full MCP tool set.
 
     search/fetch use mcp_security_profile="connector_compatible" so MCP

@@ -1,7 +1,5 @@
 """Executor reconnect, heartbeat, polling, and ordinary command execution."""
 
-from __future__ import annotations
-
 import asyncio
 import inspect
 import random

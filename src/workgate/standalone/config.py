@@ -1,16 +1,11 @@
 """Resolve one user-facing standalone configuration into distinct child configs."""
 
-from __future__ import annotations
-
 import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.roles import (
-    CONTROL_EXCLUDED_SETTING_NAMES,
-    EXECUTOR_SETTING_NAMES,
-)
+from ..config.roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
 from ..config.settings import Settings
 
 _FORCED_CONTROL_VALUES: dict[str, object] = {
@@ -48,10 +43,6 @@ def standalone_instance_namespace(state_root: Path) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def _control_setting_names() -> frozenset[str]:
-    return frozenset(Settings.model_fields) - CONTROL_EXCLUDED_SETTING_NAMES
-
-
 def resolve_standalone_child_config(
     settings: Settings,
 ) -> StandaloneChildConfig:
@@ -73,9 +64,7 @@ def resolve_standalone_child_config(
     control_data = standalone_data / "control"
 
     control = {
-        name: payload[name]
-        for name in _control_setting_names()
-        if name in payload
+        name: payload[name] for name in CONTROL_SETTING_NAMES if name in payload
     }
     control.update(_FORCED_CONTROL_VALUES)
     control["state_dir"] = str(control_state)

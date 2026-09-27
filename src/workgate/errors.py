@@ -1,4 +1,4 @@
-"""Typed filesystem and process-start errors shared across local and worker runtimes."""
+"""Typed filesystem and process-start errors shared across Workgate runtimes."""
 
 import os
 from pathlib import Path
@@ -145,7 +145,7 @@ def tool_error_payload(
 
 
 def exception_from_tool_error(data: dict[str, Any]) -> Exception:
-    """Reconstruct typed worker failures at the controller session boundary."""
+    """Reconstruct typed executor failures at the control session boundary."""
     status = str(data.get("status") or "error")
     message = str(data.get("message") or "remote tool failed")
     if status == "executable_not_found":

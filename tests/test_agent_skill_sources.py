@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 import workgate.agent_bridge.sources as source_module
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.agent_bridge.models import SkillSource as ModelSkillSource
 from workgate.agent_bridge.registry import build_agent_registry
 from workgate.agent_bridge.service import (
@@ -22,10 +23,9 @@ from workgate.agent_bridge.state import (
     agent_registry_fingerprint,
 )
 from workgate.agent_bridge.tools import AgentBridgeToolReloader
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
-from workgate.executor.tool_session.store import get_tool_session_store
 
 
 class _NoopClientManager:

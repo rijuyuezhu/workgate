@@ -1,7 +1,5 @@
 """Process-local device-code pairing for final executors."""
 
-from __future__ import annotations
-
 import asyncio
 import hmac
 import math

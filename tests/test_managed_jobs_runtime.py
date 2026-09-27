@@ -2,10 +2,14 @@ import asyncio
 
 import pytest
 
-from workgate.config.settings import get_settings
-from workgate.executor.tool_session.store import get_tool_session_store
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
+from workgate.config.role_config import (
+    get_role_config,
+    resolve_shared_role_config,
+)
+from workgate.config.settings import Settings, get_settings
 from workgate.jobs import managed as jobs_managed
-from workgate.jobs.managed import ManagedJobsRuntime
+from workgate.jobs.managed import ManagedJobsRuntime, use_managed_jobs_runtime
 from workgate.protocol.ids import new_session_id
 
 
@@ -94,3 +98,22 @@ async def test_managed_jobs_runtime_rejects_a_second_event_loop() -> None:
             await runtime.aclose()
     finally:
         foreign_loop.close()
+
+
+@pytest.mark.asyncio
+async def test_managed_jobs_context_propagates_owned_role_config_to_tasks(
+    tmp_path,
+) -> None:
+    role_config = resolve_shared_role_config(
+        Settings(state_dir=tmp_path / "state", max_job_log_bytes=321)
+    )
+    runtime = ManagedJobsRuntime(role_config=role_config)
+
+    async def inherited_role_config():
+        await asyncio.sleep(0)
+        return get_role_config()
+
+    with use_managed_jobs_runtime(runtime):
+        inherited = await asyncio.create_task(inherited_role_config())
+
+    assert inherited is role_config

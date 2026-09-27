@@ -24,8 +24,8 @@ from ..agent_bridge.redaction import (
     _redact_text,
     redact_configured_values,
 )
-from ..config.settings import Settings, get_settings
-from ..persistence import get_state_store
+from ..config.role_config import SharedRoleConfig, get_role_config
+from ..persistence import StateLayout, get_state_store
 from ..tools.session_args import tool_input_session_ids
 from ..utils.private_files import (
     append_private_bytes,
@@ -76,10 +76,11 @@ def _audit_key_is_sensitive(name: str) -> bool:
 
 def _configured_secret_maps() -> tuple[dict[str, str], ...]:
     """Return configured secrets that must be removed wherever rendered."""
-    settings = get_settings()
+    settings = get_role_config()
     secrets: dict[str, str] = {}
-    if settings.oauth_admin_pin:
-        secrets["oauth_admin_pin"] = settings.oauth_admin_pin
+    oauth_admin_pin = getattr(settings, "oauth_admin_pin", None)
+    if isinstance(oauth_admin_pin, str) and oauth_admin_pin:
+        secrets["oauth_admin_pin"] = oauth_admin_pin
     return (secrets,) if secrets else ()
 
 
@@ -426,7 +427,7 @@ def _enforce_audit_log_limit(path: Path, max_bytes: int) -> bool:
 
 
 def _record_payload_activity(
-    records: list[dict[str, Any]], settings: Settings
+    records: list[dict[str, Any]], settings: SharedRoleConfig
 ) -> tuple[set[str], set[str]]:
     referenced: set[str] = set()
     active: set[str] = set()
@@ -448,11 +449,13 @@ def _record_payload_activity(
 
 
 def _enforce_audit_retention(
-    path: Path, settings: Settings, *, payload_changed: bool
+    path: Path, settings: SharedRoleConfig, *, payload_changed: bool
 ) -> None:
     """Retain paired JSONL units and referenced payloads without rescanning every event."""
     log_changed = _enforce_audit_log_limit(path, settings.max_audit_log_bytes)
-    payload_root_exists = settings.audit_payload_dir.exists()
+    payload_root_exists = StateLayout(
+        settings.state_dir
+    ).audit_payload_dir.exists()
     sweep_key = str(path)
     monotonic_now = time.monotonic()
     last_sweep = _AUDIT_PAYLOAD_SWEEP_TIMES.get(sweep_key)
@@ -836,8 +839,8 @@ def audit_query_snapshot(
 
 def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
     """Read a bounded, consistent tail of the private JSONL audit log."""
-    settings = get_settings()
-    path = path or settings.audit_log_path
+    settings = get_role_config()
+    path = path or StateLayout(settings.state_dir).audit_log_path
     configured_limit = int(settings.max_audit_log_bytes)
     max_bytes = _AUDIT_QUERY_MAX_BYTES
     if configured_limit > 0:
@@ -995,7 +998,7 @@ def get_audit_entry(
         if str(row.get("id") or "") == normalized:
             entry = _public_audit_entry(row)
             if include_full_payloads:
-                return resolve_payload_references(entry, get_settings())
+                return resolve_payload_references(entry, get_role_config())
             return entry
     raise ValueError(f"Unknown audit entry: {normalized}")
 
@@ -1045,7 +1048,7 @@ def _audit_record_session_ids(fields: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _append_session_audit_records(
-    session_ids: tuple[str, ...], encoded: bytes, settings: Settings
+    session_ids: tuple[str, ...], encoded: bytes, settings: SharedRoleConfig
 ) -> None:
     """Append one sanitized record to each existing owning session log."""
     state_store = get_state_store()
@@ -1068,7 +1071,7 @@ def _append_session_audit_records(
 
 def audit(event: str, **fields: Any) -> None:
     """Append one uniformly redacted, bounded, private audit record."""
-    settings = get_settings()
+    settings = get_role_config()
     parent_call_id = current_audit_call_id()
     if parent_call_id and "parent_call_id" not in fields:
         fields = {**fields, "parent_call_id": parent_call_id}
@@ -1095,7 +1098,7 @@ def audit(event: str, **fields: Any) -> None:
         )
         for name, value in fields.items()
     }
-    path: Path = settings.audit_log_path
+    path: Path = StateLayout(settings.state_dir).audit_log_path
     with _audit_transaction(path):
         externalized = {
             name: externalize_sanitized_value(

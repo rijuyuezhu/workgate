@@ -4,9 +4,9 @@ import math
 import time
 from typing import Any
 
+from ..config.executor import ExecutorConfig
 from ..telemetry.system import local_system_snapshot
 from ..version import version_info
-from .config import ExecutorConfig
 
 _MAX_ALERTS = 12
 

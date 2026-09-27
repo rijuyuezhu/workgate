@@ -640,7 +640,7 @@
           {
             "items": [
               {
-                "description": "Tracked bash job ids, or controller-managed job ids, in this session to stop because they are stalled, hung, or no longer needed.",
+                "description": "Tracked bash job ids, or control-managed job ids, in this session to stop because they are stalled, hung, or no longer needed.",
                 "head": {
                   "code": "cancel"
                 },
@@ -690,7 +690,7 @@
               }
             ]
           },
-          "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates controller-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a controller-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call."
+          "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates control-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a control-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call."
         ]
       ]
     },
@@ -1534,7 +1534,7 @@
       ]
     },
     {
-      "body": "Register the special read-only search/fetch surface for connector clients. These tools are intentionally separate from the richer coding-agent file and search tools. Regular ChatGPT custom connectors and Deep Research-style clients often expose only a document-source pattern: search for result cards, then fetch one result by id. They may not surface general-purpose tools such as code search, file reads, shell commands, edits, or remote-worker operations unless the client is in Developer Mode or otherwise supports the full MCP tool set. search/fetch use mcp_security_profile=\"connector_compatible\" so MCP clients can discover them as document-source tools. oauth_scopes remains the server-enforced source of truth; the connector profile only affects MCP securitySchemes metadata.",
+      "body": "Register the special read-only search/fetch surface for connector clients. These tools are intentionally separate from the richer coding-agent file and search tools. Regular ChatGPT custom connectors and Deep Research-style clients often expose only a document-source pattern: search for result cards, then fetch one result by id. They may not surface general-purpose tools such as code search, file reads, shell commands, edits, or executor operations unless the client is in Developer Mode or otherwise supports the full MCP tool set. search/fetch use mcp_security_profile=\"connector_compatible\" so MCP clients can discover them as document-source tools. oauth_scopes remains the server-enforced source of truth; the connector profile only affects MCP securitySchemes metadata.",
       "headers": [
         "Tool",
         "Parameters",
@@ -3531,7 +3531,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates controller-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a controller-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call.",
+      "description": "Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates control-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a control-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call.",
       "inputSchema": {
         "properties": {
           "cancel": {
@@ -3547,7 +3547,7 @@
               }
             ],
             "default": null,
-            "description": "Tracked bash job ids, or controller-managed job ids, in this session to stop because they are stalled, hung, or no longer needed.",
+            "description": "Tracked bash job ids, or control-managed job ids, in this session to stop because they are stalled, hung, or no longer needed.",
             "title": "Cancel"
           },
           "include_finished": {
@@ -3700,7 +3700,7 @@
               },
               "kind": {
                 "default": "shell",
-                "description": "Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered controller operation.",
+                "description": "Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered control operation.",
                 "enum": [
                   "shell",
                   "managed"
@@ -3864,7 +3864,7 @@
               },
               "kind": {
                 "default": "shell",
-                "description": "Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered controller operation.",
+                "description": "Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered control operation.",
                 "enum": [
                   "shell",
                   "managed"
@@ -7195,7 +7195,7 @@
               },
               "kind": {
                 "default": "shell",
-                "description": "Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered controller operation.",
+                "description": "Execution kind. Shell jobs use a persistent shell runner; managed jobs run a registered control operation.",
                 "enum": [
                   "shell",
                   "managed"

@@ -1,7 +1,5 @@
 """Executor-owned Human UI terminal and raw-PTY operations."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from .shell_service import ShellService

@@ -3,8 +3,8 @@
 import subprocess
 from pathlib import Path
 
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.session import GitSessionInfo, SessionStartOutput
-from .config import ExecutorConfig
 from .environment import collect_executor_session_environment
 from .tool_session.store import AgentSession, ToolSessionStore
 

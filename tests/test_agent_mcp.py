@@ -24,6 +24,7 @@ from workgate.agent_bridge.mcp import (
 from workgate.agent_bridge.models import AgentMcpServerConfig
 from workgate.agent_bridge.registry import build_agent_registry
 from workgate.agent_bridge.status import registry_config_status
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings
 
 
@@ -354,8 +355,12 @@ def test_network_registry_reuses_service_mcp_manager(tmp_path):
         state_dir=tmp_path / "state",
     )
 
-    first = agent_service.build_network_agent_registry_from_settings(settings)
-    second = agent_service.build_network_agent_registry_from_settings(settings)
+    first = agent_service.build_network_agent_registry_from_settings(
+        resolve_control_config(settings)
+    )
+    second = agent_service.build_network_agent_registry_from_settings(
+        resolve_control_config(settings)
+    )
 
     assert first.client_manager is second.client_manager
     agent_service._close_shared_agent_mcp_client_manager()
@@ -397,12 +402,16 @@ def test_shared_manager_generation_retires_before_new_manager_is_visible(
         agent_mcp_call_timeout_s=2,
     )
 
-    first: Any = agent_service._shared_agent_mcp_client_manager(first_settings)
+    first: Any = agent_service._shared_agent_mcp_client_manager(
+        resolve_control_config(first_settings)
+    )
     assert first.number == 1
 
     replace = threading.Thread(
         target=lambda: results.put(
-            agent_service._shared_agent_mcp_client_manager(second_settings)
+            agent_service._shared_agent_mcp_client_manager(
+                resolve_control_config(second_settings)
+            )
         )
     )
     replace.start()
@@ -410,7 +419,9 @@ def test_shared_manager_generation_retires_before_new_manager_is_visible(
 
     concurrent = threading.Thread(
         target=lambda: results.put(
-            agent_service._shared_agent_mcp_client_manager(second_settings)
+            agent_service._shared_agent_mcp_client_manager(
+                resolve_control_config(second_settings)
+            )
         )
     )
     concurrent.start()

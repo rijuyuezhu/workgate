@@ -10,6 +10,7 @@ from tests.helpers import (
     build_paired_mcp,
     mcp_structured,
 )
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.errors import (
     PathNotFoundError,
@@ -19,8 +20,10 @@ from workgate.errors import (
     tool_error_payload,
     workspace_path_not_found_error,
 )
-from workgate.executor.terminal.runtime import build_terminal_runtime
-from workgate.executor.tool_session.store import get_tool_session_store
+from workgate.executor.terminal.runtime import (
+    build_terminal_runtime,
+    use_terminal_runtime,
+)
 from workgate.persistence import get_state_store
 from workgate.utils.path_policy import resolve_path_with_policy
 
@@ -138,7 +141,10 @@ async def test_conpty_reports_explicit_missing_shell_executable(
     )
     await terminal_runtime.start()
     try:
-        with pytest.raises(ShellExecutableNotFoundError) as raised:
+        with (
+            use_terminal_runtime(terminal_runtime),
+            pytest.raises(ShellExecutableNotFoundError) as raised,
+        ):
             await conpty.start_shell(
                 shell_id="missing-conpty",
                 cwd=tmp_path,

@@ -11,8 +11,8 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from tests.helpers import build_paired_http_app
+from workgate.config.control import ControlConfig, resolve_control_config
 from workgate.config.settings import (
-    Settings,
     clear_settings_cache,
     get_settings,
 )
@@ -52,7 +52,7 @@ def _register_file(
     max_downloads: int | None = None,
     inline: bool = False,
     session_id: str | None = None,
-    settings: Settings | None = None,
+    settings: ControlConfig | None = None,
 ):
     data = source.read_bytes()
     data_dir = None if settings is None else settings.data_dir
@@ -136,8 +136,10 @@ def test_explicit_control_data_dir_overrides_ambient_payload_location(
     source = tmp_path / "hello.txt"
     source.write_text("hello", encoding="utf-8")
     ambient = get_settings()
-    explicit = ambient.model_copy(
-        update={"data_dir": tmp_path / "explicit-control-data"}
+    explicit = resolve_control_config(
+        ambient.model_copy(
+            update={"data_dir": tmp_path / "explicit-control-data"}
+        )
     )
 
     created = _register_file(source, settings=explicit)

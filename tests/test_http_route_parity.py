@@ -6,6 +6,7 @@ from starlette.routing import BaseRoute, Route
 
 import workgate.control.http.app as http_app
 import workgate.control.mcp.app as mcp_app
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings, configure_settings
 from workgate.http.public_routes import public_http_routes
 from workgate.ui.http.routes import human_ui_routes
@@ -44,7 +45,9 @@ def test_shared_public_routes_have_rest_and_mcp_http_parity() -> None:
     assert shared_signatures == _SHARED_PUBLIC_ROUTE_SIGNATURES
 
     rest_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    rest_public_routes = http_app._install_public_routes(rest_app, settings)
+    rest_public_routes = http_app._install_public_routes(
+        rest_app, resolve_control_config(settings)
+    )
 
     mcp_http_app, mcp_public_routes = (
         mcp_app._add_public_routes_to_mcp_http_app(Starlette())
@@ -73,7 +76,9 @@ def test_human_ui_routes_have_rest_and_mcp_http_parity() -> None:
     )
     configure_settings(settings)
 
-    expected_routes, _expected_public_routes = human_ui_routes(settings)
+    expected_routes, _expected_public_routes = human_ui_routes(
+        resolve_control_config(settings)
+    )
     expected_paths = _route_paths(expected_routes)
     rest_paths = _route_paths(http_app.build_http_app().routes)
     mcp_http_app, _mcp_public_routes = (

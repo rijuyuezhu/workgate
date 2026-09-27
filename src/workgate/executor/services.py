@@ -2,9 +2,8 @@
 
 from dataclasses import dataclass
 
-from ..persistence import FileStateStore, StateStore, configure_state_store
-from .config import ExecutorConfig
-from .tool_session import configure_tool_session_store
+from ..config.executor import ExecutorConfig
+from ..persistence import FileStateStore
 from .tool_session.store import SessionPathResolver, ToolSessionStore
 
 
@@ -14,22 +13,6 @@ class RuntimeServices:
 
     state_store: FileStateStore
     tool_session_store: ToolSessionStore
-
-
-@dataclass
-class RuntimeServiceInstallation:
-    """One reversible executor compatibility-global installation."""
-
-    previous_state_store: StateStore | None
-    previous_tool_session_store: ToolSessionStore | None
-    _active: bool = True
-
-    def close(self) -> None:
-        if not self._active:
-            return
-        configure_tool_session_store(self.previous_tool_session_store)
-        configure_state_store(self.previous_state_store)
-        self._active = False
 
 
 def build_runtime_services(
@@ -51,22 +34,4 @@ def build_runtime_services(
     return RuntimeServices(
         state_store=state_store,
         tool_session_store=tool_session_store,
-    )
-
-
-def install_runtime_services(
-    services: RuntimeServices,
-) -> RuntimeServiceInstallation:
-    """Install executor state/session compatibility accessors."""
-    previous_state_store = configure_state_store(services.state_store)
-    try:
-        previous_tool_session_store = configure_tool_session_store(
-            services.tool_session_store
-        )
-    except BaseException:
-        configure_state_store(previous_state_store)
-        raise
-    return RuntimeServiceInstallation(
-        previous_state_store=previous_state_store,
-        previous_tool_session_store=previous_tool_session_store,
     )

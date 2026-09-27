@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Stage the dependency-light Workgate hosted closure for pywrangler."""
 
-from __future__ import annotations
-
 import argparse
 import os
 import shutil
@@ -19,7 +17,8 @@ MODULES = (
     "config/__init__.py",
     "config/settings.py",
     "control/__init__.py",
-    "control/config.py",
+    "config/control.py",
+    "config/role_config.py",
     "control/executor_transport.py",
     "control/pairing.py",
     "control/sessions.py",

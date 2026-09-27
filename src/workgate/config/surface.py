@@ -501,18 +501,30 @@ class BoolChoiceAction(argparse.Action):
 def register_setting_cli_args(
     parser: argparse.ArgumentParser,
     *,
+    include_names: Collection[str] | None = None,
     exclude_names: Collection[str] = (),
 ) -> None:
-    """Register Settings CLI options, optionally excluding role-foreign fields."""
+    """Register Settings CLI options for an explicit surface selection."""
     validate_setting_specs()
+    included = (
+        frozenset(SPECS_BY_NAME)
+        if include_names is None
+        else frozenset(include_names)
+    )
     excluded = frozenset(exclude_names)
-    unknown = excluded - SPECS_BY_NAME.keys()
+    unknown = (included | excluded) - SPECS_BY_NAME.keys()
     if unknown:
+        raise ValueError(f"Unknown setting names for CLI: {sorted(unknown)}")
+    if include_names is not None and excluded:
         raise ValueError(
-            f"Unknown setting names excluded from CLI: {sorted(unknown)}"
+            "include_names and exclude_names are mutually exclusive"
         )
     for section, specs in SETTING_SPECS_BY_SECTION:
-        selected = [spec for spec in specs if spec.name not in excluded]
+        selected = [
+            spec
+            for spec in specs
+            if spec.name in included and spec.name not in excluded
+        ]
         if not selected:
             continue
         group = parser.add_argument_group(section)

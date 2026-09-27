@@ -9,10 +9,15 @@ import pytest
 
 import workgate.audit.payloads as payloads
 from workgate.audit.payloads import AUDIT_PAYLOAD_KEY
+from workgate.config.role_config import (
+    SharedRoleConfig,
+    resolve_shared_role_config,
+)
 from workgate.config.settings import Settings
+from workgate.persistence import StateLayout
 
 
-def _settings(tmp_path: Path, **overrides: Any) -> Settings:
+def _settings(tmp_path: Path, **overrides: Any) -> SharedRoleConfig:
     values: dict[str, Any] = {
         "workspace_root": tmp_path,
         "state_dir": tmp_path / ".state",
@@ -23,7 +28,7 @@ def _settings(tmp_path: Path, **overrides: Any) -> Settings:
         "audit_payload_retention_s": 60,
     }
     values.update(overrides)
-    return Settings(**values)
+    return resolve_shared_role_config(Settings(**values))
 
 
 def _reference(
@@ -48,8 +53,12 @@ def test_payload_path_and_root_validation(tmp_path):
     with pytest.raises(ValueError, match="invalid audit payload digest"):
         payloads._payload_path(settings, "not-a-digest")
 
-    settings.audit_payload_dir.parent.mkdir(parents=True, exist_ok=True)
-    settings.audit_payload_dir.write_text("not a directory", encoding="utf-8")
+    StateLayout(settings.state_dir).audit_payload_dir.parent.mkdir(
+        parents=True, exist_ok=True
+    )
+    StateLayout(settings.state_dir).audit_payload_dir.write_text(
+        "not a directory", encoding="utf-8"
+    )
     with pytest.raises(OSError):
         payloads._prepare_payload_root(settings)
 

@@ -1,4 +1,4 @@
-"""Internal transfer operation tool registry for remote-worker file moves."""
+"""Internal transfer operation registry for executor file moves."""
 
 import asyncio
 from typing import Any, NoReturn
@@ -43,7 +43,7 @@ def _transfer_impl() -> NoReturn:
 
 
 class TransferToolRegistry(DeclarativeToolRegistry):
-    """Register worker-side transfer primitives without public routes."""
+    """Register executor-side transfer primitives without public routes."""
 
     name = "transfer"
     """Registry group name used for tool-surface organization."""
@@ -85,7 +85,7 @@ async def transfer_copy_file(
     source_session_id: OptionalSessionIdArg = None,
     destination_session_id: OptionalSessionIdArg = None,
 ) -> TransferCopyFileOutput:
-    """Stream a file between two paths on the same worker."""
+    """Stream a file between two paths on the same executor."""
     return await asyncio.to_thread(
         _transfer_impl().transfer_copy_file,
         source_path,

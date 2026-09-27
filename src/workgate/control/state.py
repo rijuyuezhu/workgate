@@ -1,7 +1,5 @@
 """Restart-critical durable state owned by the control runtime."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from threading import RLock
 from typing import Annotated, Any, Literal, Protocol

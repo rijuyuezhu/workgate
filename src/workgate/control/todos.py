@@ -1,13 +1,11 @@
 """Control-owned revisioned todo state for shared sessions."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import time
 from typing import Any
 
-from ..config.control import ControlSettingsView
+from ..config.control import ControlConfig
 from ..persistence import StateStore
 from ..schemas.result_models.todo import (
     ReadTodosOutput,
@@ -28,7 +26,7 @@ class ControlTodoService:
         self,
         state: ControlState,
         store: StateStore,
-        settings: ControlSettingsView,
+        settings: ControlConfig,
     ) -> None:
         self._state = state
         self._store = store

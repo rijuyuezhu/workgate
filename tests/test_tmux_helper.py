@@ -1,8 +1,8 @@
 import pytest
 
 import workgate.executor.shell as shell
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.runtime import build_executor_runtime
 from workgate.executor.terminal import tmux as tmux_helper
 

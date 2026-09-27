@@ -215,7 +215,7 @@ risk-weighted policy is serialized in `scripts/validation/coverage-baseline.json
 validated by the checker:
 
 - aggregate package branch coverage may not fall below the committed baseline;
-- credential, private-file, audit, OAuth, remote-worker lifecycle, terminal,
+- credential, private-file, audit, OAuth, executor lifecycle, terminal,
   destructive file/process, and transfer modules retain a near-zero per-file
   drift allowance of 0.05 percentage points;
 - ordinary existing modules may move by at most one percentage point, avoiding

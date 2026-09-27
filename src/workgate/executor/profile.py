@@ -1,6 +1,4 @@
-"""Private final executor connection profile and single-instance lock."""
-
-from __future__ import annotations
+"""Private executor connection profile and single-instance lock."""
 
 import ipaddress
 from collections.abc import Generator
@@ -94,7 +92,7 @@ class ExecutorProfileStore:
 
 
 class ExecutorAlreadyRunningError(RuntimeError):
-    """Raised when another process already owns the final executor profile."""
+    """Raised when another process already owns the executor profile."""
 
 
 @contextmanager

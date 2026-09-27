@@ -1,7 +1,5 @@
 """Control-owned public file-link snapshots sourced through executor RPC."""
 
-from __future__ import annotations
-
 import base64
 import binascii
 import hashlib
@@ -14,8 +12,7 @@ from typing import Any
 from pydantic import JsonValue
 
 from ..audit import audit
-from ..config.control import ControlSettingsView
-from ..config.settings import get_settings
+from ..config.control import ControlConfig, get_control_config
 from ..errors import exception_from_tool_error
 from ..protocol.ids import new_link_id
 from ..protocol.transfer import DEFAULT_TRANSFER_CHUNK_BYTES
@@ -66,18 +63,18 @@ def _now_s() -> float:
 
 
 def _active_settings(
-    settings: ControlSettingsView | None,
-) -> ControlSettingsView:
+    settings: ControlConfig | None,
+) -> ControlConfig:
     """Use explicit control authority, with ambient settings only for compatibility callers."""
-    return get_settings() if settings is None else settings
+    return get_control_config() if settings is None else settings
 
 
-def _payload_store(settings: ControlSettingsView | None) -> PayloadStore:
+def _payload_store(settings: ControlConfig | None) -> PayloadStore:
     return PayloadStore(_active_settings(settings).data_dir)
 
 
 def _coerce_download_ttl(
-    ttl_s: int | None, settings: ControlSettingsView | None = None
+    ttl_s: int | None, settings: ControlConfig | None = None
 ) -> int:
     active = _active_settings(settings)
     requested = (
@@ -89,7 +86,7 @@ def _coerce_download_ttl(
 
 
 def _coerce_max_downloads(
-    max_downloads: int | None, settings: ControlSettingsView | None = None
+    max_downloads: int | None, settings: ControlConfig | None = None
 ) -> int:
     active = _active_settings(settings)
     requested = (
@@ -149,7 +146,7 @@ def _register_snapshot(
     max_downloads: int | None,
     inline: bool,
     session_id: str | None,
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> CreateFileLinkOutput:
     active = _active_settings(settings)
     payloads = PayloadStore(active.data_dir)
@@ -221,7 +218,7 @@ def _list_file_links_owned(
     include_expired: bool = False,
     session_id: str | None = None,
     *,
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> ListFileLinksOutput:
     payloads = _payload_store(settings)
     with transaction() as store:
@@ -245,7 +242,7 @@ def _revoke_file_link_owned(
     link_id: str,
     session_id: str | None = None,
     *,
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> RevokeFileLinkOutput:
     payloads = _payload_store(settings)
     removed: dict[str, Any] | None = None
@@ -289,7 +286,7 @@ def claim_download(
     token: str,
     *,
     consume: bool,
-    settings: ControlSettingsView | None = None,
+    settings: ControlConfig | None = None,
 ) -> ClaimedDownload | dict[str, Any]:
     """Claim one validated control-owned snapshot for HTTP serving."""
     active = _active_settings(settings)
@@ -402,7 +399,7 @@ class ControlDownloadService:
         self,
         sessions: ControlSessionCoordinator,
         transport: ExecutorTransport,
-        settings: ControlSettingsView,
+        settings: ControlConfig,
     ) -> None:
         self._sessions = sessions
         self._transport = transport

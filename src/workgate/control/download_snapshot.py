@@ -1,12 +1,10 @@
 """Control-owned private immutable snapshots used by public file links."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
-from ..config.settings import get_settings
+from ..config.control import get_control_config
 from .payload_store import PAYLOAD_SUFFIX, PayloadStore
 
 SNAPSHOT_SUFFIX = PAYLOAD_SUFFIX
@@ -25,7 +23,7 @@ class DownloadSnapshot:
 
 def _payload_store(data_dir: Path | None = None) -> PayloadStore:
     """Return the download payload store, with ambient settings only as compatibility fallback."""
-    root = get_settings().data_dir if data_dir is None else data_dir
+    root = get_control_config().data_dir if data_dir is None else data_dir
     return PayloadStore(root)
 
 
@@ -51,7 +49,7 @@ def open_private_staging(
 def assert_shareable_size(size: int, *, maximum: int | None = None) -> None:
     """Reject invalid or over-limit public snapshot sizes."""
     limit = (
-        get_settings().file_download_max_file_bytes
+        get_control_config().file_download_max_file_bytes
         if maximum is None
         else int(maximum)
     )

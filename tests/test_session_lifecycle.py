@@ -7,14 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import get_test_tool_session_store as get_tool_session_store
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.jobs import ExecutorJobService
 from workgate.executor.tool_session import lifecycle
-from workgate.executor.tool_session.store import (
-    UnknownAgentSessionError,
-    get_tool_session_store,
-)
+from workgate.executor.tool_session.store import UnknownAgentSessionError
 from workgate.jobs import persistence as job_persistence
 from workgate.utils.private_files import private_file_lock
 
@@ -25,7 +23,11 @@ def _start_cross_process_lifecycle_holder(
     script = f"""
 import asyncio
 from pathlib import Path
+from workgate.config.settings import get_settings
 from workgate.executor.tool_session.lifecycle import session_lifecycle_locks
+from workgate.persistence import FileStateStore, use_state_store
+
+state_store = FileStateStore(lambda: get_settings().state_dir)
 
 async def main():
     async with session_lifecycle_locks({session_ids!r}):
@@ -33,7 +35,8 @@ async def main():
         while not Path({str(release)!r}).exists():
             await asyncio.sleep(0.01)
 
-asyncio.run(main())
+with use_state_store(state_store):
+    asyncio.run(main())
 """
     return subprocess.Popen(
         [sys.executable, "-c", script],
@@ -134,7 +137,11 @@ async def test_session_lifecycle_lock_serializes_across_processes(tmp_path):
     script = f"""
 import asyncio
 from pathlib import Path
+from workgate.config.settings import get_settings
 from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
+from workgate.persistence import FileStateStore, use_state_store
+
+state_store = FileStateStore(lambda: get_settings().state_dir)
 
 async def main():
     async with session_lifecycle_lock("SESSION1"):
@@ -142,7 +149,8 @@ async def main():
         while not Path({str(release)!r}).exists():
             await asyncio.sleep(0.01)
 
-asyncio.run(main())
+with use_state_store(state_store):
+    asyncio.run(main())
 """
     process = subprocess.Popen(
         [sys.executable, "-c", script],
@@ -233,14 +241,13 @@ async def test_job_admission_revalidates_after_cross_process_teardown(
 import asyncio
 from pathlib import Path
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.executor.config import resolve_executor_config
+from workgate.config.executor import resolve_executor_config
 from workgate.executor.services import build_runtime_services
 from workgate.executor.tool_session.lifecycle import session_lifecycle_lock
-from workgate.persistence import configure_state_store
+from workgate.persistence import use_state_store
 
 clear_settings_cache()
 services = build_runtime_services(resolve_executor_config(get_settings()))
-configure_state_store(services.state_store)
 store = services.tool_session_store
 
 async def main():
@@ -250,7 +257,8 @@ async def main():
         while not Path({str(release)!r}).exists():
             await asyncio.sleep(0.01)
 
-asyncio.run(main())
+with use_state_store(services.state_store):
+    asyncio.run(main())
 """
     process = subprocess.Popen(
         [sys.executable, "-c", script],

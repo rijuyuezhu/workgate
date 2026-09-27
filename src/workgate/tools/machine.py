@@ -1,7 +1,7 @@
 """Process-neutral classification for tools that require executor machine authority."""
 
 # Keep this contract dependency-light so control can classify executor-routed tools
-# without importing executor implementations or legacy remote-worker packages.
+# without importing executor implementations.
 MACHINE_TOOL_NAMES = frozenset(
     {
         "activate_agent_skill",

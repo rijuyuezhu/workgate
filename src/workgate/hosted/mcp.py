@@ -1,7 +1,5 @@
 """Dependency-light stateless MCP gateway for hosted control actors."""
 
-from __future__ import annotations
-
 import json
 import math
 import re
