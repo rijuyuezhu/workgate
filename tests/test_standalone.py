@@ -51,6 +51,7 @@ from workgate.standalone.supervisor import (
     prepare_standalone,
     standalone_child_env,
 )
+from workgate.ui.security import UI_LOCAL_TOKEN_HEADER
 
 
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -1275,6 +1276,15 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         "--config",
         str(config_path),
     ]
+    control_state_dir = state_dir / "standalone" / "control"
+    ui_token_path = FileStateStore(
+        lambda: control_state_dir
+    ).layout.ui_local_token_path
+    ui_token_path.parent.mkdir(parents=True, exist_ok=True)
+    ui_token = "standalone-topology-local-ui-token-0000000000000000"
+    ui_token_path.write_text(ui_token + "\n", encoding="utf-8")
+    if os.name != "nt":
+        ui_token_path.chmod(0o600)
 
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
@@ -1318,6 +1328,25 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         assert pin not in log_path.read_text(encoding="utf-8", errors="replace")
 
         with httpx.Client(timeout=1, trust_env=False) as client:
+            deadline = time.monotonic() + 10
+            executor_online = False
+            while time.monotonic() < deadline:
+                listing = client.get(
+                    f"{base_url}/api/ui/executors",
+                    headers={UI_LOCAL_TOKEN_HEADER: ui_token},
+                )
+                if listing.status_code == 200:
+                    rows = listing.json()["data"]["executors"]
+                    executor_online = any(
+                        row["executor_id"] == profile["executor_id"]
+                        and row["online"] is True
+                        for row in rows
+                    )
+                    if executor_online:
+                        break
+                time.sleep(0.05)
+            assert executor_online
+
             response = client.post(
                 f"{base_url}/mcp",
                 json={},

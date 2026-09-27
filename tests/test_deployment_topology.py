@@ -28,11 +28,11 @@ pytestmark = [
 ]
 
 
-async def _executor_row(base_url: str, executor_id: str) -> dict:
+async def _executor_target(base_url: str, executor_id: str) -> dict:
     async with httpx.AsyncClient(timeout=2, trust_env=False) as client:
-        response = await client.get(f"{base_url}/api/ui/executors")
+        response = await client.get(f"{base_url}/api/ui/bootstrap")
     response.raise_for_status()
-    rows = response.json()["data"]["executors"]
+    rows = response.json()["data"]["executor_targets"]
     return next(row for row in rows if row["executor_id"] == executor_id)
 
 
@@ -147,9 +147,10 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
         )
         assert "topology" in first_read["content"]
 
-        seen_before_restart = (await _executor_row(base_url, executor_id))[
-            "last_seen_at"
-        ]
+        initial_target = await _executor_target(base_url, executor_id)
+        assert initial_target["status"] == "online"
+        assert initial_target["workspace_root"] == str(workspace)
+        seen_before_restart = initial_target["last_seen_at"]
         assert isinstance(seen_before_restart, int | float)
         stop_process(executor)
         restarted_executor = start_executor_process(
@@ -179,6 +180,9 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
             timeout_s=20,
         )
         assert profile_path.read_bytes() == profile_before
+        reconnected_target = await _executor_target(base_url, executor_id)
+        assert reconnected_target["status"] == "online"
+        assert reconnected_target["workspace_root"] == str(workspace)
 
         after_executor_restart = await client.call_tool(
             "read", {"session_id": session_id, "path": "marker.txt"}
@@ -207,6 +211,9 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
             timeout_s=30,
         )
         assert profile_path.read_bytes() == profile_before
+        rehydrated_target = await _executor_target(base_url, executor_id)
+        assert rehydrated_target["status"] == "online"
+        assert rehydrated_target["workspace_root"] == str(workspace)
 
         after_control_restart = await client.call_tool(
             "read", {"session_id": session_id, "path": "marker.txt"}
