@@ -377,21 +377,46 @@ async def test_replay_receive_delegates_after_buffered_messages():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_real_http_process_rejects_oversized_body(tmp_path, monkeypatch):
+async def test_real_http_process_rejects_oversized_body(tmp_path):
     import httpx
 
-    from tests.e2e_helpers import run_http_process
+    from tests.e2e_helpers import (
+        free_tcp_port,
+        isolated_xdg_env,
+        start_control_process,
+        stop_process,
+        wait_for_http_ready,
+        write_yaml_config,
+    )
 
     limit = 16 * 1024
-    monkeypatch.setenv("WORKGATE_MAX_HTTP_REQUEST_BYTES", str(limit))
-    async with (
-        run_http_process(tmp_path, mode="http") as (base_url, _workspace),
-        httpx.AsyncClient(timeout=10) as client,
-    ):
-        response = await client.post(
-            f"{base_url}/tools/session_start",
-            content=b"x" * (limit + 1),
-            headers={"content-type": "application/json"},
-        )
+    port = free_tcp_port()
+    base_url = f"http://127.0.0.1:{port}"
+    config = write_yaml_config(
+        tmp_path / "control.yaml",
+        {
+            "mode": "http",
+            "host": "127.0.0.1",
+            "port": port,
+            "base_url": base_url,
+            "auth_mode": "none",
+            "state_dir": str(tmp_path / "state"),
+            "data_dir": str(tmp_path / "data"),
+            "max_http_request_bytes": limit,
+        },
+    )
+    process = start_control_process(
+        config, env=isolated_xdg_env(tmp_path / "xdg")
+    )
+    try:
+        await wait_for_http_ready(base_url, process)
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.post(
+                f"{base_url}/tools/session_start",
+                content=b"x" * (limit + 1),
+                headers={"content-type": "application/json"},
+            )
+    finally:
+        stop_process(process)
 
     _assert_oversize(response, limit_bytes=limit)

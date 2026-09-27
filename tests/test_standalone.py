@@ -1215,13 +1215,20 @@ def test_run_standalone_maps_lock_contention(
         standalone_supervisor.run_standalone(_settings(tmp_path))
 
 
+@pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="POSIX process-group cleanup is used for the real standalone smoke",
 )
 def test_real_standalone_bootstraps_offline_and_protects_loopback(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("WORKGATE_PORT", "1")
+    monkeypatch.setenv(
+        "WORKGATE_WORKSPACE_ROOT", str(tmp_path / "wrong-workspace")
+    )
     port = _free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
     workspace = tmp_path / "workspace"
@@ -1230,9 +1237,30 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
     runtime_base = tmp_path / "runtime"
     runtime_base.mkdir(mode=0o700)
     log_path = tmp_path / "standalone.log"
-    env = os.environ.copy()
+    config_path = tmp_path / "standalone.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "workspace_root": str(workspace),
+                "state_dir": str(state_dir),
+                "data_dir": str(data_dir),
+                "port": port,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("WORKGATE_")
+    }
     env.update(
         {
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg-config"),
+            "XDG_STATE_HOME": str(tmp_path / "xdg-state"),
+            "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
+            "XDG_CACHE_HOME": str(tmp_path / "xdg-cache"),
             "XDG_RUNTIME_DIR": str(runtime_base),
             "HTTP_PROXY": "http://127.0.0.1:1",
             "HTTPS_PROXY": "http://127.0.0.1:1",
@@ -1244,14 +1272,8 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         "-m",
         "workgate.main",
         "standalone",
-        "--workspace-root",
-        str(workspace),
-        "--state-dir",
-        str(state_dir),
-        "--data-dir",
-        str(data_dir),
-        "--port",
-        str(port),
+        "--config",
+        str(config_path),
     ]
 
     with log_path.open("w", encoding="utf-8") as log:

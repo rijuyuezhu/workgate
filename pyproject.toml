@@ -135,6 +135,7 @@ timeout = 120
 timeout_method = "thread"
 markers = [
     "integration: tests that start real workgate server processes",
+    "topology: deployment-topology acceptance tests run by the dedicated topology job",
     "browser: real Chromium end-to-end tests run by the dedicated browser job",
 ]
 
