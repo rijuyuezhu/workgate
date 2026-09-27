@@ -150,7 +150,7 @@ async def test_stream_hub_closes_executor_streams_on_trust_invalidation():
 
 @pytest.mark.asyncio
 async def test_stream_hub_idle_timeout_tracks_activity_across_both_directions():
-    hub = ControlStreamHub(max_streams=1, idle_timeout_s=0.04)
+    hub = ControlStreamHub(max_streams=1, idle_timeout_s=0.2)
     grant = await hub.create("exec-1")
     browser = _FakeSocket()
     executor = _FakeSocket()
@@ -160,15 +160,40 @@ async def test_stream_hub_idle_timeout_tracks_activity_across_both_directions():
     assert await hub.claim_executor(grant.stream_id, "exec-1", executor)
     assert await hub.activate_executor(grant.stream_id)
 
-    for payload in (b"one", b"two", b"three"):
-        await executor.incoming.put(
-            {"type": "websocket.receive", "bytes": payload}
-        )
-        await asyncio.sleep(0.025)
-        assert hub.active_count() == 1
+    await executor.incoming.put(
+        {"type": "websocket.receive", "bytes": b"executor-to-browser"}
+    )
+    for _ in range(50):
+        if browser.sent_bytes:
+            break
+        await asyncio.sleep(0)
+    assert browser.sent_bytes == [b"executor-to-browser"]
+    await asyncio.sleep(0.05)
+    assert hub.active_count() == 1
 
-    assert browser.sent_bytes == [b"one", b"two", b"three"]
-    await asyncio.sleep(0.06)
+    await browser.incoming.put(
+        {"type": "websocket.receive", "bytes": b"browser-to-executor"}
+    )
+    for _ in range(50):
+        if executor.sent_bytes:
+            break
+        await asyncio.sleep(0)
+    assert executor.sent_bytes == [b"browser-to-executor"]
+    await asyncio.sleep(0.05)
+    assert hub.active_count() == 1
+
+    await executor.incoming.put(
+        {"type": "websocket.receive", "bytes": b"refresh"}
+    )
+    for _ in range(50):
+        if len(browser.sent_bytes) == 2:
+            break
+        await asyncio.sleep(0)
+    assert browser.sent_bytes == [b"executor-to-browser", b"refresh"]
+    await asyncio.sleep(0.05)
+    assert hub.active_count() == 1
+
+    await asyncio.sleep(0.2)
     assert hub.active_count() == 0
 
 
