@@ -17,6 +17,7 @@ workspaces/
 playwright-report/
 test-results/
 /browser-artifacts*/
+/topology-artifacts/
 node_modules/
 # MkDocs build output
 site/

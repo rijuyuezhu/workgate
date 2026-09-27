@@ -153,6 +153,37 @@ def test_standalone_rejects_topology_and_auth_overrides(flag, value):
         cli._build_parser().parse_args(["standalone", flag, value])
 
 
+def test_run_standalone_from_args_dispatches_resolved_settings(monkeypatch):
+    args = argparse.Namespace()
+    settings = object()
+    seen = []
+
+    monkeypatch.setattr(
+        standalone_cli, "settings_from_args", lambda actual: settings
+    )
+    monkeypatch.setattr(standalone_cli, "run_standalone", seen.append)
+
+    standalone_cli.run_standalone_from_args(args)
+
+    assert seen == [settings]
+
+
+def test_run_standalone_from_args_maps_lock_contention(monkeypatch):
+    args = argparse.Namespace()
+    settings = object()
+    monkeypatch.setattr(
+        standalone_cli, "settings_from_args", lambda actual: settings
+    )
+
+    def busy(_settings):
+        raise standalone_cli.StandaloneAlreadyRunningError("already active")
+
+    monkeypatch.setattr(standalone_cli, "run_standalone", busy)
+
+    with pytest.raises(SystemExit, match="already active"):
+        standalone_cli.run_standalone_from_args(args)
+
+
 @pytest.mark.parametrize(
     ("flag", "value"),
     [

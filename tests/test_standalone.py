@@ -51,6 +51,7 @@ from workgate.standalone.supervisor import (
     prepare_standalone,
     standalone_child_env,
 )
+from workgate.ui.security import UI_LOCAL_TOKEN_HEADER
 
 
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -1215,13 +1216,20 @@ def test_run_standalone_maps_lock_contention(
         standalone_supervisor.run_standalone(_settings(tmp_path))
 
 
+@pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="POSIX process-group cleanup is used for the real standalone smoke",
 )
 def test_real_standalone_bootstraps_offline_and_protects_loopback(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("WORKGATE_PORT", "1")
+    monkeypatch.setenv(
+        "WORKGATE_WORKSPACE_ROOT", str(tmp_path / "wrong-workspace")
+    )
     port = _free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
     workspace = tmp_path / "workspace"
@@ -1230,9 +1238,30 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
     runtime_base = tmp_path / "runtime"
     runtime_base.mkdir(mode=0o700)
     log_path = tmp_path / "standalone.log"
-    env = os.environ.copy()
+    config_path = tmp_path / "standalone.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "workspace_root": str(workspace),
+                "state_dir": str(state_dir),
+                "data_dir": str(data_dir),
+                "port": port,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("WORKGATE_")
+    }
     env.update(
         {
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg-config"),
+            "XDG_STATE_HOME": str(tmp_path / "xdg-state"),
+            "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
+            "XDG_CACHE_HOME": str(tmp_path / "xdg-cache"),
             "XDG_RUNTIME_DIR": str(runtime_base),
             "HTTP_PROXY": "http://127.0.0.1:1",
             "HTTPS_PROXY": "http://127.0.0.1:1",
@@ -1244,15 +1273,18 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         "-m",
         "workgate.main",
         "standalone",
-        "--workspace-root",
-        str(workspace),
-        "--state-dir",
-        str(state_dir),
-        "--data-dir",
-        str(data_dir),
-        "--port",
-        str(port),
+        "--config",
+        str(config_path),
     ]
+    control_state_dir = state_dir / "standalone" / "control"
+    ui_token_path = FileStateStore(
+        lambda: control_state_dir
+    ).layout.ui_local_token_path
+    ui_token_path.parent.mkdir(parents=True, exist_ok=True)
+    ui_token = "standalone-topology-local-ui-token-0000000000000000"
+    ui_token_path.write_text(ui_token + "\n", encoding="utf-8")
+    if os.name != "nt":
+        ui_token_path.chmod(0o600)
 
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
@@ -1296,6 +1328,25 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         assert pin not in log_path.read_text(encoding="utf-8", errors="replace")
 
         with httpx.Client(timeout=1, trust_env=False) as client:
+            deadline = time.monotonic() + 10
+            executor_online = False
+            while time.monotonic() < deadline:
+                listing = client.get(
+                    f"{base_url}/api/ui/executors",
+                    headers={UI_LOCAL_TOKEN_HEADER: ui_token},
+                )
+                if listing.status_code == 200:
+                    rows = listing.json()["data"]["executors"]
+                    executor_online = any(
+                        row["executor_id"] == profile["executor_id"]
+                        and row["online"] is True
+                        for row in rows
+                    )
+                    if executor_online:
+                        break
+                time.sleep(0.05)
+            assert executor_online
+
             response = client.post(
                 f"{base_url}/mcp",
                 json={},
@@ -1312,6 +1363,7 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
 
 
 @pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="real standalone process restart coverage is exercised on POSIX",
@@ -1386,6 +1438,7 @@ def test_two_real_standalone_instances_share_xdg_roots_without_state_collision(
 
 
 @pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="real standalone process restart coverage is exercised on POSIX",
@@ -1440,6 +1493,7 @@ def test_real_supervisor_restarts_control_and_executor_independently(
 
 
 @pytest.mark.integration
+@pytest.mark.topology
 @pytest.mark.skipif(
     os.name == "nt",
     reason="real standalone owner-action process exit is exercised on POSIX",
