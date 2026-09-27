@@ -14,10 +14,10 @@ Enable Developer Mode for the full coding-agent surface, then refresh the connec
 
 Check:
 
-```env
-WORKGATE_BASE_URL=https://your-public-host.example.com
-WORKGATE_AUTH_MODE=oauth
-WORKGATE_OAUTH_ADMIN_PIN=...
+```yaml
+base_url: https://your-public-host.example.com
+auth_mode: oauth
+oauth_admin_pin: ...
 ```
 
 Make sure the connector URL is exactly:
@@ -40,16 +40,16 @@ Then check the tunnel or reverse proxy:
 
 - It must forward to the server port, usually `8765`.
 - It must preserve HTTPS externally for ChatGPT.
-- The public hostname must match `WORKGATE_BASE_URL`.
+- The public hostname must match the configured `base_url`.
 
 ## Tool call times out
 
 Public tool calls are bounded by strict watchdogs and shell timeouts. Check these settings:
 
-```env
-WORKGATE_TOOL_TIMEOUT_S=60
-WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S=10
-WORKGATE_RUN_SHELL_MAX_TIMEOUT_S=120
+```yaml
+tool_timeout_s: 60
+run_shell_default_timeout_s: 10
+run_shell_max_timeout_s: 120
 ```
 
 Use persistent shells for long-running dev servers, REPLs, or interactive commands.
@@ -65,7 +65,7 @@ Check:
 
 The executor reconnects after temporary network or control outages using its saved long-lived credential; ordinary downtime does not require a new pairing. If authentication is rejected because trust was revoked or replaced, run `workgate executor connect CONTROL_URL` and explicitly approve the replacement from the **Executors** page.
 
-If the executor process exits or fails before connecting, run `workgate executor run` in the foreground and inspect its local output. Workgate no longer provides the legacy `workgate worker` status/log/service commands, so unattended lifecycle diagnostics belong to the service manager used to launch `executor run`.
+If the executor process exits or fails before connecting, run `workgate executor run` in the foreground and inspect its local output. For unattended deployments, inspect the service manager that launches the executor.
 
 ## Audit log is missing expected calls
 
@@ -80,6 +80,6 @@ Every routed MCP or REST debug tool call should produce a `tool_call_start` and 
 
 The standalone binary includes the Python server and default OAuth
 dependencies. On POSIX systems, persistent shells require a host tmux executable;
-the default is `tmux` from `PATH`, and `WORKGATE_TMUX_BIN` may point to a
+the default is `tmux` from `PATH`, and the `tmux_bin` setting may point to a
 different executable. Git, shells, compilers, LibreOffice, and other host tools
 are not bundled.

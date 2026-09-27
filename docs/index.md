@@ -1,41 +1,37 @@
 # Workgate
 
-Workgate lets ChatGPT and other MCP clients work in a controlled
-project workspace. It can inspect and edit files, run commands and tests, use
-Git, manage persistent terminals, and delegate work to registered remote
-machines.
-
-Workgate originated from
-[`fwerkor/local-shell-mcp`](https://github.com/fwerkor/local-shell-mcp) and is now
-independently named and maintained. Its tool contracts, lifecycle model,
-capabilities, and release line have diverged substantially from the predecessor.
-See [Comparison with upstream](comparison.md) for the major functional differences.
+Workgate lets ChatGPT and other MCP clients work in controlled project
+workspaces. One **control** endpoint handles clients, authentication, UI, and
+orchestration; paired **executors** perform machine-facing work such as files,
+shells, jobs, and terminals.
 
 ## Start here
 
-- Follow the [Quickstart](getting-started/quickstart.md) for a local service exposed through HTTPS.
-- Add the service to [ChatGPT](getting-started/chatgpt-connector.md).
-- Review [Security](security.md) before exposing the service outside localhost.
+- Follow the [Quickstart](getting-started/quickstart.md) for the simplest local setup.
+- Use [Choose a deployment](getting-started/deployment.md) for public HTTPS, VPS, or multi-machine setups.
+- Pair another machine with [Executors](guides/executors.md).
+- Connect the service to [ChatGPT](getting-started/chatgpt-connector.md).
+- Read [Security](security.md) before exposing Workgate outside localhost.
 
-## What users can do
+## What you can do
 
-After connecting an MCP client, start an explicit workspace session and ask it to:
+After connecting an MCP client, start a workspace session and ask it to:
 
-- inspect a repository and its instruction files;
-- search, read, edit, and patch project files;
-- run tests, build commands, and Git workflows;
+- inspect, search, edit, and patch repositories;
+- run tests, builds, Git commands, and bounded shell tasks;
 - keep long-running jobs or persistent terminals;
 - copy data between sessions on the same or different executors;
 - review Todos and Audit history;
 - use configured Skills or upstream MCP servers.
 
-See [Common workflows](guides/common-workflows.md) for practical examples and the generated [Tool reference](reference/tools.md) for exact tool contracts.
+See [Common workflows](guides/common-workflows.md) for examples and the
+generated [Tool reference](reference/tools.md) for exact tool contracts.
 
-## Human and remote access
-
-The HTTP server includes a browser interface at `/ui`. An optional terminal client provides the same main management areas. See [Human interface](guides/human-interface.md).
-
-To work on another machine while keeping one public MCP endpoint, pair an [executor](guides/remote-workers.md).
+The browser interface is available at `/ui`; an optional terminal client
+provides the same main management areas. See
+[Human interface](guides/human-interface.md).
 
 !!! warning
-    Give the service access only to workspaces you are prepared for an AI coding agent to modify. Keep OAuth enabled for public deployments, use narrow scopes, and leave full-control mode disabled unless the environment is disposable.
+    Give executors access only to workspaces you are prepared for an AI coding
+    agent to modify. Keep OAuth enabled for public deployments and leave
+    full-control mode disabled unless the environment is disposable.

@@ -20,7 +20,7 @@ By default, local audit state is under:
 ${XDG_STATE_HOME:-~/.local/state}/workgate/audit_log/
 ```
 
-This is the Linux default; macOS and Windows use their native Workgate state location. The location follows `WORKGATE_STATE_DIR` when that setting is explicitly overridden. Executor-side audit history is selected through the same shared session-oriented UI and tool flow.
+This is the control-side Linux default; macOS and Windows use their native Workgate state location. An explicit `state_dir` changes the root. Executors keep their own audit state under their executor-private state root, while the shared UI/tool flow selects the relevant session/executor history.
 
 Do not publish this directory, attach it to public bug reports, or assume redaction removed every sensitive project value.
 

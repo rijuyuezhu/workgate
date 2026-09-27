@@ -7,7 +7,7 @@ Add `workgate` to ChatGPT as a custom MCP connector. Public deployments should u
 Confirm that:
 
 1. the public HTTPS hostname reaches the server;
-2. `WORKGATE_BASE_URL` exactly matches that origin;
+2. the control YAML `base_url` exactly matches that origin;
 3. OAuth is enabled and the admin PIN is a long random value;
 4. the health endpoint responds.
 
