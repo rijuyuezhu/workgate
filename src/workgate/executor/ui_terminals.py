@@ -16,10 +16,6 @@ class UiTerminalsService:
             return await self._shell.list_all()
         if op == "ui.terminals.start":
             return await self._shell.start_unowned(args)
-        if op == "ui.terminals.send":
-            return await self._shell.send_unowned(args)
-        if op == "ui.terminals.resize":
-            return await self._shell.resize_unowned(args)
         if op == "ui.terminals.read":
             return await self._shell.read_unowned(args)
         if op == "ui.terminals.kill":

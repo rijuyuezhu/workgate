@@ -18,14 +18,6 @@ class _FakeShell:
         self.calls.append(("start_unowned", args))
         return "started"
 
-    async def send_unowned(self, args: dict[str, Any]) -> str:
-        self.calls.append(("send_unowned", args))
-        return "sent"
-
-    async def resize_unowned(self, args: dict[str, Any]) -> str:
-        self.calls.append(("resize_unowned", args))
-        return "resized"
-
     async def read_unowned(self, args: dict[str, Any]) -> str:
         self.calls.append(("read_unowned", args))
         return "read"
@@ -41,8 +33,6 @@ class _FakeShell:
     [
         ("ui.terminals.list", "list_all", "listed"),
         ("ui.terminals.start", "start_unowned", "started"),
-        ("ui.terminals.send", "send_unowned", "sent"),
-        ("ui.terminals.resize", "resize_unowned", "resized"),
         ("ui.terminals.read", "read_unowned", "read"),
         ("ui.terminals.kill", "kill_unowned", "killed"),
     ],
@@ -64,6 +54,8 @@ async def test_ui_terminal_service_routes_shell_operations(
 @pytest.mark.parametrize(
     "op",
     [
+        "ui.terminals.send",
+        "ui.terminals.resize",
         "ui.terminals.bridge.open",
         "ui.terminals.bridge.read",
         "ui.terminals.bridge.write",

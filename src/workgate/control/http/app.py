@@ -159,20 +159,10 @@ def build_http_app(
 
 def run_http(
     *,
+    runtime: ControlRuntime,
     tool_catalog: ToolCatalog | None = None,
-    runtime: ControlRuntime | None = None,
 ) -> None:
-    """Run the REST HTTP server with one control runtime owner."""
-    if runtime is None:
-        source_settings = get_settings()
-        active_runtime = build_control_runtime(source_settings)
-    else:
-        active_runtime = runtime
-    validate_public_oauth_configuration(active_runtime.config)
-    app = build_http_app(
-        tool_catalog=tool_catalog,
-        runtime=active_runtime,
-    )
-    uvicorn.run(
-        app, host=active_runtime.config.host, port=active_runtime.config.port
-    )
+    """Run the REST HTTP server with one explicit control runtime owner."""
+    validate_public_oauth_configuration(runtime.config)
+    app = build_http_app(tool_catalog=tool_catalog, runtime=runtime)
+    uvicorn.run(app, host=runtime.config.host, port=runtime.config.port)

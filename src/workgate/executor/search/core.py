@@ -244,7 +244,6 @@ def build_rg_argv(
     *,
     path_args: list[str],
     glob_args: list[str],
-    glob: str | None,
     regex: bool,
     case_sensitive: bool,
     gitignore: bool,
@@ -259,8 +258,6 @@ def build_rg_argv(
         args.append("--ignore-case")
     for glob_arg in glob_args:
         args.extend(["--glob", glob_arg])
-    if glob:
-        args.extend(["--glob", glob])
     args.extend(["--", query, *(path_args or ["."])])
     return args
 

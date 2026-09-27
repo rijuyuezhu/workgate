@@ -787,6 +787,87 @@ def test_removed_control_executor_migration_surfaces_do_not_return() -> None:
     assert violations == []
 
 
+def test_final_control_executor_cleanup_surfaces_do_not_return() -> None:
+    """Final #123 architecture has no migration-era alternate authorities."""
+    removed_paths = (
+        _PACKAGE_ROOT / "executor" / "terminal" / "contracts.py",
+        _PACKAGE_ROOT / "ui" / "http" / "terminal_websocket.py",
+        _PACKAGE_ROOT / "ui" / "static" / "terminal_renderer.js",
+    )
+    assert all(not path.exists() for path in removed_paths)
+
+    settings_source = (_PACKAGE_ROOT / "config" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"/remote"' not in settings_source
+
+    terminal_source = (
+        _PACKAGE_ROOT / "ui" / "static" / "terminal.js"
+    ).read_text(encoding="utf-8")
+    assert "/ws/terminals/" not in terminal_source
+    assert "TerminalBridgeUnsupportedError" not in terminal_source
+    assert "acceptTerminalSnapshot" not in terminal_source
+    assert 'mode", "snapshot"' not in terminal_source
+
+    routes_source = (_PACKAGE_ROOT / "ui" / "http" / "routes.py").read_text(
+        encoding="utf-8"
+    )
+    assert "terminal_websocket" not in routes_source
+
+    download_sources = (
+        _PACKAGE_ROOT / "control" / "download_snapshot.py",
+        _PACKAGE_ROOT / "control" / "downloads.py",
+        _PACKAGE_ROOT / "http" / "downloads.py",
+    )
+    assert all(
+        "get_control_config" not in path.read_text(encoding="utf-8")
+        for path in download_sources
+    )
+
+    ui_terminal_service_source = (
+        _PACKAGE_ROOT / "executor" / "ui_terminals.py"
+    ).read_text(encoding="utf-8")
+    assert "ui.terminals.send" not in ui_terminal_service_source
+    assert "ui.terminals.resize" not in ui_terminal_service_source
+
+    shell_service_source = (
+        _PACKAGE_ROOT / "executor" / "shell_service.py"
+    ).read_text(encoding="utf-8")
+    assert "send_unowned" not in shell_service_source
+    assert "resize_unowned" not in shell_service_source
+
+    session_store_source = (
+        _PACKAGE_ROOT / "executor" / "tool_session" / "store.py"
+    ).read_text(encoding="utf-8")
+    assert "assert_tool_call_allowed" not in session_store_source
+
+    search_source = (
+        _PACKAGE_ROOT / "executor" / "search" / "service.py"
+    ).read_text(encoding="utf-8")
+    assert "request.glob" not in search_source
+    assert "legacy single glob" not in search_source
+
+    for relative_path, function_name in (
+        (Path("control/http/app.py"), "run_http"),
+        (Path("control/mcp/app.py"), "run_mcp"),
+    ):
+        path = _PACKAGE_ROOT / relative_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == function_name
+        )
+        defaults = dict(
+            zip(
+                (arg.arg for arg in function.args.kwonlyargs),
+                function.args.kw_defaults,
+                strict=True,
+            )
+        )
+        assert defaults["runtime"] is None
+
+
 def test_control_cli_imports_without_executor_dependencies() -> None:
     script = textwrap.dedent(
         """

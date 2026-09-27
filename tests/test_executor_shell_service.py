@@ -259,7 +259,7 @@ async def test_shell_service_rejects_uncertain_and_foreign_shell_ownership(
 
 
 @pytest.mark.asyncio
-async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
+async def test_shell_service_lists_owned_and_routes_ui_resource_operations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service, store = _service(tmp_path)
@@ -295,16 +295,6 @@ async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
     )
     monkeypatch.setattr(
         shell_service_module,
-        "send_persistent_shell_input_execute",
-        lambda *args, **kwargs: record("send", *args, **kwargs),
-    )
-    monkeypatch.setattr(
-        shell_service_module,
-        "resize_persistent_shell_execute",
-        lambda *args, **kwargs: record("resize", *args, **kwargs),
-    )
-    monkeypatch.setattr(
-        shell_service_module,
         "read_persistent_shell_output_execute",
         lambda *args, **kwargs: record("read", *args, **kwargs),
     )
@@ -335,22 +325,6 @@ async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
 
     assert await service.start_unowned({"cwd": ".", "name": "ui"}) == "start"
     assert calls[0][2]["forbidden_shell_ids"] == frozenset({"shell-job"})
-    with pytest.raises(ValueError, match="belongs to a tracked job"):
-        await service.send_unowned(
-            {"shell_id": "shell-job", "input_text": "do not expose"}
-        )
-    assert (
-        await service.send_unowned(
-            {"shell_id": "shell-1", "input_text": "x", "enter": False}
-        )
-        == "send"
-    )
-    assert (
-        await service.resize_unowned(
-            {"shell_id": "shell-1", "cols": 100, "rows": 40}
-        )
-        == "resize"
-    )
     assert (
         await service.read_unowned({"shell_id": "shell-1", "lines": 9})
         == "read"
@@ -358,8 +332,6 @@ async def test_shell_service_lists_owned_and_routes_ui_unowned_operations(
     assert await service.kill_unowned({"shell_id": "shell-1"}) == "kill"
     assert [name for name, _args, _kwargs in calls] == [
         "start",
-        "send",
-        "resize",
         "read",
         "kill",
     ]

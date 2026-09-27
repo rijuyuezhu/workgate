@@ -1,6 +1,7 @@
 """Authenticated browser PTY bridge for the optional OpenTUI client."""
 
 import asyncio
+import base64
 import contextlib
 import importlib
 import json
@@ -11,28 +12,90 @@ import signal
 import subprocess
 from typing import Any, Protocol
 
+import jwt
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from ... import __version__
 from ...config.control import ControlConfig
+from ...oauth.core.scopes import (
+    SCOPE_SHELL_EXECUTE,
+    SCOPE_SHELL_READ,
+    scope_set,
+)
+from ...oauth.protocol.token_codec import validate_bearer_token
 from ..runtime import resolve_tui_command
 from ..security import (
     UI_API_PREFIX,
     UI_LOCAL_TOKEN_ENV,
     get_or_create_ui_local_token,
 )
-from .terminals import (
-    UI_TERMINAL_SUBPROTOCOL,
-    _authorize_websocket,
-    _runtime,
-    _websocket_protocols,
-)
+from .session import has_valid_ui_origin, ui_session_claims
 
 _LOGGER = logging.getLogger(__name__)
 UI_OPENTUI_MIN_COLUMNS = 20
 UI_OPENTUI_MAX_COLUMNS = 400
 UI_OPENTUI_MIN_ROWS = 8
 UI_OPENTUI_MAX_ROWS = 200
+UI_OPENTUI_SUBPROTOCOL = "workgate-ui-terminal"
+
+
+def _runtime(websocket: WebSocket) -> Any:
+    runtime = getattr(websocket.app.state, "control_runtime", None)
+    if runtime is None:
+        raise RuntimeError("OpenTUI requires the control runtime")
+    return runtime
+
+
+def _websocket_protocols(websocket: WebSocket) -> list[str]:
+    raw = websocket.headers.get("sec-websocket-protocol", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _websocket_bearer(websocket: WebSocket) -> str | None:
+    for protocol in _websocket_protocols(websocket):
+        if not protocol.startswith("bearer."):
+            continue
+        encoded = protocol.removeprefix("bearer.")
+        if not encoded or len(encoded) > 16_384:
+            return None
+        padding = "=" * (-len(encoded) % 4)
+        try:
+            token = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+        except ValueError, UnicodeDecodeError:
+            return None
+        return token or None
+    return None
+
+
+def _authorize_websocket(websocket: WebSocket) -> tuple[bool, int, str]:
+    """Authorize the OpenTUI browser socket without trusting proxy localhost."""
+    runtime = _runtime(websocket)
+    if runtime.config.auth_mode == "none":
+        return True, 1000, ""
+
+    token = _websocket_bearer(websocket)
+    if token:
+        try:
+            claims = validate_bearer_token(token)
+        except jwt.PyJWTError:
+            return False, 4401, "Invalid OAuth bearer token"
+    else:
+        if not websocket.headers.get("origin", "").strip():
+            return False, 4401, "OAuth authentication required"
+        if not has_valid_ui_origin(websocket):
+            return False, 4403, "Invalid Human UI WebSocket origin"
+        try:
+            claims = ui_session_claims(websocket)
+        except jwt.PyJWTError:
+            return False, 4401, "Invalid Human UI session"
+        if claims is None:
+            return False, 4401, "OAuth authentication required"
+
+    granted = scope_set(str(claims.get("scope") or ""))
+    for scope in (SCOPE_SHELL_READ, SCOPE_SHELL_EXECUTE):
+        if scope not in granted:
+            return False, 4403, f"Missing required OAuth scope: {scope}"
+    return True, 1000, ""
 
 
 class OpenTuiProcess(Protocol):
@@ -333,7 +396,7 @@ async def ui_opentui_websocket(websocket: WebSocket) -> None:
         return
 
     runtime = _runtime(websocket)
-    authorized, close_code, reason = _authorize_websocket(websocket, "local")
+    authorized, close_code, reason = _authorize_websocket(websocket)
     if not authorized:
         await websocket.close(code=close_code, reason=reason[:120])
         return
@@ -347,9 +410,7 @@ async def ui_opentui_websocket(websocket: WebSocket) -> None:
 
     protocols = _websocket_protocols(websocket)
     subprotocol = (
-        UI_TERMINAL_SUBPROTOCOL
-        if UI_TERMINAL_SUBPROTOCOL in protocols
-        else None
+        UI_OPENTUI_SUBPROTOCOL if UI_OPENTUI_SUBPROTOCOL in protocols else None
     )
     try:
         await websocket.accept(subprotocol=subprotocol)

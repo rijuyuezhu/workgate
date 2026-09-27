@@ -2,22 +2,14 @@
 
 from typing import Any
 
-import jwt
 from fastapi import HTTPException
 from pydantic import JsonValue
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.websockets import WebSocket
 
-from ...audit import audit
 from ...control.ui_executor import call_ui_executor
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
-from ...oauth.core.scopes import (
-    SCOPE_SHELL_EXECUTE,
-    SCOPE_SHELL_READ,
-    scope_set,
-)
-from ...oauth.protocol.token_codec import validate_bearer_token
+from ...oauth.core.scopes import SCOPE_SHELL_EXECUTE, SCOPE_SHELL_READ
 from ...protocol.terminal import (
     PERSISTENT_SHELL_MAX_COLUMNS,
     PERSISTENT_SHELL_MAX_ROWS,
@@ -26,40 +18,22 @@ from ...protocol.terminal import (
 )
 from .common import bounded_text as _bounded_text
 from .common import json_error as _json_error
-from .session import has_valid_ui_origin, ui_session_claims
 from .terminal_protocol import (
     UI_TERMINAL_DEFAULT_LINES,
-    UI_TERMINAL_INPUT_MAX_BYTES,
     UI_TERMINAL_METADATA_MAX_BYTES,
     UI_TERMINAL_OUTPUT_MAX_BYTES,
     UI_TERMINAL_READ_MAX_LINES,
-    UI_TERMINAL_SUBPROTOCOL,
     _bounded_int,
     _executor_id_arg,
     _normalize_kill,
     _normalize_list,
     _normalize_read,
-    _normalize_resize,
-    _normalize_send,
     _normalize_start,
     _optional_text,
     _shell_id,
-    _websocket_protocols,
-    _websocket_token,
-    parse_terminal_websocket_request,
-)
-from .terminal_websocket import (
-    TerminalWebSocketBackend,
-    serve_terminal_websocket,
 )
 
-__all__ = [
-    "UI_TERMINAL_INPUT_MAX_BYTES",
-    "UI_TERMINAL_OUTPUT_MAX_BYTES",
-    "UI_TERMINAL_SUBPROTOCOL",
-    "_normalize_read",
-    "_websocket_protocols",
-]
+__all__ = ["UI_TERMINAL_OUTPUT_MAX_BYTES", "_normalize_read"]
 
 
 def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
@@ -88,7 +62,7 @@ def _require_terminal_scopes(*, execute: bool = False) -> None:
     _require_scopes(*required)
 
 
-def _runtime(source: Request | WebSocket) -> Any:
+def _runtime(source: Request) -> Any:
     runtime = getattr(source.app.state, "control_runtime", None)
     if runtime is None:
         raise RuntimeError("Human UI terminals require the control runtime")
@@ -126,38 +100,6 @@ async def _start_shell(
         {"cwd": cwd, "name": name, "command": command},
     )
     return _normalize_start(executor_id, value)
-
-
-async def _send_shell(
-    runtime: Any,
-    executor_id: str,
-    shell_id: str,
-    input_text: str,
-    enter: bool,
-) -> dict[str, Any]:
-    _executor_id, value = await _terminal_call(
-        runtime,
-        executor_id,
-        "ui.terminals.send",
-        {"shell_id": shell_id, "input_text": input_text, "enter": enter},
-    )
-    return _normalize_send(executor_id, shell_id, value)
-
-
-async def _resize_shell(
-    runtime: Any,
-    executor_id: str,
-    shell_id: str,
-    cols: int,
-    rows: int,
-) -> dict[str, Any]:
-    _executor_id, value = await _terminal_call(
-        runtime,
-        executor_id,
-        "ui.terminals.resize",
-        {"shell_id": shell_id, "cols": cols, "rows": rows},
-    )
-    return _normalize_resize(executor_id, shell_id, cols, rows, value)
 
 
 async def _read_shell(
@@ -244,40 +186,6 @@ async def _attach_stream(
         "mode": "pty",
         "backend": backend,
     }
-
-
-def _authorize_websocket(
-    websocket: WebSocket, executor_id: str
-) -> tuple[bool, int, str]:
-    """Authorize a browser WebSocket without trusting localhost proxy hops."""
-    runtime = _runtime(websocket)
-    if runtime.config.auth_mode == "none":
-        return True, 1000, ""
-
-    token = _websocket_token(websocket)
-    if token:
-        try:
-            claims = validate_bearer_token(token)
-        except jwt.PyJWTError:
-            return False, 4401, "Invalid OAuth bearer token"
-    else:
-        if not websocket.headers.get("origin", "").strip():
-            return False, 4401, "OAuth authentication required"
-        if not has_valid_ui_origin(websocket):
-            return False, 4403, "Invalid Human UI WebSocket origin"
-        try:
-            claims = ui_session_claims(websocket)
-        except jwt.PyJWTError:
-            return False, 4401, "Invalid Human UI session"
-        if claims is None:
-            return False, 4401, "OAuth authentication required"
-
-    granted = scope_set(str(claims.get("scope") or ""))
-    required = [SCOPE_SHELL_READ, SCOPE_SHELL_EXECUTE]
-    for scope in required:
-        if scope not in granted:
-            return False, 4403, f"Missing required OAuth scope: {scope}"
-    return True, 1000, ""
 
 
 async def api_terminals(request: Request) -> Response:
@@ -387,51 +295,3 @@ async def api_terminal_action(request: Request) -> Response:
         raise
     except Exception as exc:
         return _terminal_error(exc)
-
-
-async def ui_terminal_websocket(websocket: WebSocket) -> None:
-    """Serve the snapshot-only compatibility terminal WebSocket."""
-    try:
-        request = parse_terminal_websocket_request(
-            executor_id=websocket.query_params.get("executor_id"),
-            shell_id=websocket.path_params.get("shell_id"),
-            mode=websocket.query_params.get("mode"),
-            lines=websocket.query_params.get("lines"),
-            cols=websocket.query_params.get("cols"),
-            rows=websocket.query_params.get("rows"),
-        )
-    except ValueError as exc:
-        await websocket.close(code=4400, reason=str(exc)[:120])
-        return
-    if request.requested_mode != "snapshot":
-        await websocket.close(
-            code=4406,
-            reason="Raw PTY terminal attach moved to the StreamHub endpoint",
-        )
-        return
-
-    runtime = _runtime(websocket)
-    backend = TerminalWebSocketBackend(
-        list_shells=lambda executor_id: _list_shells(runtime, executor_id),
-        read_shell=lambda executor_id, shell_id, lines: _read_shell(
-            runtime, executor_id, shell_id, lines
-        ),
-        send_shell=lambda executor_id, shell_id, input_text, enter: _send_shell(
-            runtime, executor_id, shell_id, input_text, enter
-        ),
-        resize_shell=lambda executor_id, shell_id, cols, rows: _resize_shell(
-            runtime, executor_id, shell_id, cols, rows
-        ),
-    )
-    connections = runtime.human_ui_runtime.terminal_connections
-    maximum_connections = runtime.config.ui_terminal_max_connections
-    await serve_terminal_websocket(
-        websocket,
-        request,
-        backend=backend,
-        authorize=_authorize_websocket,
-        reserve_connection=lambda: connections.reserve(maximum_connections),
-        release_connection=connections.release,
-        idle_timeout_s=runtime.config.ui_terminal_idle_timeout_s,
-        audit_event=audit,
-    )

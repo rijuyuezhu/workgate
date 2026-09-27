@@ -59,7 +59,7 @@ def _stream_claim(claim: ClaimedDownload) -> Iterator[bytes]:
 
 
 async def download_endpoint(
-    request: Request, *, settings: ControlConfig | None = None
+    request: Request, *, settings: ControlConfig
 ) -> Response:
     """Serve a tokenized immutable snapshot without requiring bearer auth."""
     token = request.path_params.get("token", "")
@@ -99,15 +99,9 @@ async def download_endpoint(
     )
 
 
-def download_routes(
-    settings: ControlConfig | None = None,
-) -> list[Route]:
+def download_routes(settings: ControlConfig) -> list[Route]:
     """Return public Starlette routes for generated download links."""
-    endpoint = (
-        download_endpoint
-        if settings is None
-        else partial(download_endpoint, settings=settings)
-    )
+    endpoint = partial(download_endpoint, settings=settings)
     return [
         Route(
             f"{DOWNLOAD_PREFIX}/{{token}}",

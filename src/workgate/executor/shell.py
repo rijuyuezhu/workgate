@@ -21,6 +21,12 @@ from ..errors import (
     ShellExecutableNotFoundError,
     process_start_not_found_error,
 )
+from ..protocol.terminal import (
+    PERSISTENT_SHELL_MAX_COLUMNS,
+    PERSISTENT_SHELL_MAX_ROWS,
+    PERSISTENT_SHELL_MIN_COLUMNS,
+    PERSISTENT_SHELL_MIN_ROWS,
+)
 from ..schemas.result_models.shell import (
     CommandResult,
     KillPersistentShellOutput,
@@ -38,12 +44,6 @@ from .path import (
     resolve_path_with_policy,
 )
 from .terminal import conpty
-from .terminal.contracts import (
-    PERSISTENT_SHELL_MAX_COLUMNS,
-    PERSISTENT_SHELL_MAX_ROWS,
-    PERSISTENT_SHELL_MIN_COLUMNS,
-    PERSISTENT_SHELL_MIN_ROWS,
-)
 from .terminal.tmux import require_tmux, resolve_tmux, tmux_env_overrides
 from .tool_session.lifecycle import cross_process_lock
 from .tool_session.store import ToolSessionStore

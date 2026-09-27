@@ -40,7 +40,7 @@ def test_shared_public_routes_have_rest_and_mcp_http_parity() -> None:
     settings = Settings(mode="http", auth_mode="none")
     configure_settings(settings)
 
-    shared_routes = public_http_routes()
+    shared_routes = public_http_routes(resolve_control_config(settings))
     shared_signatures = _route_signatures(shared_routes)
     assert shared_signatures == _SHARED_PUBLIC_ROUTE_SIGNATURES
 

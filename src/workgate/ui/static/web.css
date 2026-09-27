@@ -493,14 +493,6 @@ h2 {
   min-width: 0;
 }
 
-.terminal-latest {
-  flex: 0 0 auto;
-  padding: 0.48rem 0.68rem;
-  border-color: rgba(87, 215, 255, 0.56);
-  background: rgba(17, 78, 104, 0.88);
-}
-
-.terminal-latest[hidden],
 .terminal-xterm[hidden],
 #terminal-output[hidden] {
   display: none;
@@ -2189,10 +2181,6 @@ h2 {
   .terminal-console-header {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .terminal-latest {
-    width: 100%;
   }
 
   .terminal-keyboard {

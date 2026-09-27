@@ -271,24 +271,6 @@ class ShellService:
             forbidden_shell_ids=self.jobs.reserved_shell_ids(),
         )
 
-    async def send_unowned(self, args: dict[str, Any]) -> Any:
-        shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
-        return await send_persistent_shell_input_execute(
-            self.config,
-            shell_id,
-            str(args.get("input_text") or ""),
-            bool(args.get("enter", True)),
-        )
-
-    async def resize_unowned(self, args: dict[str, Any]) -> Any:
-        shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
-        return await resize_persistent_shell_execute(
-            self.config,
-            shell_id,
-            int(args["cols"]),
-            int(args["rows"]),
-        )
-
     async def read_unowned(self, args: dict[str, Any]) -> Any:
         shell_id = self._require_ui_shell_allowed(str(args["shell_id"]))
         return await read_persistent_shell_output_execute(

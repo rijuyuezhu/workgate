@@ -426,21 +426,6 @@ def test_persistent_shell_release_noops_are_stable(tmp_path: Path) -> None:
     assert store.persistent_shell_ids() == set()
 
 
-def test_tool_call_allowed_facade_selects_active_or_cleanup_admission(
-    tmp_path: Path,
-) -> None:
-    store, _settings = _store(tmp_path)
-    session = _create(store, tmp_path, index=1)
-
-    store.assert_tool_call_allowed((session.session_id,))
-    store.request_termination(session.session_id)
-    store.assert_tool_call_allowed(
-        (session.session_id,), termination_cleanup=True
-    )
-    with pytest.raises(SessionTerminationRequestedError):
-        store.assert_tool_call_allowed((session.session_id,))
-
-
 def test_exclusive_shell_reservation_rejects_other_session_owner(
     tmp_path: Path,
 ) -> None:

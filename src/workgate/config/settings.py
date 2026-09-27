@@ -27,7 +27,6 @@ _RESERVED_UI_PATHS = (
     "/openapi.json",
     "/readyz",
     "/redoc",
-    "/remote",
     "/docs",
 )
 

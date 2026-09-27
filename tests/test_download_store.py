@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from workgate.config.control import ControlConfig, resolve_control_config
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control import download_store
 from workgate.control import downloads as downloads_module
@@ -33,8 +34,12 @@ def _configure(tmp_path: Path, monkeypatch) -> None:
     clear_settings_cache()
 
 
+def _control_config() -> ControlConfig:
+    return resolve_control_config(get_settings())
+
+
 def _payloads() -> PayloadStore:
-    return PayloadStore(get_settings().data_dir)
+    return PayloadStore(_control_config().data_dir)
 
 
 def _create_file_link(path: str):
@@ -42,8 +47,9 @@ def _create_file_link(path: str):
     if not source.is_absolute():
         source = get_settings().workspace_root / source
     data = source.read_bytes()
-    staging = new_staging_path()
-    with open_private_staging(staging) as handle:
+    control = _control_config()
+    staging = new_staging_path(data_dir=control.data_dir)
+    with open_private_staging(staging, data_dir=control.data_dir) as handle:
         handle.write(data)
     snapshot = DownloadSnapshot(
         staging_path=staging,
@@ -59,6 +65,7 @@ def _create_file_link(path: str):
         max_downloads=None,
         inline=False,
         session_id=None,
+        settings=control,
     )
 
 
@@ -74,17 +81,19 @@ def test_concurrent_processes_do_not_lose_links(tmp_path, monkeypatch):
 import hashlib
 import sys
 from pathlib import Path
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.download_snapshot import DownloadSnapshot, new_staging_path, open_private_staging
 from workgate.control.downloads import _register_snapshot
 from workgate.persistence import FileStateStore, use_state_store
 clear_settings_cache()
 settings = get_settings()
+control = resolve_control_config(settings)
 state_store = FileStateStore(lambda: settings.state_dir)
 source = Path(sys.argv[1])
 data = source.read_bytes()
-staging = new_staging_path()
-with open_private_staging(staging) as handle:
+staging = new_staging_path(data_dir=control.data_dir)
+with open_private_staging(staging, data_dir=control.data_dir) as handle:
     handle.write(data)
 with use_state_store(state_store):
     _register_snapshot(
@@ -96,6 +105,7 @@ with use_state_store(state_store):
             sha256=hashlib.sha256(data).hexdigest(),
         ),
         ttl_s=60, filename=None, max_downloads=None, inline=False, session_id=None,
+        settings=control,
     )
 """
     environment = os.environ.copy()
@@ -118,10 +128,16 @@ with use_state_store(state_store):
 
     assert failures == []
     clear_settings_cache()
-    links = _list_file_links_owned().links
+    links = _list_file_links_owned(settings=_control_config()).links
     assert len(links) == len(sources)
     assert {Path(link.path or "").name for link in links} == set(sources)
-    assert len(list(snapshot_directory().glob("*.bin"))) == len(sources)
+    assert len(
+        list(
+            snapshot_directory(data_dir=_control_config().data_dir).glob(
+                "*.bin"
+            )
+        )
+    ) == len(sources)
 
 
 def test_corrupt_primary_and_backup_refuse_silent_reset(tmp_path, monkeypatch):
@@ -132,11 +148,20 @@ def test_corrupt_primary_and_backup_refuse_silent_reset(tmp_path, monkeypatch):
     backup_path().write_text("{broken-backup", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="no valid backup"):
-        _list_file_links_owned()
+        _list_file_links_owned(settings=_control_config())
 
     assert store_path().read_text(encoding="utf-8") == "{broken-primary"
     assert backup_path().read_text(encoding="utf-8") == "{broken-backup"
-    assert len(list(snapshot_directory().glob("*.bin"))) == 1
+    assert (
+        len(
+            list(
+                snapshot_directory(data_dir=_control_config().data_dir).glob(
+                    "*.bin"
+                )
+            )
+        )
+        == 1
+    )
 
 
 def test_failed_primary_recovery_preserves_valid_backup(tmp_path, monkeypatch):
@@ -159,7 +184,7 @@ def test_failed_primary_recovery_preserves_valid_backup(tmp_path, monkeypatch):
     )
 
     with pytest.raises(OSError, match="simulated primary restore failure"):
-        _list_file_links_owned()
+        _list_file_links_owned(settings=_control_config())
 
     assert backup_path().read_bytes() == backup_before
     assert created.link_id in json.loads(backup_before)["links"]
@@ -167,7 +192,7 @@ def test_failed_primary_recovery_preserves_valid_backup(tmp_path, monkeypatch):
     monkeypatch.setattr(
         download_store, "atomic_write_private_text", real_atomic_write
     )
-    recovered = _list_file_links_owned().links
+    recovered = _list_file_links_owned(settings=_control_config()).links
     assert [link.link_id for link in recovered] == [created.link_id]
 
 
@@ -186,7 +211,7 @@ def test_structurally_invalid_v3_primary_recovers_before_payload_cleanup(
     primary["links"][created.link_id] = "corrupt-record"
     store_path().write_text(json.dumps(primary), encoding="utf-8")
 
-    recovered = _list_file_links_owned().links
+    recovered = _list_file_links_owned(settings=_control_config()).links
 
     assert [link.link_id for link in recovered] == [created.link_id]
     assert payload_path.read_bytes() == b"payload"
@@ -206,7 +231,7 @@ def test_invalid_v3_scalar_field_recovers_from_valid_backup(
     primary["links"][created.link_id]["downloads"] = "not-an-integer"
     store_path().write_text(json.dumps(primary), encoding="utf-8")
 
-    recovered = _list_file_links_owned().links
+    recovered = _list_file_links_owned(settings=_control_config()).links
 
     assert [link.link_id for link in recovered] == [created.link_id]
 
@@ -227,7 +252,7 @@ def test_structurally_invalid_v3_primary_and_backup_fail_closed(
     backup_path().write_text(broken, encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="no valid backup"):
-        _list_file_links_owned()
+        _list_file_links_owned(settings=_control_config())
 
     assert payload_path.read_bytes() == b"payload"
     assert store_path().read_text(encoding="utf-8") == broken
@@ -249,7 +274,7 @@ def test_structural_validation_does_not_echo_corrupt_secret_to_audit(
     backup_path().write_text(broken, encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="no valid backup"):
-        _list_file_links_owned()
+        _list_file_links_owned(settings=_control_config())
 
     assert secret not in get_settings().audit_log_path.read_text(
         encoding="utf-8"
@@ -275,7 +300,7 @@ def test_legacy_live_path_links_are_dropped_on_migration(tmp_path, monkeypatch):
     }
     store_path().write_text(json.dumps(legacy), encoding="utf-8")
 
-    assert _list_file_links_owned().links == []
+    assert _list_file_links_owned(settings=_control_config()).links == []
     assert json.loads(store_path().read_text(encoding="utf-8")) == {
         "links": {},
         "version": 3,
@@ -312,7 +337,7 @@ def test_v2_snapshot_links_are_invalidated_and_scrubbed(tmp_path, monkeypatch):
     store_path().write_text(json.dumps(legacy), encoding="utf-8")
     backup_path().write_text(json.dumps(legacy), encoding="utf-8")
 
-    assert _list_file_links_owned().links == []
+    assert _list_file_links_owned(settings=_control_config()).links == []
     persisted = store_path().read_text(encoding="utf-8")
     persisted_backup = backup_path().read_text(encoding="utf-8")
     assert token not in persisted
@@ -334,7 +359,7 @@ def test_v3_primary_scrubs_stale_legacy_backup(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    links = _list_file_links_owned().links
+    links = _list_file_links_owned(settings=_control_config()).links
 
     assert len(links) == 1
     refreshed = backup_path().read_text(encoding="utf-8")
@@ -356,7 +381,7 @@ def test_v3_primary_scrubs_malformed_backup_that_contains_legacy_bearer(
     )
     backup_path().write_text(malformed_backup, encoding="utf-8")
 
-    links = _list_file_links_owned().links
+    links = _list_file_links_owned(settings=_control_config()).links
 
     assert [link.link_id for link in links] == [created.link_id]
     refreshed = backup_path().read_text(encoding="utf-8")
@@ -377,7 +402,7 @@ def test_v3_primary_refreshes_stale_but_valid_v3_backup(tmp_path, monkeypatch):
     second_link = _create_file_link(str(second))
     backup_path().write_text(stale_backup, encoding="utf-8")
 
-    links = _list_file_links_owned().links
+    links = _list_file_links_owned(settings=_control_config()).links
 
     assert {link.link_id for link in links} == {
         first_link.link_id,
@@ -393,7 +418,9 @@ def test_revoke_persists_metadata_before_payload_cleanup(tmp_path, monkeypatch):
     source = tmp_path / "artifact.txt"
     source.write_text("payload", encoding="utf-8")
     created = _create_file_link(str(source))
-    payload_files = list(snapshot_directory().glob("*.bin"))
+    payload_files = list(
+        snapshot_directory(data_dir=_control_config().data_dir).glob("*.bin")
+    )
     assert len(payload_files) == 1
 
     monkeypatch.setattr(
@@ -405,7 +432,9 @@ def test_revoke_persists_metadata_before_payload_cleanup(tmp_path, monkeypatch):
     )
 
     with pytest.raises(OSError, match="simulated state failure"):
-        downloads_module._revoke_file_link_owned(created.link_id)
+        downloads_module._revoke_file_link_owned(
+            created.link_id, settings=_control_config()
+        )
 
     assert payload_files[0].read_bytes() == b"payload"
     persisted = json.loads(store_path().read_text(encoding="utf-8"))
@@ -432,7 +461,7 @@ def test_legacy_bearer_backup_scrub_failure_fails_closed(tmp_path, monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match="backup could not be invalidated"):
-        _list_file_links_owned()
+        _list_file_links_owned(settings=_control_config())
 
     assert stale_token not in store_path().read_text(encoding="utf-8")
     assert stale_token in backup_path().read_text(encoding="utf-8")
@@ -461,7 +490,9 @@ def test_failed_backup_refresh_cannot_resurrect_revoked_link(
         download_store, "atomic_write_private_text", fail_backup_write
     )
 
-    revoked = downloads_module._revoke_file_link_owned(created.link_id)
+    revoked = downloads_module._revoke_file_link_owned(
+        created.link_id, settings=_control_config()
+    )
 
     assert revoked.revoked is True
     assert not backup_path().exists()
@@ -470,12 +501,12 @@ def test_failed_backup_refresh_cannot_resurrect_revoked_link(
 
     store_path().write_text("{broken-primary", encoding="utf-8")
     with pytest.raises(RuntimeError, match="no valid backup"):
-        _list_file_links_owned()
+        _list_file_links_owned(settings=_control_config())
 
 
 def test_prune_removes_only_stale_staging_files(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
-    directory = snapshot_directory()
+    directory = snapshot_directory(data_dir=_control_config().data_dir)
     payloads = _payloads()
     stale = directory / ".stale.tmp"
     recent = directory / ".recent.tmp"
@@ -487,7 +518,7 @@ def test_prune_removes_only_stale_staging_files(tmp_path, monkeypatch):
     os.utime(stale, (old, old))
     os.utime(other_feature, (old, old))
 
-    _list_file_links_owned()
+    _list_file_links_owned(settings=_control_config())
 
     assert not stale.exists()
     assert recent.read_bytes() == b"recent"
@@ -524,7 +555,7 @@ def test_prune_removes_download_orphans_without_touching_transfer_payloads(
         sha256=hashlib.sha256(b"transfer payload").hexdigest(),
     )
 
-    _list_file_links_owned()
+    _list_file_links_owned(settings=_control_config())
 
     assert not payloads.path(download.payload_id, namespace="download").exists()
     assert payloads.path(

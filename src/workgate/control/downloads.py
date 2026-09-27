@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import JsonValue
 
 from ..audit import audit
-from ..config.control import ControlConfig, get_control_config
+from ..config.control import ControlConfig
 from ..errors import exception_from_tool_error
 from ..protocol.ids import new_link_id
 from ..protocol.transfer import DEFAULT_TRANSFER_CHUNK_BYTES
@@ -62,35 +62,24 @@ def _now_s() -> float:
     return time.time()
 
 
-def _active_settings(
-    settings: ControlConfig | None,
-) -> ControlConfig:
-    """Use explicit control authority, with ambient settings only for compatibility callers."""
-    return get_control_config() if settings is None else settings
+def _payload_store(settings: ControlConfig) -> PayloadStore:
+    return PayloadStore(settings.data_dir)
 
 
-def _payload_store(settings: ControlConfig | None) -> PayloadStore:
-    return PayloadStore(_active_settings(settings).data_dir)
-
-
-def _coerce_download_ttl(
-    ttl_s: int | None, settings: ControlConfig | None = None
-) -> int:
-    active = _active_settings(settings)
+def _coerce_download_ttl(ttl_s: int | None, settings: ControlConfig) -> int:
     requested = (
-        active.file_download_default_ttl_s if ttl_s is None else int(ttl_s)
+        settings.file_download_default_ttl_s if ttl_s is None else int(ttl_s)
     )
     if requested <= 0:
         raise ValueError("ttl_s must be positive")
-    return min(requested, active.file_download_max_ttl_s)
+    return min(requested, settings.file_download_max_ttl_s)
 
 
 def _coerce_max_downloads(
-    max_downloads: int | None, settings: ControlConfig | None = None
+    max_downloads: int | None, settings: ControlConfig
 ) -> int:
-    active = _active_settings(settings)
     requested = (
-        active.file_download_default_max_downloads
+        settings.file_download_default_max_downloads
         if max_downloads is None
         else int(max_downloads)
     )
@@ -146,9 +135,9 @@ def _register_snapshot(
     max_downloads: int | None,
     inline: bool,
     session_id: str | None,
-    settings: ControlConfig | None = None,
+    settings: ControlConfig,
 ) -> CreateFileLinkOutput:
-    active = _active_settings(settings)
+    active = settings
     payloads = PayloadStore(active.data_dir)
     token = secrets.token_urlsafe(32)
     token_sha256 = download_token_sha256(token)
@@ -218,7 +207,7 @@ def _list_file_links_owned(
     include_expired: bool = False,
     session_id: str | None = None,
     *,
-    settings: ControlConfig | None = None,
+    settings: ControlConfig,
 ) -> ListFileLinksOutput:
     payloads = _payload_store(settings)
     with transaction() as store:
@@ -242,7 +231,7 @@ def _revoke_file_link_owned(
     link_id: str,
     session_id: str | None = None,
     *,
-    settings: ControlConfig | None = None,
+    settings: ControlConfig,
 ) -> RevokeFileLinkOutput:
     payloads = _payload_store(settings)
     removed: dict[str, Any] | None = None
@@ -286,10 +275,10 @@ def claim_download(
     token: str,
     *,
     consume: bool,
-    settings: ControlConfig | None = None,
+    settings: ControlConfig,
 ) -> ClaimedDownload | dict[str, Any]:
     """Claim one validated control-owned snapshot for HTTP serving."""
-    active = _active_settings(settings)
+    active = settings
     payloads = PayloadStore(active.data_dir)
     if not active.file_download_enabled:
         return {

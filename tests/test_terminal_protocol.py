@@ -1,125 +1,128 @@
 import pytest
 
-from workgate.ui.http.terminal_protocol import (
-    UI_TERMINAL_INPUT_MAX_BYTES,
-    TerminalCloseControl,
-    TerminalInputControl,
-    TerminalPingControl,
-    TerminalResizeControl,
-    parse_terminal_binary_input,
-    parse_terminal_control,
-    parse_terminal_websocket_request,
-)
+import workgate.ui.http.terminal_protocol as protocol
 
 
-def test_terminal_websocket_request_defaults_are_stable():
-    request = parse_terminal_websocket_request(
-        executor_id="executor-a",
-        shell_id="demo",
-        mode=None,
-        lines=None,
-        cols=None,
-        rows=None,
+def test_terminal_argument_validation_is_bounded() -> None:
+    assert (
+        protocol._bounded_int(
+            None, default=10, minimum=1, maximum=20, label="lines"
+        )
+        == 10
     )
-
-    assert request.executor_id == "executor-a"
-    assert request.shell_id == "demo"
-    assert request.requested_mode == "snapshot"
-    assert request.announce_mode is False
-    assert request.lines == 1000
-    assert request.cols == 120
-    assert request.rows == 36
-
-
-def test_terminal_websocket_request_preserves_explicit_mode_and_bounds():
-    request = parse_terminal_websocket_request(
-        executor_id="edge",
-        shell_id="shared",
-        mode="auto",
-        lines="50",
-        cols="100",
-        rows="30",
+    assert (
+        protocol._bounded_int(
+            "12", default=10, minimum=1, maximum=20, label="lines"
+        )
+        == 12
     )
-
-    assert request.executor_id == "edge"
-    assert request.requested_mode == "auto"
-    assert request.announce_mode is True
-    assert (request.lines, request.cols, request.rows) == (50, 100, 30)
-
-    with pytest.raises(ValueError, match="mode must be one of"):
-        parse_terminal_websocket_request(
-            executor_id="local",
-            shell_id="demo",
-            mode="raw",
-            lines=None,
-            cols=None,
-            rows=None,
+    with pytest.raises(ValueError, match="must be an integer"):
+        protocol._bounded_int(
+            "bad", default=10, minimum=1, maximum=20, label="lines"
+        )
+    with pytest.raises(ValueError, match="must be between"):
+        protocol._bounded_int(
+            0, default=10, minimum=1, maximum=20, label="lines"
         )
 
+    assert protocol._executor_id_arg("executor-a") == "executor-a"
+    assert protocol._shell_id("shell-1") == "shell-1"
+    with pytest.raises(ValueError, match="shell_id must be"):
+        protocol._shell_id("bad/id")
 
-def test_terminal_input_control_preserves_snapshot_enter_semantics():
-    control = parse_terminal_control(
-        '{"type":"input","data":"echo ok","enter":true}',
-        current_cols=80,
-        current_rows=24,
+
+def test_terminal_inventory_normalization_rejects_duplicate_or_malformed_entries() -> (
+    None
+):
+    normalized = protocol._normalize_list(
+        "executor-a",
+        {
+            "shells": [
+                {
+                    "shell_id": "shell-a",
+                    "name": "build",
+                    "cwd": "/workspace",
+                    "command": "/bin/sh",
+                }
+            ]
+        },
     )
+    assert normalized == {
+        "executor_id": "executor-a",
+        "shells": [
+            {
+                "shell_id": "shell-a",
+                "name": "build",
+                "cwd": "/workspace",
+                "command": "/bin/sh",
+            }
+        ],
+    }
 
-    assert isinstance(control, TerminalInputControl)
-    assert control.input_text == "echo ok"
-    assert control.enter is True
-
-
-def test_terminal_resize_ping_and_close_controls_are_typed():
-    resize = parse_terminal_control(
-        '{"type":"resize","cols":120,"rows":36}',
-        current_cols=80,
-        current_rows=24,
-    )
-    ping = parse_terminal_control(
-        '{"type":"ping"}',
-        current_cols=80,
-        current_rows=24,
-    )
-    close = parse_terminal_control(
-        '{"type":"close"}',
-        current_cols=80,
-        current_rows=24,
-    )
-
-    assert resize == TerminalResizeControl(kind="resize", cols=120, rows=36)
-    assert isinstance(ping, TerminalPingControl)
-    assert isinstance(close, TerminalCloseControl)
-
-
-def test_terminal_control_rejects_malformed_and_oversized_messages():
-    with pytest.raises(ValueError, match="must be JSON"):
-        parse_terminal_control(
-            "not-json",
-            current_cols=80,
-            current_rows=24,
+    with pytest.raises(RuntimeError, match="duplicate terminal sessions"):
+        protocol._normalize_list(
+            "executor-a",
+            {"shells": [{"shell_id": "dup"}, {"shell_id": "dup"}]},
         )
-    with pytest.raises(ValueError, match="must be an object"):
-        parse_terminal_control(
-            "[]",
-            current_cols=80,
-            current_rows=24,
+    with pytest.raises(RuntimeError, match="malformed terminal inventory"):
+        protocol._normalize_list(
+            "executor-a", {"shells": [{"shell_id": "bad id"}]}
         )
-    with pytest.raises(ValueError, match="Unsupported terminal control"):
-        parse_terminal_control(
-            '{"type":"unknown"}',
-            current_cols=80,
-            current_rows=24,
-        )
-    with pytest.raises(ValueError, match="Terminal message is too large"):
-        parse_terminal_control(
-            "x" * (UI_TERMINAL_INPUT_MAX_BYTES + 1),
-            current_cols=80,
-            current_rows=24,
-        )
+    with pytest.raises(RuntimeError, match="malformed terminal inventory"):
+        protocol._normalize_list("executor-a", {"not_shells": []})
 
 
-def test_terminal_binary_input_enforces_wire_limit():
-    payload = b"abc"
-    assert parse_terminal_binary_input(payload) == payload
-    with pytest.raises(ValueError, match="Terminal input is too large"):
-        parse_terminal_binary_input(b"x" * (UI_TERMINAL_INPUT_MAX_BYTES + 1))
+def test_terminal_start_read_and_kill_normalization_use_current_rest_contract() -> (
+    None
+):
+    assert protocol._normalize_start(
+        "executor-a",
+        {
+            "shell_id": "shell-a",
+            "name": None,
+            "cwd": "/workspace",
+            "command": "/bin/sh",
+        },
+    ) == {
+        "executor_id": "executor-a",
+        "shell_id": "shell-a",
+        "name": None,
+        "cwd": "/workspace",
+        "command": "/bin/sh",
+    }
+
+    assert protocol._normalize_read(
+        "executor-a",
+        "shell-a",
+        50,
+        {"shell_id": "shell-a", "output": "hello"},
+    ) == {
+        "executor_id": "executor-a",
+        "shell_id": "shell-a",
+        "output": "hello",
+        "lines": 50,
+    }
+    with pytest.raises(RuntimeError, match="malformed terminal read data"):
+        protocol._normalize_read(
+            "executor-a",
+            "shell-a",
+            50,
+            {"shell_id": "other", "output": "hello"},
+        )
+
+    assert protocol._normalize_kill(
+        "executor-a",
+        "shell-a",
+        {"shell_id": "shell-a", "killed": True, "stderr": None},
+    ) == {
+        "executor_id": "executor-a",
+        "shell_id": "shell-a",
+        "killed": True,
+        "stderr": None,
+    }
+    with pytest.raises(RuntimeError, match="malformed terminal kill data"):
+        protocol._normalize_kill(
+            "executor-a",
+            "shell-a",
+            {"shell_id": "other", "killed": True},
+        )

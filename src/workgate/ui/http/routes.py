@@ -48,12 +48,7 @@ from .session import (
 )
 from .session_snapshot import api_session_snapshot
 from .sessions import api_session_action, api_sessions
-from .terminals import (
-    api_terminal_action,
-    api_terminal_read,
-    api_terminals,
-    ui_terminal_websocket,
-)
+from .terminals import api_terminal_action, api_terminal_read, api_terminals
 from .todos import api_todos
 
 
@@ -75,7 +70,6 @@ def _ui_asset_revision() -> str:
         "xterm.css",
         "web.css",
         "xterm_bundle.js",
-        "terminal_renderer.js",
         "syntax_highlight.js",
         "web.js",
         "dashboard.js",
@@ -276,7 +270,6 @@ async def api_bootstrap(request: Request) -> Response:
                     "dashboard": True,
                     "executors": True,
                     "terminals": True,
-                    "terminal_websocket": True,
                     "files": True,
                     "file_preview": True,
                     "syntax_highlighting": True,
@@ -327,9 +320,6 @@ def human_ui_routes(
         ),
     ]
     protected_routes: list[BaseRoute] = [
-        WebSocketRoute(
-            ui_path + "/ws/terminals/{shell_id}", ui_terminal_websocket
-        ),
         WebSocketRoute(ui_path + "/ws/opentui", ui_opentui_websocket),
         Route(UI_API_PREFIX + "/bootstrap", api_bootstrap, methods=["GET"]),
         Route(UI_API_PREFIX + "/dashboard", api_dashboard, methods=["GET"]),

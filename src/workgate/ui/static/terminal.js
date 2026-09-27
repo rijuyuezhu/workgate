@@ -3,17 +3,13 @@ export function createTerminalController({
   request,
   text,
   encoder,
-  uiPath,
-  sessionBindingToken,
-  sessionBindingProtocolPrefix,
-  showAuthentication,
   onAuthenticationRequired,
 }) {
   const controllerState = {
     terminalSocket: null,
     terminalSocketExecutorId: "",
     terminalExecutorId: "",
-    terminalMode: "snapshot",
+    terminalMode: "message",
     terminalReady: false,
     terminalXterm: null,
     terminalFitAddon: null,
@@ -25,10 +21,6 @@ export function createTerminalController({
     terminalListGeneration: 0,
     terminalLoading: false,
     terminalExecutorStates: new Map(),
-    terminalFollowOutput: true,
-    terminalPendingOutput: null,
-    terminalPendingUpdates: 0,
-    terminalLastOutput: "",
     terminalCommandHistory: [],
     terminalHistoryIndex: 0,
     terminalHistoryDraft: "",
@@ -44,71 +36,10 @@ export function createTerminalController({
   });
   const terminalHistoryLimit = 100;
 
-  function terminalAtBottom() {
-    return (
-      elements.terminalOutput.scrollTop + elements.terminalOutput.clientHeight >=
-      elements.terminalOutput.scrollHeight - 24
-    );
-  }
-
-  function updateTerminalLatestControl() {
-    const pending = controllerState.terminalMode !== "pty" && controllerState.terminalPendingOutput !== null;
-    elements.terminalLatest.hidden = !pending;
-    elements.terminalPendingCount.textContent = pending
-      ? `(${Math.max(1, controllerState.terminalPendingUpdates)})`
-      : "";
-  }
-
-  function renderTerminalOutput(value, { scrollToBottom = false } = {}) {
-    const output = String(value ?? "");
-    controllerState.terminalLastOutput = output;
-    const renderer = globalThis.WorkgateTerminalRenderer;
-    if (renderer && typeof renderer.renderInto === "function") {
-      renderer.renderInto(elements.terminalOutput, output);
-    } else {
-      elements.terminalOutput.textContent = output;
-    }
-    if (scrollToBottom) {
-      elements.terminalOutput.scrollTop = elements.terminalOutput.scrollHeight;
-    }
-  }
-
   function showTerminalMessage(message) {
-    activateTerminalMode("snapshot");
-    controllerState.terminalFollowOutput = true;
-    controllerState.terminalPendingOutput = null;
-    controllerState.terminalPendingUpdates = 0;
-    controllerState.terminalLastOutput = "";
+    activateTerminalMode("message");
     elements.terminalOutput.textContent = String(message ?? "");
     elements.terminalOutput.scrollTop = 0;
-    updateTerminalLatestControl();
-  }
-
-  function acceptTerminalSnapshot(value) {
-    activateTerminalMode("snapshot");
-    const output = String(value ?? "");
-    controllerState.terminalLastOutput = output;
-    if (!terminalAtBottom()) {
-      controllerState.terminalFollowOutput = false;
-      controllerState.terminalPendingOutput = output;
-      controllerState.terminalPendingUpdates = Math.min(9999, controllerState.terminalPendingUpdates + 1);
-      updateTerminalLatestControl();
-      return;
-    }
-    controllerState.terminalFollowOutput = true;
-    controllerState.terminalPendingOutput = null;
-    controllerState.terminalPendingUpdates = 0;
-    renderTerminalOutput(output, { scrollToBottom: true });
-    updateTerminalLatestControl();
-  }
-
-  function jumpToLatestTerminalOutput() {
-    const output = controllerState.terminalPendingOutput ?? controllerState.terminalLastOutput;
-    controllerState.terminalFollowOutput = true;
-    controllerState.terminalPendingOutput = null;
-    controllerState.terminalPendingUpdates = 0;
-    renderTerminalOutput(output, { scrollToBottom: true });
-    updateTerminalLatestControl();
   }
 
   function rememberTerminalCommand(command) {
@@ -225,15 +156,12 @@ export function createTerminalController({
   }
 
   function activateTerminalMode(mode, { reset = false } = {}) {
-    controllerState.terminalMode = mode === "pty" ? "pty" : "snapshot";
+    controllerState.terminalMode = mode === "pty" ? "pty" : "message";
     const raw = controllerState.terminalMode === "pty";
     if (raw && !ensureTerminalXterm()) return false;
     elements.terminalXterm.hidden = !raw;
     elements.terminalOutput.hidden = raw;
     if (raw) {
-      controllerState.terminalPendingOutput = null;
-      controllerState.terminalPendingUpdates = 0;
-      updateTerminalLatestControl();
       if (reset) controllerState.terminalXterm.reset();
       window.requestAnimationFrame(() => {
         if (controllerState.terminalMode !== "pty" || !controllerState.terminalFitAddon) return;
@@ -246,19 +174,8 @@ export function createTerminalController({
 
   function sendTerminalData(data, enter = false) {
     if (!data || !controllerState.terminalReady || !terminalSocketCurrent()) return false;
-    if (controllerState.terminalMode === "pty") {
-      const bytes = encoder.encode(`${data}${enter ? "\r" : ""}`);
-      return sendTerminalBytes(bytes);
-    }
-    controllerState.terminalSocket.send(JSON.stringify({ type: "input", data, enter }));
-    return true;
-  }
-
-  function terminalSocketProtocols() {
-    const protocols = ["workgate-ui-terminal"];
-    const bindingToken = sessionBindingToken();
-    if (bindingToken) protocols.push(`${sessionBindingProtocolPrefix}${bindingToken}`);
-    return protocols;
+    const bytes = encoder.encode(`${data}${enter ? "\r" : ""}`);
+    return sendTerminalBytes(bytes);
   }
 
   function terminalExecutorOnline(executorId = controllerState.terminalExecutorId) {
@@ -303,14 +220,11 @@ export function createTerminalController({
     if (socket && socket.readyState < WebSocket.CLOSING) {
       socket.close(1000, "Client changed terminal");
     }
-    controllerState.terminalMode = "snapshot";
+    controllerState.terminalMode = "message";
     controllerState.terminalReady = false;
     elements.terminalXterm.hidden = true;
     elements.terminalOutput.hidden = false;
     controllerState.terminalXterm?.reset();
-    controllerState.terminalPendingOutput = null;
-    controllerState.terminalPendingUpdates = 0;
-    updateTerminalLatestControl();
     elements.terminalState.textContent = controllerState.selectedShellId ? "Disconnected" : "No session";
     setTerminalControls(false);
   }
@@ -399,18 +313,6 @@ export function createTerminalController({
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
 
-  function terminalSnapshotWebSocketUrl(shellId, executorId) {
-    const url = new URL(`${uiPath}/ws/terminals/${encodeURIComponent(shellId)}`, location.href);
-    url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const size = terminalSize();
-    url.searchParams.set("executor_id", executorId);
-    url.searchParams.set("lines", "1000");
-    url.searchParams.set("mode", "snapshot");
-    url.searchParams.set("cols", String(size.cols));
-    url.searchParams.set("rows", String(size.rows));
-    return url;
-  }
-
   function terminalStreamWebSocketUrl(streamId) {
     const url = new URL(`/stream/${encodeURIComponent(streamId)}`, location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -461,7 +363,6 @@ export function createTerminalController({
     renderTerminalList({ shells: controllerState.terminalSessions });
 
     let socket;
-    let rawStream = false;
     try {
       const size = terminalSize();
       const grant = await terminalAction("attach", {
@@ -478,23 +379,17 @@ export function createTerminalController({
       ) {
         throw new Error("Terminal attach response was malformed.");
       }
-      rawStream = true;
       socket = new WebSocket(
         terminalStreamWebSocketUrl(grant.stream_id),
         terminalStreamProtocols(grant.browser_token),
       );
     } catch (error) {
       if (!selectionCurrent()) return;
-      if (error?.payload?.error !== "TerminalBridgeUnsupportedError") {
-        elements.terminalState.textContent = "Unable to attach terminal";
-        showTerminalMessage(error instanceof Error ? error.message : String(error));
-        setTerminalControls(false);
-        return;
-      }
-      socket = new WebSocket(
-        terminalSnapshotWebSocketUrl(shellId, requestedExecutor),
-        terminalSocketProtocols(),
-      );
+      if (error.authenticationRequired) onAuthenticationRequired();
+      elements.terminalState.textContent = "Unable to attach terminal";
+      showTerminalMessage(error instanceof Error ? error.message : String(error));
+      setTerminalControls(false);
+      return;
     }
 
     socket.binaryType = "arraybuffer";
@@ -529,37 +424,23 @@ export function createTerminalController({
         message.shell_id !== shellId
       ) return;
       if (message.type === "ready") {
-        const mode = message.mode === "pty" ? "pty" : "snapshot";
-        if (!activateTerminalMode(mode, { reset: mode === "pty" })) {
-          elements.terminalState.textContent = "xterm assets unavailable";
-          socket.close(1011, "xterm assets unavailable");
+        if (message.mode !== "pty" || !activateTerminalMode("pty", { reset: true })) {
+          elements.terminalState.textContent = "Invalid terminal stream";
+          socket.close(1011, "invalid terminal stream");
           return;
         }
         controllerState.terminalReady = true;
-        elements.terminalState.textContent = `Connected · ${requestedExecutor} · ${mode.toUpperCase()}`;
+        elements.terminalState.textContent = `Connected · ${requestedExecutor} · PTY`;
         setTerminalControls(true);
         sendTerminalResize();
         if (document.body.dataset.activeView === "terminals") {
-          if (mode === "pty") controllerState.terminalXterm?.focus();
-          else elements.terminalInput.focus();
-        }
-      } else if (message.type === "snapshot") {
-        acceptTerminalSnapshot(text(message.output, ""));
-        controllerState.terminalReady = true;
-        elements.terminalState.textContent = `Connected · ${requestedExecutor} · SNAPSHOT`;
-        setTerminalControls(true);
-        if (document.body.dataset.activeView === "terminals") {
-          elements.terminalInput.focus();
+          controllerState.terminalXterm?.focus();
         }
       } else if (message.type === "exit") {
         const detail = terminalNotice(message.message);
         controllerState.terminalReady = false;
         elements.terminalState.textContent = `Exited · ${requestedExecutor}`;
-        if (controllerState.terminalMode === "pty" && controllerState.terminalXterm) {
-          controllerState.terminalXterm.write(`\r\n\u001b[31m[${detail}]\u001b[0m\r\n`);
-        } else {
-          showTerminalMessage(detail);
-        }
+        controllerState.terminalXterm?.write(`\r\n\u001b[31m[${detail}]\u001b[0m\r\n`);
         setTerminalControls(false);
         refreshTerminalsInBackground({ force: true });
       }
@@ -570,13 +451,9 @@ export function createTerminalController({
       controllerState.terminalSocketExecutorId = "";
       controllerState.terminalReady = false;
       setTerminalControls(false);
-      if (!rawStream && (event.code === 4401 || event.code === 4403)) {
-        showAuthentication("Authentication required", event.reason || "Terminal authorization failed.");
-      } else {
-        elements.terminalState.textContent = event.reason || `Disconnected · ${requestedExecutor}`;
-        if (event.code === 4403 || event.code === 4404) {
-          refreshTerminalsInBackground({ force: true });
-        }
+      elements.terminalState.textContent = event.reason || `Disconnected · ${requestedExecutor}`;
+      if (event.code === 4403 || event.code === 4404) {
+        refreshTerminalsInBackground({ force: true });
       }
     });
     socket.addEventListener("error", () => {
@@ -689,22 +566,11 @@ export function createTerminalController({
     }
   });
 
-  elements.terminalLatest.addEventListener("click", jumpToLatestTerminalOutput);
-  elements.terminalOutput.addEventListener("scroll", () => {
-    if (terminalAtBottom()) {
-      if (controllerState.terminalPendingOutput !== null) jumpToLatestTerminalOutput();
-      else controllerState.terminalFollowOutput = true;
-    } else {
-      controllerState.terminalFollowOutput = false;
-    }
-  });
-
   for (const button of elements.terminalKeyButtons) {
     button.addEventListener("click", () => {
       const data = terminalSpecialKeys[button.dataset.terminalKey || ""];
       if (data && sendTerminalData(data, false)) {
-        if (controllerState.terminalMode === "pty") controllerState.terminalXterm?.focus();
-        else elements.terminalInput.focus();
+        controllerState.terminalXterm?.focus();
       }
     });
   }

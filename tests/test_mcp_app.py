@@ -302,33 +302,6 @@ def test_build_mcp_uses_runtime_settings_for_transport_security():
     assert "https://ambient.example" not in security.allowed_origins
 
 
-def test_run_mcp_uses_runtime_owned_stdio_transport(monkeypatch):
-    settings = Settings(mode="stdio", auth_mode="none")
-    configure_settings(settings)
-    runtime = cast(Any, _runtime_stub(settings, object()))
-    dummy = _DummyMcp()
-    calls = []
-
-    def build_runtime(configured_settings):
-        calls.append(("runtime", configured_settings))
-        return runtime
-
-    def build(*, tool_catalog=None, runtime=None, own_runtime_lifespan=False):
-        calls.append(("build", tool_catalog, runtime, own_runtime_lifespan))
-        return dummy
-
-    monkeypatch.setattr(mcp_app, "build_control_runtime", build_runtime)
-    monkeypatch.setattr(mcp_app, "build_mcp", build)
-
-    mcp_app.run_mcp()
-
-    assert calls == [
-        ("runtime", settings),
-        ("build", None, runtime, True),
-    ]
-    assert dummy.transports == ["stdio"]
-
-
 def test_run_mcp_stdio_runtime_owns_fastmcp_lifespan(monkeypatch):
     runtime = cast(
         Any,

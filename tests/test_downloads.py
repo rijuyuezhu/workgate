@@ -44,6 +44,10 @@ def _reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     clear_settings_cache()
 
 
+def _control_config() -> ControlConfig:
+    return resolve_control_config(get_settings())
+
+
 def _register_file(
     source: Path,
     *,
@@ -55,7 +59,8 @@ def _register_file(
     settings: ControlConfig | None = None,
 ):
     data = source.read_bytes()
-    data_dir = None if settings is None else settings.data_dir
+    active = _control_config() if settings is None else settings
+    data_dir = active.data_dir
     staging = new_staging_path(data_dir=data_dir)
     with open_private_staging(staging, data_dir=data_dir) as handle:
         handle.write(data)
@@ -72,7 +77,7 @@ def _register_file(
         max_downloads=max_downloads,
         inline=inline,
         session_id=session_id,
-        settings=settings,
+        settings=active,
     )
 
 
@@ -159,10 +164,15 @@ def test_share_link_expiry_revocation_and_download_limit(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
     source = tmp_path / "hello.txt"
     source.write_text("hello", encoding="utf-8")
-    client = TestClient(Starlette(routes=download_routes()))
+    client = TestClient(Starlette(routes=download_routes(_control_config())))
 
     revoked = _register_file(source, ttl_s=60)
-    assert _revoke_file_link_owned(revoked.link_id).revoked is True
+    assert (
+        _revoke_file_link_owned(
+            revoked.link_id, settings=_control_config()
+        ).revoked
+        is True
+    )
     assert client.get(revoked.url).status_code == 404
 
     expired = _register_file(source, ttl_s=1)
@@ -361,7 +371,7 @@ def test_creation_time_snapshot_and_inline_headers(tmp_path, monkeypatch):
     attachment = _register_file(source)
     source.write_text("changed after link creation", encoding="utf-8")
 
-    client = TestClient(Starlette(routes=download_routes()))
+    client = TestClient(Starlette(routes=download_routes(_control_config())))
     response = client.get(attachment.url)
     assert response.status_code == 200
     assert response.text == "original"
@@ -382,7 +392,10 @@ def test_creation_time_snapshot_and_inline_headers(tmp_path, monkeypatch):
     assert shown.headers["content-disposition"].startswith("inline;")
     assert shown.headers["content-security-policy"] == "sandbox"
     assert shown.headers["referrer-policy"] == "no-referrer"
-    assert _list_file_links_owned().links[0].downloads == 1
+    assert (
+        _list_file_links_owned(settings=_control_config()).links[0].downloads
+        == 1
+    )
 
 
 def test_source_extension_precedes_display_filename_for_mime(
@@ -402,21 +415,39 @@ def test_final_download_deletes_snapshot_and_tampering_is_rejected(
     source = tmp_path / "once.txt"
     source.write_text("once", encoding="utf-8")
     once = _register_file(source, max_downloads=1)
-    client = TestClient(Starlette(routes=download_routes()))
-    assert len(list(snapshot_directory().glob("*.bin"))) == 1
+    client = TestClient(Starlette(routes=download_routes(_control_config())))
+    assert (
+        len(
+            list(
+                snapshot_directory(data_dir=_control_config().data_dir).glob(
+                    "*.bin"
+                )
+            )
+        )
+        == 1
+    )
     assert client.get(once.url).text == "once"
-    assert list(snapshot_directory().glob("*.bin")) == []
+    assert (
+        list(
+            snapshot_directory(data_dir=_control_config().data_dir).glob(
+                "*.bin"
+            )
+        )
+        == []
+    )
     assert client.get(once.url).status_code == 410
 
     stable = tmp_path / "stable.txt"
     stable.write_text("stable", encoding="utf-8")
     link = _register_file(stable)
-    snapshot = next(snapshot_directory().glob("*.bin"))
+    snapshot = next(
+        snapshot_directory(data_dir=_control_config().data_dir).glob("*.bin")
+    )
     snapshot.write_bytes(b"stolen")
     rejected = client.get(link.url)
     assert rejected.status_code == 404
     assert rejected.json()["error"] == "download_missing"
-    assert _list_file_links_owned().links == []
+    assert _list_file_links_owned(settings=_control_config()).links == []
 
 
 def test_download_store_recovers_from_backup(tmp_path, monkeypatch):
@@ -427,7 +458,7 @@ def test_download_store_recovers_from_backup(tmp_path, monkeypatch):
     download_store_path = get_settings().state_dir / "downloads.json"
     download_store_path.write_text("{broken", encoding="utf-8")
 
-    recovered = _list_file_links_owned()
+    recovered = _list_file_links_owned(settings=_control_config())
     assert [item.link_id for item in recovered.links] == [link.link_id]
     assert json.loads(download_store_path.read_text())["version"] == 3
     assert backup_path().exists()
@@ -476,7 +507,10 @@ async def test_invalid_executor_chunk_removes_staging_snapshot(
         await harness.control.download_service._export_snapshot(
             record, "artifact.bin"
         )
-    assert list(snapshot_directory().iterdir()) == []
+    assert (
+        list(snapshot_directory(data_dir=_control_config().data_dir).iterdir())
+        == []
+    )
 
 
 def test_download_filename_is_header_safe_and_rfc5987_encoded(
@@ -486,7 +520,9 @@ def test_download_filename_is_header_safe_and_rfc5987_encoded(
     source = tmp_path / "hello.txt"
     source.write_text("hello", encoding="utf-8")
     link = _register_file(source, filename='报告 "final"\\name.txt')
-    response = TestClient(Starlette(routes=download_routes())).get(link.url)
+    response = TestClient(
+        Starlette(routes=download_routes(_control_config()))
+    ).get(link.url)
     disposition = response.headers["content-disposition"]
 
     assert response.status_code == 200

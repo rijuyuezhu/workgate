@@ -3,11 +3,14 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import HTTPConnection
 from starlette.websockets import WebSocketDisconnect
 
 import workgate.ui.http.opentui as opentui
+import workgate.ui.http.session as ui_session_http
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
@@ -170,3 +173,24 @@ def test_spawn_opentui_process_keeps_local_token_in_environment(
     assert captured["env"]["TERM_PROGRAM_VERSION"] == (
         f"workgate/{opentui.__version__}"
     )
+
+
+def test_ui_session_helpers_reject_invalid_websocket_target() -> None:
+    connection = HTTPConnection(
+        {
+            "type": "websocket",
+            "scheme": "ftp",
+            "path": "/ui/ws/opentui",
+            "headers": [
+                (b"host", b"workgate.example"),
+                (b"origin", b"https://workgate.example"),
+            ],
+            "query_string": b"",
+        }
+    )
+
+    assert ui_session_http.has_valid_ui_origin(connection) is False
+    with pytest.raises(
+        jwt.InvalidTokenError, match="Invalid Human UI request origin"
+    ):
+        ui_session_http.ui_session_claims(connection)

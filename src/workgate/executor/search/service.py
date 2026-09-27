@@ -59,8 +59,6 @@ class SearchRequest:
     """Number of earlier actual matches to skip."""
     gitignore: bool = True
     """Respect gitignore-style exclusions when true."""
-    glob: str | None = None
-    """Optional legacy single glob used by the sessionless grep facade."""
 
 
 @dataclass(frozen=True)
@@ -329,7 +327,6 @@ class LocalSearchRunner:
             request.pattern,
             path_args=path_args,
             glob_args=glob_args,
-            glob=request.glob,
             regex=request.regex,
             case_sensitive=request.case_sensitive,
             gitignore=request.gitignore,
