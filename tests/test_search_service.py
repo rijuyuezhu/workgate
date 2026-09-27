@@ -320,6 +320,49 @@ async def test_local_search_runner_parses_fake_rg_process_without_binary(
 
 
 @pytest.mark.asyncio
+async def test_local_search_runner_accepts_missing_stderr_pipe(
+    tmp_path, monkeypatch
+):
+    store, settings = _store_and_settings(tmp_path, monkeypatch)
+    runner = build_local_search_runner(resolve_executor_config(settings), store)
+
+    class EmptyStdout:
+        async def readline(self) -> bytes:
+            return b""
+
+    class FakeProc:
+        def __init__(self):
+            self.stdout = EmptyStdout()
+            self.stderr = None
+            self.returncode = None
+
+        async def wait(self) -> int:
+            self.returncode = 1
+            return 1
+
+        def terminate(self) -> None:
+            raise AssertionError("empty fake search should not terminate")
+
+        def kill(self) -> None:
+            raise AssertionError("empty fake search should not kill")
+
+    async def fake_spawn(*_args, **_kwargs):
+        return FakeProc()
+
+    monkeypatch.setattr(
+        search_service_module.asyncio, "create_subprocess_exec", fake_spawn
+    )
+    result = await runner.search(
+        SearchRequest(pattern="needle", regex=False, gitignore=False),
+        workdir=str(tmp_path),
+    )
+
+    assert result.ok is True
+    assert result.count == 0
+    assert result.stderr == ""
+
+
+@pytest.mark.asyncio
 async def test_local_search_runner_reports_process_start_failure(
     tmp_path, monkeypatch
 ):

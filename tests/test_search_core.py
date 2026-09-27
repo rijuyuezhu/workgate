@@ -13,6 +13,7 @@ from workgate.executor.search.core import (
     merge_line_ranges,
     parse_rg_match_record,
     parse_search_line_range,
+    search_match_path,
     split_line_scoped_search_path,
 )
 
@@ -31,6 +32,19 @@ def test_clamp_search_result_limit_uses_configured_positive_ceiling() -> None:
     assert clamp_search_result_limit(-5, 200) == 1
     assert clamp_search_result_limit(25, 200) == 25
     assert clamp_search_result_limit(500, 200) == 200
+
+
+def test_search_match_path_handles_missing_absolute_and_relative_paths() -> (
+    None
+):
+    cwd = str(Path.cwd().resolve())
+    absolute = str(Path.cwd().resolve() / "demo.txt")
+
+    assert search_match_path(cwd, None) is None
+    assert search_match_path(cwd, absolute) == absolute
+    assert search_match_path(cwd, "nested/demo.txt") == str(
+        Path(cwd) / "nested/demo.txt"
+    )
 
 
 def test_build_rg_argv_keeps_query_after_option_terminator() -> None:
