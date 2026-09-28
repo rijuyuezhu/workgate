@@ -107,6 +107,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
+      - name: Install locked Chromium revision
+        run: uv run playwright install --with-deps chromium
       - name: Run branch coverage
         run: |
           find . -maxdepth 1 -name '.coverage*' -delete

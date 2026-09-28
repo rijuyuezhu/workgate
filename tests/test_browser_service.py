@@ -25,7 +25,10 @@ from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
-from workgate.errors import SessionTerminationRequestedError
+from workgate.errors import (
+    BrowserUnavailableError,
+    SessionTerminationRequestedError,
+)
 from workgate.executor.browser import (
     BrowserService,
     browser_capability_available,
@@ -180,6 +183,16 @@ async def test_browser_snapshot_actions_ownership_and_screenshot(
   <head><title>Browser test</title></head>
   <body>
     <input id="secret" type="password" aria-label="Password">
+    <textarea id="notes" aria-label="Notes"></textarea>
+    <select id="color" aria-label="Color">
+      <option value="red">Red</option>
+      <option value="blue">Blue</option>
+    </select>
+    <select id="multi" aria-label="Multi" multiple>
+      <option value="red">Red</option>
+      <option value="blue">Blue</option>
+    </select>
+    <input id="agree" type="checkbox" aria-label="Agree">
     <button id="go" onclick="document.querySelector('#result').textContent='clicked'">Go</button>
     <div id="result">ready</div>
   </body>
@@ -198,7 +211,22 @@ async def test_browser_snapshot_actions_ownership_and_screenshot(
         input_ref = next(
             item["ref"]
             for item in snapshot["interactive_elements"]
-            if item["tag"] == "input"
+            if item["type"] == "password"
+        )
+        textarea_ref = next(
+            item["ref"]
+            for item in snapshot["interactive_elements"]
+            if item["tag"] == "textarea"
+        )
+        select_refs = [
+            item["ref"]
+            for item in snapshot["interactive_elements"]
+            if item["tag"] == "select"
+        ]
+        checkbox_ref = next(
+            item["ref"]
+            for item in snapshot["interactive_elements"]
+            if item["type"] == "checkbox"
         )
         button_ref = next(
             item["ref"]
@@ -212,10 +240,27 @@ async def test_browser_snapshot_actions_ownership_and_screenshot(
             browser_id,
             [
                 {"action": "fill", "target": input_ref, "value": secret},
+                {"action": "type", "target": textarea_ref, "value": "typed"},
+                {"action": "press", "target": textarea_ref, "key": "End"},
+                {"action": "select", "target": select_refs[0], "value": "blue"},
+                {
+                    "action": "select",
+                    "target": select_refs[1],
+                    "value": ["red", "blue"],
+                },
+                {"action": "check", "target": checkbox_ref},
+                {"action": "uncheck", "target": checkbox_ref},
+                {"action": "hover", "target": button_ref},
+                {"action": "wait", "ms": 1},
+                {"action": "wait_for_text", "text": "ready"},
+                {
+                    "action": "wait_for_url",
+                    "url": f"{base_url}/index.html",
+                },
                 {"action": "click", "target": button_ref},
             ],
         )
-        assert len(acted["results"]) == 2
+        assert len(acted["results"]) == 12
 
         after = await service.snapshot(
             session_id,
@@ -231,6 +276,18 @@ async def test_browser_snapshot_actions_ownership_and_screenshot(
                 session_id,
                 browser_id,
                 screenshot_path="browser-shot.png",
+            )
+        with pytest.raises(ValueError, match="must not be empty"):
+            await service.snapshot(
+                session_id,
+                browser_id,
+                screenshot_path="",
+            )
+        with pytest.raises(ValueError, match="must end in .png"):
+            await service.snapshot(
+                session_id,
+                browser_id,
+                screenshot_path="browser-shot.jpg",
             )
         with pytest.raises(ValueError, match="only permits"):
             await service.act(
@@ -250,14 +307,86 @@ async def test_browser_snapshot_actions_ownership_and_screenshot(
                 ],
             )
 
+        page_actions = await service.act(
+            session_id,
+            browser_id,
+            [
+                {"action": "new_page", "url": f"{base_url}/index.html"},
+                {"action": "close_page"},
+                {
+                    "action": "navigate",
+                    "url": f"{base_url}/index.html",
+                    "wait_until": "load",
+                },
+            ],
+        )
+        assert len(page_actions["results"]) == 3
+
         other_id = "sess_0000000000000000000002"
         store.create_session(session_id=other_id, workdir=workspace)
         with pytest.raises(ValueError, match="unknown browser session"):
             await service.snapshot(other_id, browser_id)
 
-        closed = await service.close(session_id, browser_id)
+        closed = await service.manage(
+            session_id,
+            action="close",
+            browser_session_id=browser_id,
+        )
         assert closed == {"browser_session_id": browser_id, "closed": True}
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_start_failure_cleans_partial_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+
+    async def fail_page_start(_state):
+        raise RuntimeError("synthetic page start failure")
+
+    monkeypatch.setattr(service, "_ensure_page", fail_page_start)
+    with pytest.raises(RuntimeError, match="synthetic page start failure"):
+        await service.start(session_id)
+
+    assert service._sessions == {}
+    assert service._cleanup_pending == {}
+    assert service._starting == 0
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_manage_rejects_invalid_lifecycle_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+
+    with pytest.raises(ValueError, match="browser_session_id"):
+        await service.manage(session_id, action="close")
+    with pytest.raises(
+        ValueError, match="action must be start, list, or close"
+    ):
+        await service.manage(session_id, action="invalid")
+
+    monkeypatch.setattr(
+        browser_ops, "browser_capability_available", lambda: False
+    )
+    with pytest.raises(
+        BrowserUnavailableError, match="Playwright is not installed"
+    ):
+        await service.start(session_id)
+
+    monkeypatch.setattr(
+        browser_ops, "browser_capability_available", lambda: True
+    )
+    with pytest.raises(ValueError, match="invalid wait_until"):
+        await service.start(session_id, wait_until="invalid")
+
+    await service.aclose()
+    with pytest.raises(RuntimeError, match="browser service is closed"):
+        await service.start(session_id)
 
 
 @pytest.mark.asyncio
@@ -404,6 +533,52 @@ async def test_session_termination_waits_for_idle_cleanup_in_progress(
     ended = await termination
     assert ended["absent"] is True
     assert browser_id not in browser._closing
+    await browser.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_lookup_refreshes_idle_deadline_before_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    browser, _config, _store, session_id, _workspace = _service(tmp_path)
+    monkeypatch.setattr(browser_ops, "_IDLE_TIMEOUT_S", 10)
+    now = [100.0]
+    monkeypatch.setattr(browser_ops.time, "time", lambda: now[0])
+
+    class FakeBrowser:
+        def is_connected(self) -> bool:
+            return True
+
+    browser_id = "browser_idle_refresh"
+    state = browser_ops.BrowserSessionState(
+        browser_session_id=browser_id,
+        owner_session_id=session_id,
+        playwright=object(),
+        browser=FakeBrowser(),
+        context=object(),
+        created_at=0.0,
+        last_used_at=95.0,
+    )
+    browser._sessions[browser_id] = state
+    closed: list[str] = []
+
+    async def record_close(closing_state) -> None:
+        closed.append(closing_state.browser_session_id)
+
+    monkeypatch.setattr(browser, "_close_state", record_close)
+
+    assert await browser._get_owned(session_id, browser_id) is state
+    assert state.last_used_at == 100.0
+
+    now[0] = 105.0
+    await browser._cleanup_idle()
+    assert browser_id in browser._sessions
+    assert closed == []
+
+    now[0] = 111.0
+    await browser._cleanup_idle()
+    assert browser_id not in browser._sessions
+    assert closed == [browser_id]
     await browser.aclose()
 
 

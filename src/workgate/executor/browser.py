@@ -168,13 +168,17 @@ class BrowserService:
             self._touch_owner(owner_session_id)
             return result
         if normalized == "list":
-            await self._cleanup_idle()
-            async with self._lock:
-                sessions = [
-                    state
-                    for state in self._sessions.values()
-                    if state.owner_session_id == owner_session_id
-                ]
+            async with self._cleanup_lock:
+                await self._cleanup_idle_locked()
+                async with self._lock:
+                    sessions = [
+                        state
+                        for state in self._sessions.values()
+                        if state.owner_session_id == owner_session_id
+                    ]
+                    now = time.time()
+                    for state in sessions:
+                        state.last_used_at = now
             result = {
                 "sessions": [
                     await self._session_summary(state) for state in sessions
@@ -363,7 +367,6 @@ class BrowserService:
         async with state.lock:
             current = await self._select_page(state, page_id)
             page = current.page
-            state.last_used_at = time.time()
             bounded_text_chars = max(
                 0, min(int(max_text_chars), _MAX_SNAPSHOT_TEXT_CHARS)
             )
@@ -439,7 +442,6 @@ class BrowserService:
         results: list[dict[str, Any]] = []
         async with state.lock:
             current = await self._select_page(state, page_id)
-            state.last_used_at = time.time()
             for index, raw_action in enumerate(actions):
                 if not isinstance(raw_action, dict):
                     raise ValueError(f"actions[{index}] must be an object")
@@ -809,11 +811,15 @@ class BrowserService:
         self, owner_session_id: str, browser_session_id: str
     ) -> BrowserSessionState:
         self._require_owner(owner_session_id)
-        await self._cleanup_idle()
-        async with self._lock:
-            state = self._sessions.get(browser_session_id)
-        if state is None or state.owner_session_id != owner_session_id:
-            raise ValueError(f"unknown browser session: {browser_session_id}")
+        async with self._cleanup_lock:
+            await self._cleanup_idle_locked()
+            async with self._lock:
+                state = self._sessions.get(browser_session_id)
+                if state is None or state.owner_session_id != owner_session_id:
+                    raise ValueError(
+                        f"unknown browser session: {browser_session_id}"
+                    )
+                state.last_used_at = time.time()
         try:
             connected = bool(state.browser.is_connected())
         except Exception:

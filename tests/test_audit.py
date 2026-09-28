@@ -434,6 +434,117 @@ def test_browser_session_list_audit_redacts_nested_page_content(
     ]
 
 
+def test_browser_action_output_redacts_urls_and_preserves_refs(
+    tmp_path, monkeypatch
+):
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "browser-action-output-secret"
+
+    audit_tool_call_end(
+        call_id="browser-action-output",
+        transport="mcp",
+        tool="browser_act",
+        ok=True,
+        duration_ms=1,
+        output={
+            "results": [
+                {
+                    "url": f"https://example.test/path?token={secret}",
+                    "target": "e1",
+                },
+                "opaque-result",
+            ]
+        },
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert secret not in raw
+    results = _records(path)[0]["output"]["results"]
+    assert results == [
+        {"url": "https://example.test", "target": "e1"},
+        "opaque-result",
+    ]
+
+
+def test_browser_audit_malformed_shapes_are_fail_safe(tmp_path, monkeypatch):
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "malformed-browser-secret"
+
+    audit_tool_call_start(
+        call_id="browser-malformed-actions",
+        transport="mcp",
+        tool="browser_act",
+        input={
+            "actions": [
+                "opaque-action",
+                {"action": "wait_for_text", "text": secret},
+                {"action": "navigate", "url": "about:blank"},
+                {"action": "navigate", "url": f"file:///{secret}"},
+                {
+                    "action": "navigate",
+                    "url": f"http://[::1]:8080/path?token={secret}",
+                },
+                {
+                    "action": "navigate",
+                    "url": f"http://example.test:notaport/{secret}",
+                },
+            ]
+        },
+    )
+    audit_tool_call_start(
+        call_id="browser-malformed-action-list",
+        transport="mcp",
+        tool="browser_act",
+        input={"actions": "not-a-list"},
+    )
+    audit_tool_call_end(
+        call_id="browser-malformed-session-output",
+        transport="mcp",
+        tool="browser_session",
+        ok=True,
+        duration_ms=1,
+        output={
+            "url": "http://[::1]:8080/path",
+            "sessions": [
+                "opaque-session",
+                {"pages": ["opaque-page"]},
+            ],
+        },
+    )
+    audit_tool_call_end(
+        call_id="browser-malformed-snapshot-output",
+        transport="mcp",
+        tool="browser_snapshot",
+        ok=True,
+        duration_ms=1,
+        output="opaque-output",
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert secret not in raw
+    records = {item["call_id"]: item for item in _records(path)}
+    actions = records["browser-malformed-actions"]["input"]["actions"]
+    assert actions[0] == "opaque-action"
+    assert actions[1]["text"] == "<redacted>"
+    assert actions[2]["url"] == "about:blank"
+    assert actions[3]["url"] == "<redacted-url>"
+    assert actions[4]["url"] == "http://[::1]:8080"
+    assert actions[5]["url"] == "<redacted-url>"
+    assert records["browser-malformed-action-list"]["input"] == {
+        "actions": "not-a-list"
+    }
+    session_output = records["browser-malformed-session-output"]["output"]
+    assert session_output["url"] == "http://[::1]:8080"
+    assert session_output["sessions"] == [
+        "opaque-session",
+        {"pages": ["opaque-page"]},
+    ]
+    assert (
+        records["browser-malformed-snapshot-output"]["output"]
+        == "opaque-output"
+    )
+
+
 def test_browser_error_audit_omits_backend_diagnostics(tmp_path, monkeypatch):
     path = _configure_audit(tmp_path, monkeypatch)
     secret = "sensitive-playwright-error-detail"
