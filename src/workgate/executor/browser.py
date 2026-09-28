@@ -1,12 +1,9 @@
 """Executor-owned structured browser automation for shared sessions."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import importlib.util
 import os
-import re
 import secrets
 import time
 from collections import deque
@@ -19,9 +16,9 @@ from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 
+from ..config.executor import ExecutorConfig
 from ..errors import BrowserUnavailableError
 from ..schemas.input_models.browser import BrowserActionsArg
-from .config import ExecutorConfig
 from .errors import ExecutorOperationFailure
 from .tool_session.store import ToolSessionStore
 
@@ -39,7 +36,6 @@ _MAX_SCREENSHOT_PIXELS = 40_000_000
 _IDLE_TIMEOUT_S = 60 * 60
 _IDLE_REAP_INTERVAL_S = 60
 _REF_ATTRIBUTE = "data-workgate-browser-ref"
-_REF_RE = re.compile(r"^e[1-9][0-9]*$")
 _BROWSER_ACTIONS_ADAPTER = TypeAdapter(BrowserActionsArg)
 
 
@@ -182,12 +178,7 @@ class BrowserService:
             result = {
                 "sessions": [
                     await self._session_summary(state) for state in sessions
-                ],
-                "cleanup_pending": sorted(
-                    browser_id
-                    for browser_id, state in self._cleanup_pending.items()
-                    if state.owner_session_id == owner_session_id
-                ),
+                ]
             }
             self._touch_owner(owner_session_id)
             return result
@@ -619,7 +610,7 @@ class BrowserService:
             if not text:
                 raise ValueError("wait_for_text requires text")
             await page.get_by_text(text).first.wait_for(timeout=timeout_ms)
-            return {"matched": _bounded(text)}, current
+            return {}, current
         if action == "wait_for_url":
             url = str(data.get("url") or "")
             if not url:
@@ -735,11 +726,9 @@ class BrowserService:
     def _locator(self, page_state: BrowserPageState, target: str) -> Any:
         selector = page_state.refs.get(target)
         if selector is None:
-            if _REF_RE.fullmatch(target):
-                raise ValueError(
-                    f"browser ref {target} is stale or unknown; take a new snapshot"
-                )
-            selector = target
+            raise ValueError(
+                f"browser ref {target} is stale or unknown; take a new snapshot"
+            )
         return page_state.page.locator(selector).first
 
     async def _screenshot(
@@ -1041,13 +1030,15 @@ class BrowserService:
         current_page_id: str | None = None,
     ) -> dict[str, Any]:
         await self._sync_pages(state)
-        return {
+        result = {
             "browser_session_id": state.browser_session_id,
-            "current_page_id": current_page_id,
             "pages": await self._page_summaries(state),
             "created_at": state.created_at,
             "last_used_at": state.last_used_at,
         }
+        if current_page_id is not None:
+            result["current_page_id"] = current_page_id
+        return result
 
     @staticmethod
     async def _page_summaries(

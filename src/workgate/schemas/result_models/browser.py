@@ -15,7 +15,6 @@ class BrowserSessionSummary(BaseModel):
     """One ephemeral browser owned by a Workgate session."""
 
     browser_session_id: str
-    current_page_id: str | None = None
     pages: list[BrowserPageSummary] = Field(default_factory=list)
     created_at: float
     last_used_at: float
@@ -30,7 +29,6 @@ class BrowserSessionOutput(BaseModel):
     created_at: float | None = None
     last_used_at: float | None = None
     sessions: list[BrowserSessionSummary] | None = None
-    cleanup_pending: list[str] | None = None
     closed: bool | None = None
 
 
@@ -84,7 +82,6 @@ class BrowserActionResult(BaseModel):
     page_id: str | None = None
     closed: bool | None = None
     waited_ms: int | None = None
-    matched: str | None = None
     target: str | None = None
 
 

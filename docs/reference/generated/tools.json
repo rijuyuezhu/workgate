@@ -1,11 +1,11 @@
 {
-  "count": 43,
+  "count": 46,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "43"
+          "code": "46"
         },
         "."
       ],
@@ -297,7 +297,7 @@
           {
             "items": [
               {
-                "description": "Ordered high-level structured actions. Element targets may be snapshot refs such as e1 or bounded CSS selectors.",
+                "description": "Ordered high-level actions using snapshot refs for element targets.",
                 "head": {
                   "code": "actions"
                 },
@@ -333,7 +333,7 @@
               }
             ]
           },
-          "Perform bounded high-level browser actions on an owned browser session. Prefer snapshot refs such as e1 over CSS selectors. Supported actions are navigate, new_page, close_page, click, fill, type, select, press, check, uncheck, hover, wait, wait_for_text, and wait_for_url. There is intentionally no arbitrary Playwright-script escape hatch in this structured surface."
+          "Perform bounded high-level browser actions on an owned browser session using snapshot refs for element targets. There is intentionally no arbitrary Playwright-script escape hatch."
         ],
         [
           {
@@ -2638,7 +2638,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Perform bounded high-level browser actions on an owned browser session. Prefer snapshot refs such as e1 over CSS selectors. Supported actions are navigate, new_page, close_page, click, fill, type, select, press, check, uncheck, hover, wait, wait_for_text, and wait_for_url. There is intentionally no arbitrary Playwright-script escape hatch in this structured surface.",
+      "description": "Perform bounded high-level browser actions on an owned browser session using snapshot refs for element targets. There is intentionally no arbitrary Playwright-script escape hatch.",
       "inputSchema": {
         "$defs": {
           "BrowserClosePageAction": {
@@ -2727,9 +2727,10 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
-                "maxLength": 4096,
-                "minLength": 1,
+                "description": "Snapshot ref such as e1.",
+                "maxLength": 16,
+                "minLength": 2,
+                "pattern": "^e[1-9][0-9]*$",
                 "title": "Target",
                 "type": "string"
               }
@@ -2751,9 +2752,10 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
-                "maxLength": 4096,
-                "minLength": 1,
+                "description": "Snapshot ref such as e1.",
+                "maxLength": 16,
+                "minLength": 2,
+                "pattern": "^e[1-9][0-9]*$",
                 "title": "Target",
                 "type": "string"
               },
@@ -2800,9 +2802,10 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
-                "maxLength": 4096,
-                "minLength": 1,
+                "description": "Snapshot ref such as e1.",
+                "maxLength": 16,
+                "minLength": 2,
+                "pattern": "^e[1-9][0-9]*$",
                 "title": "Target",
                 "type": "string"
               }
@@ -2826,9 +2829,10 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1 or a bounded CSS selector.",
-                "maxLength": 4096,
-                "minLength": 1,
+                "description": "Snapshot ref such as e1.",
+                "maxLength": 16,
+                "minLength": 2,
+                "pattern": "^e[1-9][0-9]*$",
                 "title": "Target",
                 "type": "string"
               },
@@ -2916,7 +2920,7 @@
         },
         "properties": {
           "actions": {
-            "description": "Ordered high-level structured actions. Element targets may be snapshot refs such as e1 or bounded CSS selectors.",
+            "description": "Ordered high-level actions using snapshot refs for element targets.",
             "items": {
               "discriminator": {
                 "mapping": {
@@ -3059,18 +3063,6 @@
               "index": {
                 "title": "Index",
                 "type": "integer"
-              },
-              "matched": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Matched"
               },
               "page_id": {
                 "anyOf": [
@@ -3358,18 +3350,6 @@
                 "title": "Created At",
                 "type": "number"
               },
-              "current_page_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Current Page Id"
-              },
               "last_used_at": {
                 "title": "Last Used At",
                 "type": "number"
@@ -3404,21 +3384,6 @@
             ],
             "default": null,
             "title": "Browser Session Id"
-          },
-          "cleanup_pending": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Cleanup Pending"
           },
           "closed": {
             "anyOf": [

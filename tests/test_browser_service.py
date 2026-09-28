@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -21,6 +19,7 @@ from tests.helpers import (
     build_tool_session_store,
     mcp_text,
 )
+from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
@@ -31,17 +30,14 @@ from workgate.executor.browser import (
     BrowserService,
     browser_capability_available,
 )
-from workgate.executor.config import resolve_executor_config
 from workgate.executor.connection import ExecutorConnection
 from workgate.executor.control_client import ExecutorControlClient
 from workgate.executor.hello import build_executor_hello
 from workgate.executor.profile import ExecutorProfile
 from workgate.executor.runtime import build_executor_runtime
-from workgate.executor.search_composition import (
-    build_executor_dispatcher_with_search,
-)
 from workgate.executor.sessions import ExecutorSessionService
 from workgate.executor.shell_service import ShellService
+from workgate.executor.tool_composition import build_executor_tool_dispatcher
 from workgate.executor.tool_session.store import UnknownAgentSessionError
 from workgate.protocol.credentials import (
     executor_credential_verifier,
@@ -97,6 +93,8 @@ def test_browser_action_schema_rejects_unknown_or_incomplete_fields() -> None:
         )
     with pytest.raises(ValidationError, match="Field required"):
         adapter.validate_python([{"action": "fill", "target": "e1"}])
+    with pytest.raises(ValidationError, match="String should match pattern"):
+        adapter.validate_python([{"action": "click", "target": "#submit"}])
     with pytest.raises(
         ValidationError, match="List should have at most 100 items"
     ):
@@ -287,8 +285,8 @@ async def test_browser_close_failure_remains_retryable(
 
     listed = await service.manage(session_id, action="list")
     assert listed["sessions"] == []
-    assert listed["cleanup_pending"] == []
     assert attempts == 2
+    assert browser_id not in service._cleanup_pending
     await service.aclose()
 
 
@@ -334,7 +332,7 @@ async def test_browser_dispatch_is_fenced_from_session_termination(
     browser, config, store, session_id, _workspace = _service(tmp_path)
     shell = ShellService(config, store)
     sessions = ExecutorSessionService(config, store, shell, browser)
-    dispatcher = build_executor_dispatcher_with_search(
+    dispatcher = build_executor_tool_dispatcher(
         config,
         store,
         shell_service=shell,
@@ -347,7 +345,7 @@ async def test_browser_dispatch_is_fenced_from_session_termination(
         assert owner_session_id == session_id
         entered.set()
         await release.wait()
-        return {"sessions": [], "cleanup_pending": []}
+        return {"sessions": []}
 
     monkeypatch.setattr(browser, "manage", blocked_manage)
     operation = asyncio.create_task(

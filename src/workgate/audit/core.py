@@ -151,6 +151,8 @@ def _redact_browser_tool_input(tool: str, value: Any) -> Any:
 
 def _redact_browser_tool_output(tool: str, value: Any) -> Any:
     """Retain browser audit shape without persisting page bodies/form content."""
+    if tool not in {"browser_session", "browser_snapshot", "browser_act"}:
+        return value
     if not isinstance(value, Mapping):
         return value
     copied = dict(value)
@@ -207,8 +209,6 @@ def _redact_browser_tool_output(tool: str, value: Any) -> Any:
                 row = dict(item)
                 if "url" in row:
                     row["url"] = _redact_browser_url(row["url"])
-                if "matched" in row:
-                    row["matched"] = "<redacted>"
                 if "target" in row:
                     target = str(row["target"])
                     row["target"] = (
