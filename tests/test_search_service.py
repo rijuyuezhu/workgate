@@ -320,46 +320,73 @@ async def test_local_search_runner_parses_fake_rg_process_without_binary(
 
 
 @pytest.mark.asyncio
-async def test_local_search_runner_accepts_missing_stderr_pipe(
+async def test_local_search_runner_applies_skip_before_early_result_limit(
     tmp_path, monkeypatch
 ):
     store, settings = _store_and_settings(tmp_path, monkeypatch)
+    (tmp_path / "demo.txt").write_text(
+        "first needle\nsecond needle\n", encoding="utf-8"
+    )
     runner = build_local_search_runner(resolve_executor_config(settings), store)
 
-    class EmptyStdout:
+    class FakeStdout:
+        def __init__(self):
+            self._lines = [
+                b'{"type":"match","data":{"path":{"text":"demo.txt"},'
+                b'"lines":{"text":"first needle\\n"},"line_number":1,'
+                b'"submatches":[{"start":6,"end":12}]}}\n',
+                b'{"type":"match","data":{"path":{"text":"demo.txt"},'
+                b'"lines":{"text":"second needle\\n"},"line_number":2,'
+                b'"submatches":[{"start":7,"end":13}]}}\n',
+                b"",
+            ]
+
         async def readline(self) -> bytes:
-            return b""
+            await search_service_module.asyncio.sleep(0)
+            return self._lines.pop(0)
 
     class FakeProc:
         def __init__(self):
-            self.stdout = EmptyStdout()
+            self.stdout = FakeStdout()
             self.stderr = None
             self.returncode = None
+            self.terminated = False
 
         async def wait(self) -> int:
-            self.returncode = 1
-            return 1
+            self.returncode = 0
+            return 0
 
         def terminate(self) -> None:
-            raise AssertionError("empty fake search should not terminate")
+            self.terminated = True
 
         def kill(self) -> None:
-            raise AssertionError("empty fake search should not kill")
+            raise AssertionError("early-stop fake search should not kill")
+
+    proc = FakeProc()
 
     async def fake_spawn(*_args, **_kwargs):
-        return FakeProc()
+        return proc
 
     monkeypatch.setattr(
         search_service_module.asyncio, "create_subprocess_exec", fake_spawn
     )
     result = await runner.search(
-        SearchRequest(pattern="needle", regex=False, gitignore=False),
+        SearchRequest(
+            pattern="needle",
+            regex=False,
+            gitignore=False,
+            skip=1,
+            max_results=1,
+        ),
         workdir=str(tmp_path),
     )
 
     assert result.ok is True
-    assert result.count == 0
+    assert [match.line for match in result.matches] == [2]
+    assert result.skipped == 1
+    assert result.truncated is True
     assert result.stderr == ""
+    assert proc.terminated is True
 
 
 @pytest.mark.asyncio
