@@ -87,8 +87,8 @@ nav:
   - Development: development.md
   - Maintenance:
       - Product comparison: comparison.md
-      - Fork and upstream differences: maintenance/fork-upstream-differences.md
-      - Upstream commit review: maintenance/upstream-commit-review.md
+      - Historical fork/upstream audit: maintenance/fork-upstream-differences.md
+      - Historical upstream commit review: maintenance/upstream-commit-review.md
       - Native artifact provenance: maintenance/native-artifact-provenance.md
   - Community:
       - Contributing: community/contributing.md

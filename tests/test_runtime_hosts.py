@@ -41,10 +41,8 @@ def test_rest_http_host_owns_control_runtime_lifespan(tmp_path):
         assert get_state_store() is outer_state_store
 
 
-@pytest.mark.parametrize("mode", ["default", "catalog", "runtime"])
-def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
-    tmp_path, monkeypatch, mode
-):
+@pytest.mark.parametrize("with_catalog", [False, True])
+def test_run_http_uses_explicit_runtime(tmp_path, monkeypatch, with_catalog):
     settings = Settings(
         workspace_root=tmp_path,
         state_dir=tmp_path / "runtime-state",
@@ -53,21 +51,15 @@ def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
         host="127.0.0.1",
         port=8765,
     )
-    configure_settings(settings)
     runtime = build_control_runtime(settings)
-    catalog = runtime.tool_catalog
+    catalog = runtime.tool_catalog if with_catalog else None
     app = object()
     calls = []
-
-    def build_runtime(configured_settings):
-        calls.append(("runtime", configured_settings))
-        return runtime
 
     def build(**kwargs):
         calls.append(("build", kwargs))
         return app
 
-    monkeypatch.setattr(http_app, "build_control_runtime", build_runtime)
     monkeypatch.setattr(http_app, "build_http_app", build)
     monkeypatch.setattr(
         http_app.uvicorn,
@@ -77,26 +69,10 @@ def test_run_http_owns_runtime_for_compatibility_and_explicit_paths(
         ),
     )
 
-    if mode == "default":
-        http_app.run_http()
-        expected_calls = [
-            ("runtime", settings),
-            ("build", {"tool_catalog": None, "runtime": runtime}),
-        ]
-    elif mode == "catalog":
-        http_app.run_http(tool_catalog=catalog)
-        expected_calls = [
-            ("runtime", settings),
-            ("build", {"tool_catalog": catalog, "runtime": runtime}),
-        ]
-    else:
-        http_app.run_http(runtime=runtime)
-        expected_calls = [
-            ("build", {"tool_catalog": None, "runtime": runtime}),
-        ]
+    http_app.run_http(runtime=runtime, tool_catalog=catalog)
 
     assert calls == [
-        *expected_calls,
+        ("build", {"tool_catalog": catalog, "runtime": runtime}),
         ("uvicorn", app, "127.0.0.1", 8765),
     ]
 

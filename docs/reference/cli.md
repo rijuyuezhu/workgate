@@ -69,5 +69,3 @@ workgate executor run
 `connect` starts device-code pairing when the saved executor profile is absent or no longer authenticates. It prints the owner verification URL and short user code, then waits for approval. After approval, Workgate atomically saves the issued `control_url`, stable `executor_id`, and bearer credential before an auth-only credential validation. That validation does not mark the executor online or publish resource inventory. If the existing profile still authenticates, `connect` reports that it is already paired and leaves it unchanged.
 
 `run` uses only the saved executor profile. Normal network or control outages reconnect with the same long-lived credential; they do not require a fresh owner approval. Revocation or credential replacement requires owner action before that profile can authenticate again.
-
-The old remote invite/join and `workgate worker` surfaces are removed. New and existing machines use the executor profile and pairing flow above.

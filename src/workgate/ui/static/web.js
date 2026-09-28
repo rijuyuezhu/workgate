@@ -206,12 +206,10 @@ void (async () => {
     terminalInputForm: document.getElementById("terminal-input-form"),
     terminalKeyButtons: Array.from(document.querySelectorAll("[data-terminal-key]")),
     terminalKill: document.getElementById("terminal-kill"),
-    terminalLatest: document.getElementById("terminal-latest"),
     terminalList: document.getElementById("terminal-list"),
     terminalExecutor: document.getElementById("terminal-executor"),
     terminalName: document.getElementById("terminal-name"),
     terminalOutput: document.getElementById("terminal-output"),
-    terminalPendingCount: document.getElementById("terminal-pending-count"),
     terminalXterm: document.getElementById("terminal-xterm"),
     terminalStartForm: document.getElementById("terminal-start-form"),
     terminalState: document.getElementById("terminal-state"),
@@ -281,10 +279,6 @@ void (async () => {
     request,
     text,
     encoder,
-    uiPath,
-    sessionBindingToken,
-    sessionBindingProtocolPrefix,
-    showAuthentication,
     onAuthenticationRequired: () => void load(),
   });
   terminal.bind();

@@ -495,11 +495,6 @@
       "num_statements": 625,
       "percent_covered": 78.244747
     },
-    "src/workgate/executor/terminal/contracts.py": {
-      "num_branches": 0,
-      "num_statements": 2,
-      "percent_covered": 100.0
-    },
     "src/workgate/executor/terminal/runtime.py": {
       "num_branches": 16,
       "num_statements": 81,
@@ -1254,11 +1249,6 @@
       "num_branches": 70,
       "num_statements": 269,
       "percent_covered": 82.300885
-    },
-    "src/workgate/ui/http/terminal_websocket.py": {
-      "num_branches": 68,
-      "num_statements": 247,
-      "percent_covered": 72.380952
     },
     "src/workgate/ui/http/terminals.py": {
       "num_branches": 40,

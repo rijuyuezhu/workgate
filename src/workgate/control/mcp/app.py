@@ -303,21 +303,16 @@ def build_mcp_http_app(
 
 def run_mcp(
     *,
+    runtime: ControlRuntime,
     tool_catalog: ToolCatalog | None = None,
-    runtime: ControlRuntime | None = None,
 ) -> None:
-    """Start MCP with one control runtime owner over stdio or HTTP."""
-    if runtime is None:
-        source_settings = get_settings()
-        active_runtime = build_control_runtime(source_settings)
-    else:
-        active_runtime = runtime
-    mode = active_runtime.config.mode
+    """Start MCP with one explicit control runtime owner over stdio or HTTP."""
+    mode = runtime.config.mode
     if mode != "stdio":
-        validate_public_oauth_configuration(active_runtime.config)
+        validate_public_oauth_configuration(runtime.config)
     mcp = build_mcp(
         tool_catalog=tool_catalog,
-        runtime=active_runtime,
+        runtime=runtime,
         own_runtime_lifespan=mode == "stdio",
     )
 
@@ -325,9 +320,9 @@ def run_mcp(
         # stdio mode talks directly to the parent process; no HTTP app is needed.
         mcp.run(transport="stdio")
     else:
-        app = build_mcp_http_app(mcp, runtime=active_runtime)
+        app = build_mcp_http_app(mcp, runtime=runtime)
         uvicorn.run(
             app,
-            host=active_runtime.config.host,
-            port=active_runtime.config.port,
+            host=runtime.config.host,
+            port=runtime.config.port,
         )

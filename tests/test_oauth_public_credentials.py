@@ -9,6 +9,7 @@ import workgate.control.http.app as http_app
 import workgate.control.mcp.app as mcp_app
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings, configure_settings
+from workgate.control.runtime import build_control_runtime
 from workgate.oauth.core.security import (
     MIN_OAUTH_SIGNING_SECRET_BYTES,
     OAUTH_SIGNING_SECRET_FILE_NAME,
@@ -120,7 +121,9 @@ def test_concurrent_signing_secret_initialization_reuses_one_value(tmp_path):
 def test_http_server_entrypoints_reject_weak_public_pin_before_building(
     tmp_path, monkeypatch, server_module
 ):
-    configure_settings(_settings(tmp_path, pin="short"))
+    settings = _settings(tmp_path, pin="short")
+    configure_settings(settings)
+    runtime = build_control_runtime(settings)
 
     def fail_build(*args, **kwargs):
         raise AssertionError(
@@ -132,6 +135,6 @@ def test_http_server_entrypoints_reject_weak_public_pin_before_building(
 
     with pytest.raises(RuntimeError, match="at least 8 characters"):
         if server_module is http_app:
-            server_module.run_http()
+            server_module.run_http(runtime=runtime)
         else:
-            server_module.run_mcp()
+            server_module.run_mcp(runtime=runtime)

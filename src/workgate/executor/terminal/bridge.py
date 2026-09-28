@@ -25,6 +25,10 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ...protocol.terminal import (
+    PERSISTENT_SHELL_MAX_COLUMNS,
+    PERSISTENT_SHELL_MAX_ROWS,
+    PERSISTENT_SHELL_MIN_COLUMNS,
+    PERSISTENT_SHELL_MIN_ROWS,
     TERMINAL_BRIDGE_BACKEND,
     TERMINAL_BRIDGE_MAX_CHUNK_BYTES,
     TerminalBridgeBusyError,
@@ -33,12 +37,6 @@ from ...protocol.terminal import (
     TerminalBridgeUnsupportedError,
 )
 from . import conpty
-from .contracts import (
-    PERSISTENT_SHELL_MAX_COLUMNS,
-    PERSISTENT_SHELL_MAX_ROWS,
-    PERSISTENT_SHELL_MIN_COLUMNS,
-    PERSISTENT_SHELL_MIN_ROWS,
-)
 from .tmux import detached_tmux_env, require_tmux
 
 TERMINAL_BRIDGE_MAX_WAIT_MS = 1_000

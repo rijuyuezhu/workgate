@@ -1,14 +1,17 @@
 import asyncio
+import shutil
 from pathlib import Path
 
 import pytest
 
+from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings
 from workgate.control.executor_transport import ExecutorTransportClosedError
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ControlSessionRecord, ExecutorTrustRecord
 from workgate.oauth.core.client_store import persist_approved_clients
 from workgate.oauth.core.models import AuthCode, OAuthClient
+from workgate.oauth.core.security import oauth_signing_secret
 from workgate.protocol.credentials import (
     executor_credential_verifier,
     new_executor_credential,
@@ -153,6 +156,104 @@ async def test_control_runtime_restores_only_durable_product_facts(
         assert await second.executor_transport.is_online(executor_id)
     finally:
         await second.aclose()
+
+
+@pytest.mark.asyncio
+async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
+    tmp_path: Path,
+) -> None:
+    source_state = tmp_path / "source-state"
+    source_data = tmp_path / "source-data"
+    settings = Settings(
+        workspace_root=tmp_path,
+        state_dir=source_state,
+        data_dir=source_data,
+    )
+    runtime = build_control_runtime(settings)
+    await runtime.start()
+
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    credential = new_executor_credential()
+    trust = ExecutorTrustRecord(
+        executor_id=executor_id,
+        name="backup-executor",
+        credential_verifier=executor_credential_verifier(credential),
+        created_at=10,
+    )
+    session = ControlSessionRecord(
+        session_id=session_id,
+        executor_id=executor_id,
+        requested_workdir=".",
+        resolved_workdir_display=str(tmp_path),
+        status="active",
+        created_at=20,
+        updated_at=20,
+    )
+    approved_client = OAuthClient(
+        client_id="backup-client",
+        redirect_uris=["https://client.example/callback"],
+        client_name="Backup client",
+        created_at=30,
+        approved_at=40,
+    )
+
+    runtime.control_state.put_executor(trust)
+    runtime.control_state.put_session(session)
+    runtime.oauth_state.clients[approved_client.client_id] = approved_client
+    persist_approved_clients(
+        runtime.oauth_state.clients,
+        state_store=runtime.oauth_state.state_store,
+    )
+    signing_secret = oauth_signing_secret(resolve_control_config(settings))
+    source_data.mkdir(parents=True, exist_ok=True)
+    (source_data / "backup-marker").write_text("payload\n", encoding="utf-8")
+    await runtime.aclose()
+
+    restored_state = tmp_path / "restored-state"
+    restored_data = tmp_path / "restored-data"
+    shutil.copytree(source_state, restored_state)
+    shutil.copytree(source_data, restored_data)
+    restored_settings = Settings(
+        workspace_root=tmp_path,
+        state_dir=restored_state,
+        data_dir=restored_data,
+    )
+    restored = build_control_runtime(restored_settings)
+    await restored.start()
+    try:
+        assert restored.control_state.snapshot_executors() == {
+            executor_id: trust
+        }
+        assert restored.control_state.snapshot_sessions() == {
+            session_id: session
+        }
+        assert restored.oauth_state.clients == {
+            approved_client.client_id: approved_client
+        }
+        assert (restored_data / "backup-marker").read_text(
+            encoding="utf-8"
+        ) == ("payload\n")
+        assert (
+            oauth_signing_secret(resolve_control_config(restored_settings))
+            == signing_secret
+        )
+
+        hello = ExecutorHelloRequest(
+            runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            sessions=(
+                SessionInventorySummary(
+                    session_id=session_id,
+                    resolved_workdir=str(tmp_path),
+                ),
+            ),
+            shells=(),
+            jobs=(),
+        )
+        await restored.executor_transport.hello(credential, hello)
+        assert await restored.executor_transport.is_online(executor_id)
+    finally:
+        await restored.aclose()
 
 
 @pytest.mark.asyncio

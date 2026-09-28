@@ -504,18 +504,6 @@ class ToolSessionStore:
                     sessions.append(self._require_session_locked(session_id))
         return tuple(sessions)
 
-    def assert_tool_call_allowed(
-        self,
-        session_ids: tuple[str, ...],
-        *,
-        termination_cleanup: bool = False,
-    ) -> None:
-        """Compatibility facade over active admission or cleanup lookup."""
-        if termination_cleanup:
-            self.require_cleanup_sessions(session_ids)
-            return
-        self.admit_tool_sessions(session_ids)
-
     def change_session_workdir(
         self, session_id: str, workdir: str | Path
     ) -> AgentSession:

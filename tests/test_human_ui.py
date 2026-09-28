@@ -117,13 +117,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="executor-revoke-dialog"' in index.text
     assert 'id="terminal-executor"' in index.text
     assert 'id="terminal-xterm"' in index.text
-    assert 'id="terminal-latest"' in index.text
     assert 'id="terminal-keyboard"' in index.text
     assert 'data-terminal-key="ctrl-c"' in index.text
 
     assert "assets/xterm.css" in index.text
     assert "assets/xterm_bundle.js" in index.text
-    assert "assets/terminal_renderer.js" in index.text
     assert "assets/opentui_console.js" in index.text
     assert 'id="opentui-panel"' in index.text
     assert 'id="opentui-terminal"' in index.text
@@ -147,15 +145,6 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "style-src 'self' 'unsafe-inline'" in csp
     assert "frame-ancestors 'none'" in csp
     assert client.get("/ui/callback?code=example").status_code == 200
-    renderer = client.get("/ui/assets/terminal_renderer.js")
-    assert renderer.status_code == 200
-    assert renderer.headers["cache-control"] == "no-cache"
-    assert renderer.headers["x-content-type-options"] == "nosniff"
-    assert "WorkgateTerminalRenderer" in renderer.text
-    assert "MAX_RUNS = 10_000" in renderer.text
-    assert "createTextNode" in renderer.text
-    assert "innerHTML" not in renderer.text
-
     xterm_bundle = client.get("/ui/assets/xterm_bundle.js")
     assert xterm_bundle.status_code == 200
     assert xterm_bundle.headers["x-content-type-options"] == "nosniff"
@@ -264,14 +253,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
         in terminal_script.text
     )
     assert (
-        'url.searchParams.set("executor_id", executorId)'
-        in terminal_script.text
-    )
-    assert 'url.searchParams.set("mode", "snapshot")' in terminal_script.text
-    assert (
         "new URL(`/stream/${encodeURIComponent(streamId)}`"
         in terminal_script.text
     )
+    assert "/ws/terminals/" not in terminal_script.text
+    assert "snapshot" not in terminal_script.text
     assert "workgate-stream-token.${token}" in terminal_script.text
     assert 'terminalAction("attach"' in terminal_script.text
     assert 'socket.binaryType = "arraybuffer"' in terminal_script.text
@@ -292,12 +278,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
         in terminal_script.text
     )
     assert "bridge_id" not in terminal_script.text
-    assert "acceptTerminalSnapshot" in terminal_script.text
-    assert "controllerState.terminalPendingOutput" in terminal_script.text
     assert "const terminalSpecialKeys = Object.freeze" in terminal_script.text
     assert "const terminalHistoryLimit = 100;" in terminal_script.text
     assert "navigateTerminalHistory" in terminal_script.text
-    assert "WorkgateTerminalRenderer" in terminal_script.text
     assert "controllerState.filePreviewGeneration" in files_script.text
     assert (
         "generation !== controllerState.filePreviewGeneration"
@@ -961,7 +944,6 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
             "dashboard": True,
             "executors": True,
             "terminals": True,
-            "terminal_websocket": True,
             "files": True,
             "file_preview": True,
             "syntax_highlighting": True,

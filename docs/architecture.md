@@ -100,10 +100,10 @@ The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
 it through the outer Starlette lifespan that also owns the SDK session manager.
 MCP stdio instead uses FastMCP's low-level server lifespan because stdio has one
-`Server.run()` for the process lifetime. Compatibility calls to `run_http()` or
-`run_mcp()` that do not supply a runtime construct one before building the host,
-so those public runner paths retain the same ownership invariant. The process
-runtime must not be attached to FastMCP's low-level lifespan for MCP-over-HTTP:
+`Server.run()` for the process lifetime. Both `run_http()` and `run_mcp()` require
+the already-composed `ControlRuntime`; they do not reconstruct role authority from
+ambient settings. The process runtime must not be attached to FastMCP's low-level
+lifespan for MCP-over-HTTP:
 the SDK enters it once per MCP session, which is a narrower lifecycle than the
 control process.
 
@@ -489,18 +489,12 @@ The architecture-hardening review compares large stateful modules by responsibil
 clusters, dependency direction, compatibility surface, and focused test ownership.
 Accepted decompositions preserve stable facades rather than moving code by size alone:
 
-- `jobs/runtime.py` is now a compatibility/orchestration facade over dedicated
-  lifecycle, shell, managed, persistence, recovery, state, and runner modules while
-  preserving the durable job format and trimmed worker-runtime contract.
-- Human UI terminal delivery is split into `terminal_protocol.py`,
-  `terminal_websocket.py`, and the stable `terminals.py` facade. The split was only
-  accepted together with typed protocol-contract tests and local/remote adapter-parity
-  coverage, so REST and WebSocket consumers keep the same normalized machine-scoped
-  behavior and existing monkeypatch/import surfaces remain valid.
-- `remote/transfer_gateway.py` remains intact. Its ticket store, spool identity,
-  authorization, range handling, cleanup, and router composition jointly enforce the
-  transfer security and TOCTOU model; no narrower security contract currently
-  justifies separating them.
+- `jobs/runtime.py` composes dedicated lifecycle, shell, managed, persistence,
+  recovery, state, and runner modules while preserving the durable job format.
+- Human UI terminal resource operations live in `terminals.py`, with bounded
+  response normalization in `terminal_protocol.py`. Interactive terminal bytes and
+  resize/input control use only the control StreamHub and executor-initiated outbound
+  terminal stream; there is no snapshot WebSocket fallback through ordinary RPC.
 
 Further large-module decomposition must start from a concrete behavior, dependency,
 or testability problem and complete its own focused validation and compatibility
