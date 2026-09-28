@@ -9,8 +9,8 @@ another.
 
 This page compares the product models and major user-visible capabilities. It is
 not a claim that one branch contains every commit from the other. The upstream
-column remains based on upstream release `v3.1.4`, reviewed on July 31, 2026;
-the Workgate column is maintained with the current repository surface as it evolves.
+column is periodically checked against upstream `main`; the Workgate column
+tracks the current repository surface.
 
 ## The main distinction
 

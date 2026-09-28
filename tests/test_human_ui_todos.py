@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from tests.helpers import build_paired_http_app
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.todos import TodoConflictError
+from workgate.control.task_state import TaskRevisionConflictError
 from workgate.oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from workgate.oauth.protocol.token_codec import issue_access_token
 
@@ -102,7 +102,7 @@ async def test_todos_write_read_and_stale_revision_conflict(
     assert saved.json()["data"]["revision"] == 1
     assert saved.json()["data"]["task"]["revision"] == 1
     assert stale.status_code == 409
-    assert stale.json()["error"] == "TodoConflictError"
+    assert stale.json()["error"] == "revision_conflict"
     assert current.status_code == 200
     assert current.json()["data"]["revision"] == 1
     assert current.json()["data"]["todos"][0]["content"] == "first"
@@ -183,13 +183,13 @@ async def test_todo_http_validates_shape_count_ids_and_encoded_lengths(
 
 
 @pytest.mark.asyncio
-async def test_todo_service_revision_guard_serializes_concurrent_replacements(
+async def test_task_service_revision_guard_serializes_concurrent_replacements(
     tmp_path, monkeypatch
 ):
     _client, harness, session_id = await _client_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     results = await asyncio.gather(
         service.write(session_id, [_todo("a")], 0),
@@ -201,7 +201,7 @@ async def test_todo_service_revision_guard_serializes_concurrent_replacements(
         item for item in results if not isinstance(item, BaseException)
     ]
     conflicts = [
-        item for item in results if isinstance(item, TodoConflictError)
+        item for item in results if isinstance(item, TaskRevisionConflictError)
     ]
     assert len(successes) == 1
     assert len(conflicts) == 1

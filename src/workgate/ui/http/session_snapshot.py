@@ -64,7 +64,7 @@ async def api_session_snapshot(request: Request) -> Response:
             max_bytes=audit_http.UI_AUDIT_ENTRY_ID_MAX_BYTES,
         )
         task_state, audit_result = await asyncio.gather(
-            runtime.todo_service.read_with_task(session_id),
+            runtime.task_service.read_with_task(session_id),
             asyncio.to_thread(
                 query_audit,
                 **{**audit_args, "session": session_id},

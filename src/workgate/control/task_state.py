@@ -41,11 +41,11 @@ _STEP_LABEL_MAX_BYTES = 64
 _STEP_NOTE_MAX_BYTES = 16_384
 
 
-class TodoConflictError(RuntimeError):
+class TaskRevisionConflictError(RuntimeError):
     """Raised when a revision-guarded task mutation targets stale state."""
 
 
-class ControlTodoService:
+class ControlTaskService:
     """Persist one canonical task document and expose legacy Todo projections."""
 
     def __init__(
@@ -61,8 +61,8 @@ class ControlTodoService:
         self._sessions = sessions
 
     def _path(self, session_id: str):
-        # Keep the established location so existing Todo state is upgraded in place.
-        return self._store.layout.control_dir / "todos" / f"{session_id}.json"
+        # Keep the established on-disk location so Todo state upgrades in place.
+        return self._store.layout.control_task_state_path(session_id)
 
     def _require_session(self, session_id: str):
         record = self._state.snapshot_sessions().get(session_id)
@@ -316,7 +316,7 @@ class ControlTodoService:
         if isinstance(expected_revision, bool) or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         if expected_revision != current.revision:
-            raise TodoConflictError(
+            raise TaskRevisionConflictError(
                 "Session task changed from revision "
                 f"{expected_revision} to {current.revision}; reload before saving"
             )
@@ -483,7 +483,7 @@ class ControlTodoService:
                 exclude={"session_id", "label", "execution_status"}
             )
         )
-        return ControlTodoService._todo_output(  # type: ignore[return-value]
+        return ControlTaskService._todo_output(  # type: ignore[return-value]
             document, write=True
         )
 

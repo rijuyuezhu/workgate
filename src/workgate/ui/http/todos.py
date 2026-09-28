@@ -8,7 +8,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ...config.control import get_control_config
-from ...control.todos import TodoConflictError
+from ...control.task_state import TaskRevisionConflictError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_SHELL_READ,
@@ -171,7 +171,7 @@ def _final_payload(
 async def _read_final(
     runtime: Any, session_id: str
 ) -> tuple[ReadTodosOutput, SessionTaskOutput]:
-    return await runtime.todo_service.read_with_task(session_id)
+    return await runtime.task_service.read_with_task(session_id)
 
 
 async def _write_final(
@@ -180,7 +180,7 @@ async def _write_final(
     todos: list[dict[str, str]],
     expected_revision: int,
 ) -> tuple[WriteTodosOutput, SessionTaskOutput]:
-    return await runtime.todo_service.write_with_task(
+    return await runtime.task_service.write_with_task(
         session_id,
         todos,
         expected_revision,
@@ -214,8 +214,15 @@ async def api_todos(request: Request) -> Response:
         return _json_ok(_final_payload(record, result, task=task))
     except HTTPException:
         raise
-    except TodoConflictError as exc:
-        return _json_error(exc, status_code=409)
+    except TaskRevisionConflictError as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "revision_conflict",
+                "message": str(exc),
+            },
+            status_code=409,
+        )
     except LookupError as exc:
         return _json_error(exc, status_code=404)
     except ConnectionError as exc:

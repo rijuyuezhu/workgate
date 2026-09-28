@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 
@@ -8,7 +6,7 @@ import pytest
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.runtime import build_control_runtime
-from workgate.control.todos import TodoConflictError
+from workgate.control.task_state import TaskRevisionConflictError
 
 
 def _configure(monkeypatch, tmp_path) -> None:
@@ -40,7 +38,7 @@ async def test_task_progress_plan_and_todos_share_one_revisioned_document(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     initial = await service.read_task(session_id)
     assert initial.revision == 0
@@ -126,7 +124,7 @@ async def test_legacy_todo_replacement_preserves_plan_notes(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
     await service.update_plan(
         session_id,
         expected_revision=0,
@@ -166,7 +164,7 @@ async def test_legacy_todo_write_keeps_preexisting_flexible_status_semantics(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
     long_content = "x" * 20_000
 
     written = await service.write(
@@ -197,7 +195,7 @@ async def test_new_plan_patch_rejects_ambiguous_legacy_duplicate_ids(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     written = await service.write(
         session_id,
@@ -235,7 +233,7 @@ async def test_task_state_survives_control_restart_and_executor_unavailability(
     settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
     await service.report_progress(
         session_id,
         expected_revision=0,
@@ -264,7 +262,7 @@ async def test_task_state_survives_control_restart_and_executor_unavailability(
     harness.control.control_state.close()
     restarted = build_control_runtime(settings)
     restarted.control_state.start()
-    restored = await restarted.todo_service.read_task(session_id)
+    restored = await restarted.task_service.read_task(session_id)
     assert restored.revision == 3
     assert restored.progress.findings == [
         "Executor availability is not task authority"
@@ -279,7 +277,7 @@ async def test_concurrent_task_mutations_reject_one_stale_revision(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     results = await asyncio.gather(
         service.report_progress(
@@ -295,7 +293,7 @@ async def test_concurrent_task_mutations_reject_one_stale_revision(
         item for item in results if not isinstance(item, BaseException)
     ]
     conflicts = [
-        item for item in results if isinstance(item, TodoConflictError)
+        item for item in results if isinstance(item, TaskRevisionConflictError)
     ]
     assert len(successes) == 1
     assert len(conflicts) == 1
@@ -309,7 +307,7 @@ async def test_progress_and_plan_share_one_stale_write_guard(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     reported = await service.report_progress(
         session_id,
@@ -318,7 +316,9 @@ async def test_progress_and_plan_share_one_stale_write_guard(
     )
     assert reported.revision == 1
 
-    with pytest.raises(TodoConflictError, match="changed from revision 0 to 1"):
+    with pytest.raises(
+        TaskRevisionConflictError, match="changed from revision 0 to 1"
+    ):
         await service.update_plan(
             session_id,
             expected_revision=0,
@@ -338,7 +338,7 @@ async def test_task_terminal_states_and_plan_completion_rules(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     await service.update_plan(
         session_id,
@@ -408,7 +408,7 @@ async def test_session_end_retains_read_only_task_history(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
     await service.report_progress(
         session_id,
         expected_revision=0,
@@ -445,7 +445,7 @@ async def test_legacy_todos_migrate_into_canonical_task_document_on_write(
     _settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
     path = service._path(session_id)
     legacy = {
         "revision": 4,
@@ -487,7 +487,7 @@ async def test_task_mutation_audit_records_metadata_not_report_contents(
         monkeypatch, tmp_path
     )
     secret_text = "sensitive-progress-body"
-    await harness.control.todo_service.report_progress(
+    await harness.control.task_service.report_progress(
         session_id,
         expected_revision=0,
         summary=secret_text,
@@ -519,7 +519,7 @@ async def test_task_service_rejects_invalid_progress_and_plan_inputs(
     settings, harness, session_id = await _harness_with_session(
         monkeypatch, tmp_path
     )
-    service = harness.control.todo_service
+    service = harness.control.task_service
 
     with pytest.raises(ValueError, match="unknown session_id"):
         await service.read_task("missing")
@@ -688,7 +688,7 @@ async def test_task_state_enforces_document_byte_limit(tmp_path, monkeypatch):
     )
 
     with pytest.raises(ValueError, match="session-task bytes"):
-        await harness.control.todo_service.report_progress(
+        await harness.control.task_service.report_progress(
             session_id,
             expected_revision=0,
             objective="x" * 1_000,
@@ -706,12 +706,12 @@ async def test_task_mutation_survives_audit_append_failure(
     def fail_audit(*_args, **_kwargs):
         raise RuntimeError("audit unavailable")
 
-    monkeypatch.setattr("workgate.control.todos.audit", fail_audit)
-    updated = await harness.control.todo_service.report_progress(
+    monkeypatch.setattr("workgate.control.task_state.audit", fail_audit)
+    updated = await harness.control.task_service.report_progress(
         session_id,
         expected_revision=0,
         summary="canonical write still succeeds",
     )
     assert updated.revision == 1
-    restored = await harness.control.todo_service.read_task(session_id)
+    restored = await harness.control.task_service.read_task(session_id)
     assert restored.progress.summary == "canonical write still succeeds"

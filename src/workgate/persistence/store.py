@@ -157,6 +157,14 @@ class StateLayout:
         """Return the durable control session registry path."""
         return self.control_dir / "sessions.json"
 
+    def control_task_state_path(self, session_id: str) -> Path:
+        """Return canonical control-owned task state for one shared session."""
+        return (
+            self.control_dir
+            / "todos"
+            / f"{self._component(session_id, field='session_id')}.json"
+        )
+
     @property
     def executor_dir(self) -> Path:
         """Return the directory containing final executor-owned durable state."""
