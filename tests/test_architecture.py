@@ -868,6 +868,31 @@ def test_final_control_executor_cleanup_surfaces_do_not_return() -> None:
         assert defaults["runtime"] is None
 
 
+def test_current_docs_do_not_restore_removed_remote_architecture() -> None:
+    current_docs = (
+        _PROJECT_ROOT / "README.md",
+        _PROJECT_ROOT / "docs" / "architecture.md",
+        _PROJECT_ROOT / "docs" / "architecture" / "control-executor.md",
+        _PROJECT_ROOT / "docs" / "comparison.md",
+        _PROJECT_ROOT / "docs" / "reference" / "cli.md",
+    )
+    forbidden = (
+        "session_start(target=",
+        "remote_admin",
+        "worker_session_id",
+        "WORKGATE_REMOTE_WORKER_RUNTIME",
+        "/remote/",
+    )
+    violations = [
+        (str(path.relative_to(_PROJECT_ROOT)), token)
+        for path in current_docs
+        for token in forbidden
+        if token in path.read_text(encoding="utf-8")
+    ]
+
+    assert violations == []
+
+
 def test_control_cli_imports_without_executor_dependencies() -> None:
     script = textwrap.dedent(
         """

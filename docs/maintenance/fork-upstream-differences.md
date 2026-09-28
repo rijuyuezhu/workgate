@@ -1,9 +1,12 @@
-# Fork and upstream differences
+# Historical fork and upstream differences
 
-This document preserves detailed architecture and migration evidence from the
-upstream-porting audit. For the current user-facing product distinction, start
-with [Comparison with upstream](../comparison.md). The corresponding
-commit-by-commit decisions remain in
+This document preserves a pre-control/executor architecture and migration
+snapshot from the upstream-porting audit. Names such as remote worker,
+`target="remote"`, and `remote_admin` below are historical evidence, not the
+current Workgate API or architecture. For current behavior, use
+[Comparison with upstream](../comparison.md) and
+[Control/executor architecture](../architecture/control-executor.md). The
+corresponding commit-by-commit decisions remain in
 [Upstream commit review](upstream-commit-review.md).
 
 ## Historical comparison snapshot

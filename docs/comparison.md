@@ -62,7 +62,7 @@ names, state ownership, modules, security checks, and recovery rules.
 
 Prefer Workgate when you need:
 
-- explicit local or remote workspace sessions;
+- explicit workspace sessions bound to paired executors;
 - session-owned cwd, jobs, Todos, Audit, and transfers;
 - durable control-managed work and teardown semantics;
 - the dynamic Agent Bridge for configured MCP servers;
@@ -77,8 +77,8 @@ Prefer upstream when you need:
 - compatibility with upstream prompts, configuration, and releases.
 
 Neither choice is a compatibility mode for the other. Do not assume that tool
-names, OAuth state, worker identities, durable state files, or release artifacts
-can be moved between them without a reviewed migration.
+names, OAuth state, executor or worker identities, durable state files, or release
+artifacts can be moved between them without a reviewed migration.
 
 ## Detailed evidence
 
@@ -86,7 +86,7 @@ Use the following resources for deeper inspection:
 
 - [Upstream repository](https://github.com/fwerkor/local-shell-mcp)
 - [GitHub code comparison](https://github.com/fwerkor/local-shell-mcp/compare/main...rijuyuezhu:workgate:main)
-- [Detailed Workgate and upstream differences](maintenance/fork-upstream-differences.md)
+- [Historical fork/upstream migration audit](maintenance/fork-upstream-differences.md)
 - [Chronological upstream commit review](maintenance/upstream-commit-review.md)
 
 The GitHub comparison is useful for source history, but it is not a complete
