@@ -2485,6 +2485,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "SessionCapabilitiesEnvironment": {
           "description": "Executor-local feature support relevant to choosing session tools.",
           "properties": {
+            "browser": {
+              "description": "Whether structured Playwright browser automation is available on this executor.",
+              "title": "Browser",
+              "type": "boolean"
+            },
             "conpty": {
               "description": "Whether Windows ConPTY is available.",
               "title": "Conpty",
@@ -2498,7 +2503,8 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           },
           "required": [
             "raw_pty",
-            "conpty"
+            "conpty",
+            "browser"
           ],
           "title": "SessionCapabilitiesEnvironment",
           "type": "object"
@@ -3017,6 +3023,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "SessionCapabilitiesEnvironment": {
           "description": "Executor-local feature support relevant to choosing session tools.",
           "properties": {
+            "browser": {
+              "description": "Whether structured Playwright browser automation is available on this executor.",
+              "title": "Browser",
+              "type": "boolean"
+            },
             "conpty": {
               "description": "Whether Windows ConPTY is available.",
               "title": "Conpty",
@@ -3030,7 +3041,8 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           },
           "required": [
             "raw_pty",
-            "conpty"
+            "conpty",
+            "browser"
           ],
           "title": "SessionCapabilitiesEnvironment",
           "type": "object"
@@ -3521,6 +3533,14 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Ended agent/workspace session id.",
           "title": "Session Id",
           "type": "string"
+        },
+        "stopped_browsers": {
+          "description": "Ephemeral browser session ids stopped before session removal.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Stopped Browsers",
+          "type": "array"
         },
         "stopped_jobs": {
           "description": "Tracked job ids stopped before session removal.",

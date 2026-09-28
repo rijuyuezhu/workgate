@@ -22,6 +22,9 @@ from workgate.tools.declarative import _normalize_description
 LOCAL_MCP_TOOL_NAMES = {
     "audit_tail",
     "bash",
+    "browser_act",
+    "browser_session",
+    "browser_snapshot",
     "read",
     "search",
     "workspace_search",
@@ -86,6 +89,24 @@ async def test_mcp_tool_surface_is_stable(tmp_path, monkeypatch):
 
     assert names == LOCAL_MCP_TOOL_NAMES
     assert "remote_admin" not in names
+
+
+@pytest.mark.asyncio
+async def test_browser_actions_are_structured_and_bounded(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_MODE", "mcp")
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    tools = {tool.name: tool for tool in await build_mcp().list_tools()}
+    actions = tools["browser_act"].inputSchema["properties"]["actions"]
+
+    assert actions["minItems"] == 1
+    assert actions["maxItems"] == 50
+    assert actions["items"]["discriminator"]["propertyName"] == "action"
+    assert len(actions["items"]["oneOf"]) >= 8
 
 
 @pytest.mark.asyncio

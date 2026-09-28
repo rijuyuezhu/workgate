@@ -6,6 +6,8 @@ Tool descriptions come from the tool definitions/docstrings exposed by the MCP s
 
 Tool availability still depends on client capability, server settings, and executor availability. Regular connector-style clients may only expose `search` and `fetch`; ChatGPT Developer Mode and full MCP clients can expose the complete MCP surface. Machine-facing tools require a shared session bound to an eligible executor. Agent Bridge tools require the corresponding control-owned network or executor-owned local integration configuration.
 
+Structured browser automation is provided by `browser_session`, `browser_snapshot`, and `browser_act`. These tools require the dedicated `browser:use` OAuth scope and an executor that advertises `browser.v1` with Playwright Chromium installed. Browser state is ephemeral and owned by the Workgate session; persistent profiles/storage state and arbitrary Playwright scripts are not exposed.
+
 <div class="generated-reference" data-reference-json="../generated/tools.json">
 Loading generated tools reference...
 </div>
