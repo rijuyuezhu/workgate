@@ -38,7 +38,6 @@ _TEXT_MAX_BYTES = 20_000
 _STEP_ID_MAX_BYTES = 256
 _STEP_CONTENT_MAX_BYTES = 16_384
 _STEP_LABEL_MAX_BYTES = 64
-_STEP_NOTE_MAX_BYTES = 16_384
 
 
 class TaskRevisionConflictError(RuntimeError):
@@ -128,7 +127,7 @@ class ControlTaskService:
             )
         normalized: list[SessionPlanStep] = []
         seen: set[str] = set()
-        allowed_fields = {"id", "content", "status", "priority", "note"}
+        allowed_fields = {"id", "content", "status", "priority"}
         for index, item in enumerate(steps):
             if not isinstance(item, dict):
                 raise ValueError(f"steps[{index}] must be a JSON object")
@@ -184,11 +183,6 @@ class ControlTaskService:
                         field=f"steps[{index}].priority",
                         max_bytes=_STEP_LABEL_MAX_BYTES,
                         allow_empty=False,
-                    ),
-                    note=self._optional_text(
-                        item.get("note"),
-                        field=f"steps[{index}].note",
-                        max_bytes=_STEP_NOTE_MAX_BYTES,
                     ),
                 )
             )
@@ -456,20 +450,10 @@ class ControlTaskService:
             document: SessionTaskDocument,
         ) -> tuple[list[str], list[dict[str, str]]]:
             self._require_task_mutable(document)
-            existing_notes = {
-                step.id: step.note for step in document.plan.steps
-            }
-            replacement_steps = [
-                step.model_copy(update={"note": existing_notes.get(step.id)})
-                for step in normalized
-            ]
-            document.plan.steps = replacement_steps
+            document.plan.steps = normalized
             return (
                 ["plan.steps"],
-                [
-                    {"id": step.id, "status": step.status}
-                    for step in replacement_steps
-                ],
+                [{"id": step.id, "status": step.status} for step in normalized],
             )
 
         return await self._mutate(
@@ -478,13 +462,8 @@ class ControlTaskService:
 
     @staticmethod
     def _todo_write_output(output: SessionTaskOutput) -> WriteTodosOutput:
-        document = SessionTaskDocument.model_validate(
-            output.model_dump(
-                exclude={"session_id", "label", "execution_status"}
-            )
-        )
         return ControlTaskService._todo_output(  # type: ignore[return-value]
-            document, write=True
+            output, write=True
         )
 
     async def write(
@@ -562,10 +541,6 @@ class ControlTaskService:
             )
             self._require_task_mutable(document, resuming=resuming)
             changed = [name for name, present in provided.items() if present]
-            progress_changed = any(
-                name.startswith("progress.") and present
-                for name, present in provided.items()
-            )
             if objective is not None:
                 document.objective = self._optional_text(
                     objective, field="objective"
@@ -586,8 +561,7 @@ class ControlTaskService:
                 document.progress.blockers = self._report_list(
                     blockers, field="blockers"
                 )
-            if progress_changed:
-                document.progress.updated_at = time.time()
+
             if normalized_status is not None:
                 if normalized_status == "completed":
                     self._require_completable(document)
@@ -603,124 +577,23 @@ class ControlTaskService:
         session_id: str,
         *,
         expected_revision: int,
-        steps: list[dict[str, Any]] | None = None,
-        step_id: str | None = None,
-        status: str | None = None,
-        content: str | None = None,
-        priority: str | None = None,
-        note: str | None = None,
+        steps: list[dict[str, Any]],
     ) -> SessionTaskOutput:
-        replacing = steps is not None
-        patching = step_id is not None or any(
-            value is not None for value in (status, content, priority, note)
-        )
-        if replacing and patching:
-            raise ValueError(
-                "pass either steps for complete replacement or step_id fields, not both"
-            )
-        if not replacing and not patching:
-            raise ValueError(
-                "update_session_plan requires steps or step_id plus fields"
-            )
-        replacement = self._normalize_steps(steps or []) if replacing else None
-        normalized_step_id = (
-            None
-            if step_id is None
-            else self._bounded_text(
-                step_id,
-                field="step_id",
-                max_bytes=_STEP_ID_MAX_BYTES,
-                allow_empty=False,
-            ).strip()
-        )
-        if step_id is not None and not normalized_step_id:
-            raise ValueError("step_id must not be blank")
-        if not replacing and normalized_step_id is None:
-            raise ValueError("step_id is required for an in-place plan update")
-        if not replacing and all(
-            value is None for value in (status, content, priority, note)
-        ):
-            raise ValueError(
-                "step_id update requires status, content, priority, or note"
-            )
-        normalized_status = None
-        if status is not None:
-            normalized_status = (
-                self._bounded_text(
-                    status,
-                    field="status",
-                    max_bytes=_STEP_LABEL_MAX_BYTES,
-                    allow_empty=False,
-                )
-                .strip()
-                .lower()
-            )
-            if normalized_status not in _PLAN_STEP_STATUSES:
-                allowed = ", ".join(sorted(_PLAN_STEP_STATUSES))
-                raise ValueError(
-                    f"unsupported plan step status {normalized_status!r}; "
-                    f"expected one of: {allowed}"
-                )
+        replacement = self._normalize_steps(steps)
 
         def mutate(
             document: SessionTaskDocument,
         ) -> tuple[list[str], list[dict[str, str]]]:
             self._require_task_mutable(document)
-            if replacement is not None:
-                document.plan.steps = replacement
-                return (
-                    ["plan.steps"],
-                    [
-                        {"id": step.id, "status": step.status}
-                        for step in replacement
-                    ],
-                )
-            assert normalized_step_id is not None
-            matches = [
-                item
-                for item in document.plan.steps
-                if item.id == normalized_step_id
-            ]
-            if not matches:
-                raise ValueError(f"unknown plan step id: {normalized_step_id}")
-            if len(matches) > 1:
-                raise ValueError(
-                    f"ambiguous plan step id from legacy Todo state: "
-                    f"{normalized_step_id}; replace the plan with unique stable ids first"
-                )
-            target = matches[0]
-            changed: list[str] = []
-            if normalized_status is not None:
-                target.status = normalized_status
-                changed.append("status")
-            if content is not None:
-                target.content = self._bounded_text(
-                    content,
-                    field="content",
-                    max_bytes=_STEP_CONTENT_MAX_BYTES,
-                )
-                changed.append("content")
-            if priority is not None:
-                target.priority = self._bounded_text(
-                    priority,
-                    field="priority",
-                    max_bytes=_STEP_LABEL_MAX_BYTES,
-                    allow_empty=False,
-                )
-                changed.append("priority")
-            if note is not None:
-                target.note = self._optional_text(
-                    note, field="note", max_bytes=_STEP_NOTE_MAX_BYTES
-                )
-                changed.append("note")
+            document.plan.steps = replacement
             return (
+                ["plan.steps"],
                 [
-                    f"plan.steps[{normalized_step_id}].{field}"
-                    for field in changed
+                    {"id": step.id, "status": step.status}
+                    for step in replacement
                 ],
-                [{"id": target.id, "status": target.status}],
             )
 
         return await self._mutate(
-            session_id, expected_revision, "plan_update", mutate
+            session_id, expected_revision, "plan_replace", mutate
         )

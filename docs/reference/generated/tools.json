@@ -1479,7 +1479,7 @@
               }
             ]
           },
-          "Read the durable task objective, semantic progress, and structured plan associated with one explicit Workgate session. The task state is control-owned and remains readable after session_end; execution_status is separate and an ended session cannot be revived through this API."
+          "Read control-owned task progress and plan state for one explicit Workgate session. Ended sessions remain readable."
         ],
         [
           {
@@ -1545,7 +1545,7 @@
               }
             ]
           },
-          "Revision-guardedly update durable semantic progress for one explicit active Workgate session. Supply at least one field. task_status is semantic task state, not executor-session state; cancelled tasks are terminal, completed tasks can only be changed by explicitly reporting task_status=active first. Completing a task requires every existing plan step to be completed or skipped."
+          "Update durable task progress for one active session using expected_revision. Completing requires every plan step to be completed or skipped."
         ],
         [
           {
@@ -1554,32 +1554,11 @@
           {
             "items": [
               {
-                "description": "Optional replacement plan step content.",
-                "head": {
-                  "code": "content"
-                },
-                "note": "(string / null, optional)"
-              },
-              {
                 "description": "Current task revision that must still match before mutation.",
                 "head": {
                   "code": "expected_revision"
                 },
                 "note": "(integer, required)"
-              },
-              {
-                "description": "Optional replacement note; empty text clears the note.",
-                "head": {
-                  "code": "note"
-                },
-                "note": "(string / null, optional)"
-              },
-              {
-                "description": "Optional replacement compatibility priority.",
-                "head": {
-                  "code": "priority"
-                },
-                "note": "(string / null, optional)"
               },
               {
                 "description": "Opaque shared agent/workspace session_id returned by session_start.",
@@ -1589,29 +1568,15 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional replacement step status: pending, in_progress, completed, skipped, or blocked.",
-                "head": {
-                  "code": "status"
-                },
-                "note": "(string / null, optional)"
-              },
-              {
-                "description": "Stable plan step ID to update in place.",
-                "head": {
-                  "code": "step_id"
-                },
-                "note": "(string / null, optional)"
-              },
-              {
-                "description": "Optional complete replacement plan. Every step requires an explicit stable id and may include content, status, priority, and note; unsupported fields are rejected.",
+                "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
                 "head": {
                   "code": "steps"
                 },
-                "note": "(array / null, optional)"
+                "note": "(array, required)"
               }
             ]
           },
-          "Revision-guardedly replace a whole structured plan or update one stable step on an explicit active Workgate session. Replacement steps require explicit stable IDs and accept only id/content/status/priority/note; unsupported fields are rejected instead of silently ignored. Pass steps for a complete replacement, or step_id plus one or more fields for an in-place step update. The canonical plan and legacy Todo compatibility APIs share one backing document and one revision."
+          "Replace the structured plan for one active session using expected_revision. Every step requires a stable ID; Todo APIs expose the same plan."
         ]
       ]
     },
@@ -5590,7 +5555,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read the durable task objective, semantic progress, and structured plan associated with one explicit Workgate session. The task state is control-owned and remains readable after session_end; execution_status is separate and an ended session cannot be revived through this API.",
+      "description": "Read control-owned task progress and plan state for one explicit Workgate session. Ended sessions remain readable.",
       "inputSchema": {
         "properties": {
           "session_id": {
@@ -5648,19 +5613,6 @@
                 "description": "Stable caller-visible plan step identifier.",
                 "title": "Id",
                 "type": "string"
-              },
-              "note": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Optional bounded note for this step.",
-                "title": "Note"
               },
               "priority": {
                 "default": "medium",
@@ -5726,19 +5678,6 @@
                 "default": null,
                 "description": "Current concise progress summary.",
                 "title": "Summary"
-              },
-              "updated_at": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Unix timestamp when semantic progress was last reported.",
-                "title": "Updated At"
               }
             },
             "title": "SessionProgress",
@@ -5953,7 +5892,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Revision-guardedly update durable semantic progress for one explicit active Workgate session. Supply at least one field. task_status is semantic task state, not executor-session state; cancelled tasks are terminal, completed tasks can only be changed by explicitly reporting task_status=active first. Completing a task requires every existing plan step to be completed or skipped.",
+      "description": "Update durable task progress for one active session using expected_revision. Completing requires every plan step to be completed or skipped.",
       "inputSchema": {
         "properties": {
           "blockers": {
@@ -6104,19 +6043,6 @@
                 "title": "Id",
                 "type": "string"
               },
-              "note": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Optional bounded note for this step.",
-                "title": "Note"
-              },
               "priority": {
                 "default": "medium",
                 "description": "Compatibility priority label retained from Todo state.",
@@ -6181,19 +6107,6 @@
                 "default": null,
                 "description": "Current concise progress summary.",
                 "title": "Summary"
-              },
-              "updated_at": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Unix timestamp when semantic progress was last reported.",
-                "title": "Updated At"
               }
             },
             "title": "SessionProgress",
@@ -9131,53 +9044,14 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Revision-guardedly replace a whole structured plan or update one stable step on an explicit active Workgate session. Replacement steps require explicit stable IDs and accept only id/content/status/priority/note; unsupported fields are rejected instead of silently ignored. Pass steps for a complete replacement, or step_id plus one or more fields for an in-place step update. The canonical plan and legacy Todo compatibility APIs share one backing document and one revision.",
+      "description": "Replace the structured plan for one active session using expected_revision. Every step requires a stable ID; Todo APIs expose the same plan.",
       "inputSchema": {
         "properties": {
-          "content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement plan step content.",
-            "title": "Content"
-          },
           "expected_revision": {
             "description": "Current task revision that must still match before mutation.",
             "minimum": 0,
             "title": "Expected Revision",
             "type": "integer"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement note; empty text clears the note.",
-            "title": "Note"
-          },
-          "priority": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement compatibility priority.",
-            "title": "Priority"
           },
           "session_id": {
             "description": "Opaque shared agent/workspace session_id returned by session_start.",
@@ -9187,53 +9061,20 @@
             "title": "Session Id",
             "type": "string"
           },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement step status: pending, in_progress, completed, skipped, or blocked.",
-            "title": "Status"
-          },
-          "step_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Stable plan step ID to update in place.",
-            "title": "Step Id"
-          },
           "steps": {
-            "anyOf": [
-              {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional complete replacement plan. Every step requires an explicit stable id and may include content, status, priority, and note; unsupported fields are rejected.",
-            "title": "Steps"
+            "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Steps",
+            "type": "array"
           }
         },
         "required": [
           "session_id",
-          "expected_revision"
+          "expected_revision",
+          "steps"
         ],
         "title": "update_session_planArguments",
         "type": "object"
@@ -9279,19 +9120,6 @@
                 "description": "Stable caller-visible plan step identifier.",
                 "title": "Id",
                 "type": "string"
-              },
-              "note": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Optional bounded note for this step.",
-                "title": "Note"
               },
               "priority": {
                 "default": "medium",
@@ -9357,19 +9185,6 @@
                 "default": null,
                 "description": "Current concise progress summary.",
                 "title": "Summary"
-              },
-              "updated_at": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Unix timestamp when semantic progress was last reported.",
-                "title": "Updated At"
               }
             },
             "title": "SessionProgress",

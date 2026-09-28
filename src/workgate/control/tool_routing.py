@@ -111,12 +111,7 @@ class ControlToolRouter:
             return await self._tasks.update_plan(
                 str(args["session_id"]),
                 expected_revision=args["expected_revision"],
-                steps=args.get("steps"),
-                step_id=args.get("step_id"),
-                status=args.get("status"),
-                content=args.get("content"),
-                priority=args.get("priority"),
-                note=args.get("note"),
+                steps=args["steps"],
             )
         if tool_name == "read_todos":
             return await self._tasks.read(str(args["session_id"]))

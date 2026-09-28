@@ -56,49 +56,12 @@ ProgressBlockersArg = Annotated[
 ]
 
 PlanStepsArg = Annotated[
-    list[dict[str, Any]] | None,
+    list[dict[str, Any]],
     Field(
-        default=None,
         description=(
-            "Optional complete replacement plan. Every step requires an explicit "
-            "stable id and may include content, status, priority, and note; "
-            "unsupported fields are rejected."
+            "Complete replacement plan. Every step requires an explicit stable id "
+            "and may include content, status, and priority; unsupported fields "
+            "are rejected."
         ),
-    ),
-]
-
-PlanStepIdArg = Annotated[
-    str | None,
-    Field(default=None, description="Stable plan step ID to update in place."),
-]
-
-PlanStepStatusArg = Annotated[
-    str | None,
-    Field(
-        default=None,
-        description=(
-            "Optional replacement step status: pending, in_progress, completed, "
-            "skipped, or blocked."
-        ),
-    ),
-]
-
-PlanStepContentArg = Annotated[
-    str | None,
-    Field(default=None, description="Optional replacement plan step content."),
-]
-
-PlanStepPriorityArg = Annotated[
-    str | None,
-    Field(
-        default=None, description="Optional replacement compatibility priority."
-    ),
-]
-
-PlanStepNoteArg = Annotated[
-    str | None,
-    Field(
-        default=None,
-        description="Optional replacement note; empty text clears the note.",
     ),
 ]

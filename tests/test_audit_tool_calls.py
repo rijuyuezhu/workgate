@@ -112,7 +112,6 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
                     "content": long_content,
                     "status": "in_progress",
                     "priority": "high",
-                    "note": f"{marker}-note",
                 }
             ],
         },
@@ -170,33 +169,24 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
     report_starts, report_ends = _tool_call_pairs(
         records, "report_session_progress", transport="http"
     )
-    assert report_starts[0]["input"]["session_id"] == session_id
-    assert report_starts[0]["input"]["objective"] == "<redacted>"
-    assert report_starts[0]["input"]["findings"] == "<redacted>"
-    assert report_ends[0]["output"]["objective"] == "<redacted>"
-    assert report_ends[0]["output"]["progress"]["summary"] == "<redacted>"
+    assert report_starts[0]["session"] == session_id
+    assert report_starts[0]["input"] == "<redacted>"
+    assert report_ends[0]["output"] == "<redacted>"
 
     plan_starts, plan_ends = _tool_call_pairs(
         records, "update_session_plan", transport="http"
     )
-    assert plan_starts[0]["input"]["steps"][0]["id"] == "step-1"
-    assert plan_starts[0]["input"]["steps"][0]["content"] == "<redacted>"
-    assert plan_starts[0]["input"]["steps"][0]["note"] == "<redacted>"
     assert len(plan_starts) == 2
     assert len(plan_ends) == 2
-    assert (
-        plan_starts[1]["input"]["steps"][0]["private_context"] == "<redacted>"
-    )
-    assert plan_ends[0]["output"]["plan"]["steps"][0]["id"] == "step-1"
-    assert plan_ends[0]["output"]["plan"]["steps"][0]["content"] == "<redacted>"
+    assert all(row["input"] == "<redacted>" for row in plan_starts)
+    assert plan_ends[0]["output"] == "<redacted>"
     assert plan_ends[1]["ok"] is False
 
     todo_starts, todo_ends = _tool_call_pairs(
         records, "write_todos", transport="http"
     )
-    assert todo_starts[0]["input"]["todos"][0]["id"] == "step-1"
-    assert todo_starts[0]["input"]["todos"][0]["content"] == "<redacted>"
-    assert todo_ends[0]["output"]["todos"][0]["content"] == "<redacted>"
+    assert todo_starts[0]["input"] == "<redacted>"
+    assert todo_ends[0]["output"] == "<redacted>"
 
 
 @pytest.mark.asyncio

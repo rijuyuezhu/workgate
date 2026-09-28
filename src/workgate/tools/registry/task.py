@@ -3,12 +3,7 @@
 from ...schemas.input_models.session import SessionIdArg
 from ...schemas.input_models.task import (
     ExpectedTaskRevisionArg,
-    PlanStepContentArg,
-    PlanStepIdArg,
-    PlanStepNoteArg,
-    PlanStepPriorityArg,
     PlanStepsArg,
-    PlanStepStatusArg,
     ProgressBlockersArg,
     ProgressFindingsArg,
     ProgressNextActionArg,
@@ -36,7 +31,7 @@ task_tool = TaskToolRegistry.get_tool_decorator()
     oauth_scopes=("shell:read",),
 )
 async def read_session_task(session_id: SessionIdArg) -> SessionTaskOutput:
-    """Read the durable task objective, semantic progress, and structured plan associated with one explicit Workgate session. The task state is control-owned and remains readable after session_end; execution_status is separate and an ended session cannot be revived through this API."""
+    """Read control-owned task progress and plan state for one explicit Workgate session. Ended sessions remain readable."""
     del session_id
     raise RuntimeError("read_session_task requires control routing")
 
@@ -57,7 +52,7 @@ async def report_session_progress(
     blockers: ProgressBlockersArg = None,
     task_status: TaskStatusArg = None,
 ) -> SessionTaskOutput:
-    """Revision-guardedly update durable semantic progress for one explicit active Workgate session. Supply at least one field. task_status is semantic task state, not executor-session state; cancelled tasks are terminal, completed tasks can only be changed by explicitly reporting task_status=active first. Completing a task requires every existing plan step to be completed or skipped."""
+    """Update durable task progress for one active session using expected_revision. Completing requires every plan step to be completed or skipped."""
     del (
         session_id,
         expected_revision,
@@ -80,22 +75,8 @@ async def report_session_progress(
 async def update_session_plan(
     session_id: SessionIdArg,
     expected_revision: ExpectedTaskRevisionArg,
-    steps: PlanStepsArg = None,
-    step_id: PlanStepIdArg = None,
-    status: PlanStepStatusArg = None,
-    content: PlanStepContentArg = None,
-    priority: PlanStepPriorityArg = None,
-    note: PlanStepNoteArg = None,
+    steps: PlanStepsArg,
 ) -> SessionTaskOutput:
-    """Revision-guardedly replace a whole structured plan or update one stable step on an explicit active Workgate session. Replacement steps require explicit stable IDs and accept only id/content/status/priority/note; unsupported fields are rejected instead of silently ignored. Pass steps for a complete replacement, or step_id plus one or more fields for an in-place step update. The canonical plan and legacy Todo compatibility APIs share one backing document and one revision."""
-    del (
-        session_id,
-        expected_revision,
-        steps,
-        step_id,
-        status,
-        content,
-        priority,
-        note,
-    )
+    """Replace the structured plan for one active session using expected_revision. Every step requires a stable ID; Todo APIs expose the same plan."""
+    del session_id, expected_revision, steps
     raise RuntimeError("update_session_plan requires control routing")

@@ -64,7 +64,7 @@ _AUDIT_TRUNCATED_KEY = "$workgate_audit_truncated"
 _AUDIT_BINARY_KEY = "$workgate_audit_binary"
 _AUDIT_CYCLE_KEY = "$workgate_audit_cycle"
 _AUDIT_SAFE_IDENTIFIER_SUFFIXES = ("_sha256", "_fingerprint", "_token_id")
-_AUDIT_TASK_STATE_TOOLS = frozenset(
+_AUDIT_REDACTED_TOOL_PAYLOADS = frozenset(
     {
         "read_session_task",
         "report_session_progress",
@@ -73,66 +73,10 @@ _AUDIT_TASK_STATE_TOOLS = frozenset(
         "write_todos",
     }
 )
-_AUDIT_TASK_PROSE_FIELDS = frozenset(
-    {
-        "objective",
-        "summary",
-        "findings",
-        "next_action",
-        "blockers",
-        "content",
-        "text",
-        "note",
-    }
-)
-_AUDIT_TASK_STRUCTURAL_FIELDS = frozenset(
-    {
-        "session_id",
-        "expected_revision",
-        "task_status",
-        "step_id",
-        "status",
-        "priority",
-        "revision",
-        "updated_at",
-        "version",
-        "execution_status",
-        "label",
-        "id",
-        "progress",
-        "plan",
-        "steps",
-        "todos",
-    }
-)
-
-
-def _task_tool_audit_projection(value: Any) -> Any:
-    """Redact durable task/report prose while retaining structural audit metadata."""
-    if isinstance(value, BaseModel):
-        value = value.model_dump(mode="python", by_alias=True)
-    if isinstance(value, Mapping):
-        projected: dict[str, Any] = {}
-        for key, child in value.items():
-            key_text = str(key)
-            if key_text in _AUDIT_TASK_PROSE_FIELDS:
-                projected[key_text] = None if child is None else "<redacted>"
-            elif key_text in _AUDIT_TASK_STRUCTURAL_FIELDS:
-                projected[key_text] = _task_tool_audit_projection(child)
-            else:
-                projected[key_text] = None if child is None else "<redacted>"
-        return projected
-    if isinstance(value, list):
-        return [_task_tool_audit_projection(child) for child in value]
-    if isinstance(value, tuple):
-        return tuple(_task_tool_audit_projection(child) for child in value)
-    return value
 
 
 def _tool_audit_projection(tool: str, value: Any) -> Any:
-    if tool in _AUDIT_TASK_STATE_TOOLS:
-        if isinstance(value, Mapping | BaseModel):
-            return _task_tool_audit_projection(value)
+    if tool in _AUDIT_REDACTED_TOOL_PAYLOADS:
         return None if value is None else "<redacted>"
     return value
 

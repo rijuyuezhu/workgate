@@ -75,7 +75,6 @@ async def test_task_progress_plan_and_todos_share_one_revisioned_document(
                 "content": "Expose state in Human UI",
                 "status": "in_progress",
                 "priority": "medium",
-                "note": "Use the same backing document",
             },
         ],
     )
@@ -118,46 +117,6 @@ async def test_task_progress_plan_and_todos_share_one_revisioned_document(
 
 
 @pytest.mark.asyncio
-async def test_legacy_todo_replacement_preserves_plan_notes(
-    tmp_path, monkeypatch
-):
-    _settings, harness, session_id = await _harness_with_session(
-        monkeypatch, tmp_path
-    )
-    service = harness.control.task_service
-    await service.update_plan(
-        session_id,
-        expected_revision=0,
-        steps=[
-            {
-                "id": "keep-note",
-                "content": "Original content",
-                "status": "pending",
-                "note": "Plan-only context",
-            }
-        ],
-    )
-
-    await service.write(
-        session_id,
-        [
-            {
-                "id": "keep-note",
-                "content": "Edited through Todo compatibility",
-                "status": "in_progress",
-                "priority": "medium",
-            }
-        ],
-        expected_revision=1,
-    )
-
-    current = await service.read_task(session_id)
-    assert current.plan.steps[0].content == "Edited through Todo compatibility"
-    assert current.plan.steps[0].status == "in_progress"
-    assert current.plan.steps[0].note == "Plan-only context"
-
-
-@pytest.mark.asyncio
 async def test_legacy_todo_write_keeps_preexisting_flexible_status_semantics(
     tmp_path, monkeypatch
 ):
@@ -189,7 +148,7 @@ async def test_legacy_todo_write_keeps_preexisting_flexible_status_semantics(
 
 
 @pytest.mark.asyncio
-async def test_new_plan_patch_rejects_ambiguous_legacy_duplicate_ids(
+async def test_new_plan_replacement_recovers_from_legacy_duplicate_ids(
     tmp_path, monkeypatch
 ):
     _settings, harness, session_id = await _harness_with_session(
@@ -206,14 +165,6 @@ async def test_new_plan_patch_rejects_ambiguous_legacy_duplicate_ids(
         expected_revision=0,
     )
     assert written.revision == 1
-
-    with pytest.raises(ValueError, match="ambiguous plan step id"):
-        await service.update_plan(
-            session_id,
-            expected_revision=1,
-            step_id="same",
-            status="completed",
-        )
 
     replaced = await service.update_plan(
         session_id,
@@ -356,47 +307,45 @@ async def test_task_terminal_states_and_plan_completion_rules(
     await service.update_plan(
         session_id,
         expected_revision=1,
-        step_id="one",
-        status="completed",
-    )
-    await service.update_plan(
-        session_id,
-        expected_revision=2,
-        step_id="two",
-        status="skipped",
+        steps=[
+            {"id": "one", "content": "First", "status": "completed"},
+            {"id": "two", "content": "Second", "status": "skipped"},
+        ],
     )
     completed = await service.report_progress(
         session_id,
-        expected_revision=3,
+        expected_revision=2,
         task_status="completed",
     )
     assert completed.status == "completed"
-    assert completed.revision == 4
+    assert completed.revision == 3
 
     with pytest.raises(ValueError, match="explicitly resumed"):
         await service.update_plan(
             session_id,
-            expected_revision=4,
-            step_id="two",
-            note="too late",
+            expected_revision=3,
+            steps=[
+                {"id": "one", "content": "First", "status": "completed"},
+                {"id": "two", "content": "Second", "status": "skipped"},
+            ],
         )
 
     resumed = await service.report_progress(
         session_id,
-        expected_revision=4,
+        expected_revision=3,
         task_status="active",
     )
     assert resumed.status == "active"
     cancelled = await service.report_progress(
         session_id,
-        expected_revision=5,
+        expected_revision=4,
         task_status="cancelled",
     )
     assert cancelled.status == "cancelled"
     with pytest.raises(ValueError, match="terminal"):
         await service.report_progress(
             session_id,
-            expected_revision=6,
+            expected_revision=5,
             task_status="active",
         )
 
@@ -523,19 +472,17 @@ async def test_task_service_rejects_invalid_progress_and_plan_inputs(
 
     with pytest.raises(ValueError, match="unknown session_id"):
         await service.read_task("missing")
-    with pytest.raises(ValueError, match="must not be empty"):
+    with pytest.raises(ValueError, match="id is required"):
         await service.update_plan(
             session_id,
             expected_revision=0,
-            step_id="",
-            content="content",
+            steps=[{"id": "", "content": "content"}],
         )
     with pytest.raises(ValueError, match="exceeds 256 encoded bytes"):
         await service.update_plan(
             session_id,
             expected_revision=0,
-            step_id="x" * 257,
-            content="content",
+            steps=[{"id": "x" * 257, "content": "content"}],
         )
     with pytest.raises(ValueError, match="at most 50 items"):
         await service.report_progress(
@@ -616,41 +563,11 @@ async def test_task_service_rejects_invalid_progress_and_plan_inputs(
             expected_revision=1,
             steps=[{"id": "one", "content": "one", "status": "unknown"}],
         )
-    with pytest.raises(ValueError, match="either steps"):
-        await service.update_plan(
-            session_id,
-            expected_revision=1,
-            steps=[],
-            step_id="one",
-            content="one",
-        )
-    with pytest.raises(ValueError, match="requires steps or step_id"):
-        await service.update_plan(session_id, expected_revision=1)
-    with pytest.raises(ValueError, match="step_id is required"):
-        await service.update_plan(
-            session_id,
-            expected_revision=1,
-            content="one",
-        )
-    with pytest.raises(ValueError, match="step_id update requires"):
-        await service.update_plan(
-            session_id,
-            expected_revision=1,
-            step_id="one",
-        )
-    with pytest.raises(ValueError, match="unsupported plan step status"):
-        await service.update_plan(
-            session_id,
-            expected_revision=1,
-            step_id="one",
-            status="unknown",
-        )
     with pytest.raises(ValueError, match="status exceeds 64 encoded bytes"):
         await service.update_plan(
             session_id,
             expected_revision=1,
-            step_id="one",
-            status="x" * 65,
+            steps=[{"id": "one", "content": "one", "status": "x" * 65}],
         )
 
     created = await service.update_plan(
@@ -659,25 +576,20 @@ async def test_task_service_rejects_invalid_progress_and_plan_inputs(
         steps=[{"id": "one", "content": "initial"}],
     )
     assert created.revision == 2
-    patched = await service.update_plan(
+    replaced = await service.update_plan(
         session_id,
         expected_revision=2,
-        step_id="one",
-        content="updated",
-        priority="high",
-        note="context",
+        steps=[
+            {
+                "id": "one",
+                "content": "updated",
+                "priority": "high",
+            }
+        ],
     )
-    assert patched.revision == 3
-    assert patched.plan.steps[0].content == "updated"
-    assert patched.plan.steps[0].priority == "high"
-    assert patched.plan.steps[0].note == "context"
-    with pytest.raises(ValueError, match="unknown plan step id"):
-        await service.update_plan(
-            session_id,
-            expected_revision=3,
-            step_id="missing",
-            status="completed",
-        )
+    assert replaced.revision == 3
+    assert replaced.plan.steps[0].content == "updated"
+    assert replaced.plan.steps[0].priority == "high"
 
 
 @pytest.mark.asyncio

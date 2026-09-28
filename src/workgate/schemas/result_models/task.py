@@ -24,10 +24,6 @@ class SessionProgress(BaseModel):
         default_factory=list,
         description="Current blockers preventing or constraining progress.",
     )
-    updated_at: float | None = Field(
-        default=None,
-        description="Unix timestamp when semantic progress was last reported.",
-    )
 
 
 class SessionPlanStep(BaseModel):
@@ -44,9 +40,6 @@ class SessionPlanStep(BaseModel):
     priority: str = Field(
         default="medium",
         description="Compatibility priority label retained from Todo state.",
-    )
-    note: str | None = Field(
-        default=None, description="Optional bounded note for this step."
     )
 
 
