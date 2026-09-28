@@ -8,7 +8,7 @@ from .downloads import ControlDownloadService
 from .jobs import ControlJobService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
-from .todos import ControlTodoService
+from .task_state import ControlTaskService
 from .tool_routing import ControlToolRouter, route_control_registry
 
 
@@ -18,7 +18,7 @@ def build_control_tool_catalog(
     session_copy: ControlSessionCopyService,
     jobs: ControlJobService,
     downloads: ControlDownloadService,
-    todos: ControlTodoService,
+    tasks: ControlTaskService,
     audit: ControlAuditService,
 ) -> ToolCatalog:
     """Build public metadata locally while routing machine calls through executors."""
@@ -28,7 +28,7 @@ def build_control_tool_catalog(
         session_copy,
         jobs,
         downloads,
-        todos,
+        tasks,
         audit,
         ControlAgentBridgeService(settings, sessions),
     )

@@ -20,7 +20,7 @@ from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
 from .streams import ControlStreamHub
-from .todos import ControlTodoService
+from .task_state import ControlTaskService
 from .tool_composition import build_control_tool_catalog
 
 
@@ -46,8 +46,8 @@ class ControlRuntime:
     """Control-owned public file-link snapshots sourced through executor RPC."""
     job_service: ControlJobService
     """Hybrid public job routing across executor resources and control-managed jobs."""
-    todo_service: ControlTodoService
-    """Control-owned revisioned todo state for shared sessions."""
+    task_service: ControlTaskService
+    """Control-owned canonical task/progress/plan state with Todo compatibility."""
     audit_service: ControlAuditService
     """Control authority for canonical public audit history."""
     managed_jobs_runtime: ManagedJobsRuntime
@@ -206,7 +206,9 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
-    todo_service = ControlTodoService(control_state, state_store, config)
+    task_service = ControlTaskService(
+        control_state, state_store, config, session_coordinator
+    )
     audit_service = ControlAuditService(session_coordinator)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,
@@ -239,7 +241,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         session_copy_service=session_copy_service,
         download_service=download_service,
         job_service=job_service,
-        todo_service=todo_service,
+        task_service=task_service,
         audit_service=audit_service,
         managed_jobs_runtime=managed_jobs_runtime,
         stream_hub=stream_hub,
@@ -251,7 +253,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
             session_copy_service,
             job_service,
             download_service,
-            todo_service,
+            task_service,
             audit_service,
         ),
     )

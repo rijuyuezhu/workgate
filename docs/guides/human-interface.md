@@ -57,7 +57,7 @@ Approve pairing requests, inspect or rename executors, see whether they are onli
 
 Create, attach to, resize, and close persistent terminals. A persistent shell continues after the browser tab or OpenTUI client disconnects. Closing a client view does not necessarily terminate the underlying shell; use the explicit terminate action when you are finished.
 
-Interactive terminal support depends on the selected machine. When a full interactive stream is unavailable, the UI falls back to a compatible snapshot view.
+Browser terminal traffic uses the executor's outbound stream path. If the bound executor is offline or streaming is unavailable, the UI reports the terminal as unavailable instead of falling back to a second transport.
 
 ### Files
 
@@ -65,9 +65,11 @@ Browse the selected workspace, preview supported files, edit bounded UTF-8 text 
 
 Some executor file operations may be unavailable when the bound executor is offline or lacks the needed capability. The UI shows the available actions instead of emulating missing operations with control-local shell commands. Use `session_copy` through an MCP client for cross-workspace transfers.
 
-### Todos
+### Task progress and plan
 
-View and update the Todo list associated with a shared workspace session. If another client changes the same list, reload the latest version instead of overwriting it.
+The Sessions view reads the same control-owned durable task document used by MCP clients. It shows semantic task status, objective, progress summary, findings, next action, blockers, and the structured plan. Plan steps keep stable IDs and share one monotonic revision with the progress report, so stale updates can be rejected instead of silently replacing newer state.
+
+The Plan editor remains compatible with the older Todo surface: `read_todos` and `write_todos` project the same plan steps rather than storing a second checklist. Ending an executor-backed session makes task state read-only but does not erase it, so the Human UI can still explain what the agent was doing after executor resources are released.
 
 ### Audit
 
@@ -87,7 +89,7 @@ The native OpenTUI client connects only through the trusted loopback Human UI AP
 - **`/ui` returns 404:** confirm the server is in supported `mcp` or `http` mode and the UI is enabled. The reserved `both` mode does not start a server.
 - **OpenTUI cannot start:** use the browser UI, then confirm that your installation contains a platform-native runtime.
 - **An executor-backed panel is unavailable:** verify that the executor is online, the session is bound to it, and it supports the requested operation.
-- **A terminal looks disconnected:** reattach to the persistent shell or use its snapshot view.
+- **A terminal looks disconnected:** verify the executor connection, then reattach to the persistent shell.
 - **An action is forbidden:** sign in again with the scopes required for that operation.
 
 See [Troubleshooting](../troubleshooting.md) for server-wide diagnostics and [Security](../security.md) for the trust model.

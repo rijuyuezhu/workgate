@@ -15,7 +15,7 @@ from .downloads import ControlDownloadService
 from .jobs import ControlJobService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
-from .todos import ControlTodoService
+from .task_state import ControlTaskService
 
 _MACHINE_TOOL_NAMES = MACHINE_TOOL_NAMES
 _SESSION_CONTROL_TOOLS = frozenset(
@@ -23,6 +23,9 @@ _SESSION_CONTROL_TOOLS = frozenset(
 )
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
     {"create_file_link", "list_file_links", "revoke_file_link"}
+)
+_TASK_CONTROL_TOOLS = frozenset(
+    {"read_session_task", "report_session_progress", "update_session_plan"}
 )
 _TODO_CONTROL_TOOLS = frozenset({"read_todos", "write_todos"})
 _AUDIT_CONTROL_TOOLS = frozenset({"audit_tail"})
@@ -41,7 +44,7 @@ class ControlToolRouter:
         session_copy: ControlSessionCopyService,
         jobs: ControlJobService,
         downloads: ControlDownloadService,
-        todos: ControlTodoService,
+        tasks: ControlTaskService,
         audit: ControlAuditService,
         agent_bridge: ControlAgentBridgeService,
     ) -> None:
@@ -49,7 +52,7 @@ class ControlToolRouter:
         self._session_copy = session_copy
         self._jobs = jobs
         self._downloads = downloads
-        self._todos = todos
+        self._tasks = tasks
         self._audit = audit
         self._agent_bridge = agent_bridge
 
@@ -91,10 +94,29 @@ class ControlToolRouter:
                 include_finished=bool(args.get("include_finished", True)),
                 lines=int(args.get("lines", 200)),
             )
+        if tool_name == "read_session_task":
+            return await self._tasks.read_task(str(args["session_id"]))
+        if tool_name == "report_session_progress":
+            return await self._tasks.report_progress(
+                str(args["session_id"]),
+                expected_revision=args["expected_revision"],
+                objective=args.get("objective"),
+                summary=args.get("summary"),
+                findings=args.get("findings"),
+                next_action=args.get("next_action"),
+                blockers=args.get("blockers"),
+                task_status=args.get("task_status"),
+            )
+        if tool_name == "update_session_plan":
+            return await self._tasks.update_plan(
+                str(args["session_id"]),
+                expected_revision=args["expected_revision"],
+                steps=args["steps"],
+            )
         if tool_name == "read_todos":
-            return await self._todos.read(str(args["session_id"]))
+            return await self._tasks.read(str(args["session_id"]))
         if tool_name == "write_todos":
-            return await self._todos.write(
+            return await self._tasks.write(
                 str(args["session_id"]),
                 list(args.get("todos") or []),
                 args.get("expected_revision"),
@@ -167,6 +189,7 @@ def route_control_registry(
         _MACHINE_TOOL_NAMES
         | _SESSION_CONTROL_TOOLS
         | _DOWNLOAD_CONTROL_TOOLS
+        | _TASK_CONTROL_TOOLS
         | _TODO_CONTROL_TOOLS
         | _AUDIT_CONTROL_TOOLS
         | _JOB_CONTROL_TOOLS
@@ -197,6 +220,7 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
             _MACHINE_TOOL_NAMES
             | _SESSION_CONTROL_TOOLS
             | _DOWNLOAD_CONTROL_TOOLS
+            | _TASK_CONTROL_TOOLS
             | _TODO_CONTROL_TOOLS
             | _AUDIT_CONTROL_TOOLS
             | _JOB_CONTROL_TOOLS

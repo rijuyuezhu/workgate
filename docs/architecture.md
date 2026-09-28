@@ -341,17 +341,19 @@ ownership explicit while preserving their package-data role; they contain no
 Python modules and are not imported by executor machine-runtime logic.
 
 The directory contains exactly the browser shell (`index.html`), Human UI styles
-(`web.css`), the classic bootstrap controller (`web.js`), feature ES modules such
-as `dashboard.js`, `remotes.js`, `audit.js`, `sessions.js`, `terminal.js`, and
-`files.js`, the shared stateless Audit renderer/parser (`audit_view.js`), the
-OpenTUI console bridge, syntax highlighter, terminal renderer, vendored xterm
-bundle and stylesheet, and the corresponding license notice. Build and
-architecture gates reject symlinks, Python files, unexpected assets, and
-restoration of the former top-level `ui_static` path.
+(`web.css`), the bootstrap controller (`web.js`), feature modules such as
+`dashboard.js`, `executors.js`, `audit.js`, `sessions.js`, `terminal.js`,
+and `files.js`, plus `audit_view.js`, `opentui_console.js`,
+`syntax_highlight.js`, the vendored xterm bundle and stylesheet, and their
+license notice. Build and architecture gates reject symlinks, Python files,
+unexpected assets, and restoration of the former top-level `ui_static` path.
 
 The browser controller presents agent state through one Sessions control surface:
-machine and recent/all session selection precede session details, Todo, and the
-session-local Audit view. The separate Global Audit panel deliberately retains
+machine and recent/all session selection precede execution-session details, durable
+task progress, the structured Plan compatibility editor, and the session-local
+Audit view. Task/progress/plan state is control-owned and revisioned independently
+of executor availability, while the execution session remains the authority for
+machine/workdir binding. The separate Global Audit panel deliberately retains
 machine-wide lifecycle, control-plane, and other events that are not owned by one
 session. The browser never exposes executor-internal session identifiers.
 

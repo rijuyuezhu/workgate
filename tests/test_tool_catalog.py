@@ -23,6 +23,7 @@ EXPECTED_BUILTIN_REGISTRIES = (
     "secret_scan",
     "session",
     "shell",
+    "task",
     "todo",
     "transfer",
     "version",

@@ -64,6 +64,21 @@ _AUDIT_TRUNCATED_KEY = "$workgate_audit_truncated"
 _AUDIT_BINARY_KEY = "$workgate_audit_binary"
 _AUDIT_CYCLE_KEY = "$workgate_audit_cycle"
 _AUDIT_SAFE_IDENTIFIER_SUFFIXES = ("_sha256", "_fingerprint", "_token_id")
+_AUDIT_REDACTED_TOOL_PAYLOADS = frozenset(
+    {
+        "read_session_task",
+        "report_session_progress",
+        "update_session_plan",
+        "read_todos",
+        "write_todos",
+    }
+)
+
+
+def _tool_audit_projection(tool: str, value: Any) -> Any:
+    if tool in _AUDIT_REDACTED_TOOL_PAYLOADS:
+        return None if value is None else "<redacted>"
+    return value
 
 
 def _audit_key_is_sensitive(name: str) -> bool:
@@ -1147,7 +1162,7 @@ def audit_tool_call_start(
         "call_id": call_id,
         "transport": transport,
         "tool": tool,
-        "input": input,
+        "input": _tool_audit_projection(tool, input),
     }
     session_ids = tool_input_session_ids(input)
     if session_ids:
@@ -1182,5 +1197,5 @@ def audit_tool_call_end(
     if error is not None:
         fields["error"] = error
     else:
-        fields["output"] = output
+        fields["output"] = _tool_audit_projection(tool, output)
     audit("tool_call_end", **fields)
