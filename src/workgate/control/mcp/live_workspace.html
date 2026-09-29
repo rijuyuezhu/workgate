@@ -53,6 +53,7 @@
       <h1 id="title">Live Workspace</h1>
       <span class="pill" id="availability">loading</span>
       <span class="pill" id="task-status" hidden></span>
+      <button id="refresh-workspace">Refresh</button>
     </div>
     <div class="mono muted" id="session-id"></div>
     <div class="row muted"><span id="executor"></span><span id="workdir"></span></div>
@@ -118,7 +119,6 @@
   let snapshot = null;
   let boundSessionId = null;
   let standardBridge = null;
-  let refreshTimer = null;
   let shuttingDown = false;
 
   function createStandardBridge() {
@@ -217,10 +217,6 @@
   function stopLiveWorkspace() {
     if (shuttingDown) return;
     shuttingDown = true;
-    if (refreshTimer !== null) {
-      window.clearInterval(refreshTimer);
-      refreshTimer = null;
-    }
     if (standardBridge) {
       standardBridge.close();
       standardBridge = null;
@@ -380,6 +376,8 @@
     }
   }
 
+  $("refresh-workspace").addEventListener("click", () => void refresh());
+
   for (const button of document.querySelectorAll("[data-task-action]")) {
     button.addEventListener("click", async () => {
       if (!snapshot || !snapshot.session) return;
@@ -446,7 +444,6 @@
   }
 
   void startHostBridge();
-  refreshTimer = window.setInterval(() => void refresh(), 5000);
   window.addEventListener("beforeunload", stopLiveWorkspace);
 })();
 </script>

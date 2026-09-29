@@ -115,13 +115,6 @@ def _mock_host_html(path: Path) -> str:
     mock = f"""
 <script>
 window.__liveCalls = [];
-window.__liveIntervalCallbacks = [];
-window.__liveClearedIntervals = [];
-window.setInterval = (callback) => {{
-  window.__liveIntervalCallbacks.push(callback);
-  return window.__liveIntervalCallbacks.length;
-}};
-window.clearInterval = (id) => window.__liveClearedIntervals.push(id);
 const __initial = {json.dumps(initial)};
 const __blocked = {json.dumps(blocked)};
 const __refreshed = {json.dumps(refreshed)};
@@ -305,6 +298,20 @@ def run_live_workspace(harness: BrowserHarness) -> None:
             }
         ]
 
+        page.get_by_role("button", name="Refresh").click()
+        expect(page.locator("#status")).to_have_text("Updated from Workgate.")
+        calls = page.evaluate("window.__liveCalls")
+        snapshot_calls = [
+            call
+            for call in calls
+            if call.get("name") == "tools/call"
+            and call.get("args", {}).get("name") == "workspace_snapshot"
+        ]
+        assert len(snapshot_calls) == 1
+        assert snapshot_calls[0]["args"]["arguments"] == {
+            "session_id": "sess_browser_live"
+        }
+
         # Wrong confirmation is rejected locally and never reaches the tool.
         page.locator("#end-confirm").fill("sess_wrong")
         page.get_by_role("button", name="End session").click()
@@ -342,8 +349,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
             }
         ]
 
-        # A host teardown must stop the App itself, not merely detach the bridge
-        # listener while leaving the passive snapshot timer running.
+        # A host teardown closes the App bridge and prevents later user refreshes.
         tool_calls_before_teardown = page.evaluate(
             "window.__liveCalls.filter((call) => call.name === 'tools/call').length"
         )
@@ -355,8 +361,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
                 params: {}
             }, "*")"""
         )
-        page.wait_for_function("window.__liveClearedIntervals.includes(1)")
-        page.evaluate("window.__liveIntervalCallbacks[0]()")
+        page.get_by_role("button", name="Refresh").click()
         page.wait_for_timeout(50)
         assert (
             page.evaluate(
