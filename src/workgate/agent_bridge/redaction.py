@@ -50,8 +50,9 @@ SENSITIVE_QUOTED_ARG_LIST_RE = re.compile(
 )
 BEARER_TOKEN_RE = re.compile(r"\bBearer\s+[^\s,;'\"\)\}\]]+", re.I)
 HIGH_CONFIDENCE_TOKEN_RE = re.compile(
-    r"\b(?:gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{20,}|"
-    r"sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})\b"
+    r"(?:\b(?:gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{20,}|"
+    r"sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})\b|"
+    r"(?<![A-Za-z0-9_-])wg_exec_[A-Za-z0-9_-]{43,}(?![A-Za-z0-9_-]))"
 )
 URL_USERINFO_PASSWORD_RE = re.compile(
     r"(?P<prefix>https?://[^/\s:@?#]+:)[^@/\s?#]+(?=@)", re.I

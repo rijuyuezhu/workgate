@@ -386,6 +386,8 @@ def test_redact_text_hides_standalone_high_confidence_tokens():
         "ghp_1234567890abcdef1234567890abcdef123456",
         "sk-1234567890abcdef1234567890abcdef",
         "AKIA1234567890ABCDEF",
+        "wg_exec_1234567890abcdefghijklmnopqrstuvwxyzABCDEFG",
+        "wg_exec_" + "A" * 42 + "-",
     ]
 
     redacted = _redact_text(f"probe failed with {' '.join(tokens)}")
