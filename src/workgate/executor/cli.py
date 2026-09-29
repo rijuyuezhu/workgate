@@ -129,16 +129,14 @@ def _run_from_args(args: argparse.Namespace) -> None:
 def _service_manager(args: argparse.Namespace) -> ExecutorServiceManager:
     settings = settings_from_args(args)
     initialize_runtime_directories(settings)
-    return ExecutorServiceManager(settings)
+    return ExecutorServiceManager(resolve_executor_config(settings))
 
 
 def _redact_service_text(value: str) -> str:
     return _redact_text(value)
 
 
-def _print_service_status(
-    manager: ExecutorServiceManager, status: ExecutorServiceStatus
-) -> None:
+def _print_service_status(status: ExecutorServiceStatus) -> None:
     print(f"State: {status.state.value}")
     print(f"Backend: {status.backend}")
     if status.service_file:
@@ -158,28 +156,22 @@ def _run_service_action(args: argparse.Namespace, action: str) -> None:
     try:
         manager = _service_manager(args)
         if action == "install":
-            result = manager.install()
-            _print_service_status(manager, result.status)
+            _print_service_status(manager.install())
             return
         if action == "uninstall":
-            status = manager.uninstall()
-            _print_service_status(manager, status)
+            _print_service_status(manager.uninstall())
             return
         if action == "status":
-            status = manager.status()
-            _print_service_status(manager, status)
+            _print_service_status(manager.status())
             return
         if action == "start":
-            status = manager.start()
-            _print_service_status(manager, status)
+            _print_service_status(manager.start())
             return
         if action == "stop":
-            status = manager.stop()
-            _print_service_status(manager, status)
+            _print_service_status(manager.stop())
             return
         if action == "restart":
-            status = manager.restart()
-            _print_service_status(manager, status)
+            _print_service_status(manager.restart())
             return
         if action == "logs":
             output = manager.logs(lines=int(args.lines))

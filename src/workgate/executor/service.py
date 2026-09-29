@@ -5,8 +5,7 @@ launcher for the existing ``workgate executor run`` runtime and never owns
 pairing or executor credentials.
 """
 
-from __future__ import annotations
-
+import hashlib
 import json
 import ntpath
 import os
@@ -17,20 +16,19 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from ..app_paths import ensure_private_directory
-from ..config.settings import Settings
+from ..config.executor import EXECUTOR_SETTING_NAMES, ExecutorConfig
 from ..persistence import FileStateStore
 from ..utils.private_files import (
     atomic_write_private_bytes,
     atomic_write_private_text,
 )
 from ..version import __version__
-from .config import ExecutorConfig
 from .profile import ExecutorProfileStore
 
 _SERVICE_NAME = "workgate-executor"
@@ -89,16 +87,6 @@ class ExecutorServiceStatus:
     runtime_current: bool = True
 
 
-@dataclass(frozen=True, slots=True)
-class ExecutorServiceInstallation:
-    """Result of installing or refreshing the local executor service."""
-
-    backend: str
-    service_file: str
-    started: bool
-    status: ExecutorServiceStatus
-
-
 class UnsupportedExecutorServiceError(RuntimeError):
     """Raised when this host has no supported per-user service manager."""
 
@@ -115,22 +103,30 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-def _executor_service_settings(settings: Settings) -> dict[str, Any]:
-    """Snapshot only settings consumed by ExecutorConfig.
+def _executor_service_settings(config: ExecutorConfig) -> dict[str, Any]:
+    """Snapshot only user-configurable executor-owned policy fields.
 
-    In particular, control-plane auth settings and executor bearer credentials
-    are never copied into the managed-service configuration.
+    Control-plane auth settings and executor bearer credentials are never
+    copied into the managed-service configuration.
     """
 
-    settings_fields = Settings.model_fields
-    names = {
-        field.name
-        for field in fields(ExecutorConfig)
-        if field.name in settings_fields
-    }
     return {
-        name: _json_value(getattr(settings, name)) for name in sorted(names)
+        name: _json_value(getattr(config, name))
+        for name in sorted(EXECUTOR_SETTING_NAMES)
     }
+
+
+def _settings_payload_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _executor_service_settings_digest(config: ExecutorConfig) -> str:
+    return _settings_payload_digest(_executor_service_settings(config))
 
 
 def _powershell_literal(value: str) -> str:
@@ -149,25 +145,25 @@ class ExecutorServiceManager:
 
     def __init__(
         self,
-        settings: Settings,
+        config: ExecutorConfig,
         *,
         home: Path | None = None,
         environ: dict[str, str] | None = None,
         system: str | None = None,
         executable: Path | None = None,
     ) -> None:
-        self.settings = settings
+        self.config = config
         self.home = (Path.home() if home is None else Path(home)).expanduser()
         self.environ = dict(os.environ if environ is None else environ)
         self.system = platform.system() if system is None else system
         self.executable = Path(
             sys.executable if executable is None else executable
         )
-        self.state_store = FileStateStore(lambda: self.settings.state_dir)
+        self.state_store = FileStateStore(lambda: self.config.state_dir)
 
     @property
     def service_dir(self) -> Path:
-        return self.settings.state_dir / "executor" / "service"
+        return self.config.state_dir / "executor" / "service"
 
     @property
     def config_path(self) -> Path:
@@ -300,7 +296,7 @@ class ExecutorServiceManager:
     def _write_service_config(self) -> None:
         ensure_private_directory(self.service_dir)
         payload = json.dumps(
-            _executor_service_settings(self.settings),
+            _executor_service_settings(self.config),
             indent=2,
             sort_keys=True,
         )
@@ -312,7 +308,6 @@ class ExecutorServiceManager:
         windows_path = self._managed_windows_path()
         return (
             '"""Private Workgate managed-executor launcher. Generated; do not edit."""\n'
-            "from __future__ import annotations\n\n"
             "import contextlib\n"
             "import os\n"
             "import sys\n"
@@ -452,9 +447,10 @@ class ExecutorServiceManager:
         service_file: Path | None = None,
     ) -> None:
         payload: dict[str, Any] = {
-            "version": 2,
+            "version": 3,
             "backend": backend,
             "workgate_version": __version__,
+            "settings_sha256": _executor_service_settings_digest(self.config),
             "command": command,
         }
         if service_file is not None:
@@ -482,9 +478,26 @@ class ExecutorServiceManager:
             return None
         return path
 
+    def _installed_settings_digest(self) -> str | None:
+        try:
+            payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return _settings_payload_digest(payload)
+
     def _runtime_current(self) -> bool:
         payload = self._read_metadata()
-        if payload is None or payload.get("backend") != self.backend():
+        expected_settings = _executor_service_settings_digest(self.config)
+        if (
+            payload is None
+            or payload.get("version") != 3
+            or payload.get("backend") != self.backend()
+            or payload.get("workgate_version") != __version__
+            or payload.get("settings_sha256") != expected_settings
+            or self._installed_settings_digest() != expected_settings
+        ):
             return False
         command = payload.get("command")
         if not isinstance(command, list) or not all(
@@ -706,7 +719,7 @@ class ExecutorServiceManager:
             "-Confirm:$false"
         )
 
-    def install(self) -> ExecutorServiceInstallation:
+    def install(self) -> ExecutorServiceStatus:
         """Install or refresh the native per-user service and start it."""
 
         self._ensure_paired()
@@ -756,12 +769,7 @@ class ExecutorServiceManager:
             self._write_metadata(backend, command)
             self._start_windows_task()
 
-        return ExecutorServiceInstallation(
-            backend=backend,
-            service_file=str(service_file),
-            started=True,
-            status=self.status(),
-        )
+        return self.status()
 
     def _systemd_native_state(self) -> dict[str, str]:
         result = self._run(
@@ -1301,7 +1309,6 @@ class ExecutorServiceManager:
 
 
 __all__ = [
-    "ExecutorServiceInstallation",
     "ExecutorServiceManager",
     "ExecutorServiceState",
     "ExecutorServiceStatus",

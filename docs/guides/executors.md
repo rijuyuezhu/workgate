@@ -22,19 +22,35 @@ restrictions, and local integration credentials, is configured on that machine.
 
 ## Run and reconnect
 
-Start a paired executor with:
+Start a paired executor in the foreground with:
 
 ```bash
 workgate executor run
 ```
 
+For a persistent per-user executor, install the native service instead:
+
+```bash
+workgate executor install-service
+workgate executor status
+```
+
+The same CLI provides `start`, `stop`, `restart`, `logs`, and
+`uninstall-service`. Reinstalling refreshes the service after a Workgate
+upgrade without changing the paired executor identity.
+
+Linux uses a systemd user service. It is enabled for future user-manager
+sessions; remaining active without a logged-in user depends on the host's
+systemd linger policy, which Workgate does not change. macOS uses a LaunchAgent
+and Windows uses a per-user scheduled task, so both start after that user logs
+in rather than before login. For a dedicated Linux VPS that must start at
+system boot without a user session, use the system service pattern in
+[VPS deployment](../getting-started/vps.md).
+
 Temporary network or control outages reconnect with the same profile. Normal
 reboots or long periods offline do not require pairing again. If the executor
 was revoked or its credential was replaced, run `executor connect` again and
 complete the owner-approved flow.
-
-For unattended Linux startup, see the systemd example in
-[VPS deployment](../getting-started/vps.md).
 
 ## Start work on an executor
 

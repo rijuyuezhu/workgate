@@ -1,16 +1,16 @@
-from __future__ import annotations
-
 import json
 import os
 import plistlib
 import shlex
 import stat
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from workgate.config.settings import Settings
+from workgate.config.executor import ExecutorConfig, resolve_executor_config
+from workgate.config.settings import Settings, load_settings
 from workgate.executor import service
 from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
 from workgate.executor.service import (
@@ -36,6 +36,10 @@ def _settings(tmp_path: Path, **kwargs) -> Settings:
     )
 
 
+def _config(tmp_path: Path, **kwargs) -> ExecutorConfig:
+    return resolve_executor_config(_settings(tmp_path, **kwargs))
+
+
 def _profile() -> ExecutorProfile:
     return ExecutorProfile(
         control_url="https://control.test",
@@ -52,7 +56,7 @@ def _paired_manager(
     **settings_kwargs,
 ) -> tuple[ExecutorServiceManager, ExecutorProfile]:
     manager = ExecutorServiceManager(
-        _settings(tmp_path, **settings_kwargs),
+        _config(tmp_path, **settings_kwargs),
         home=tmp_path / "home",
         environ={},
         system=system,
@@ -85,7 +89,7 @@ def test_service_helpers_cover_nested_settings_and_command_failures(
     ]
 
     manager = ExecutorServiceManager(
-        _settings(tmp_path),
+        _config(tmp_path),
         home=tmp_path / "home",
         environ={},
         system="Windows",
@@ -114,7 +118,7 @@ def test_backend_reports_unavailable_native_manager(
     message: str,
 ) -> None:
     manager = ExecutorServiceManager(
-        _settings(tmp_path),
+        _config(tmp_path),
         home=tmp_path / "home",
         environ={},
         system=system,
@@ -130,7 +134,7 @@ def test_linux_backend_reports_unavailable_user_manager(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = ExecutorServiceManager(
-        _settings(tmp_path),
+        _config(tmp_path),
         home=tmp_path / "home",
         environ={},
         system="Linux",
@@ -153,11 +157,30 @@ def test_linux_backend_reports_unavailable_user_manager(
         manager.backend(require_available=True)
 
 
+def test_managed_config_reconstructs_foreground_executor_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _profile_value = _paired_manager(
+        tmp_path,
+        system="Linux",
+        allow_full_control=True,
+        max_output_bytes=123_456,
+    )
+    manager._write_service_config()
+    for name in tuple(os.environ):
+        if name.startswith("WORKGATE_"):
+            monkeypatch.delenv(name)
+
+    loaded = load_settings(manager.config_path)
+
+    assert resolve_executor_config(loaded) == manager.config
+
+
 def test_install_requires_existing_paired_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manager = ExecutorServiceManager(
-        _settings(tmp_path),
+        _config(tmp_path),
         home=tmp_path / "home",
         environ={},
         system="Linux",
@@ -230,7 +253,7 @@ def test_systemd_install_is_private_idempotent_and_preserves_identity(
     second = manager.install()
 
     assert first.backend == "systemd"
-    assert second.status.state == ExecutorServiceState.RUNNING
+    assert second.state == ExecutorServiceState.RUNNING
     assert manager.systemd_unit_path == manager_unit_path
     assert not (tmp_path / "xdg-config" / "systemd" / "user").exists()
     metadata = json.loads(manager.metadata_path.read_text(encoding="utf-8"))
@@ -248,7 +271,7 @@ def test_systemd_install_is_private_idempotent_and_preserves_identity(
     assert profile.control_url not in unit
 
     changed_shell = ExecutorServiceManager(
-        manager.settings,
+        manager.config,
         home=manager.home,
         environ={"XDG_CONFIG_HOME": str(tmp_path / "different-shell-xdg")},
         system="Linux",
@@ -394,6 +417,41 @@ def test_runtime_current_rejects_metadata_for_different_backend(
     manager, _profile_value = _paired_manager(tmp_path, system="Linux")
     manager._write_metadata("launchd", manager._runtime_command())
 
+    assert manager._runtime_current() is False
+
+
+def test_runtime_current_rejects_metadata_from_previous_workgate_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _profile_value = _paired_manager(tmp_path, system="Linux")
+    manager._write_service_config()
+    manager._write_metadata("systemd", manager._runtime_command())
+    assert manager._runtime_current() is True
+
+    monkeypatch.setattr(service, "__version__", "999.0-test")
+
+    assert manager._runtime_current() is False
+
+
+def test_runtime_current_tracks_managed_config_snapshot(tmp_path: Path) -> None:
+    manager, _profile_value = _paired_manager(tmp_path, system="Linux")
+    manager._write_service_config()
+    manager._write_metadata("systemd", manager._runtime_command())
+    assert manager._runtime_current() is True
+
+    installed = json.loads(manager.config_path.read_text(encoding="utf-8"))
+    installed["max_output_bytes"] += 1
+    manager.config_path.write_text(json.dumps(installed), encoding="utf-8")
+    assert manager._runtime_current() is False
+
+    manager._write_service_config()
+    manager.config = replace(
+        manager.config, max_output_bytes=manager.config.max_output_bytes + 1
+    )
+    assert manager._runtime_current() is False
+
+    manager.config = _config(tmp_path)
+    manager.config_path.unlink()
     assert manager._runtime_current() is False
 
 
@@ -600,10 +658,10 @@ def test_launchd_definition_uses_private_local_paths_without_credentials(
 
     monkeypatch.setattr(manager, "_run", fake_run)
 
-    result = manager.install()
+    status = manager.install()
     payload = plistlib.loads(manager.launchd_plist_path.read_bytes())
 
-    assert result.status.state == ExecutorServiceState.RUNNING
+    assert status.state == ExecutorServiceState.RUNNING
     assert payload["Label"] == "com.workgate.executor"
     assert payload["RunAtLoad"] is True
     assert payload["KeepAlive"] is True
@@ -865,12 +923,12 @@ def test_windows_task_is_per_user_persistent_and_secret_free(
 
     monkeypatch.setattr(manager, "_run", fake_run)
 
-    result = manager.install()
+    status = manager.install()
     registration = next(
         script for script in scripts if "Register-ScheduledTask" in script
     )
 
-    assert result.status.state == ExecutorServiceState.RUNNING
+    assert status.state == ExecutorServiceState.RUNNING
     assert str(pythonw.resolve()) in registration
     assert "New-ScheduledTaskTrigger -AtLogOn" in registration
     assert "-AllowStartIfOnBatteries" in registration
@@ -935,6 +993,7 @@ def test_windows_frozen_service_uses_logging_launcher_without_hiding_runtime(
     assert str(profile.credential) not in launcher
     assert profile.control_url not in launcher
 
+    manager._write_service_config()
     manager._write_metadata("scheduled-task", runtime_command)
     assert manager._runtime_current() is True
     assert (

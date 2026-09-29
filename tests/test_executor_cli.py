@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from workgate.app_paths import app_paths
+from workgate.config.executor import ExecutorConfig, resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor import cli as executor_cli
 from workgate.executor.control_client import (
@@ -219,7 +220,7 @@ def test_service_actions_dispatch_and_render(
 
         def install(self):
             self.calls.append("install")
-            return argparse.Namespace(status=status)
+            return status
 
         def uninstall(self):
             self.calls.append("uninstall")
@@ -247,8 +248,8 @@ def test_service_actions_dispatch_and_render(
 
     manager = Manager()
 
-    def fake_manager(active_settings: Settings) -> Manager:
-        assert active_settings is settings
+    def fake_manager(active_config: ExecutorConfig) -> Manager:
+        assert active_config == resolve_executor_config(settings)
         return manager
 
     monkeypatch.setattr(
@@ -272,6 +273,33 @@ def test_service_actions_dispatch_and_render(
         assert "Detail: healthy" in output
 
 
+def test_service_logs_redact_executor_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _settings(tmp_path)
+    credential = new_executor_credential()
+
+    class Manager:
+        def logs(self, *, lines: int) -> str:
+            assert lines == 10
+            return f"connected with {credential}"
+
+    monkeypatch.setattr(
+        executor_cli, "settings_from_args", lambda *_a, **_k: settings
+    )
+    monkeypatch.setattr(
+        executor_cli, "ExecutorServiceManager", lambda _settings: Manager()
+    )
+
+    executor_cli._run_service_action(argparse.Namespace(lines=10), "logs")
+
+    output = capsys.readouterr().out
+    assert credential not in output
+    assert "connected with <redacted>" in output
+
+
 def test_service_status_render_omits_optional_fields_for_current_runtime(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -282,7 +310,7 @@ def test_service_status_render_omits_optional_fields_for_current_runtime(
         running=False,
     )
 
-    executor_cli._print_service_status(object(), status)  # type: ignore[arg-type]
+    executor_cli._print_service_status(status)
 
     assert capsys.readouterr().out == (
         "State: stopped\nBackend: test-backend\nRuntime: current\n"
