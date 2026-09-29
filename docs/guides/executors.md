@@ -74,7 +74,7 @@ For protocol and trust details, see
 ## Troubleshooting
 
 - **Pairing request never appears:** confirm the control URL is reachable and the pairing code has not expired.
-- **Paired machine restarted:** run `workgate executor run`; downtime alone does not require pairing again.
+- **Paired machine restarted:** check `workgate executor status` when using the managed service; otherwise run `workgate executor run`. Downtime alone does not require pairing again.
 - **Executor is revoked or unauthorized:** run `executor connect` and approve replacement if the machine should still be trusted.
 - **A machine operation is unavailable:** verify the executor is online, the session is bound to it, and the required executable/capability exists.
 

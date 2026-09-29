@@ -84,7 +84,7 @@ class ExecutorServiceStatus:
     detail: str = ""
     service_file: str | None = None
     log_path: str | None = None
-    runtime_current: bool = True
+    runtime_current: bool = False
 
 
 class UnsupportedExecutorServiceError(RuntimeError):
@@ -243,13 +243,14 @@ class ExecutorServiceManager:
             raise UnsupportedExecutorServiceError(
                 "PowerShell is required for the Windows executor service"
             )
+        fail_closed_script = "$ErrorActionPreference = 'Stop'\n" + script
         return self._run(
             [
                 executable,
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                script,
+                fail_closed_script,
             ],
             check=check,
         )
@@ -487,6 +488,13 @@ class ExecutorServiceManager:
             return None
         return _settings_payload_digest(payload)
 
+    def _runtime_launcher_present(self) -> bool:
+        if not getattr(sys, "frozen", False):
+            return self.launcher_path.is_file()
+        if self.system == "Windows":
+            return self.windows_frozen_launcher_path.is_file()
+        return True
+
     def _runtime_current(self) -> bool:
         payload = self._read_metadata()
         expected_settings = _executor_service_settings_digest(self.config)
@@ -497,6 +505,7 @@ class ExecutorServiceManager:
             or payload.get("workgate_version") != __version__
             or payload.get("settings_sha256") != expected_settings
             or self._installed_settings_digest() != expected_settings
+            or not self._runtime_launcher_present()
         ):
             return False
         command = payload.get("command")
@@ -627,7 +636,6 @@ class ExecutorServiceManager:
         argument_text = subprocess.list2cmdline(arguments)
         return "\n".join(
             [
-                "$ErrorActionPreference = 'Stop'",
                 "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
                 (
                     "$action = New-ScheduledTaskAction "
@@ -662,7 +670,6 @@ class ExecutorServiceManager:
     def _windows_task_status(self) -> dict[str, Any] | None:
         script = "\n".join(
             [
-                "$ErrorActionPreference = 'Stop'",
                 (
                     "$task = Get-ScheduledTask "
                     f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
@@ -705,6 +712,12 @@ class ExecutorServiceManager:
         )
 
     def _stop_windows_task(self) -> None:
+        task = self._windows_task_status()
+        if task is None:
+            return
+        task_state = str(task.get("state", "")).lower()
+        if task_state not in {"running", "queued"}:
+            return
         self._run_powershell(
             "Stop-ScheduledTask "
             f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
@@ -963,13 +976,6 @@ class ExecutorServiceManager:
             self._start_windows_task()
         return self.status()
 
-    def _service_file(self, backend: str) -> Path:
-        if backend == "systemd":
-            return self.systemd_unit_path
-        if backend == "launchd":
-            return self.launchd_plist_path
-        return self.metadata_path
-
     def _require_installed(self) -> None:
         status = self.status()
         if not status.installed:
@@ -978,8 +984,8 @@ class ExecutorServiceManager:
                 "`workgate executor install-service` first"
             )
 
-    def _windows_status(self, service_file: Path) -> ExecutorServiceStatus:
-        metadata_present = service_file.exists()
+    def _windows_status(self) -> ExecutorServiceStatus:
+        metadata_present = self.metadata_path.exists()
         try:
             task = self._windows_task_status()
         except (RuntimeError, UnsupportedExecutorServiceError) as exc:
@@ -989,7 +995,6 @@ class ExecutorServiceManager:
                 installed=metadata_present,
                 running=False,
                 detail=str(exc),
-                service_file=str(service_file),
                 log_path=str(self.log_path),
                 runtime_current=(
                     self._runtime_current() if metadata_present else False
@@ -1003,7 +1008,6 @@ class ExecutorServiceManager:
                     state=ExecutorServiceState.NOT_INSTALLED,
                     installed=False,
                     running=False,
-                    service_file=str(service_file),
                     log_path=str(self.log_path),
                 )
             return ExecutorServiceStatus(
@@ -1012,7 +1016,6 @@ class ExecutorServiceManager:
                 installed=False,
                 running=False,
                 detail="service metadata exists but scheduled task is missing",
-                service_file=str(service_file),
                 log_path=str(self.log_path),
                 runtime_current=False,
             )
@@ -1050,7 +1053,6 @@ class ExecutorServiceManager:
             installed=True,
             running=running,
             detail="; ".join(detail_parts),
-            service_file=str(service_file),
             log_path=str(self.log_path),
             runtime_current=(
                 self._runtime_current() if metadata_present else False
@@ -1266,12 +1268,11 @@ class ExecutorServiceManager:
 
     def status(self) -> ExecutorServiceStatus:
         backend = self.backend()
-        service_file = self._service_file(backend)
         if backend == "systemd":
-            return self._systemd_status(service_file)
+            return self._systemd_status(self.systemd_unit_path)
         if backend == "launchd":
-            return self._launchd_status(service_file)
-        return self._windows_status(service_file)
+            return self._launchd_status(self.launchd_plist_path)
+        return self._windows_status()
 
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""

@@ -22,7 +22,11 @@ from .pairing import (
 )
 from .profile import ExecutorProfileStore, normalize_control_url
 from .runtime import build_executor_runtime
-from .service import ExecutorServiceManager, ExecutorServiceStatus
+from .service import (
+    ExecutorServiceManager,
+    ExecutorServiceState,
+    ExecutorServiceStatus,
+)
 
 
 def _run_async(coro: Any) -> Any:
@@ -143,11 +147,12 @@ def _print_service_status(status: ExecutorServiceStatus) -> None:
         print(f"Service: {status.service_file}")
     if status.log_path:
         print(f"Log: {status.log_path}")
-    print(
-        "Runtime: current"
-        if status.runtime_current
-        else "Runtime: stale; run `workgate executor install-service` to refresh"
-    )
+    if status.state != ExecutorServiceState.NOT_INSTALLED:
+        print(
+            "Runtime: current"
+            if status.runtime_current
+            else "Runtime: stale; run `workgate executor install-service` to refresh"
+        )
     if status.detail:
         print(f"Detail: {_redact_service_text(status.detail)}")
 

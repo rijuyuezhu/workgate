@@ -308,12 +308,30 @@ def test_service_status_render_omits_optional_fields_for_current_runtime(
         state=ExecutorServiceState.STOPPED,
         installed=True,
         running=False,
+        runtime_current=True,
     )
 
     executor_cli._print_service_status(status)
 
     assert capsys.readouterr().out == (
         "State: stopped\nBackend: test-backend\nRuntime: current\n"
+    )
+
+
+def test_service_status_render_omits_runtime_when_not_installed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status = executor_cli.ExecutorServiceStatus(
+        backend="test-backend",
+        state=ExecutorServiceState.NOT_INSTALLED,
+        installed=False,
+        running=False,
+    )
+
+    executor_cli._print_service_status(status)
+
+    assert capsys.readouterr().out == (
+        "State: not-installed\nBackend: test-backend\n"
     )
 
 

@@ -102,6 +102,33 @@ def test_service_helpers_cover_nested_settings_and_command_failures(
         manager._run_powershell("Write-Output test")
 
 
+def test_powershell_lifecycle_commands_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = ExecutorServiceManager(
+        _config(tmp_path),
+        home=tmp_path / "home",
+        environ={},
+        system="Windows",
+    )
+    monkeypatch.setattr(
+        manager, "_powershell_executable", lambda: "powershell.exe"
+    )
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        manager,
+        "_run",
+        lambda command, **_kwargs: (
+            captured.append(command) or _completed(command)
+        ),
+    )
+
+    manager._run_powershell("Start-ScheduledTask -TaskName 'Workgate Executor'")
+
+    assert captured[0][-1].startswith("$ErrorActionPreference = 'Stop'\n")
+    assert "Start-ScheduledTask" in captured[0][-1]
+
+
 @pytest.mark.parametrize(
     ("system", "message"),
     [
@@ -425,6 +452,7 @@ def test_runtime_current_rejects_metadata_from_previous_workgate_version(
 ) -> None:
     manager, _profile_value = _paired_manager(tmp_path, system="Linux")
     manager._write_service_config()
+    manager._write_launcher()
     manager._write_metadata("systemd", manager._runtime_command())
     assert manager._runtime_current() is True
 
@@ -436,6 +464,7 @@ def test_runtime_current_rejects_metadata_from_previous_workgate_version(
 def test_runtime_current_tracks_managed_config_snapshot(tmp_path: Path) -> None:
     manager, _profile_value = _paired_manager(tmp_path, system="Linux")
     manager._write_service_config()
+    manager._write_launcher()
     manager._write_metadata("systemd", manager._runtime_command())
     assert manager._runtime_current() is True
 
@@ -452,6 +481,18 @@ def test_runtime_current_tracks_managed_config_snapshot(tmp_path: Path) -> None:
 
     manager.config = _config(tmp_path)
     manager.config_path.unlink()
+    assert manager._runtime_current() is False
+
+
+def test_runtime_current_rejects_missing_launcher(tmp_path: Path) -> None:
+    manager, _profile_value = _paired_manager(tmp_path, system="Linux")
+    manager._write_service_config()
+    manager._write_launcher()
+    manager._write_metadata("systemd", manager._runtime_command())
+    assert manager._runtime_current() is True
+
+    manager.launcher_path.unlink()
+
     assert manager._runtime_current() is False
 
 
@@ -876,6 +917,28 @@ def test_launchd_status_and_uninstall_recover_loaded_orphan(
     )
 
 
+def test_windows_stop_is_idempotent_for_non_running_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _profile_value = _paired_manager(tmp_path, system="Windows")
+    scripts: list[str] = []
+    task: dict[str, object] = {"state": "Ready", "last_result": 0}
+    monkeypatch.setattr(manager, "_windows_task_status", lambda: task)
+    monkeypatch.setattr(
+        manager,
+        "_run_powershell",
+        lambda script, **_kwargs: scripts.append(script),
+    )
+
+    manager._stop_windows_task()
+    assert scripts == []
+
+    task["state"] = "Running"
+    manager._stop_windows_task()
+    assert len(scripts) == 1
+    assert "Stop-ScheduledTask" in scripts[0]
+
+
 def test_windows_task_is_per_user_persistent_and_secret_free(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1126,6 +1189,7 @@ def test_windows_status_uses_native_task_when_metadata_is_missing(
 
     assert status.installed is True
     assert status.state == ExecutorServiceState.STOPPED
+    assert status.service_file is None
     assert status.runtime_current is False
     assert "metadata missing" in status.detail
 
@@ -1177,6 +1241,7 @@ def test_uninstall_preserves_executor_profile(
     status = manager.uninstall()
 
     assert status.state == ExecutorServiceState.NOT_INSTALLED
+    assert status.runtime_current is False
     assert ExecutorProfileStore(manager.state_store).load() == profile
     assert not manager.config_path.exists()
     assert not manager.launcher_path.exists()
