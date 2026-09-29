@@ -2,6 +2,7 @@ import os
 
 import pytest
 
+import workgate.config.settings as settings_module
 from workgate.config.settings import (
     Settings,
     initialize_runtime_directories,
@@ -167,3 +168,118 @@ def test_audit_payload_limits_must_be_nested():
             raise AssertionError(
                 "expected nested audit payload limit validation"
             )
+
+
+_EXPECTED_NONNEGATIVE_NUMERIC_SETTINGS = {
+    "ui_terminal_idle_timeout_s",
+    "oauth_access_token_ttl_s",
+    "oauth_max_pending_codes",
+    "oauth_client_ttl_s",
+    "oauth_max_dynamic_clients",
+    "max_jobs",
+    "max_http_request_bytes",
+    "file_download_default_max_downloads",
+    "file_download_max_file_bytes",
+}
+
+
+def test_runtime_numeric_validation_classifies_every_numeric_setting():
+    numeric_settings = {
+        name
+        for name, field in Settings.model_fields.items()
+        if field.annotation in {int, float}
+    }
+    pydantic_constrained = {
+        name
+        for name, field in Settings.model_fields.items()
+        if any(
+            type(metadata).__name__ in {"Ge", "Gt"}
+            for metadata in field.metadata
+        )
+    }
+    explicitly_validated = {
+        *settings_module._POSITIVE_NUMERIC_SETTINGS,
+        *settings_module._NONNEGATIVE_NUMERIC_SETTINGS,
+        "port",
+        "ui_terminal_max_connections",
+    }
+
+    assert set(settings_module._NONNEGATIVE_NUMERIC_SETTINGS) == (
+        _EXPECTED_NONNEGATIVE_NUMERIC_SETTINGS
+    )
+    assert numeric_settings == pydantic_constrained | explicitly_validated
+
+
+@pytest.mark.parametrize("name", settings_module._POSITIVE_NUMERIC_SETTINGS)
+def test_runtime_numeric_settings_reject_zero(name):
+    with pytest.raises(ValueError, match=name):
+        Settings.model_validate({name: 0})
+
+
+@pytest.mark.parametrize("name", settings_module._NONNEGATIVE_NUMERIC_SETTINGS)
+def test_runtime_numeric_settings_accept_documented_zero(name):
+    settings = Settings.model_validate({name: 0})
+
+    assert getattr(settings, name) == 0
+
+
+@pytest.mark.parametrize("name", settings_module._NONNEGATIVE_NUMERIC_SETTINGS)
+def test_runtime_numeric_settings_reject_negative_values(name):
+    with pytest.raises(ValueError, match=name):
+        Settings.model_validate({name: -1})
+
+
+@pytest.mark.parametrize("port", (-1, 0, 65_536, 70_000))
+def test_port_must_be_in_tcp_range(port):
+    with pytest.raises(ValueError, match="port"):
+        Settings(port=port)
+
+
+@pytest.mark.parametrize("port", (1, 65_535))
+def test_port_accepts_tcp_range_boundaries(port):
+    assert Settings(port=port).port == port
+
+
+@pytest.mark.parametrize("value", (float("nan"), float("inf"), float("-inf")))
+def test_tool_timeout_must_be_finite(value):
+    with pytest.raises(ValueError, match="tool_timeout_s"):
+        Settings(tool_timeout_s=value)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {
+                "run_shell_default_timeout_s": 11,
+                "run_shell_max_timeout_s": 10,
+            },
+            "run_shell_max_timeout_s",
+        ),
+        (
+            {
+                "file_download_default_ttl_s": 61,
+                "file_download_max_ttl_s": 60,
+            },
+            "file_download_max_ttl_s",
+        ),
+    ],
+)
+def test_runtime_numeric_cross_field_limits(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        Settings(**overrides)
+
+
+def test_yaml_numeric_validation_uses_settings_model(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("max_http_request_bytes: -1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="max_http_request_bytes"):
+        load_settings(config)
+
+
+def test_environment_numeric_validation_uses_settings_model(monkeypatch):
+    monkeypatch.setenv("WORKGATE_MCP_MAX_SESSIONS", "0")
+
+    with pytest.raises(ValueError, match="mcp_max_sessions"):
+        load_settings()

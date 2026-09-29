@@ -642,8 +642,8 @@ def test_transfer_temp_pruning_preserves_recent_active_files(
     tmp_path, monkeypatch
 ):
     _workspace(tmp_path, monkeypatch)
-    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "0")
-    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "0")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "1")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "1")
     clear_settings_cache()
     _refresh_context()
     directory = temp_dir()
@@ -662,8 +662,8 @@ def test_transfer_temp_pruning_preserves_recent_active_files(
 
 def test_transfer_temp_pruning_tolerates_unlink_failure(tmp_path, monkeypatch):
     _workspace(tmp_path, monkeypatch)
-    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "0")
-    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "0")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "1")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "1")
     clear_settings_cache()
     _refresh_context()
     stale = temp_dir() / "stale.bin"
@@ -698,8 +698,8 @@ def test_transfer_temp_pruning_fails_closed_on_invalid_receipt(
     stale.write_bytes(b"stale")
     old = time.time() - 2 * 24 * 60 * 60
     os.utime(stale, (old, old))
-    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "0")
-    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "0")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "1")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "1")
     clear_settings_cache()
     _refresh_context()
 
@@ -723,8 +723,8 @@ def test_transfer_temp_pruning_fails_closed_on_invalid_unpack_receipt(
     stale.write_bytes(b"stale")
     old = time.time() - 2 * 24 * 60 * 60
     os.utime(stale, (old, old))
-    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "0")
-    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "0")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "1")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "1")
     clear_settings_cache()
     _refresh_context()
 
@@ -758,8 +758,8 @@ def test_temp_gc_preserves_scratch_archive_owned_by_live_receipt(
     old = time.time() - 2 * 24 * 60 * 60
     os.utime(archive, (old, old))
 
-    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "0")
-    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "0")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_FILES", "1")
+    monkeypatch.setenv("WORKGATE_MAX_TMP_BYTES", "1")
     clear_settings_cache()
     _refresh_context()
     context = _context()

@@ -1,5 +1,6 @@
 """Runtime settings for the Workgate workspace control plane."""
 
+import math
 import os
 import re
 from collections.abc import Collection, Mapping
@@ -28,6 +29,58 @@ _RESERVED_UI_PATHS = (
     "/readyz",
     "/redoc",
     "/docs",
+)
+
+_POSITIVE_NUMERIC_SETTINGS = (
+    "mcp_session_idle_timeout_s",
+    "mcp_max_sessions",
+    "oauth_code_ttl_s",
+    "oauth_registration_max_body_bytes",
+    "oauth_registration_max_redirect_uris",
+    "oauth_registration_max_redirect_uri_chars",
+    "oauth_registration_max_client_name_chars",
+    "tool_timeout_s",
+    "run_shell_default_timeout_s",
+    "run_shell_max_timeout_s",
+    "max_output_bytes",
+    "max_job_log_bytes",
+    "max_file_read_bytes",
+    "max_view_image_bytes",
+    "max_skills",
+    "max_skill_related_files",
+    "max_skill_scan_entries",
+    "max_skill_path_bytes",
+    "max_file_write_bytes",
+    "max_grep_results",
+    "max_directory_entries",
+    "max_glob_results",
+    "max_tree_entries",
+    "max_todos",
+    "max_todo_bytes",
+    "max_audit_log_bytes",
+    "max_audit_event_bytes",
+    "max_tmp_files",
+    "max_tmp_bytes",
+    "max_transfer_archive_entries",
+    "max_transfer_unpacked_bytes",
+    "max_concurrent_commands",
+    "max_tmux_sessions",
+    "file_download_default_ttl_s",
+    "file_download_max_ttl_s",
+    "agent_mcp_probe_timeout_s",
+    "agent_mcp_call_timeout_s",
+)
+
+_NONNEGATIVE_NUMERIC_SETTINGS = (
+    "ui_terminal_idle_timeout_s",
+    "oauth_access_token_ttl_s",
+    "oauth_max_pending_codes",
+    "oauth_client_ttl_s",
+    "oauth_max_dynamic_clients",
+    "max_jobs",
+    "max_http_request_bytes",
+    "file_download_default_max_downloads",
+    "file_download_max_file_bytes",
 )
 
 
@@ -126,7 +179,7 @@ class Settings(BaseSettings):
     oauth_admin_pin: str | None = None
     """Admin PIN required to approve OAuth authorization. Public OAuth URLs require a non-placeholder value of at least 8 characters."""
     oauth_access_token_ttl_s: int = 3600
-    """Bearer token lifetime in seconds. After this time, the token must be re-authorized and refreshed."""
+    """Bearer token lifetime in seconds; 0 disables token expiry."""
     oauth_code_ttl_s: int = 300
     """OAuth authorization-code lifetime in seconds. The authorization must be done within this time."""
     oauth_max_pending_codes: int = 2048
@@ -159,7 +212,7 @@ class Settings(BaseSettings):
     max_job_log_bytes: int = 10_000_000
     """Maximum retained output bytes for one tracked background-job attempt."""
     max_jobs: int = 1_000
-    """Maximum retained tracked-job records; active jobs are never pruned."""
+    """Maximum retained tracked-job records; 0 retains only active jobs, which are never pruned."""
     max_agent_sessions: int = Field(default=256, ge=1, le=10_000)
     """Maximum durable agent/workspace sessions after stale-session pruning."""
     agent_session_retention_s: int = Field(
@@ -370,14 +423,6 @@ class Settings(BaseSettings):
         """Reject root, traversal, and service-reserved Human UI paths."""
         return normalize_ui_path(value)
 
-    @field_validator("ui_terminal_idle_timeout_s")
-    @classmethod
-    def validate_ui_terminal_idle_timeout(cls, value: int) -> int:
-        """Reject negative Human UI terminal idle timeouts."""
-        if value < 0:
-            raise ValueError("ui_terminal_idle_timeout_s must be non-negative")
-        return value
-
     @field_validator("ui_terminal_max_connections")
     @classmethod
     def validate_ui_terminal_max_connections(cls, value: int) -> int:
@@ -393,6 +438,32 @@ class Settings(BaseSettings):
     def split_csv_fields(cls, value: str | list[str] | None) -> list[str]:
         """Normalize comma-delimited restriction lists supplied through environment variables."""
         return _split_csv(value)
+
+    @model_validator(mode="after")
+    def validate_numeric_settings(self) -> Settings:
+        """Reject invalid runtime numeric settings before role resolution."""
+        for name in _POSITIVE_NUMERIC_SETTINGS:
+            value = getattr(self, name)
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            if value <= 0:
+                raise ValueError(f"{name} must be greater than zero")
+        for name in _NONNEGATIVE_NUMERIC_SETTINGS:
+            if getattr(self, name) < 0:
+                raise ValueError(
+                    f"{name} must be greater than or equal to zero"
+                )
+        if not 1 <= self.port <= 65_535:
+            raise ValueError("port must be between 1 and 65535")
+        if self.run_shell_max_timeout_s < self.run_shell_default_timeout_s:
+            raise ValueError(
+                "run_shell_max_timeout_s must be >= run_shell_default_timeout_s"
+            )
+        if self.file_download_max_ttl_s < self.file_download_default_ttl_s:
+            raise ValueError(
+                "file_download_max_ttl_s must be >= file_download_default_ttl_s"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_audit_payload_limits(self) -> Settings:

@@ -58,7 +58,7 @@ oauth_resource: null
 # Admin PIN required to approve OAuth authorization. Public OAuth URLs require a non-placeholder value
 # of at least 8 characters.
 oauth_admin_pin: null
-# Bearer token lifetime in seconds. After this time, the token must be re-authorized and refreshed.
+# Bearer token lifetime in seconds; 0 disables token expiry.
 oauth_access_token_ttl_s: 3600
 # OAuth authorization-code lifetime in seconds. The authorization must be done within this time.
 oauth_code_ttl_s: 300
@@ -94,7 +94,7 @@ run_shell_max_timeout_s: 120
 max_output_bytes: 200000
 # Maximum retained output bytes for one tracked background-job attempt.
 max_job_log_bytes: 10000000
-# Maximum retained tracked-job records; active jobs are never pruned.
+# Maximum retained tracked-job records; 0 retains only active jobs, which are never pruned.
 max_jobs: 1000
 # Maximum durable agent/workspace sessions after stale-session pruning.
 max_agent_sessions: 256

@@ -66,6 +66,15 @@ class NoBreakHelpFormatter(argparse.HelpFormatter):
         )
 
 
+def test_control_cli_numeric_validation_uses_settings_model():
+    from workgate.config.cli import settings_from_args
+
+    args = cli._build_parser().parse_args(["control", "--port", "0"])
+
+    with pytest.raises(ValueError, match="port"):
+        settings_from_args(args)
+
+
 def test_control_subcommand_parses_control_owned_runtime_settings():
     args = cli._build_parser().parse_args(
         [
