@@ -1,8 +1,10 @@
 """Typed structured outputs for the session-scoped Live Workspace MCP App."""
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from .task import SessionTaskDocument
 
 
 class LiveWorkspaceSession(BaseModel):
@@ -69,9 +71,7 @@ class LiveWorkspaceSnapshot(BaseModel):
 
     version: Literal[1] = 1
     session: LiveWorkspaceSession
-    task: dict[str, Any] | None = None
-    compatibility_plan: list[dict[str, Any]] = Field(default_factory=list)
-    task_controls_available: bool = False
+    task: SessionTaskDocument
     task_control_actions: list[
         Literal["block", "resume", "cancel", "next_instruction"]
     ] = Field(default_factory=list)
@@ -82,13 +82,3 @@ class LiveWorkspaceSnapshot(BaseModel):
     shells_message: str | None = None
     activity: list[LiveWorkspaceActivity] = Field(default_factory=list)
     links: LiveWorkspaceLinks
-
-
-class LiveWorkspaceEndOutput(BaseModel):
-    """Result of an explicitly confirmed Live Workspace session end."""
-
-    session_id: str
-    ended: bool
-    force_released: bool = False
-    stopped_jobs: list[str] = Field(default_factory=list)
-    stopped_shells: list[str] = Field(default_factory=list)

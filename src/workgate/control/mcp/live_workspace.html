@@ -116,6 +116,7 @@
   const $ = (id) => document.getElementById(id);
   const UI_PROTOCOL_VERSION = "2026-01-26";
   let snapshot = null;
+  let boundSessionId = null;
   let standardBridge = null;
   let refreshTimer = null;
   let shuttingDown = false;
@@ -254,11 +255,18 @@
   }
 
   function render(data) {
-    snapshot = payload(data);
-    if (!snapshot || !snapshot.session) {
+    const candidate = payload(data);
+    if (!candidate || !candidate.session || !candidate.session.session_id) {
       $("status").textContent = "No session snapshot was supplied.";
-      return;
+      return false;
     }
+    const candidateSessionId = String(candidate.session.session_id);
+    if (boundSessionId !== null && candidateSessionId !== boundSessionId) {
+      $("status").textContent = "Ignored snapshot for a different session.";
+      return false;
+    }
+    if (boundSessionId === null) boundSessionId = candidateSessionId;
+    snapshot = candidate;
     const session = snapshot.session;
     const task = snapshot.task;
     $("title").textContent = session.label || "Live Workspace";
@@ -268,35 +276,24 @@
     $("workdir").textContent = `Workdir: ${session.workdir}`;
 
     const taskStatus = $("task-status");
-    if (task) {
-      taskStatus.hidden = false;
-      taskStatus.textContent = `task: ${text(task.status, "active")}`;
-      $("objective").textContent = task.objective || "";
-      const progress = task.progress || {};
-      $("progress").textContent = progress.summary || "No progress summary yet.";
-      $("next-action").textContent = progress.next_action ? `Next: ${progress.next_action}` : "";
-      const findings = Array.isArray(progress.findings) ? progress.findings : [];
-      const blockers = Array.isArray(progress.blockers) ? progress.blockers : [];
-      clear($("findings"));
-      for (const finding of findings) $("findings").appendChild(li(text(finding)));
-      $("findings-wrap").hidden = findings.length === 0;
-      clear($("blockers"));
-      for (const blocker of blockers) $("blockers").appendChild(li(text(blocker)));
-      $("blockers-wrap").hidden = blockers.length === 0;
-    } else {
-      taskStatus.hidden = true;
-      $("objective").textContent = "";
-      $("progress").textContent = "Canonical durable task state is not available on this server yet.";
-      $("next-action").textContent = "";
-      clear($("findings"));
-      clear($("blockers"));
-      $("findings-wrap").hidden = true;
-      $("blockers-wrap").hidden = true;
-    }
+    taskStatus.hidden = false;
+    taskStatus.textContent = `task: ${text(task && task.status, "active")}`;
+    $("objective").textContent = task && task.objective || "";
+    const progress = task && task.progress || {};
+    $("progress").textContent = progress.summary || "No progress summary yet.";
+    $("next-action").textContent = progress.next_action ? `Next: ${progress.next_action}` : "";
+    const findings = Array.isArray(progress.findings) ? progress.findings : [];
+    const blockers = Array.isArray(progress.blockers) ? progress.blockers : [];
+    clear($("findings"));
+    for (const finding of findings) $("findings").appendChild(li(text(finding)));
+    $("findings-wrap").hidden = findings.length === 0;
+    clear($("blockers"));
+    for (const blocker of blockers) $("blockers").appendChild(li(text(blocker)));
+    $("blockers-wrap").hidden = blockers.length === 0;
 
     const steps = task && task.plan && Array.isArray(task.plan.steps)
       ? task.plan.steps
-      : Array.isArray(snapshot.compatibility_plan) ? snapshot.compatibility_plan : [];
+      : [];
     clear($("plan"));
     for (const step of steps) {
       $("plan").appendChild(li(`[${text(step.status, "pending")}] ${text(step.content)}`));
@@ -308,8 +305,7 @@
       ? snapshot.task_control_actions
       : [];
     for (const button of document.querySelectorAll("[data-task-action]")) {
-      button.disabled = !snapshot.task_controls_available
-        || taskRevision() === null
+      button.disabled = taskRevision() === null
         || !allowedActions.includes(button.dataset.taskAction);
     }
 
@@ -362,6 +358,7 @@
       });
       $("links").appendChild(anchor);
     }
+    return true;
   }
 
   async function callTool(name, args) {
@@ -376,8 +373,8 @@
   async function refresh() {
     if (shuttingDown || !snapshot || !snapshot.session) return;
     try {
-      render(await callTool("workspace_snapshot", { session_id: snapshot.session.session_id }));
-      $("status").textContent = "Updated from Workgate.";
+      const accepted = render(await callTool("workspace_snapshot", { session_id: snapshot.session.session_id }));
+      if (accepted) $("status").textContent = "Updated from Workgate.";
     } catch (error) {
       $("status").textContent = `Refresh failed: ${error instanceof Error ? error.message : error}`;
     }
@@ -397,9 +394,11 @@
       if (action === "next_instruction") args.instruction = $("instruction").value;
       $("status").textContent = "Applying task update…";
       try {
-        render(await callTool("workspace_task_control", args));
-        if (action === "next_instruction") $("instruction").value = "";
-        $("status").textContent = "Task state updated.";
+        const accepted = render(await callTool("workspace_task_control", args));
+        if (accepted) {
+          if (action === "next_instruction") $("instruction").value = "";
+          $("status").textContent = "Task state updated.";
+        }
       } catch (error) {
         $("status").textContent = `Task update failed: ${error instanceof Error ? error.message : error}`;
       }

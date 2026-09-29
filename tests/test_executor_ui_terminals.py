@@ -22,14 +22,6 @@ class _FakeShell:
         self.calls.append(("start", args))
         return "started-owned"
 
-    async def send(self, args: dict[str, Any]) -> str:
-        self.calls.append(("send", args))
-        return "sent-owned"
-
-    async def resize(self, args: dict[str, Any]) -> str:
-        self.calls.append(("resize", args))
-        return "resized-owned"
-
     async def read(self, args: dict[str, Any]) -> str:
         self.calls.append(("read", args))
         return "read-owned"
@@ -80,8 +72,6 @@ async def test_ui_terminal_service_routes_shell_operations(
     [
         ("ui.terminals.list", "list", "listed-owned"),
         ("ui.terminals.start", "start", "started-owned"),
-        ("ui.terminals.send", "send", "sent-owned"),
-        ("ui.terminals.resize", "resize", "resized-owned"),
         ("ui.terminals.read", "read", "read-owned"),
         ("ui.terminals.kill", "kill", "killed-owned"),
     ],

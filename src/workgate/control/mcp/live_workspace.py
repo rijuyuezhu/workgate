@@ -1,18 +1,15 @@
 """Session-scoped Live Workspace MCP App composition."""
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
-from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from ...audit import query_audit
+from ...audit import current_audit_call_id, query_audit
 from ...oauth.core.context import require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_READ,
@@ -21,15 +18,17 @@ from ...oauth.core.scopes import (
     SCOPE_SHELL_WRITE,
 )
 from ...schemas.input_models.session import SessionIdArg
+from ...schemas.input_models.task import ExpectedTaskRevisionArg
 from ...schemas.result_models.live_workspace import (
     LiveWorkspaceActivity,
-    LiveWorkspaceEndOutput,
     LiveWorkspaceJob,
     LiveWorkspaceLinks,
     LiveWorkspaceSession,
     LiveWorkspaceShell,
     LiveWorkspaceSnapshot,
 )
+from ...schemas.result_models.session import SessionEndOutput
+from ...schemas.result_models.task import SessionTaskDocument, SessionTaskOutput
 from ...tools.metadata import oauth_security_meta
 from ..runtime import ControlRuntime
 
@@ -37,6 +36,7 @@ _RESOURCE_PATH = Path(__file__).with_name("live_workspace.html")
 _RESOURCE_URI = "ui://workgate/live-workspace.html"
 _RESOURCE_MIME = "text/html;profile=mcp-app"
 _ACTIVITY_LIMIT = 24
+_ACTIVITY_SCAN_LIMIT = _ACTIVITY_LIMIT * 4
 _JOB_LIMIT = 24
 _SHELL_LIMIT = 32
 
@@ -149,19 +149,6 @@ def _human_ui_links(
     )
 
 
-def _task_payload(value: Any) -> dict[str, Any]:
-    payload = (
-        value.model_dump(mode="json")
-        if hasattr(value, "model_dump")
-        else dict(value)
-    )
-    if not isinstance(payload, dict):
-        raise TypeError(
-            "canonical task service returned a non-object task payload"
-        )
-    return payload
-
-
 def _safe_activity(raw: dict[str, Any]) -> LiveWorkspaceActivity:
     return LiveWorkspaceActivity(
         id=str(raw["id"]) if raw.get("id") is not None else None,
@@ -182,59 +169,21 @@ def _safe_activity(raw: dict[str, Any]) -> LiveWorkspaceActivity:
 
 async def _task_projection(
     runtime: ControlRuntime, session_id: str
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool, str | None]:
-    read_task = getattr(runtime.todo_service, "read_task", None)
-    report_progress = getattr(runtime.todo_service, "report_progress", None)
-    if callable(read_task):
-        read_task_fn = cast(Callable[[str], Awaitable[Any]], read_task)
-        task = await read_task_fn(session_id)
-        task_payload = _task_payload(task)
-        return (
-            task_payload,
-            list(task_payload.get("plan", {}).get("steps", [])),
-            callable(report_progress),
-            None,
-        )
-
-    # #134 has not landed yet. Existing Todos are display-only compatibility
-    # state here; Live Workspace never creates a second task document.
-    compatibility: list[dict[str, Any]] = []
-    try:
-        todos = await runtime.todo_service.read(session_id)
-    except Exception:
-        todos = None
-    if todos is not None:
-        compatibility = [
-            item.model_dump(mode="json")
-            if hasattr(item, "model_dump")
-            else dict(item)
-            for item in todos.todos
-        ]
-    return (
-        None,
-        compatibility,
-        False,
-        "Durable task controls require the canonical session task state from issue #134.",
-    )
+) -> SessionTaskOutput:
+    return await runtime.task_service.read_task(session_id)
 
 
 def _task_control_actions(
-    task: dict[str, Any] | None,
+    task: SessionTaskDocument,
     *,
     execution_status: str,
-    service_available: bool,
 ) -> tuple[list[TaskAction], str | None]:
-    if not service_available:
-        return [], None
     if execution_status != "active":
         return (
             [],
             f"Task controls are unavailable while session is {execution_status}.",
         )
-    if task is None:
-        return [], None
-
-    task_status = str(task.get("status") or "").strip().lower()
+    task_status = task.status
     if task_status == "active":
         return ["block", "cancel", "next_instruction"], None
     if task_status == "blocked":
@@ -263,8 +212,8 @@ async def _job_projection(
             include_finished=False,
             lines=1,
         )
-    except Exception as exc:
-        return [], f"Job snapshot unavailable: {type(exc).__name__}"
+    except Exception:
+        return [], "Job snapshot unavailable."
     rows = output.jobs[:_JOB_LIMIT]
     if len(output.jobs) > _JOB_LIMIT:
         message = f"Showing {_JOB_LIMIT} most recent jobs."
@@ -308,11 +257,8 @@ async def _shell_projection(
         raw = await runtime.session_coordinator.call_session_tool(
             "list_persistent_shells", {"session_id": session_id}
         )
-    except Exception as exc:
-        return (
-            [],
-            f"Persistent-shell snapshot unavailable: {type(exc).__name__}",
-        )
+    except Exception:
+        return [], "Persistent-shell snapshot unavailable."
     shells_value = raw.get("shells") if isinstance(raw, dict) else None
     shells: list[Any] = shells_value if isinstance(shells_value, list) else []
     result = [
@@ -338,14 +284,24 @@ async def _shell_projection(
 
 
 async def _activity_projection(session_id: str) -> list[LiveWorkspaceActivity]:
+    # The public ControlAuditService intentionally admits only active/available
+    # sessions. Live Workspace must retain bounded durable activity while the
+    # executor is offline or the execution session has ended, so query the same
+    # canonical audit store directly after the caller session was resolved.
     raw = await asyncio.to_thread(
         query_audit,
-        limit=_ACTIVITY_LIMIT,
+        limit=_ACTIVITY_SCAN_LIMIT,
         session=session_id,
         sort="desc",
+        exclude_call_id=current_audit_call_id(),
     )
     entries = raw.get("entries", []) if isinstance(raw, dict) else []
-    return [_safe_activity(item) for item in entries if isinstance(item, dict)]
+    visible = [
+        item
+        for item in entries
+        if isinstance(item, dict) and item.get("tool") != "workspace_snapshot"
+    ]
+    return [_safe_activity(item) for item in visible[:_ACTIVITY_LIMIT]]
 
 
 async def live_workspace_snapshot(
@@ -375,15 +331,13 @@ async def live_workspace_snapshot(
         _shell_projection(runtime, session_id, availability),
         _activity_projection(session_id),
     )
-    task, compatibility_plan, controls_available, controls_message = task_result
+    task = task_result
     jobs, jobs_message = jobs_result
     shells, shells_message = shells_result
-    task_actions, state_controls_message = _task_control_actions(
+    task_actions, controls_message = _task_control_actions(
         task,
         execution_status=str(record.status),
-        service_available=controls_available,
     )
-    controls_message = controls_message or state_controls_message
 
     return LiveWorkspaceSnapshot(
         session=LiveWorkspaceSession(
@@ -399,8 +353,6 @@ async def live_workspace_snapshot(
             last_active_at=last_active_at,
         ),
         task=task,
-        compatibility_plan=compatibility_plan,
-        task_controls_available=bool(task_actions),
         task_control_actions=task_actions,
         task_controls_message=controls_message,
         jobs=jobs,
@@ -425,32 +377,20 @@ async def live_workspace_task_control(
     *,
     session_id: str,
     action: TaskAction,
-    expected_revision: int,
+    expected_revision: ExpectedTaskRevisionArg,
     instruction: str | None = None,
 ) -> LiveWorkspaceSnapshot:
-    """Apply one semantic task mutation through #134's canonical task service."""
-
-    read_task = getattr(runtime.todo_service, "read_task", None)
-    report_progress = getattr(runtime.todo_service, "report_progress", None)
-    if not callable(read_task) or not callable(report_progress):
-        raise RuntimeError(
-            "Live Workspace task controls require canonical session task state from issue #134"
-        )
-    read_task_fn = cast(Callable[[str], Awaitable[Any]], read_task)
-    report_progress_fn = cast(Callable[..., Awaitable[Any]], report_progress)
-    if isinstance(expected_revision, bool) or expected_revision < 0:
-        raise ValueError("expected_revision must be a non-negative integer")
+    """Apply one semantic mutation to the canonical session task state."""
 
     record = runtime.control_state.snapshot_sessions().get(session_id)
     if record is None:
         raise ValueError(
             f"unknown session_id {session_id!r}; call session_start first"
         )
-    current_task = _task_payload(await read_task_fn(session_id))
+    current_task = await runtime.task_service.read_task(session_id)
     allowed_actions, state_message = _task_control_actions(
         current_task,
         execution_status=str(record.status),
-        service_available=True,
     )
     if action not in allowed_actions:
         detail = state_message or (
@@ -478,7 +418,7 @@ async def live_workspace_task_control(
                 f"unsupported Live Workspace task action: {action}"
             )
 
-    await report_progress_fn(session_id, **kwargs)
+    await runtime.task_service.report_progress(session_id, **kwargs)
     return await live_workspace_snapshot(runtime, session_id)
 
 
@@ -487,7 +427,7 @@ async def live_workspace_end(
     *,
     session_id: str,
     confirm_session_id: str,
-) -> LiveWorkspaceEndOutput:
+) -> SessionEndOutput:
     """End only when the human confirmation repeats the exact session id."""
 
     if confirm_session_id != session_id:
@@ -495,7 +435,7 @@ async def live_workspace_end(
     result = await runtime.session_coordinator.end_session(
         session_id, force=False
     )
-    return LiveWorkspaceEndOutput.model_validate(result)
+    return SessionEndOutput.model_validate(result)
 
 
 def register_live_workspace(
@@ -564,7 +504,7 @@ def register_live_workspace(
     async def workspace_task_control(
         session_id: SessionIdArg,
         action: TaskAction,
-        expected_revision: int,
+        expected_revision: ExpectedTaskRevisionArg,
         instruction: str | None = None,
     ) -> LiveWorkspaceSnapshot:
         require_oauth_scopes(task_write_scopes)
@@ -588,7 +528,7 @@ def register_live_workspace(
     async def workspace_end(
         session_id: SessionIdArg,
         confirm_session_id: str,
-    ) -> LiveWorkspaceEndOutput:
+    ) -> SessionEndOutput:
         require_oauth_scopes((SCOPE_SHELL_EXECUTE,))
         return await live_workspace_end(
             runtime,

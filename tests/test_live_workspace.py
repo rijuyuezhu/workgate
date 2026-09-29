@@ -1,15 +1,13 @@
-from __future__ import annotations
-
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from pydantic import BaseModel
 
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp import live_workspace as live
 from workgate.control.mcp.app import build_mcp
+from workgate.schemas.result_models.task import SessionTaskOutput
 
 
 def _started_session_id(value: Any) -> str:
@@ -94,16 +92,26 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
         workdir=".", label="review me"
     )
     session_id = _started_session_id(started)
-    await harness.control.todo_service.write(
+    await harness.control.task_service.write(
         session_id,
         [{"id": "one", "content": "inspect", "status": "in_progress"}],
     )
 
-    monkeypatch.setattr(
-        live,
-        "query_audit",
-        lambda **_kwargs: {
+    audit_queries = []
+
+    def fake_query_audit(**kwargs):
+        audit_queries.append(kwargs)
+        return {
             "entries": [
+                {
+                    "id": "refresh-noise",
+                    "ts": 124.0,
+                    "event": "tool_call",
+                    "tool": "workspace_snapshot",
+                    "operation": "execute",
+                    "ok": True,
+                    "duration_ms": 1,
+                },
                 {
                     "id": "audit-1",
                     "ts": 123.0,
@@ -115,10 +123,11 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
                     "args": {"command": "printf super-secret"},
                     "result": {"stdout": "super-secret"},
                     "token": "super-secret",
-                }
+                },
             ]
-        },
-    )
+        }
+
+    monkeypatch.setattr(live, "query_audit", fake_query_audit)
 
     snapshot = await live.live_workspace_snapshot(harness.control, session_id)
     data = snapshot.model_dump(mode="json")
@@ -127,9 +136,21 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
     assert data["session"]["executor_id"] == harness.executor_id
     assert data["session"]["label"] == "review me"
     assert data["session"]["availability"] == "available"
-    assert data["task"] is None
-    assert data["task_controls_available"] is False
-    assert data["compatibility_plan"][0]["content"] == "inspect"
+    assert data["task"]["revision"] == 1
+    assert data["task"]["plan"]["steps"][0]["content"] == "inspect"
+    assert data["task_control_actions"] == [
+        "block",
+        "cancel",
+        "next_instruction",
+    ]
+    assert audit_queries == [
+        {
+            "limit": live._ACTIVITY_SCAN_LIMIT,
+            "session": session_id,
+            "sort": "desc",
+            "exclude_call_id": None,
+        }
+    ]
     assert data["activity"] == [
         {
             "id": "audit-1",
@@ -201,30 +222,29 @@ async def test_live_workspace_job_message_does_not_forward_backend_exception_tex
     ]
 
 
-class _FakeTask(BaseModel):
-    revision: int = 4
-    objective: str | None = "ship Live Workspace"
-    status: str = "active"
-    progress: dict[str, Any] = {}
-    plan: dict[str, Any] = {"steps": []}
-
-
 class _TaskService:
     def __init__(self) -> None:
-        self.task = _FakeTask()
+        self.task = SessionTaskOutput(
+            revision=4,
+            objective="ship Live Workspace",
+            status="active",
+            session_id="sess_fake",
+            label=None,
+            execution_status="active",
+        )
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def read_task(self, _session_id: str) -> _FakeTask:
+    async def read_task(self, _session_id: str) -> SessionTaskOutput:
         return self.task
 
     async def report_progress(
         self, session_id: str, **kwargs: Any
-    ) -> _FakeTask:
+    ) -> SessionTaskOutput:
         self.calls.append((session_id, kwargs))
         if "task_status" in kwargs:
             self.task.status = kwargs["task_status"]
         if "next_action" in kwargs:
-            self.task.progress = {"next_action": kwargs["next_action"]}
+            self.task.progress.next_action = kwargs["next_action"]
         self.task.revision += 1
         return self.task
 
@@ -241,17 +261,22 @@ class _TaskService:
 def test_live_workspace_task_actions_follow_task_lifecycle(
     task_status, expected
 ):
+    task = SessionTaskOutput.model_validate(
+        {
+            "status": task_status,
+            "session_id": "sess_test",
+            "execution_status": "active",
+        }
+    )
     actions, _message = live._task_control_actions(
-        {"status": task_status},
+        task,
         execution_status="active",
-        service_available=True,
     )
     assert actions == expected
 
     ended_actions, ended_message = live._task_control_actions(
-        {"status": task_status},
+        task,
         execution_status="ended",
-        service_available=True,
     )
     assert ended_actions == []
     assert ended_message is not None
@@ -268,7 +293,7 @@ async def test_live_workspace_controls_use_canonical_task_service(
     )
     session_id = _started_session_id(started)
     service = _TaskService()
-    harness.control.todo_service = service  # type: ignore[assignment]
+    harness.control.task_service = service  # type: ignore[assignment]
     monkeypatch.setattr(live, "query_audit", lambda **_kwargs: {"entries": []})
 
     blocked = await live.live_workspace_task_control(
@@ -282,8 +307,7 @@ async def test_live_workspace_controls_use_canonical_task_service(
         {"expected_revision": 4, "task_status": "blocked"},
     )
     assert blocked.task is not None
-    assert blocked.task["status"] == "blocked"
-    assert blocked.task_controls_available is True
+    assert blocked.task.status == "blocked"
     assert blocked.task_control_actions == [
         "resume",
         "cancel",
@@ -310,9 +334,8 @@ async def test_live_workspace_controls_use_canonical_task_service(
         "Please inspect the failing browser test."
     )
     assert instructed.task is not None
-    assert instructed.task["progress"]["next_action"].startswith(
-        "Please inspect"
-    )
+    assert instructed.task.progress.next_action is not None
+    assert instructed.task.progress.next_action.startswith("Please inspect")
 
     with pytest.raises(ValueError, match="instruction is required"):
         await live.live_workspace_task_control(

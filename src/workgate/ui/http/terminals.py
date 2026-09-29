@@ -117,14 +117,6 @@ async def _list_shells(
     return _normalize_list(executor_id, value)
 
 
-async def _list_shells_for_scope(
-    runtime: Any, executor_id: str, session_id: str | None
-) -> dict[str, Any]:
-    if session_id is None:
-        return await _list_shells(runtime, executor_id)
-    return await _list_shells(runtime, executor_id, session_id)
-
-
 async def _start_shell(
     runtime: Any,
     executor_id: str,
@@ -194,7 +186,7 @@ async def _attach_stream(
     rows: int,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    shells = await _list_shells_for_scope(runtime, executor_id, session_id)
+    shells = await _list_shells(runtime, executor_id, session_id)
     if shell_id not in {
         str(item.get("shell_id") or "") for item in shells["shells"]
     }:
@@ -253,9 +245,7 @@ async def api_terminals(request: Request) -> Response:
         session_id = _session_id_arg(request.query_params.get("session_id"))
         _require_terminal_scopes()
         return _json_ok(
-            await _list_shells_for_scope(
-                _runtime(request), executor_id, session_id
-            )
+            await _list_shells(_runtime(request), executor_id, session_id)
         )
     except HTTPException:
         raise

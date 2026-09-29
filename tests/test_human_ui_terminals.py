@@ -524,7 +524,7 @@ def test_terminal_read_normalization_rejects_oversized_executor_output():
 def test_terminal_http_maps_executor_connection_failure(monkeypatch, tmp_path):
     client, _, _ = _client(monkeypatch, tmp_path)
 
-    async def fail_list(_runtime, _executor_id):
+    async def fail_list(_runtime, _executor_id, _session_id=None):
         raise ConnectionError("executor offline")
 
     monkeypatch.setattr(terminal_module, "_list_shells", fail_list)

@@ -1,8 +1,4 @@
-            return (
-                await self._shell.start(args)
-                if session_scoped
-                else await self._shell.start_unowned(args)
-            )"""Executor-owned Human UI terminal and raw-PTY operations."""
+"""Executor-owned Human UI terminal and raw-PTY operations."""
 
 from typing import Any
 

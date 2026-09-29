@@ -59,8 +59,6 @@ def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
                 ]
             },
         },
-        "compatibility_plan": [],
-        "task_controls_available": bool(actions),
         "task_control_actions": actions,
         "task_controls_message": None,
         "jobs": [
@@ -248,6 +246,27 @@ def run_live_workspace(harness: BrowserHarness) -> None:
             "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser#audit",
         )
         assert "browser-super-secret" not in page.locator("body").inner_text()
+
+        page.evaluate(
+            """window.postMessage({
+                jsonrpc: "2.0",
+                method: "ui/notifications/tool-result",
+                params: {
+                    structuredContent: {
+                        session: {
+                            session_id: "sess_other",
+                            label: "wrong workspace"
+                        }
+                    }
+                }
+            }, "*")"""
+        )
+        expect(page.locator("#session-id")).to_have_text("sess_browser_live")
+        expect(page.locator("#title")).to_have_text("Browser handoff")
+        expect(page.locator("#status")).to_have_text(
+            "Ignored snapshot for a different session."
+        )
+
         calls = page.evaluate("window.__liveCalls")
         assert calls[0]["name"] == "ui/initialize"
         assert calls[0]["args"]["protocolVersion"] == "2026-01-26"
