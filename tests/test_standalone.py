@@ -163,8 +163,8 @@ def test_standalone_control_data_is_namespaced_by_state_root(
 
 @pytest.mark.parametrize("port", [-1, 0, 65536])
 def test_standalone_requires_stable_tcp_port(tmp_path: Path, port: int) -> None:
-    with pytest.raises(ValueError, match="between 1 and 65535"):
-        resolve_standalone_child_config(_settings(tmp_path, port=port))
+    with pytest.raises(ValueError, match="port"):
+        _settings(tmp_path, port=port)
 
 
 def test_private_launcher_bootstrap_becomes_normal_executor_profile(

@@ -357,6 +357,17 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     assert "executor-env-policy" not in control_settings.command_denylist
 
 
+def test_cli_numeric_overrides_use_settings_validation():
+    from workgate.config.cli import settings_from_args
+
+    args = cli._build_parser().parse_args(
+        ["control", "--mcp-max-sessions", "0"]
+    )
+
+    with pytest.raises(ValueError, match="mcp_max_sessions"):
+        settings_from_args(args)
+
+
 def test_control_and_executor_discover_distinct_default_yaml_files(
     tmp_path, monkeypatch
 ):

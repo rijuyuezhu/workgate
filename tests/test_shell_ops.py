@@ -1543,6 +1543,7 @@ def test_control_tool_watchdog_ignores_executor_shell_policy(
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
+    monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "1")
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "1")
     clear_settings_cache()
 

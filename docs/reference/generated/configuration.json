@@ -503,7 +503,7 @@
           {
             "code": "3600"
           },
-          "Bearer token lifetime in seconds. After this time, the token must be re-authorized and refreshed."
+          "Bearer token lifetime in seconds; 0 disables token expiry."
         ],
         [
           {
@@ -817,7 +817,7 @@
           {
             "code": "1000"
           },
-          "Maximum retained tracked-job records; active jobs are never pruned."
+          "Maximum retained tracked-job records; 0 keeps only active jobs."
         ],
         [
           {
@@ -1197,7 +1197,7 @@
           {
             "code": "20000000"
           },
-          "Maximum active audit JSONL bytes before atomic recent-record retention."
+          "Maximum active audit JSONL bytes before recent-record retention; 0 disables this size cap."
         ],
         [
           {
@@ -1337,7 +1337,7 @@
           {
             "code": "500"
           },
-          "Temporary-file count limit. When exceeded, old files are deleted."
+          "Temporary-file count limit; 0 removes all eligible scratch files during pruning."
         ],
         [
           {
@@ -1357,7 +1357,7 @@
           {
             "code": "50000000"
           },
-          "Temporary-file byte limit. When exceeded, old files are deleted."
+          "Temporary-file byte limit; 0 removes all eligible scratch files during pruning."
         ],
         [
           {
@@ -2134,7 +2134,7 @@
       "cli": "--oauth-access-token-ttl-s",
       "default": 3600,
       "default_display": "3600",
-      "description": "Bearer token lifetime in seconds. After this time, the token must be re-authorized and refreshed.",
+      "description": "Bearer token lifetime in seconds; 0 disables token expiry.",
       "env": "WORKGATE_OAUTH_ACCESS_TOKEN_TTL_S",
       "name": "oauth_access_token_ttl_s",
       "nullable": false,
@@ -2332,7 +2332,7 @@
       "cli": "--max-jobs",
       "default": 1000,
       "default_display": "1000",
-      "description": "Maximum retained tracked-job records; active jobs are never pruned.",
+      "description": "Maximum retained tracked-job records; 0 keeps only active jobs.",
       "env": "WORKGATE_MAX_JOBS",
       "name": "max_jobs",
       "nullable": false,
@@ -2579,7 +2579,7 @@
       "cli": "--max-audit-log-bytes",
       "default": 20000000,
       "default_display": "20000000",
-      "description": "Maximum active audit JSONL bytes before atomic recent-record retention.",
+      "description": "Maximum active audit JSONL bytes before recent-record retention; 0 disables this size cap.",
       "env": "WORKGATE_MAX_AUDIT_LOG_BYTES",
       "name": "max_audit_log_bytes",
       "nullable": false,
@@ -2673,7 +2673,7 @@
       "cli": "--max-tmp-files",
       "default": 500,
       "default_display": "500",
-      "description": "Temporary-file count limit. When exceeded, old files are deleted.",
+      "description": "Temporary-file count limit; 0 removes all eligible scratch files during pruning.",
       "env": "WORKGATE_MAX_TMP_FILES",
       "name": "max_tmp_files",
       "nullable": false,
@@ -2686,7 +2686,7 @@
       "cli": "--max-tmp-bytes",
       "default": 50000000,
       "default_display": "50000000",
-      "description": "Temporary-file byte limit. When exceeded, old files are deleted.",
+      "description": "Temporary-file byte limit; 0 removes all eligible scratch files during pruning.",
       "env": "WORKGATE_MAX_TMP_BYTES",
       "name": "max_tmp_bytes",
       "nullable": false,
