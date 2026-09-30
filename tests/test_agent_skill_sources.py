@@ -108,6 +108,37 @@ def test_skill_sources_deduplicate_symlinked_equivalent_roots(
     assert sources[0].path == project.resolve() / ".agents/skills"
 
 
+def test_skill_sources_keep_lexical_root_when_resolution_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = tmp_path / "project"
+    managed = tmp_path / "managed"
+    xdg = tmp_path / "xdg"
+    project.mkdir()
+    managed.mkdir()
+    managed_root = managed.resolve()
+    failing_path = managed_root / "skills"
+    original_resolve = Path.resolve
+
+    def resolve_with_source_failure(self: Path, strict: bool = False) -> Path:
+        if self == failing_path:
+            raise RuntimeError("simulated symlink resolution loop")
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve_with_source_failure)
+
+    sources = skill_sources(
+        project_root=project,
+        managed_config_dir=managed,
+        managed_directory="skills",
+        environ={"XDG_CONFIG_HOME": str(xdg)},
+        include_project=False,
+    )
+
+    assert [source.name for source in sources] == ["managed", "global"]
+    assert sources[0].path == failing_path
+
+
 def test_source_warning_limit_adds_one_omission_marker() -> None:
     warnings = [
         f"warning-{index}" for index in range(source_module.MAX_SOURCE_WARNINGS)
