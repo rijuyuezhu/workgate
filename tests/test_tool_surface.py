@@ -342,9 +342,14 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
     assert isinstance(search, CallToolResult)
     assert isinstance(search.structuredContent, dict)
     assert isinstance(search.content[0], TextContent)
-    assert (
-        search.content[0].text == search.structuredContent["numbered_content"]
+    numbered = search.structuredContent["numbered_content"]
+    stderr = search.structuredContent["stderr"].strip()
+    expected_search_text = (
+        numbered
+        or stderr
+        or ("No matches." if search.structuredContent["count"] == 0 else "")
     )
+    assert search.content[0].text == expected_search_text
 
     bash = await mcp.call_tool(
         "bash",
