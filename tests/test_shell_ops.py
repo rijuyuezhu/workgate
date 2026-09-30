@@ -1896,6 +1896,15 @@ def test_internal_shell_timeout_uses_larger_run_shell_values(
 
 
 @pytest.mark.asyncio
+async def test_trusted_argv_still_rejects_empty_argv(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    clear_settings_cache()
+
+    with pytest.raises(ValueError, match="argv must not be empty"):
+        await shell_ops._run_exec(_executor_config(), [], cwd=str(tmp_path))
+
+
+@pytest.mark.asyncio
 async def test_run_shell_command_timeout_includes_subprocess_spawn(
     tmp_path, monkeypatch
 ):
