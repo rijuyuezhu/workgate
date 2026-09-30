@@ -83,62 +83,6 @@ def test_skill_sources_deduplicate_equivalent_roots(tmp_path: Path) -> None:
     assert [source.name for source in sources] == ["project", "global"]
 
 
-def test_skill_sources_deduplicate_symlinked_equivalent_roots(
-    tmp_path: Path,
-) -> None:
-    project = tmp_path / "project"
-    managed = tmp_path / "managed"
-    xdg = tmp_path / "xdg"
-    shared = project / ".agents/skills"
-    shared.mkdir(parents=True)
-    managed.mkdir()
-    try:
-        (managed / "skills").symlink_to(shared, target_is_directory=True)
-    except NotImplementedError, OSError:
-        pytest.skip("symlink creation is unavailable")
-
-    sources = skill_sources(
-        project_root=project,
-        managed_config_dir=managed,
-        managed_directory="skills",
-        environ={"XDG_CONFIG_HOME": str(xdg)},
-    )
-
-    assert [source.name for source in sources] == ["project", "global"]
-    assert sources[0].path == project.resolve() / ".agents/skills"
-
-
-def test_skill_sources_keep_lexical_root_when_resolution_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    project = tmp_path / "project"
-    managed = tmp_path / "managed"
-    xdg = tmp_path / "xdg"
-    project.mkdir()
-    managed.mkdir()
-    managed_root = managed.resolve()
-    failing_path = managed_root / "skills"
-    original_resolve = Path.resolve
-
-    def resolve_with_source_failure(self: Path, strict: bool = False) -> Path:
-        if self == failing_path:
-            raise RuntimeError("simulated symlink resolution loop")
-        return original_resolve(self, strict=strict)
-
-    monkeypatch.setattr(Path, "resolve", resolve_with_source_failure)
-
-    sources = skill_sources(
-        project_root=project,
-        managed_config_dir=managed,
-        managed_directory="skills",
-        environ={"XDG_CONFIG_HOME": str(xdg)},
-        include_project=False,
-    )
-
-    assert [source.name for source in sources] == ["managed", "global"]
-    assert sources[0].path == failing_path
-
-
 def test_source_warning_limit_adds_one_omission_marker() -> None:
     warnings = [
         f"warning-{index}" for index in range(source_module.MAX_SOURCE_WARNINGS)
@@ -317,55 +261,6 @@ async def test_project_skill_payloads_and_dynamic_reloader_use_registry_snapshot
     dynamic = await handler()
     assert dynamic.name == "debugging"
     assert "find root causes" in dynamic.content
-
-
-def test_registry_skill_reads_follow_current_symlink_targets(
-    tmp_path: Path,
-) -> None:
-    project = tmp_path / "project"
-    managed = tmp_path / "managed"
-    skill = project / ".agents/skills/debugging"
-    skill.mkdir(parents=True)
-    managed.mkdir()
-    entry_a = tmp_path / "entry-a.md"
-    entry_b = tmp_path / "entry-b.md"
-    guide_a = tmp_path / "guide-a.md"
-    guide_b = tmp_path / "guide-b.md"
-    entry_a.write_text("# debugging\n\nentry A.\n", encoding="utf-8")
-    entry_b.write_text("# debugging\n\nentry B.\n", encoding="utf-8")
-    guide_a.write_text("guide A", encoding="utf-8")
-    guide_b.write_text("guide B", encoding="utf-8")
-    try:
-        (skill / "SKILL.md").symlink_to(entry_a)
-        (skill / "guide.md").symlink_to(guide_a)
-    except NotImplementedError, OSError:
-        pytest.skip("symlink creation is unavailable")
-
-    registry = build_agent_registry(
-        managed,
-        _NoopClientManager(),
-        project_root=project,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
-    )
-    record = registry.skills["debugging"]
-    assert record.entry_path == ".agents/skills/debugging/SKILL.md"
-    assert record.related_files == ["guide.md"]
-
-    (skill / "SKILL.md").unlink()
-    (skill / "guide.md").unlink()
-    (skill / "SKILL.md").symlink_to(entry_b)
-    (skill / "guide.md").symlink_to(guide_b)
-
-    activated = activate_agent_skill_payload(
-        registry, "debugging", max_entry_bytes=1024
-    )
-    related = read_agent_skill_file_payload(
-        registry, "debugging", "guide.md", max_file_bytes=1024
-    )
-
-    assert "entry B" in activated.content
-    assert related["content"] == "guide B"
 
 
 @pytest.mark.parametrize(

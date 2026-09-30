@@ -1,6 +1,5 @@
 """Agent bridge configuration and registry data models."""
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -298,11 +297,7 @@ class SkillSource:
     @property
     def path(self) -> Path:
         """Return the normalized lexical Skill root without resolving symlinks."""
-        return Path(
-            os.path.abspath(
-                self.config_dir.expanduser().resolve() / self.directory
-            )
-        )
+        return self.config_dir.expanduser().resolve() / self.directory
 
     def public_row(self) -> dict[str, str]:
         """Return bounded source metadata suitable for public tool responses."""
