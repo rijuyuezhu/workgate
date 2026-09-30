@@ -189,7 +189,7 @@ def _resolved_skills_directory(
     config_dir: Path, directory: str
 ) -> tuple[Path, Path]:
     """Return the resolved config root and lexical relative Skills root."""
-    config_root = config_dir.expanduser().resolve()
+    config_root = config_dir.resolve()
     directory_path = Path(directory)
     if not _is_relative_child_path(directory_path):
         raise ValueError(
