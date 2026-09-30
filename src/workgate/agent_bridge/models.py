@@ -296,10 +296,8 @@ class SkillSource:
 
     @property
     def path(self) -> Path:
-        """Return the normalized absolute Skill root without requiring it to exist."""
-        return (
-            self.config_dir.expanduser().resolve() / self.directory
-        ).resolve()
+        """Return the normalized lexical Skill root without resolving symlinks."""
+        return self.config_dir.expanduser().resolve() / self.directory
 
     def public_row(self) -> dict[str, str]:
         """Return bounded source metadata suitable for public tool responses."""
