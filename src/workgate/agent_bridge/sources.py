@@ -49,9 +49,13 @@ def skill_sources(
     seen_paths: set[Path] = set()
     for source in candidates:
         path = source.path
-        if path in seen_paths:
+        try:
+            identity = path.resolve()
+        except OSError, RuntimeError:
+            identity = path
+        if identity in seen_paths:
             continue
-        seen_paths.add(path)
+        seen_paths.add(identity)
         unique.append(source)
     return tuple(unique)
 

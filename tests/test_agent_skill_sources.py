@@ -83,6 +83,31 @@ def test_skill_sources_deduplicate_equivalent_roots(tmp_path: Path) -> None:
     assert [source.name for source in sources] == ["project", "global"]
 
 
+def test_skill_sources_deduplicate_symlinked_equivalent_roots(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    managed = tmp_path / "managed"
+    xdg = tmp_path / "xdg"
+    shared = project / ".agents/skills"
+    shared.mkdir(parents=True)
+    managed.mkdir()
+    try:
+        (managed / "skills").symlink_to(shared, target_is_directory=True)
+    except NotImplementedError, OSError:
+        pytest.skip("symlink creation is unavailable")
+
+    sources = skill_sources(
+        project_root=project,
+        managed_config_dir=managed,
+        managed_directory="skills",
+        environ={"XDG_CONFIG_HOME": str(xdg)},
+    )
+
+    assert [source.name for source in sources] == ["project", "global"]
+    assert sources[0].path == project.resolve() / ".agents/skills"
+
+
 def test_source_warning_limit_adds_one_omission_marker() -> None:
     warnings = [
         f"warning-{index}" for index in range(source_module.MAX_SOURCE_WARNINGS)
@@ -261,6 +286,88 @@ async def test_project_skill_payloads_and_dynamic_reloader_use_registry_snapshot
     dynamic = await handler()
     assert dynamic.name == "debugging"
     assert "find root causes" in dynamic.content
+
+
+@pytest.mark.parametrize(
+    ("source_name", "directory"),
+    (
+        ("project", ".agents/skills"),
+        ("managed", "skills"),
+        ("global", "agents/skills"),
+    ),
+)
+def test_each_skill_source_accepts_symlinked_skill(
+    tmp_path: Path, source_name: str, directory: str
+) -> None:
+    root = tmp_path / source_name
+    shared = tmp_path / f"shared-{source_name}"
+    (root / directory).mkdir(parents=True)
+    shared.mkdir()
+    (shared / "SKILL.md").write_text(
+        f"# linked\n\n{source_name} marker.\n", encoding="utf-8"
+    )
+    try:
+        (root / directory / "linked").symlink_to(
+            shared, target_is_directory=True
+        )
+    except NotImplementedError, OSError:
+        pytest.skip("symlink creation is unavailable")
+
+    result = scan_skill_sources(
+        (SkillSource(source_name, root, directory),),
+        max_skills=10,
+        max_related_files=100,
+        max_scan_entries=100,
+        max_path_bytes=10_000,
+        max_entry_bytes=10_000,
+    )
+
+    record = result.skills["linked"]
+    assert record.source == source_name
+    assert record.source_path == str(root.resolve() / directory)
+    assert record.entry_path == f"{directory}/linked/SKILL.md"
+
+
+def test_symlinked_skill_preserves_multi_source_duplicate_priority(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    managed = tmp_path / "managed"
+    shared = tmp_path / "shared-project-skill"
+    (project / ".agents/skills").mkdir(parents=True)
+    managed.mkdir()
+    shared.mkdir()
+    (shared / "SKILL.md").write_text(
+        "# debugging\n\nproject marker.\n", encoding="utf-8"
+    )
+    try:
+        (project / ".agents/skills/debugging").symlink_to(
+            shared, target_is_directory=True
+        )
+    except NotImplementedError, OSError:
+        pytest.skip("symlink creation is unavailable")
+    _install_skill(managed, "skills", "debugging", "managed marker")
+    sources = (
+        SkillSource("project", project, ".agents/skills"),
+        SkillSource("managed", managed, "skills"),
+    )
+
+    result = scan_skill_sources(
+        sources,
+        max_skills=10,
+        max_related_files=100,
+        max_scan_entries=100,
+        max_path_bytes=10_000,
+        max_entry_bytes=10_000,
+    )
+
+    assert result.skills["debugging"].source == "project"
+    assert result.skills["debugging"].entry_path == (
+        ".agents/skills/debugging/SKILL.md"
+    )
+    assert any(
+        "duplicate Skill 'debugging'" in warning for warning in result.warnings
+    )
 
 
 def test_multi_source_scan_shares_entry_and_skill_budgets(

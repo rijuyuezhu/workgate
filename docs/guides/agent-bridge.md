@@ -78,6 +78,8 @@ Reproduce the failure first, inspect the smallest relevant code path, and verify
 
 Use `list_agent_skills` to see discovered names and sources, then `activate_agent_skill` to load one. Related files returned by a Skill can be read with `read_agent_skill_file`.
 
+Skill trees may use normal filesystem symlinks for the Skill directory, `SKILL.md`, and related files or directories. Workgate follows those links under the same file-size and scan budgets while keeping the configured Skill/source path and Skill-relative related paths in tool output. Broken links and directory loops are skipped or reported without unbounded traversal.
+
 When dynamic Skill tools are enabled, selected Skills also appear directly in the MCP tool list.
 
 ## Store a static secret
