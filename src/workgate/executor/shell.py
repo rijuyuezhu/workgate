@@ -137,16 +137,6 @@ def _shared_tail_bytes(
     )
 
 
-def check_command_policy(config: ExecutorConfig, command: str) -> None:
-    """Reject shell commands matching executor-owned denylist entries."""
-    normalized = command.casefold()
-    for denied in config.command_denylist:
-        if denied and denied.casefold() in normalized:
-            raise PermissionError(
-                f"Command contains denylisted fragment: {denied!r}"
-            )
-
-
 def _effective_shell_default_timeout_s(config: ExecutorConfig) -> int:
     """Return the effective internal shell default timeout."""
     return max(
@@ -436,12 +426,10 @@ async def run_shell(
     env: dict[str, str] | None = None,
 ) -> CommandResult:
     """Execute a shell command under explicit executor-owned policy."""
-    check_command_policy(config, command)
     resolved_cwd = resolve_path_with_policy(
         cwd,
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
         must_exist=True,
     )
     start = time.time()
@@ -593,12 +581,10 @@ async def _run_exec(
     if not argv:
         raise ValueError("argv must not be empty")
     command = _shell_join_argv(argv)
-    check_command_policy(config, command)
     resolved_cwd = resolve_path_with_policy(
         cwd,
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
         must_exist=True,
     )
     start = time.time()
@@ -812,7 +798,6 @@ async def _start_persistent_shell_locked(
         cwd,
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
         must_exist=True,
     )
     active_shell_ids = await authoritative_persistent_shell_ids_execute(
@@ -842,7 +827,6 @@ async def _start_persistent_shell_locked(
                 "pywinpty is required for persistent shells on Windows"
             )
         initial = conpty.initial_command(command, config.shell_executable)
-        check_command_policy(config, initial)
         try:
             return await conpty.start_shell(
                 shell_id=shell_id,
@@ -866,7 +850,6 @@ async def _start_persistent_shell_locked(
             "configured shell executable was not found or is not executable",
         )
     initial = command or configured_shell
-    check_command_policy(config, initial)
     cmd = [
         "new-session",
         "-d",

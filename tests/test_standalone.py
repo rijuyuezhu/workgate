@@ -103,7 +103,7 @@ def test_standalone_resolves_distinct_role_authority(tmp_path: Path) -> None:
         auth_bypass_localhost=True,
         oauth_issuer="https://public.example",
         oauth_resource="https://public.example/mcp",
-        command_denylist=["shutdown"],
+        shell_executable="/bin/custom-shell",
     )
 
     resolved = resolve_standalone_child_config(settings)
@@ -127,13 +127,13 @@ def test_standalone_resolves_distinct_role_authority(tmp_path: Path) -> None:
     )
     assert "workspace_root" not in resolved.control
     assert "allow_full_control" not in resolved.control
-    assert "command_denylist" not in resolved.control
+    assert "shell_executable" not in resolved.control
 
     assert resolved.executor["workspace_root"] == str(
         (tmp_path / "workspace").resolve()
     )
     assert resolved.executor["allow_full_control"] is False
-    assert resolved.executor["command_denylist"] == ["shutdown"]
+    assert resolved.executor["shell_executable"] == "/bin/custom-shell"
     assert resolved.executor["state_dir"] == str(
         tmp_path / "state" / "standalone" / "executor"
     )

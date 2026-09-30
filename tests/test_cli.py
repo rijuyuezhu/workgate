@@ -195,7 +195,6 @@ def test_run_standalone_from_args_maps_lock_contention(monkeypatch):
     [
         ("--workspace-root", "/tmp/work"),
         ("--allow-full-control", "true"),
-        ("--command-denylist", "shutdown"),
         ("--shell-executable", "/bin/bash"),
     ],
 )
@@ -342,14 +341,14 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     )
     monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "env-control-secret")
-    monkeypatch.setenv("WORKGATE_COMMAND_DENYLIST", "executor-env-policy")
+    monkeypatch.setenv("WORKGATE_SHELL_EXECUTABLE", "/bin/executor-env-shell")
 
     executor_args = cli._build_parser().parse_args(
         ["executor", "run", "--config", str(config)]
     )
     executor_settings = settings_from_args(executor_args)
     assert executor_settings.workspace_root == workspace
-    assert executor_settings.command_denylist == ["executor-env-policy"]
+    assert executor_settings.shell_executable == "/bin/executor-env-shell"
     assert executor_settings.oauth_admin_pin is None
     assert executor_settings.port == Settings().port
 
@@ -360,7 +359,10 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     assert control_settings.oauth_admin_pin == "env-control-secret"
     assert control_settings.port == 9876
     assert control_settings.workspace_root != workspace
-    assert "executor-env-policy" not in control_settings.command_denylist
+    assert (
+        control_settings.shell_executable
+        == Settings.model_fields["shell_executable"].get_default()
+    )
 
 
 def test_cli_numeric_overrides_use_settings_validation():
@@ -399,13 +401,13 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
         encoding="utf-8",
     )
     executor_config.write_text(
-        f"workspace_root: {workspace}\ncommand_denylist: [executor-only]\n",
+        f"workspace_root: {workspace}\nshell_executable: /bin/executor-only\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
     monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
     monkeypatch.delenv("WORKGATE_OAUTH_ADMIN_PIN", raising=False)
-    monkeypatch.delenv("WORKGATE_COMMAND_DENYLIST", raising=False)
+    monkeypatch.delenv("WORKGATE_SHELL_EXECUTABLE", raising=False)
     monkeypatch.delenv("WORKGATE_STATE_DIR", raising=False)
 
     control_args = cli._build_parser().parse_args(["control"])
@@ -418,7 +420,7 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
     executor = settings_from_args(executor_args)
     assert executor.workspace_root == workspace
     assert executor.state_dir == paths.executor_state_dir
-    assert executor.command_denylist == ["executor-only"]
+    assert executor.shell_executable == "/bin/executor-only"
     assert executor.oauth_admin_pin is None
     assert executor.port == Settings().port
 
@@ -480,6 +482,12 @@ def test_every_setting_has_generic_cli_option():
             assert spec.unset_cli_flag in help_text
         else:
             assert spec.unset_cli_flag not in help_text
+
+
+@pytest.mark.parametrize("flag", ("--command-denylist", "--path-denylist"))
+def test_removed_denylist_cli_flags_are_rejected(flag):
+    with pytest.raises(SystemExit):
+        cli._build_parser().parse_args(["executor", "run", flag, "value"])
 
 
 def test_removed_remote_worker_settings_stay_out_of_public_config_surface():

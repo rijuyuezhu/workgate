@@ -737,7 +737,7 @@
           {
             "code": "false"
           },
-          "Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP safety annotations remain conservative in this mode."
+          "Allow executor filesystem operations to escape workspace_root; use only where unrestricted filesystem access is intended. MCP safety annotations remain conservative in this mode."
         ],
         [
           {
@@ -1581,46 +1581,6 @@
         ],
         [
           {
-            "code": "command_denylist"
-          },
-          {
-            "lines": [
-              {
-                "code": "--command-denylist"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_COMMAND_DENYLIST"
-          },
-          "CSV or YAML list",
-          {
-            "code": "docker.sock,/var/run/docker.sock,mkfs,mount,umount,shutdown,reboot,systemctl,iptables,nft"
-          },
-          "Comma-separated command denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled."
-        ],
-        [
-          {
-            "code": "path_denylist"
-          },
-          {
-            "lines": [
-              {
-                "code": "--path-denylist"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_PATH_DENYLIST"
-          },
-          "CSV or YAML list",
-          {
-            "code": ".ssh/id_rsa,.ssh/id_ed25519,.env,secrets,credentials,.git/config"
-          },
-          "Comma-separated path denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled."
-        ],
-        [
-          {
             "code": "executor_max_pending_commands"
           },
           {
@@ -2326,7 +2286,7 @@
       "cli": "--allow-full-control",
       "default": false,
       "default_display": "false",
-      "description": "Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP safety annotations remain conservative in this mode.",
+      "description": "Allow executor filesystem operations to escape workspace_root; use only where unrestricted filesystem access is intended. MCP safety annotations remain conservative in this mode.",
       "env": "WORKGATE_ALLOW_FULL_CONTROL",
       "name": "allow_full_control",
       "nullable": false,
@@ -2884,50 +2844,6 @@
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--command-denylist",
-      "default": [
-        "docker.sock",
-        "/var/run/docker.sock",
-        "mkfs",
-        "mount",
-        "umount",
-        "shutdown",
-        "reboot",
-        "systemctl",
-        "iptables",
-        "nft"
-      ],
-      "default_display": "docker.sock,/var/run/docker.sock,mkfs,mount,umount,shutdown,reboot,systemctl,iptables,nft",
-      "description": "Comma-separated command denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled.",
-      "env": "WORKGATE_COMMAND_DENYLIST",
-      "name": "command_denylist",
-      "nullable": false,
-      "section": "Safety and resource limits",
-      "type": "CSV or YAML list",
-      "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--path-denylist",
-      "default": [
-        ".ssh/id_rsa",
-        ".ssh/id_ed25519",
-        ".env",
-        "secrets",
-        "credentials",
-        ".git/config"
-      ],
-      "default_display": ".ssh/id_rsa,.ssh/id_ed25519,.env,secrets,credentials,.git/config",
-      "description": "Comma-separated path denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled.",
-      "env": "WORKGATE_PATH_DENYLIST",
-      "name": "path_denylist",
-      "nullable": false,
-      "section": "Safety and resource limits",
-      "type": "CSV or YAML list",
       "unset_cli": null
     },
     {

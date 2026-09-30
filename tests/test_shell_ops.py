@@ -35,7 +35,6 @@ from workgate.executor.shell import (
     _shell_command_args,
     _subprocess_env,
     _tmux_session_name,
-    check_command_policy,
     clamp_timeout,
     read_persistent_shell_output_execute,
     resize_persistent_shell_execute,
@@ -675,7 +674,6 @@ shell_ops._use_conpty_persistent_shell_backend = lambda: False
 shell_ops._tmux_session_name = lambda _name: shell_name
 shell_ops._resolved_tmux_shell = lambda _config, _cwd: "/bin/sh"
 shell_ops.shutil.which = lambda *_args, **_kwargs: "/bin/sh"
-shell_ops.check_command_policy = lambda _config, _command: None
 
 async def inventory(_config, _store, *, preserve_shell_ids=None):
     assert preserve_shell_ids == set()
@@ -819,7 +817,6 @@ store = services.tool_session_store
 shell_ops._PERSISTENT_SHELL_CREATION_LOCK = None
 shell_ops._use_conpty_persistent_shell_backend = lambda: True
 shell_ops._tmux_session_name = lambda name: str(name)
-shell_ops.check_command_policy = lambda _config, _command: None
 conpty.is_available = lambda: True
 
 class FakePty:
@@ -958,9 +955,6 @@ async def test_tmux_start_cancellation_cleans_created_session(
     )
     monkeypatch.setattr(
         shell_ops.shutil, "which", lambda *_args, **_kwargs: "/bin/sh"
-    )
-    monkeypatch.setattr(
-        shell_ops, "check_command_policy", lambda _config, _command: None
     )
     monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
 
@@ -1501,14 +1495,6 @@ def test_command_with_env_uses_cmd_assignments(monkeypatch):
     assert command == 'set "TOKEN=a b" && echo ok'
 
 
-def test_command_denylist_matching_is_case_insensitive(monkeypatch):
-    monkeypatch.setenv("WORKGATE_COMMAND_DENYLIST", "RM -RF")
-    clear_settings_cache()
-
-    with pytest.raises(PermissionError, match="denylisted fragment"):
-        check_command_policy(_executor_config(), "rm -rf /tmp/example")
-
-
 def test_tmux_session_name_strips_invalid_edges_and_has_safe_fallback():
     assert _tmux_session_name("  ..example shell--  ") == "example-shell"
 
@@ -1910,6 +1896,15 @@ def test_internal_shell_timeout_uses_larger_run_shell_values(
 
 
 @pytest.mark.asyncio
+async def test_trusted_argv_still_rejects_empty_argv(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    clear_settings_cache()
+
+    with pytest.raises(ValueError, match="argv must not be empty"):
+        await shell_ops._run_exec(_executor_config(), [], cwd=str(tmp_path))
+
+
+@pytest.mark.asyncio
 async def test_run_shell_command_timeout_includes_subprocess_spawn(
     tmp_path, monkeypatch
 ):
@@ -1932,15 +1927,15 @@ async def test_run_shell_command_timeout_includes_subprocess_spawn(
 
 
 @pytest.mark.asyncio
-async def test_run_shell_command_fast_command_succeeds(tmp_path, monkeypatch):
+async def test_run_shell_does_not_filter_command_text(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     clear_settings_cache()
 
-    result = await run_shell(_executor_config(), "echo ok", timeout_s=5)
+    result = await run_shell(_executor_config(), "echo shutdown", timeout_s=5)
 
     assert result.ok is True
     assert result.timed_out is False
-    assert "ok" in result.stdout
+    assert "shutdown" in result.stdout
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="requires Linux subreaper")

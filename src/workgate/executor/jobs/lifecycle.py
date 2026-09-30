@@ -11,7 +11,6 @@ from ...jobs import status as job_status
 from ...jobs.persistence import attempt_paths as _attempt_paths
 from ...jobs.state import JobAttemptPaths, MutableJobRow
 from ...utils.private_files import write_private_text
-from ..shell import check_command_policy
 
 _adopt_pending_retry = job_status._adopt_pending_retry
 _clear_pending_retry = job_status._clear_pending_retry
@@ -98,7 +97,6 @@ def _prepare_attempt(
     cwd: Path,
 ) -> tuple[JobAttemptPaths, str]:
     """Validate and materialize one executor-owned durable shell attempt."""
-    check_command_policy(config, command)
     paths = _attempt_paths(job_id, attempt)
     write_private_text(paths["command"], command)
     paths["log"].unlink(missing_ok=True)

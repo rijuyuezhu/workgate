@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..app_paths import app_paths, ensure_private_directory
 from ..persistence import StateLayout
@@ -34,15 +34,6 @@ _PositiveInt = Annotated[int, Field(gt=0)]
 _NonNegativeInt = Annotated[int, Field(ge=0)]
 _PositiveFloat = Annotated[float, Field(gt=0)]
 _Port = Annotated[int, Field(ge=1, le=65535)]
-
-
-def _split_csv(value: str | list[str] | None) -> list[str]:
-    """Normalize comma-delimited environment values into list."""
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    return [x.strip() for x in value.split(",") if x.strip()]
 
 
 def normalize_ui_path(value: str) -> str:
@@ -157,7 +148,7 @@ class Settings(BaseSettings):
 
     # Safety and resource limits.
     allow_full_control: bool = False
-    """Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP safety annotations remain conservative in this mode."""
+    """Allow executor filesystem operations to escape workspace_root; use only where unrestricted filesystem access is intended. MCP safety annotations remain conservative in this mode."""
     """Allow network-capable operations."""
     tool_timeout_s: _PositiveFloat = 60
     """Base control-owned MCP/HTTP tool watchdog timeout in seconds."""
@@ -259,33 +250,6 @@ class Settings(BaseSettings):
     """Default download-count limit for file links; 0 means unlimited until expiry."""
     file_download_max_file_bytes: _NonNegativeInt = 0
     """Maximum file size allowed for download links; 0 disables this size limit."""
-    command_denylist: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: [
-            "docker.sock",
-            "/var/run/docker.sock",
-            "mkfs",
-            "mount",
-            "umount",
-            "shutdown",
-            "reboot",
-            "systemctl",
-            "iptables",
-            "nft",
-        ]
-    )
-    """Comma-separated command denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled."""
-    path_denylist: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: [
-            ".ssh/id_rsa",
-            ".ssh/id_ed25519",
-            ".env",
-            "secrets",
-            "credentials",
-            ".git/config",
-        ]
-    )
-    """Comma-separated path denylist in env/CLI, or a YAML list in config files. Cleared when full-control mode is enabled."""
-
     # Executor transport.
     executor_max_pending_commands: int = Field(default=64, ge=1)
     """Maximum queued or offered ordinary commands retained per executor."""
@@ -387,12 +351,6 @@ class Settings(BaseSettings):
         """Normalize supported log levels before Literal validation."""
         return str(value).strip().lower()
 
-    @field_validator("command_denylist", "path_denylist", mode="before")
-    @classmethod
-    def split_csv_fields(cls, value: str | list[str] | None) -> list[str]:
-        """Normalize comma-delimited restriction lists supplied through environment variables."""
-        return _split_csv(value)
-
     @model_validator(mode="after")
     def validate_limit_relationships(self) -> Settings:
         """Keep related runtime limits internally consistent."""
@@ -414,14 +372,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "max_audit_payload_bytes must not exceed max_audit_payload_store_bytes"
             )
-        return self
-
-    @model_validator(mode="after")
-    def disable_builtin_restrictions_in_full_container_mode(self) -> Settings:
-        """Remove built-in command and path restrictions when full-control mode is explicitly enabled."""
-        if self.allow_full_control:
-            self.command_denylist = []
-            self.path_denylist = []
         return self
 
 

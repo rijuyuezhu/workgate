@@ -69,8 +69,6 @@ class SearchPathAccess:
     """Configured workspace boundary used for ordinary path resolution."""
     allow_full_control: bool
     """Whether absolute paths may escape the workspace boundary."""
-    path_denylist: tuple[str, ...]
-    """Case-insensitive path fragments denied even after resolution."""
 
     def resolve(
         self,
@@ -85,7 +83,6 @@ class SearchPathAccess:
             path,
             workspace_root=self.workspace_root,
             allow_full_control=self.allow_full_control,
-            path_denylist=self.path_denylist,
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,

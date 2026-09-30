@@ -141,7 +141,6 @@ class ExecutorSessionService:
             workdir,
             workspace_root=self._config.workspace_root,
             allow_full_control=self._config.allow_full_control,
-            path_denylist=self._config.path_denylist,
             must_exist=True,
         )
         if not resolved.is_dir():

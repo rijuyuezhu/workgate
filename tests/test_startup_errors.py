@@ -45,7 +45,6 @@ def _resolve_ambient_path(
         path,
         workspace_root=settings.workspace_root,
         allow_full_control=settings.allow_full_control,
-        path_denylist=tuple(settings.path_denylist),
         must_exist=must_exist,
     )
 

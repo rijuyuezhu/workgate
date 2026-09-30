@@ -351,7 +351,6 @@ def build_executor_runtime(
             path,
             workspace_root=config.workspace_root,
             allow_full_control=config.allow_full_control,
-            path_denylist=config.path_denylist,
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,

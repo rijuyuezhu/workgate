@@ -9,7 +9,7 @@ import argparse
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import PurePath
-from typing import Annotated, Any, Literal, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, get_args, get_origin
 
 from .settings import ENV_PREFIX, Settings
 
@@ -398,10 +398,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         metavar="BYTES",
     ),
     SettingSpec(
-        "command_denylist", "Safety and resource limits", metavar="CSV"
-    ),
-    SettingSpec("path_denylist", "Safety and resource limits", metavar="CSV"),
-    SettingSpec(
         "executor_max_pending_commands",
         "Safety and resource limits",
         metavar="COUNT",
@@ -472,9 +468,6 @@ def default_to_string(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, PurePath):
         return value.as_posix()
-    if isinstance(value, list):
-        items = cast(list[Any], value)
-        return ",".join(str(item) for item in items)
     return str(value)
 
 

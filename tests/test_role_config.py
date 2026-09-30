@@ -20,8 +20,7 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
         data_dir=tmp_path / "data",
         host="127.0.0.2",
         port=9876,
-        command_denylist=["shutdown"],
-        path_denylist=[".env"],
+        shell_executable="/bin/custom-shell",
         ui_terminal_max_connections=23,
         executor_max_pending_commands=17,
     )
@@ -36,32 +35,17 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     assert control.ui_terminal_max_connections == 23
     assert control.executor_max_pending_commands == 17
     assert not hasattr(control, "workspace_root")
-    assert not hasattr(control, "command_denylist")
     assert not hasattr(control, "shell_executable")
 
     assert executor.workspace_root == settings.workspace_root.resolve(
         strict=False
     )
-    assert executor.command_denylist == ("shutdown",)
-    assert executor.path_denylist == (".env",)
+    assert executor.shell_executable == "/bin/custom-shell"
     assert executor.state_dir == settings.state_dir.resolve(strict=False)
     assert not hasattr(executor, "host")
     assert not hasattr(executor, "port")
     assert not hasattr(executor, "auth_mode")
     assert not hasattr(executor, "executor_max_pending_commands")
-
-
-def test_role_configs_snapshot_legacy_settings(tmp_path: Path) -> None:
-    settings = Settings(
-        workspace_root=tmp_path,
-        state_dir=tmp_path / "state",
-        command_denylist=["shutdown"],
-    )
-    executor = resolve_executor_config(settings)
-
-    settings.command_denylist.append("reboot")
-
-    assert executor.command_denylist == ("shutdown",)
 
 
 def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
