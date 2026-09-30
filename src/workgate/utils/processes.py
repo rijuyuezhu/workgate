@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -18,6 +19,25 @@ _FROZEN_LOADER_ENV_VARS = (
 )
 
 
+_BUILTIN_BLOCKED_ENV_NAMES = frozenset({"PYTHONPATH"})
+_BUILTIN_BLOCKED_ENV_PREFIXES = ("WORKGATE_", "DOCKER_")
+
+
+def user_subprocess_env_name_blocked(
+    name: str,
+    *,
+    blocked_names: tuple[str, ...] = (),
+    blocked_prefixes: tuple[str, ...] = (),
+) -> bool:
+    """Return whether one environment variable is hidden from user subprocesses."""
+    return (
+        name in _BUILTIN_BLOCKED_ENV_NAMES
+        or name in blocked_names
+        or name.startswith(_BUILTIN_BLOCKED_ENV_PREFIXES)
+        or name.startswith(blocked_prefixes)
+    )
+
+
 def _restore_or_remove_loader_var(env: dict[str, str], name: str) -> None:
     original_name = f"{name}_ORIG"
     original_value = env.pop(original_name, None)
@@ -27,15 +47,41 @@ def _restore_or_remove_loader_var(env: dict[str, str], name: str) -> None:
         env.pop(name, None)
 
 
-def user_subprocess_env(*, frozen: bool | None = None) -> dict[str, str]:
+def blocked_user_subprocess_env_names(
+    names: Iterable[str],
+    *,
+    blocked_names: tuple[str, ...] = (),
+    blocked_prefixes: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Return concrete environment names blocked by the effective policy."""
+    return tuple(
+        sorted(
+            name
+            for name in set(names)
+            if user_subprocess_env_name_blocked(
+                name,
+                blocked_names=blocked_names,
+                blocked_prefixes=blocked_prefixes,
+            )
+        )
+    )
+
+
+def user_subprocess_env(
+    *,
+    blocked_names: tuple[str, ...] = (),
+    blocked_prefixes: tuple[str, ...] = (),
+    frozen: bool | None = None,
+) -> dict[str, str]:
     """Return a sanitized environment for commands launched on behalf of users."""
-    blocked_names = {"PYTHONPATH"}
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in blocked_names
-        and not key.startswith("WORKGATE_")
-        and not key.startswith("DOCKER_")
+        if not user_subprocess_env_name_blocked(
+            key,
+            blocked_names=blocked_names,
+            blocked_prefixes=blocked_prefixes,
+        )
     }
     is_frozen = (
         bool(getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None))
@@ -45,6 +91,13 @@ def user_subprocess_env(*, frozen: bool | None = None) -> dict[str, str]:
     if is_frozen:
         for name in _FROZEN_LOADER_ENV_VARS:
             _restore_or_remove_loader_var(env, name)
+        for name in tuple(env):
+            if user_subprocess_env_name_blocked(
+                name,
+                blocked_names=blocked_names,
+                blocked_prefixes=blocked_prefixes,
+            ):
+                env.pop(name, None)
     return env
 
 

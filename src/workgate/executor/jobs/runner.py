@@ -39,6 +39,8 @@ def configure_job_runner_parser(
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--shell", required=True)
     parser.add_argument("--max-log-bytes", type=int, required=True)
+    parser.add_argument("--blocked-env-name", action="append", default=[])
+    parser.add_argument("--blocked-env-prefix", action="append", default=[])
     return parser
 
 
@@ -69,7 +71,14 @@ def run_job_runner_from_args(args: Any) -> None:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=user_subprocess_env(),
+                env=user_subprocess_env(
+                    blocked_names=tuple(
+                        getattr(args, "blocked_env_name", ()) or ()
+                    ),
+                    blocked_prefixes=tuple(
+                        getattr(args, "blocked_env_prefix", ()) or ()
+                    ),
+                ),
             )
             if process.stdout is None:
                 raise RuntimeError(

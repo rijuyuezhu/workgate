@@ -37,7 +37,12 @@ from ..schemas.result_models.shell import (
     SendPersistentShellInputOutput,
     StartPersistentShellOutput,
 )
-from ..utils.processes import new_process_group_kwargs, user_subprocess_env
+from ..utils.processes import (
+    blocked_user_subprocess_env_names,
+    new_process_group_kwargs,
+    user_subprocess_env,
+    user_subprocess_env_name_blocked,
+)
 from .bounded_runner import bounded_runner_argv
 from .path import (
     relative_display_from_root,
@@ -219,9 +224,31 @@ async def _persistent_shell_admission_lock():
             _PERSISTENT_SHELL_ADMISSION_OWNER.reset(token)
 
 
-def _subprocess_env() -> dict[str, str]:
+def _subprocess_env(config: ExecutorConfig) -> dict[str, str]:
     """Return the environment exposed to user shell commands."""
-    return user_subprocess_env(frozen=_is_frozen_app())
+    return user_subprocess_env(
+        blocked_names=config.subprocess_env_blocklist,
+        blocked_prefixes=config.subprocess_env_blocked_prefixes,
+        frozen=_is_frozen_app(),
+    )
+
+
+def _conpty_subprocess_env(config: ExecutorConfig) -> dict[str, str]:
+    """Return filtered user environment plus allowed terminal defaults."""
+    env = _subprocess_env(config)
+    if not user_subprocess_env_name_blocked(
+        "TERM",
+        blocked_names=config.subprocess_env_blocklist,
+        blocked_prefixes=config.subprocess_env_blocked_prefixes,
+    ):
+        env.setdefault("TERM", "xterm-256color")
+    if not user_subprocess_env_name_blocked(
+        "COLORTERM",
+        blocked_names=config.subprocess_env_blocklist,
+        blocked_prefixes=config.subprocess_env_blocked_prefixes,
+    ):
+        env["COLORTERM"] = "truecolor"
+    return env
 
 
 def _effective_shell_executable(config: ExecutorConfig) -> str:
@@ -257,14 +284,24 @@ def _effective_python_executable(config: ExecutorConfig) -> str:
     return configured or sys.executable
 
 
-def _validated_env_overrides(env: dict[str, str] | None) -> dict[str, str]:
-    """Validate and normalize caller-provided subprocess environment overrides."""
+def _validated_env_overrides(
+    config: ExecutorConfig, env: dict[str, str] | None
+) -> dict[str, str]:
+    """Validate caller overrides without allowing executor policy bypass."""
     if not env:
         return {}
     normalized: dict[str, str] = {}
     for name, value in env.items():
         if not _ENV_NAME_RE.match(name):
             raise ValueError(f"Invalid environment variable name: {name!r}")
+        if user_subprocess_env_name_blocked(
+            name,
+            blocked_names=config.subprocess_env_blocklist,
+            blocked_prefixes=config.subprocess_env_blocked_prefixes,
+        ):
+            raise ValueError(
+                f"Environment variable is blocked by executor policy: {name}"
+            )
         normalized[name] = str(value)
     return normalized
 
@@ -273,7 +310,7 @@ def _command_with_env(
     config: ExecutorConfig, command: str, env: dict[str, str] | None
 ) -> str:
     """Prefix PTY/job commands with shell-native environment assignments."""
-    overrides = _validated_env_overrides(env)
+    overrides = _validated_env_overrides(config, env)
     if not overrides:
         return command
     shell_name = os.path.basename(_effective_shell_executable(config)).lower()
@@ -311,8 +348,8 @@ async def _spawn_process(
 ) -> asyncio.subprocess.Process:
     """Start a bounded shell command in a descendant-reaping process group."""
     shell = _effective_shell_executable(config)
-    child_env = _subprocess_env()
-    child_env.update(_validated_env_overrides(env))
+    child_env = _subprocess_env(config)
+    child_env.update(_validated_env_overrides(config, env))
     process_group = new_process_group_kwargs()
     common: dict[str, Any] = {
         "cwd": cwd,
@@ -541,13 +578,14 @@ async def run_shell_command_execute(
 
 
 async def _spawn_exec_process(
+    config: ExecutorConfig,
     argv: list[str],
     cwd: str,
     env: dict[str, str] | None = None,
 ) -> asyncio.subprocess.Process:
     """Start one direct executable without routing through the configured shell."""
-    child_env = _subprocess_env()
-    child_env.update(_validated_env_overrides(env))
+    child_env = _subprocess_env(config)
+    child_env.update(env or {})
     process_group = new_process_group_kwargs()
     command = _shell_join_argv(argv)
     try:
@@ -600,7 +638,7 @@ async def _run_exec(
 
     async def spawn_and_wait() -> None:
         nonlocal proc
-        proc = await _spawn_exec_process(argv, str(resolved_cwd), env)
+        proc = await _spawn_exec_process(config, argv, str(resolved_cwd), env)
         reader_tasks.extend(
             [
                 asyncio.create_task(
@@ -684,7 +722,9 @@ def _tmux_session_cwd(args: list[str]) -> str:
 def _resolved_tmux_shell(config: ExecutorConfig, session_cwd: str = ".") -> str:
     """Resolve the configured persistent shell without trusting account $SHELL."""
     configured = os.path.expanduser(_effective_shell_executable(config))
-    candidate = shutil.which(configured, path=_subprocess_env().get("PATH"))
+    candidate = shutil.which(
+        configured, path=_subprocess_env(config).get("PATH")
+    )
     if candidate:
         return candidate
     if os.path.isabs(configured):
@@ -754,6 +794,70 @@ def _persistent_shell_ids(output: Any) -> set[str]:
 def _use_conpty_persistent_shell_backend() -> bool:
     """Return whether persistent shells should use the Windows ConPTY backend."""
     return os.name == "nt"
+
+
+def _tmux_environment_names(output: str) -> set[str]:
+    """Return valid variable names from tmux show-environment output."""
+    names: set[str] = set()
+    for line in output.splitlines():
+        if not line:
+            continue
+        name = line[1:] if line.startswith("-") else line.split("=", 1)[0]
+        if _ENV_NAME_RE.fullmatch(name):
+            names.add(name)
+    return names
+
+
+async def _tmux_blocked_environment_names(
+    config: ExecutorConfig,
+) -> tuple[str, ...]:
+    """Find blocked names retained by the existing tmux server."""
+    result = await tmux(config, ["show-environment", "-g"], timeout_s=5)
+    if not result.ok:
+        if _tmux_server_absent(result):
+            return ()
+        raise RuntimeError(result.stderr or result.stdout)
+    return blocked_user_subprocess_env_names(
+        _tmux_environment_names(result.stdout),
+        blocked_names=config.subprocess_env_blocklist,
+        blocked_prefixes=config.subprocess_env_blocked_prefixes,
+    )
+
+
+async def _tmux_default_shell(config: ExecutorConfig) -> str:
+    """Return the existing tmux server default shell for wrapper parity."""
+    result = await tmux(
+        config, ["show-options", "-gv", "default-shell"], timeout_s=5
+    )
+    if not result.ok:
+        raise RuntimeError(result.stderr or result.stdout)
+    shell = result.stdout.strip()
+    if not shell:
+        raise RuntimeError("tmux default-shell is empty")
+    return shell
+
+
+def _tmux_sanitized_shell_argv(
+    configured_shell: str,
+    command: str | None,
+    blocked_names: tuple[str, ...],
+) -> list[str]:
+    """Wrap one tmux user process only when inherited blocked names exist."""
+    target = (
+        [configured_shell, "-c", command]
+        if command is not None
+        else [configured_shell]
+    )
+    if not blocked_names:
+        return target
+    unset_names = " ".join(shlex.quote(name) for name in blocked_names)
+    return [
+        "/bin/sh",
+        "-c",
+        f'unset {unset_names}; exec "$@"',
+        "workgate-env",
+        *target,
+    ]
 
 
 async def _cleanup_failed_tmux_start(
@@ -834,13 +938,14 @@ async def _start_persistent_shell_locked(
                 command=command,
                 owner_session_id=owner_session_id,
                 shell_executable=config.shell_executable,
+                env=_conpty_subprocess_env(config),
             )
         except conpty.ConPtyCleanupUncertainError as exc:
             raise PersistentShellCleanupUncertainError(str(exc)) from exc
 
     configured_shell = _resolved_tmux_shell(config, str(resolved_cwd))
     if (
-        shutil.which(configured_shell, path=_subprocess_env().get("PATH"))
+        shutil.which(configured_shell, path=_subprocess_env(config).get("PATH"))
         is None
     ):
         raise ShellExecutableNotFoundError(
@@ -858,7 +963,15 @@ async def _start_persistent_shell_locked(
         "-c",
         str(resolved_cwd),
     ]
-    if command is not None:
+    blocked_env_names = await _tmux_blocked_environment_names(config)
+    if blocked_env_names:
+        tmux_default_shell = await _tmux_default_shell(config)
+        cmd.extend(
+            _tmux_sanitized_shell_argv(
+                tmux_default_shell, command, blocked_env_names
+            )
+        )
+    elif command is not None:
         cmd.append(command)
     if owner_session_id is not None:
         cmd.extend(

@@ -687,6 +687,8 @@ async def inventory(_config, _store, *, preserve_shell_ids=None):
 
 async def fake_tmux(_config, args, timeout_s=10):
     _ = timeout_s
+    if args == ["show-environment", "-g"]:
+        return SimpleNamespace(ok=True, stdout="", stderr="")
     if args[0] != "new-session":
         raise AssertionError(f"unexpected tmux call: {args}")
     current = []
@@ -927,6 +929,8 @@ async def test_tmux_start_cancellation_cleans_created_session(
 
     async def fake_tmux(_config, args: list[str], timeout_s: int = 10):  # noqa: ARG001
         calls.append(args)
+        if args == ["show-environment", "-g"]:
+            return result()
         if args[0] == "new-session":
             assert args[-6:] == [
                 ";",
@@ -1775,7 +1779,9 @@ async def test_spawn_process_uses_native_shell_api_for_cmd_on_windows(
         shell_ops, "_effective_shell_executable", lambda _config: "cmd.exe"
     )
     monkeypatch.setattr(shell_ops.shutil, "which", lambda command, **_: command)
-    monkeypatch.setattr(shell_ops, "_subprocess_env", lambda: {"BASE": "1"})
+    monkeypatch.setattr(
+        shell_ops, "_subprocess_env", lambda _config: {"BASE": "1"}
+    )
     monkeypatch.setattr(
         shell_ops.asyncio, "create_subprocess_shell", fake_shell
     )
@@ -2279,7 +2285,7 @@ def test_frozen_subprocess_env_restores_loader_environment(
     monkeypatch.setattr(sys, "_MEIPASS", "/tmp/bundled", raising=False)
     clear_settings_cache()
 
-    env = _subprocess_env()
+    env = _subprocess_env(_executor_config())
 
     assert env["LD_LIBRARY_PATH"] == "/usr/lib"
     assert "LD_LIBRARY_PATH_ORIG" not in env
@@ -2299,7 +2305,206 @@ def test_non_frozen_subprocess_env_preserves_loader_environment(
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     clear_settings_cache()
 
-    env = _subprocess_env()
+    env = _subprocess_env(_executor_config())
 
     assert env["LD_LIBRARY_PATH"] == "/custom/lib"
     assert env["LD_LIBRARY_PATH_ORIG"] == "/original/lib"
+
+
+@pytest.mark.asyncio
+async def test_run_shell_command_applies_configured_environment_filters(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EXACT_SECRET", "hidden")
+    monkeypatch.setenv("PRIVATE_TOKEN", "hidden")
+    monkeypatch.setenv("KEEP_VISIBLE", "visible")
+    config = _executor_config(
+        workspace_root=tmp_path,
+        subprocess_env_blocklist=("EXACT_SECRET",),
+        subprocess_env_blocked_prefixes=("PRIVATE_",),
+    )
+
+    result = await run_shell(
+        config,
+        _python_shell_command(
+            "import os; "
+            "print('|'.join(os.environ.get(name, '<missing>') for name in "
+            "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
+        ),
+        cwd=str(tmp_path),
+    )
+
+    assert result.ok
+    assert result.stdout.strip() == "<missing>|<missing>|visible"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name", ["PYTHONPATH", "EXACT_SECRET", "PRIVATE_TOKEN"]
+)
+async def test_run_shell_command_rejects_blocked_environment_overrides(
+    name, tmp_path
+):
+    config = _executor_config(
+        workspace_root=tmp_path,
+        subprocess_env_blocklist=("EXACT_SECRET",),
+        subprocess_env_blocked_prefixes=("PRIVATE_",),
+    )
+
+    with pytest.raises(ValueError, match="blocked by executor policy"):
+        await run_shell(
+            config,
+            "echo unreachable",
+            cwd=str(tmp_path),
+            env={name: "override"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_persistent_shell_sanitizes_configured_stale_tmux_environment(
+    monkeypatch, tmp_path
+):
+    config = _executor_config(
+        workspace_root=tmp_path,
+        subprocess_env_blocklist=("SERVER_SECRET",),
+    )
+    calls: list[list[str]] = []
+
+    async def empty_inventory(_config, _store):
+        return set()
+
+    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
+        del timeout_s
+        calls.append(args)
+        if args == ["show-environment", "-g"]:
+            return CommandResult(
+                ok=True,
+                exit_code=0,
+                duration_ms=1,
+                cwd=".",
+                command="tmux show-environment -g",
+                stdout="SERVER_SECRET=stale\nKEEP_VISIBLE=yes\n",
+            )
+        if args == ["show-options", "-gv", "default-shell"]:
+            return CommandResult(
+                ok=True,
+                exit_code=0,
+                duration_ms=1,
+                cwd=".",
+                command="tmux show-options -gv default-shell",
+                stdout="/bin/zsh\n",
+            )
+        if args[0] == "new-session":
+            return CommandResult(
+                ok=True,
+                exit_code=0,
+                duration_ms=1,
+                cwd=".",
+                command="tmux new-session",
+            )
+        raise AssertionError(f"unexpected tmux call: {args}")
+
+    monkeypatch.setattr(
+        shell_ops, "authoritative_persistent_shell_ids_execute", empty_inventory
+    )
+    monkeypatch.setattr(
+        shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
+    )
+    monkeypatch.setattr(
+        shell_ops, "_resolved_tmux_shell", lambda _config, _cwd: "/bin/bash"
+    )
+    monkeypatch.setattr(
+        shell_ops.shutil, "which", lambda *_args, **_kwargs: "/bin/bash"
+    )
+    monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
+
+    result = await shell_ops.start_persistent_shell_execute(
+        config,
+        _executor_store(),
+        ".",
+        "filtered-shell",
+        "printf ok",
+    )
+
+    assert result.shell_id == "filtered-shell"
+    assert calls[0] == ["show-environment", "-g"]
+    assert calls[1] == ["show-options", "-gv", "default-shell"]
+    new_session = calls[2]
+    wrapper = new_session[new_session.index(str(tmp_path)) + 1 :]
+    assert wrapper[0:2] == ["/bin/sh", "-c"]
+    assert wrapper[3] == "workgate-env"
+    assert wrapper[4:] == ["/bin/zsh", "-c", "printf ok"]
+    unset_script = wrapper[2]
+    assert unset_script.endswith('; exec "$@"')
+    assert "SERVER_SECRET" in unset_script
+    assert "KEEP_VISIBLE" not in unset_script
+
+
+@pytest.mark.asyncio
+async def test_conpty_persistent_shell_receives_filtered_executor_environment(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EXACT_SECRET", "hidden")
+    monkeypatch.setenv("KEEP_VISIBLE", "visible")
+    config = _executor_config(
+        workspace_root=tmp_path,
+        subprocess_env_blocklist=(
+            "EXACT_SECRET",
+            "TERM",
+            "COLORTERM",
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    async def empty_inventory(_config, _store):
+        return set()
+
+    async def fake_start_shell(**kwargs):
+        captured.update(kwargs)
+        return shell_ops.StartPersistentShellOutput(
+            shell_id=str(kwargs["shell_id"]),
+            name=None,
+            cwd=str(kwargs["cwd"]),
+            command=str(kwargs["command"]),
+        )
+
+    monkeypatch.setattr(
+        shell_ops, "authoritative_persistent_shell_ids_execute", empty_inventory
+    )
+    monkeypatch.setattr(
+        shell_ops, "_use_conpty_persistent_shell_backend", lambda: True
+    )
+    monkeypatch.setattr(shell_ops.conpty, "is_available", lambda: True)
+    monkeypatch.setattr(shell_ops.conpty, "start_shell", fake_start_shell)
+
+    await shell_ops.start_persistent_shell_execute(
+        config,
+        _executor_store(),
+        ".",
+        "conpty-filtered",
+        "echo ok",
+    )
+
+    env = cast(dict[str, str], captured["env"])
+    assert "EXACT_SECRET" not in env
+    assert "TERM" not in env
+    assert "COLORTERM" not in env
+    assert env["KEEP_VISIBLE"] == "visible"
+
+
+def test_configured_filter_wins_after_frozen_loader_restore(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/bundled")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", "/tmp/bundled", raising=False)
+    config = _executor_config(
+        workspace_root=tmp_path,
+        subprocess_env_blocklist=("LD_LIBRARY_PATH",),
+    )
+
+    env = _subprocess_env(config)
+
+    assert "LD_LIBRARY_PATH" not in env
+    assert "LD_LIBRARY_PATH_ORIG" not in env

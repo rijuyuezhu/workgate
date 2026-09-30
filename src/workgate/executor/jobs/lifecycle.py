@@ -66,6 +66,10 @@ def _runner_argv(
         "--max-log-bytes",
         str(max(1, config.max_job_log_bytes)),
     ]
+    for name in config.subprocess_env_blocklist:
+        arguments.extend(["--blocked-env-name", name])
+    for prefix in config.subprocess_env_blocked_prefixes:
+        arguments.extend(["--blocked-env-prefix", prefix])
     if getattr(sys, "frozen", False):
         return [sys.executable, "job-runner", *arguments]
     return [

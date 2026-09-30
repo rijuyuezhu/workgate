@@ -365,6 +365,25 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     )
 
 
+def test_executor_cli_parses_subprocess_env_filters():
+    from workgate.config.cli import settings_from_args
+
+    args = cli._build_parser().parse_args(
+        [
+            "executor",
+            "run",
+            "--subprocess-env-blocklist",
+            "SECRET_A,SECRET_B",
+            "--subprocess-env-blocked-prefixes",
+            "PRIVATE_,TOKEN_",
+        ]
+    )
+
+    settings = settings_from_args(args)
+    assert settings.subprocess_env_blocklist == ["SECRET_A", "SECRET_B"]
+    assert settings.subprocess_env_blocked_prefixes == ["PRIVATE_", "TOKEN_"]
+
+
 def test_cli_numeric_overrides_use_settings_validation():
     from workgate.config.cli import settings_from_args
 

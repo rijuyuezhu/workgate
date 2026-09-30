@@ -28,6 +28,7 @@ from ...schemas.result_models.shell import (
 )
 from ...utils.path_policy import relative_display_from_root
 from ...utils.private_files import private_file_lock
+from ...utils.processes import user_subprocess_env
 
 CONPTY_BACKEND = "conpty"
 CONPTY_BUFFER_BYTES = 1_000_000
@@ -193,27 +194,28 @@ def _persistent_shell_args(
     return [shell]
 
 
-def _subprocess_env() -> dict[str, str]:
-    blocked_names = {"PYTHONPATH"}
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in blocked_names
-        and not key.startswith("WORKGATE_")
-        and not key.startswith("DOCKER_")
-    }
+def _subprocess_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    if base_env is not None:
+        return dict(base_env)
+    env = user_subprocess_env()
     env.setdefault("TERM", "xterm-256color")
     env["COLORTERM"] = "truecolor"
     return env
 
 
-def _spawn_pty(argv: list[str], cwd: Path, cols: int, rows: int) -> Any:
+def _spawn_pty(
+    argv: list[str],
+    cwd: Path,
+    cols: int,
+    rows: int,
+    base_env: dict[str, str] | None = None,
+) -> Any:
     if not is_available():
         raise RuntimeError("pywinpty is not available")
     assert winpty is not None
     spawn = winpty.PtyProcess.spawn
     dimensions = (max(1, rows), max(1, cols))
-    env = _subprocess_env()
+    env = _subprocess_env(base_env)
     candidates: tuple[list[str] | str, ...] = (
         argv,
         subprocess.list2cmdline(argv),
@@ -660,6 +662,7 @@ async def start_shell(
     command: str | None,
     owner_session_id: str | None = None,
     shell_executable: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> StartPersistentShellOutput:
     """Start and register one Windows ConPTY persistent shell."""
     registry = _conpty_registry()
@@ -689,14 +692,16 @@ async def start_shell(
         cancelled: asyncio.CancelledError | None = None
         try:
             await asyncio.to_thread(lease.acquire)
+            spawn_args: tuple[Any, ...] = (
+                args,
+                cwd,
+                CONPTY_DEFAULT_COLUMNS,
+                CONPTY_DEFAULT_ROWS,
+            )
+            if env is not None:
+                spawn_args += (env,)
             spawn_task = asyncio.create_task(
-                asyncio.to_thread(
-                    _spawn_pty,
-                    args,
-                    cwd,
-                    CONPTY_DEFAULT_COLUMNS,
-                    CONPTY_DEFAULT_ROWS,
-                )
+                asyncio.to_thread(_spawn_pty, *spawn_args)
             )
             try:
                 process = await asyncio.shield(spawn_task)
