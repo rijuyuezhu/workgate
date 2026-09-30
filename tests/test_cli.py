@@ -78,6 +78,10 @@ def test_control_subcommand_parses_control_owned_runtime_settings():
             "127.0.0.1",
             "--port",
             "9999",
+            "--log-level",
+            "debug",
+            "--forwarded-allow-ips",
+            "127.0.0.1,10.0.0.0/8",
             "--auth-mode",
             "none",
             "--base-url",
@@ -96,6 +100,8 @@ def test_control_subcommand_parses_control_owned_runtime_settings():
     assert args.mode == "stdio"
     assert args.host == "127.0.0.1"
     assert args.port == 9999
+    assert args.log_level == "debug"
+    assert args.forwarded_allow_ips == "127.0.0.1,10.0.0.0/8"
     assert args.auth_mode == "none"
     assert args.base_url == "https://example.com"
     assert args.oauth_admin_pin == "pin"
@@ -689,6 +695,7 @@ def test_control_handler_initializes_only_control_owned_directories(
         data_dir=data_dir,
     )
     configured = []
+    configured_log_levels = []
     dispatched = []
 
     def load_from_args(_args):
@@ -699,6 +706,11 @@ def test_control_handler_initializes_only_control_owned_directories(
         server_cli,
         "configure_settings",
         lambda active: configured.append(active),
+    )
+    monkeypatch.setattr(
+        server_cli,
+        "configure_runtime_logging",
+        lambda level: configured_log_levels.append(level),
     )
     monkeypatch.setattr(
         server_cli,
@@ -717,6 +729,7 @@ def test_control_handler_initializes_only_control_owned_directories(
         assert data_dir.stat().st_mode & 0o777 == 0o700
         assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
     assert configured == [settings]
+    assert configured_log_levels == ["warning"]
     assert dispatched == [settings]
 
 

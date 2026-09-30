@@ -9,6 +9,11 @@ mode: "mcp"
 host: "127.0.0.1"
 # Bind port for HTTP/MCP transports.
 port: 8765
+# Runtime log level for Workgate and its HTTP server.
+# Choices: critical, error, warning, info, debug.
+log_level: "warning"
+# Comma-separated proxy addresses/networks trusted for forwarded HTTP headers.
+forwarded_allow_ips: "127.0.0.1"
 
 # Human interface.
 # Mount the browser Human UI and its authenticated API on the HTTP server.

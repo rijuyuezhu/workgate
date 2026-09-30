@@ -15,6 +15,8 @@ class ControlConfig(SharedRoleConfig):
     mode: Literal["mcp", "http", "both", "stdio"]
     host: str
     port: int
+    log_level: Literal["critical", "error", "warning", "info", "debug"]
+    forwarded_allow_ips: str
     data_dir: Path
     base_url: str | None
     resolved_base_url: str
@@ -85,6 +87,8 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         mode=settings.mode,
         host=settings.host,
         port=settings.port,
+        log_level=settings.log_level,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
         state_dir=settings.state_dir.resolve(strict=False),
         data_dir=settings.data_dir.resolve(strict=False),
         base_url=settings.base_url,

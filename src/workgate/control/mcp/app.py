@@ -4,7 +4,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
@@ -31,6 +30,7 @@ from ..http.executor_admin import executor_admin_routes
 from ..http.executor_routes import executor_routes
 from ..http.stream_routes import terminal_stream_routes
 from ..runtime import ControlRuntime, build_control_runtime
+from ..server import run_uvicorn
 from ..tool_timeouts import tool_timeout_s
 from .instructions import SERVER_INSTRUCTIONS
 from .live_workspace import register_live_workspace
@@ -323,8 +323,4 @@ def run_mcp(
         mcp.run(transport="stdio")
     else:
         app = build_mcp_http_app(mcp, runtime=runtime)
-        uvicorn.run(
-            app,
-            host=runtime.config.host,
-            port=runtime.config.port,
-        )
+        run_uvicorn(app, config=runtime.config)

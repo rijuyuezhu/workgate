@@ -350,10 +350,10 @@ def test_run_mcp_http_runtime_is_owned_by_outer_asgi_lifespan(monkeypatch):
     monkeypatch.setattr(mcp_app, "build_mcp", build)
     monkeypatch.setattr(mcp_app, "build_mcp_http_app", build_http)
     monkeypatch.setattr(
-        mcp_app.uvicorn,
-        "run",
-        lambda built_app, *, host, port: calls.append(
-            ("uvicorn", built_app, host, port)
+        mcp_app,
+        "run_uvicorn",
+        lambda built_app, *, config: calls.append(
+            ("uvicorn", built_app, config)
         ),
     )
 
@@ -362,7 +362,7 @@ def test_run_mcp_http_runtime_is_owned_by_outer_asgi_lifespan(monkeypatch):
     assert calls == [
         ("build", None, runtime, False),
         ("http", dummy, runtime),
-        ("uvicorn", app, "127.0.0.1", 8765),
+        ("uvicorn", app, runtime.config),
     ]
 
 

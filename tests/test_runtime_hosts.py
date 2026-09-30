@@ -62,10 +62,10 @@ def test_run_http_uses_explicit_runtime(tmp_path, monkeypatch, with_catalog):
 
     monkeypatch.setattr(http_app, "build_http_app", build)
     monkeypatch.setattr(
-        http_app.uvicorn,
-        "run",
-        lambda built_app, *, host, port: calls.append(
-            ("uvicorn", built_app, host, port)
+        http_app,
+        "run_uvicorn",
+        lambda built_app, *, config: calls.append(
+            ("uvicorn", built_app, config)
         ),
     )
 
@@ -73,7 +73,7 @@ def test_run_http_uses_explicit_runtime(tmp_path, monkeypatch, with_catalog):
 
     assert calls == [
         ("build", {"tool_catalog": catalog, "runtime": runtime}),
-        ("uvicorn", app, "127.0.0.1", 8765),
+        ("uvicorn", app, runtime.config),
     ]
 
 

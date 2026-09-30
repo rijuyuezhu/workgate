@@ -87,6 +87,46 @@
             "code": "8765"
           },
           "Bind port for HTTP/MCP transports."
+        ],
+        [
+          {
+            "code": "log_level"
+          },
+          {
+            "lines": [
+              {
+                "code": "--log-level"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_LOG_LEVEL"
+          },
+          "critical | error | warning | info | debug",
+          {
+            "code": "warning"
+          },
+          "Runtime log level for Workgate and its HTTP server."
+        ],
+        [
+          {
+            "code": "forwarded_allow_ips"
+          },
+          {
+            "lines": [
+              {
+                "code": "--forwarded-allow-ips"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_FORWARDED_ALLOW_IPS"
+          },
+          "string",
+          {
+            "code": "127.0.0.1"
+          },
+          "Comma-separated proxy addresses/networks trusted for forwarded HTTP headers."
         ]
       ]
     },
@@ -1893,6 +1933,38 @@
       "nullable": false,
       "section": "Server",
       "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [
+        "critical",
+        "error",
+        "warning",
+        "info",
+        "debug"
+      ],
+      "cli": "--log-level",
+      "default": "warning",
+      "default_display": "warning",
+      "description": "Runtime log level for Workgate and its HTTP server.",
+      "env": "WORKGATE_LOG_LEVEL",
+      "name": "log_level",
+      "nullable": false,
+      "section": "Server",
+      "type": "critical | error | warning | info | debug",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--forwarded-allow-ips",
+      "default": "127.0.0.1",
+      "default_display": "127.0.0.1",
+      "description": "Comma-separated proxy addresses/networks trusted for forwarded HTTP headers.",
+      "env": "WORKGATE_FORWARDED_ALLOW_IPS",
+      "name": "forwarded_allow_ips",
+      "nullable": false,
+      "section": "Server",
+      "type": "string",
       "unset_cli": null
     },
     {
