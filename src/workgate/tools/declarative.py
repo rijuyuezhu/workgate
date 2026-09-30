@@ -27,7 +27,7 @@ from .contracts import (
     ToolHandler,
     ToolRegistry,
 )
-from .mcp_text import render_tool_text
+from .mcp_text import has_explicit_tool_text, render_tool_text
 from .metadata import oauth_security_meta
 
 type McpSecurityProfile = Literal["oauth", "connector_compatible"]
@@ -243,14 +243,16 @@ class ToolDefinition:
             try:
                 _enforce_oauth_scopes(self.required_oauth_scopes())
                 result = await self.func(*args, **kwargs)
+                if not has_explicit_tool_text(self.name):
+                    return result
                 structured = to_jsonable(result)
                 text = render_tool_text(self.name, structured)
-                if text is not None:
-                    return CallToolResult(
-                        content=[TextContent(type="text", text=text)],
-                        structuredContent=structured,
-                    )
-                return result
+                if text is None:
+                    return result
+                return CallToolResult(
+                    content=[TextContent(type="text", text=text)],
+                    structuredContent=structured,
+                )
             except SessionTerminationRequestedError:
                 raise
             except MissingOAuthScopeError as exc:

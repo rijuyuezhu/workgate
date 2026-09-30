@@ -297,6 +297,7 @@ async def test_activate_agent_skill_returns_skill_content(
     (skill_dir / "SKILL.md").write_text(
         "# Debugging\n\nFind root causes.\n", encoding="utf-8"
     )
+    (skill_dir / "guide.md").write_text("More guidance.\n", encoding="utf-8")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
@@ -315,7 +316,10 @@ async def test_activate_agent_skill_returns_skill_content(
     structured = mcp_structured(response)
 
     assert "Find root causes." in payload
+    assert "[related files]" in payload
+    assert "guide.md" in payload
     assert structured["entry_path"] == "skills/debugging/SKILL.md"
+    assert structured["related_files"] == ["guide.md"]
 
 
 @pytest.mark.asyncio

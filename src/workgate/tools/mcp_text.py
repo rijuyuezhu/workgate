@@ -1,5 +1,6 @@
 """Explicit model-facing text projections for structured MCP tool results."""
 
+import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -48,11 +49,24 @@ def _search_text(result: Mapping[str, Any]) -> str:
 
 def _tree_text(result: Mapping[str, Any]) -> str:
     entries = [str(entry) for entry in _rows_or_strings(result["entries"])]
-    return (
-        "\n".join(entries)
-        if entries
-        else _optional_string(result.get("message")) or "(empty tree)"
-    )
+    parts: list[str] = []
+    message = _optional_string(result.get("message"))
+    if message:
+        parts.append(message)
+    if entries:
+        parts.append("\n".join(entries))
+        if result.get("truncated") is True:
+            parts.append("[tree truncated]")
+    else:
+        parent = _optional_string(result.get("nearest_existing_parent"))
+        parent_entries = result.get("nearest_parent_entries")
+        if parent and isinstance(parent_entries, list):
+            parts.append(f"Nearest existing parent: {parent}")
+            if parent_entries:
+                parts.append("\n".join(str(entry) for entry in parent_entries))
+            if result.get("nearest_parent_entries_truncated") is True:
+                parts.append("[nearest parent listing truncated]")
+    return "\n".join(parts) or "(empty tree)"
 
 
 def _glob_text(result: Mapping[str, Any]) -> str:
@@ -119,21 +133,45 @@ def _job_text(result: Mapping[str, Any]) -> str:
             chunks = []
             for row in _rows(result["outputs"]):
                 job = _mapping(row["job"])
-                body = _string(row["output"]).rstrip("\n")
-                if not body:
-                    body = _optional_string(row.get("message")) or "No output."
+                details: list[str] = []
+                output = _string(row["output"]).rstrip("\n")
+                if output:
+                    details.append(output)
+                message = _optional_string(row.get("message"))
+                if message:
+                    details.append(message)
+                progress = job.get("progress")
+                job_result = job.get("result")
+                if isinstance(job_result, Mapping):
+                    details.append(
+                        "[result]\n"
+                        + json.dumps(
+                            job_result, ensure_ascii=False, sort_keys=True
+                        )
+                    )
+                elif isinstance(progress, Mapping):
+                    details.append(
+                        "[progress]\n"
+                        + json.dumps(
+                            progress, ensure_ascii=False, sort_keys=True
+                        )
+                    )
+                error = _optional_string(job.get("error")).strip()
+                if error:
+                    details.append(f"[error]\n{error}")
+                if not details:
+                    details.append("No output.")
                 chunks.append(
-                    f"[{_string(job['job_id'])} {_string(job['status'])}]\n{body}"
+                    f"[{_string(job['job_id'])} {_string(job['status'])}]\n"
+                    + "\n".join(details)
                 )
             return "\n\n".join(chunks) or "No job output."
         case "list":
             jobs = _rows(result["jobs"])
+            message = _optional_string(result.get("message"))
             if not jobs:
-                return (
-                    _optional_string(result.get("message"))
-                    or "No tracked jobs."
-                )
-            return "\n".join(
+                return message or "No tracked jobs."
+            rows = "\n".join(
                 "\t".join(
                     part
                     for part in (
@@ -145,6 +183,7 @@ def _job_text(result: Mapping[str, Any]) -> str:
                 )
                 for job in jobs
             )
+            return f"{message}\n{rows}" if message else rows
         case "cancel":
             lines = []
             for row in _rows(result["cancelled"]):
@@ -169,6 +208,17 @@ def _job_text(result: Mapping[str, Any]) -> str:
             )
         case _:
             raise TypeError
+
+
+def _skill_text(result: Mapping[str, Any]) -> str:
+    content = _string(result["content"])
+    related = _rows_or_strings(result["related_files"])
+    if not related:
+        return content
+    separator = "" if content.endswith("\n") else "\n"
+    return f"{content}{separator}\n[related files]\n" + "\n".join(
+        str(path) for path in related
+    )
 
 
 def _content_text(result: Mapping[str, Any]) -> str:
@@ -196,7 +246,7 @@ _RENDERERS: dict[str, ToolTextRenderer] = {
     "run_python_code": _shell_text,
     "read_persistent_shell_output": _persistent_shell_text,
     "job": _job_text,
-    "activate_agent_skill": _content_text,
+    "activate_agent_skill": _skill_text,
     "read_agent_skill_file": _content_text,
     "fetch": _fetch_text,
     "session_start": _session_text,

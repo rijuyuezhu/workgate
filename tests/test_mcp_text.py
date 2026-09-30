@@ -17,7 +17,26 @@ from workgate.tools.mcp_text import render_tool_text
             {"numbered_content": "", "stderr": "", "count": 0},
             "No matches.",
         ),
-        ("tree_view", {"entries": ["src/", "  app.py"]}, "src/\n  app.py"),
+        (
+            "tree_view",
+            {"entries": ["src/", "  app.py"], "truncated": True},
+            "src/\n  app.py\n[tree truncated]",
+        ),
+        (
+            "tree_view",
+            {
+                "entries": [],
+                "message": "Path does not exist: missing/project",
+                "nearest_existing_parent": ".",
+                "nearest_parent_entries": ["actual/", "README.md"],
+                "nearest_parent_entries_truncated": False,
+            },
+            (
+                "Path does not exist: missing/project\n"
+                "Nearest existing parent: .\n"
+                "actual/\nREADME.md"
+            ),
+        ),
         ("glob_search", {"paths": ["a.py", "b.py"]}, "a.py\nb.py"),
         (
             "edit_lines",
@@ -81,7 +100,76 @@ from workgate.tools.mcp_text import render_tool_text
                     }
                 ],
             },
-            "[job_1 succeeded]\ndone",
+            "[job_1 succeeded]\ndone\njob completed",
+        ),
+        (
+            "job",
+            {
+                "operation": "poll",
+                "outputs": [
+                    {
+                        "job": {
+                            "job_id": "job_managed",
+                            "status": "succeeded",
+                            "progress": {"phase": "copying", "bytes": 7},
+                            "result": {"bytes": 10, "sha256": "abc"},
+                            "error": "",
+                        },
+                        "output": "",
+                        "message": "job completed with exit code 0",
+                    }
+                ],
+            },
+            (
+                "[job_managed succeeded]\n"
+                "job completed with exit code 0\n"
+                '[result]\n{"bytes": 10, "sha256": "abc"}'
+            ),
+        ),
+        (
+            "job",
+            {
+                "operation": "poll",
+                "outputs": [
+                    {
+                        "job": {
+                            "job_id": "job_running",
+                            "status": "running",
+                            "progress": {"phase": "copying", "bytes": 7},
+                            "result": None,
+                            "error": None,
+                        },
+                        "output": "",
+                        "message": None,
+                    }
+                ],
+            },
+            (
+                "[job_running running]\n"
+                '[progress]\n{"bytes": 7, "phase": "copying"}'
+            ),
+        ),
+        (
+            "job",
+            {
+                "operation": "poll",
+                "outputs": [
+                    {
+                        "job": {
+                            "job_id": "job_failed",
+                            "status": "failed",
+                            "error": "RuntimeError: copy failed",
+                        },
+                        "output": "",
+                        "message": "job completed with exit code 1",
+                    }
+                ],
+            },
+            (
+                "[job_failed failed]\n"
+                "job completed with exit code 1\n"
+                "[error]\nRuntimeError: copy failed"
+            ),
         ),
         (
             "job",
@@ -90,8 +178,12 @@ from workgate.tools.mcp_text import render_tool_text
                 "jobs": [
                     {"job_id": "job_1", "status": "running", "name": "build"}
                 ],
+                "message": "Executor jobs unavailable while the session is not active.",
             },
-            "job_1\trunning\tbuild",
+            (
+                "Executor jobs unavailable while the session is not active.\n"
+                "job_1\trunning\tbuild"
+            ),
         ),
         (
             "job",
@@ -115,7 +207,14 @@ from workgate.tools.mcp_text import render_tool_text
             },
             "job_2: running",
         ),
-        ("activate_agent_skill", {"content": "# Skill"}, "# Skill"),
+        (
+            "activate_agent_skill",
+            {
+                "content": "# Skill\n",
+                "related_files": ["README.md", "references/guide.md"],
+            },
+            ("# Skill\n\n[related files]\nREADME.md\nreferences/guide.md"),
+        ),
         ("read_agent_skill_file", {"content": "guide"}, "guide"),
         ("fetch", {"text": "document"}, "document"),
         (
