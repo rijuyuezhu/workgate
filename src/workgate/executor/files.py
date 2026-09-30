@@ -44,8 +44,6 @@ class FilesConfig:
     """Workspace root used for sessionless paths and display normalization."""
     allow_full_control: bool
     """Whether filesystem access may escape the configured workspace root."""
-    path_denylist: tuple[str, ...]
-    """Denied path fragments enforced by the shared path policy."""
     max_directory_entries: int
     """Maximum directory entries returned by one list operation."""
     max_file_read_bytes: int
@@ -59,7 +57,6 @@ def files_config_from_executor_config(config: ExecutorConfig) -> FilesConfig:
     return FilesConfig(
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
         max_directory_entries=config.max_directory_entries,
         max_file_read_bytes=config.max_file_read_bytes,
         max_file_write_bytes=config.max_file_write_bytes,
@@ -81,7 +78,6 @@ def _resolve_file_path(
             path,
             workspace_root=config.workspace_root,
             allow_full_control=config.allow_full_control,
-            path_denylist=config.path_denylist,
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -94,7 +90,6 @@ def _resolve_file_path(
         candidate,
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
         follow_final_symlink=follow_final_symlink,

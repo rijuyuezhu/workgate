@@ -38,7 +38,6 @@ def _new_store(settings: Settings) -> ToolSessionStore:
         state_store=FileStateStore(lambda: config.state_dir),
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
         max_session_snapshots=config.max_session_snapshots,
         max_session_snapshot_bytes=config.max_session_snapshot_bytes,
     )

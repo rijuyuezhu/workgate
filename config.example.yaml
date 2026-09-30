@@ -86,8 +86,8 @@ oauth_registration_max_redirect_uri_chars: 2048
 oauth_registration_max_client_name_chars: 200
 
 # Safety and resource limits.
-# Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP
-# safety annotations remain conservative in this mode.
+# Allow executor filesystem operations to escape workspace_root; use only where unrestricted
+# filesystem access is intended. MCP safety annotations remain conservative in this mode.
 allow_full_control: false
 # Base control-owned MCP/HTTP tool watchdog timeout in seconds.
 tool_timeout_s: 60
@@ -173,28 +173,6 @@ file_download_max_ttl_s: 604800
 file_download_default_max_downloads: 0
 # Maximum file size allowed for download links; 0 disables this size limit.
 file_download_max_file_bytes: 0
-# Comma-separated command denylist in env/CLI, or a YAML list in config files. Cleared when
-# full-control mode is enabled.
-command_denylist:
-  - "docker.sock"
-  - "/var/run/docker.sock"
-  - "mkfs"
-  - "mount"
-  - "umount"
-  - "shutdown"
-  - "reboot"
-  - "systemctl"
-  - "iptables"
-  - "nft"
-# Comma-separated path denylist in env/CLI, or a YAML list in config files. Cleared when full-control
-# mode is enabled.
-path_denylist:
-  - ".ssh/id_rsa"
-  - ".ssh/id_ed25519"
-  - ".env"
-  - "secrets"
-  - "credentials"
-  - ".git/config"
 # Maximum queued or offered ordinary commands retained per executor.
 executor_max_pending_commands: 64
 # Maximum live process-local executor pairing attempts admitted by control.

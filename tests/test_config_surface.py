@@ -60,8 +60,6 @@ def test_generated_yaml_example_loads_without_losing_defaults(monkeypatch):
     settings = load_settings("config.example.yaml")
     defaults = Settings()
 
-    assert settings.command_denylist == defaults.command_denylist
-    assert settings.path_denylist == defaults.path_denylist
     assert settings.allow_full_control == defaults.allow_full_control
 
 
@@ -76,7 +74,18 @@ def test_setting_spec_properties_cover_current_setting_shapes():
 
     assert not SPECS_BY_NAME["base_url"].is_bool
     assert SPECS_BY_NAME["base_url"].is_nullable
-    assert not SPECS_BY_NAME["command_denylist"].is_nullable
+
+
+def test_removed_denylist_settings_are_not_registered(tmp_path: Path) -> None:
+    removed = {"command_denylist", "path_denylist"}
+    assert removed.isdisjoint(Settings.model_fields)
+    assert removed.isdisjoint(SPECS_BY_NAME)
+
+    for name in removed:
+        config = tmp_path / f"{name}.yaml"
+        config.write_text(f"{name}: []\n", encoding="utf-8")
+        with pytest.raises(ValueError, match=name):
+            load_settings(config)
 
 
 def test_setting_spec_rejects_unregistered_setting() -> None:
@@ -131,8 +140,6 @@ def test_setting_spec_properties_cover_future_nullable_shapes(monkeypatch):
 
 
 def test_config_file_errors(tmp_path):
-    assert settings_module._split_csv(None) == []
-
     missing = tmp_path / "missing.yaml"
     with pytest.raises(FileNotFoundError):
         settings_module.read_config_file(missing)
@@ -282,27 +289,29 @@ def test_role_scoped_load_ignores_foreign_yaml_and_environment(
                 "state_dir": str(control_state),
                 "workspace_root": str(workspace),
                 "oauth_admin_pin": "control-secret-pin",
-                "command_denylist": ["executor-only-command"],
+                "shell_executable": "/bin/executor-yaml-shell",
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "env-control-secret")
-    monkeypatch.setenv("WORKGATE_COMMAND_DENYLIST", "env-executor-command")
+    monkeypatch.setenv("WORKGATE_SHELL_EXECUTABLE", "/bin/executor-env-shell")
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(executor_state))
 
     executor = load_settings(config, setting_names=EXECUTOR_SETTING_NAMES)
     assert executor.state_dir == executor_state
     assert executor.workspace_root == workspace
-    assert executor.command_denylist == ["env-executor-command"]
+    assert executor.shell_executable == "/bin/executor-env-shell"
     assert executor.oauth_admin_pin is None
 
     control = load_settings(config, setting_names=CONTROL_SETTING_NAMES)
     assert control.state_dir == executor_state
     assert control.oauth_admin_pin == "env-control-secret"
     assert control.workspace_root != workspace
-    assert "executor-only-command" not in control.command_denylist
-    assert "env-executor-command" not in control.command_denylist
+    assert (
+        control.shell_executable
+        == Settings.model_fields["shell_executable"].get_default()
+    )
 
 
 def test_role_scoped_load_ignores_foreign_invalid_yaml_path(

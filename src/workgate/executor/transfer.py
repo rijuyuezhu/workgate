@@ -145,7 +145,6 @@ def _policy_path(
         path,
         workspace_root=context.config.workspace_root,
         allow_full_control=context.config.allow_full_control,
-        path_denylist=context.config.path_denylist,
         must_exist=must_exist,
         follow_final_symlink=follow_final_symlink,
     )

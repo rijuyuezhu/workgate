@@ -19,7 +19,6 @@ def build_local_search_runner(
     paths = SearchPathAccess(
         workspace_root=config.workspace_root,
         allow_full_control=config.allow_full_control,
-        path_denylist=config.path_denylist,
     )
     grounding = SearchGrounding(
         store=store,

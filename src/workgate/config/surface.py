@@ -398,10 +398,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         metavar="BYTES",
     ),
     SettingSpec(
-        "command_denylist", "Safety and resource limits", metavar="CSV"
-    ),
-    SettingSpec("path_denylist", "Safety and resource limits", metavar="CSV"),
-    SettingSpec(
         "executor_max_pending_commands",
         "Safety and resource limits",
         metavar="COUNT",

@@ -11,7 +11,6 @@ def resolve_path_with_policy(
     *,
     workspace_root: Path,
     allow_full_control: bool,
-    path_denylist: tuple[str, ...],
     must_exist: bool = False,
     allow_missing_parent: bool = True,
     follow_final_symlink: bool = True,
@@ -36,11 +35,6 @@ def resolve_path_with_policy(
             boundary.relative_to(root)
         except ValueError as exc:
             raise ValueError(f"Path escapes workspace: {path}") from exc
-
-    lower = str(resolved).lower()
-    for denied in path_denylist:
-        if denied and denied.lower() in lower:
-            raise PermissionError(f"Path is denylisted: {path}")
 
     exists = (
         resolved.exists() if follow_final_symlink else os.path.lexists(resolved)

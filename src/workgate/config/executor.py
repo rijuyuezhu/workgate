@@ -14,8 +14,6 @@ class ExecutorConfig(SharedRoleConfig):
 
     workspace_root: Path
     allow_full_control: bool
-    command_denylist: tuple[str, ...]
-    path_denylist: tuple[str, ...]
     max_concurrent_commands: int
     max_tmux_sessions: int
     run_shell_default_timeout_s: int
@@ -70,8 +68,6 @@ def resolve_executor_config(settings: Settings) -> ExecutorConfig:
         state_dir=settings.state_dir.resolve(strict=False),
         workspace_root=settings.workspace_root.resolve(strict=False),
         allow_full_control=settings.allow_full_control,
-        command_denylist=tuple(settings.command_denylist),
-        path_denylist=tuple(settings.path_denylist),
         max_concurrent_commands=settings.max_concurrent_commands,
         max_tmux_sessions=settings.max_tmux_sessions,
         ui_terminal_idle_timeout_s=settings.ui_terminal_idle_timeout_s,

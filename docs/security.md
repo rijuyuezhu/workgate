@@ -79,7 +79,7 @@ Agent Bridge authentication is separate from the built-in OAuth server that prot
 
 - Runtime fields contain normalized versions/platform tokens only. Executor identity contains package/bundle versions and a normalized service kind/status, never bundle digests, join tokens, service definitions, or command lines.
 - Tool probes run only allowlisted version commands, concurrently, with independent 1.5-second timeouts and bounded output. Responses expose an extracted version token and safe source category, not full executable paths, stdout/stderr, or exception text. Missing, timed-out, and failed probes are not marked available.
-- Capability and policy fields include only values needed for tool selection. They exclude environment-variable values, OAuth/admin secrets, Agent Bridge server names, command/path denylists, state/config directories, audit contents, and other private configuration. OAuth capability changes are represented only as configured/authorized server counts.
+- Capability and policy fields include only values needed for tool selection. They exclude environment-variable values, OAuth/admin secrets, Agent Bridge server names, state/config directories, audit contents, and other private configuration. OAuth capability changes are represented only as configured/authorized server counts.
 - Executor orientation is produced by the executor and validated as the same typed response before control binds its public session id and machine name. Executor cwd changes refresh machine-side Git, instructions, environment, and canonical workdir instead of substituting control-local information.
 - Tool probes are briefly cached, but cwd-sensitive orientation and dynamic capability/policy fields are rebuilt for each session response. Collection failures degrade to normalized unavailable/error fields rather than failing session creation or returning raw diagnostics.
 
@@ -93,11 +93,12 @@ When OAuth authentication is enabled, protected MCP and REST routes authenticate
 
 ## Full-control mode
 
-`allow_full_control: true` is an explicit **executor** machine-policy mode
-(also available to the executor through `allow_full_control: true`).
-It disables that executor's built-in command and path denylists, but MCP safety
-annotations remain conservative and continue to identify destructive or
-open-world tools. The control CLI does not accept `--allow-full-control`.
+`allow_full_control: true` is an explicit **executor** machine-policy mode.
+It allows executor filesystem path resolution to escape the configured
+`workspace_root`; with the default `false`, that structural boundary remains
+enforced. MCP safety annotations remain conservative and continue to identify
+destructive or open-world tools. The control CLI does not accept
+`--allow-full-control`.
 
 ## Bounded command containment
 

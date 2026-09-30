@@ -65,7 +65,6 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
             path,
             workspace_root=settings.workspace_root,
             allow_full_control=settings.allow_full_control,
-            path_denylist=tuple(settings.path_denylist),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -76,7 +75,6 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
         path_resolver=test_path_resolver,
         workspace_root=initial_settings.workspace_root,
         allow_full_control=initial_settings.allow_full_control,
-        path_denylist=tuple(initial_settings.path_denylist),
         max_session_snapshots=initial_settings.max_session_snapshots,
         max_session_snapshot_bytes=initial_settings.max_session_snapshot_bytes,
     )

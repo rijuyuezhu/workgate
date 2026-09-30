@@ -83,7 +83,6 @@ class ToolSessionStore:
         path_resolver: SessionPathResolver | None = None,
         workspace_root: Path | None = None,
         allow_full_control: bool = False,
-        path_denylist: tuple[str, ...] = (),
         max_session_snapshots: int,
         max_session_snapshot_bytes: int,
     ) -> None:
@@ -106,7 +105,6 @@ class ToolSessionStore:
                     path,
                     workspace_root=workspace_root,
                     allow_full_control=allow_full_control,
-                    path_denylist=path_denylist,
                     must_exist=must_exist,
                     allow_missing_parent=allow_missing_parent,
                     follow_final_symlink=follow_final_symlink,

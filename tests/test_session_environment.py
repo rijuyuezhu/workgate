@@ -177,8 +177,6 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
 ):
     config = _config(
         tmp_path,
-        command_denylist=["private-command"],
-        path_denylist=["private/path"],
         max_jobs=17,
         max_grep_results=23,
     )
@@ -197,7 +195,6 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
         config, workdir=str(tmp_path)
     )
     payload = environment.model_dump(mode="json")
-    encoded = json.dumps(payload)
 
     assert environment.workspace.workspace_root == str(tmp_path)
     assert environment.capabilities.raw_pty is True
@@ -217,9 +214,6 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
         "audit_full_payload",
     ):
         assert control_only not in payload["capabilities"]
-    for forbidden in ("private-command", "private/path"):
-        assert forbidden not in encoded
-
     monkeypatch.setattr(
         env_ops,
         "_collect_tools",

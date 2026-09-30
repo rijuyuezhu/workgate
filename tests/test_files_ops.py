@@ -21,7 +21,6 @@ from workgate.executor.files import (
     parse_hashline_edit_input,
 )
 from workgate.executor.files_service import FilesService
-from workgate.executor.shell import check_command_policy
 from workgate.executor.tool_session.bindings import SessionBinding
 from workgate.executor.tool_session.resolver import SessionResolver
 from workgate.persistence import get_state_store, use_state_store
@@ -64,7 +63,6 @@ def _resolve_ambient_path(path: str | Path) -> Path:
         path,
         workspace_root=settings.workspace_root,
         allow_full_control=settings.allow_full_control,
-        path_denylist=tuple(settings.path_denylist),
     )
 
 
@@ -448,24 +446,25 @@ def test_reject_path_escape(tmp_path, monkeypatch):
         _resolve_ambient_path("/etc/passwd")
 
 
-def test_full_container_mode_disables_builtin_restrictions(
-    tmp_path, monkeypatch
-):
+def test_full_control_mode_allows_workspace_escape(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "true")
     clear_settings_cache()
 
-    settings = get_settings()
-    assert settings.command_denylist == []
-
-    assert settings.path_denylist == []
     outside_workspace = Path(tmp_path.anchor) / "outside-workspace"
     assert _resolve_ambient_path(outside_workspace) == Path(
         os.path.abspath(outside_workspace)
     )
-    check_command_policy(
-        resolve_executor_config(settings), "mount /dev/null /mnt || true"
-    )
+
+
+def test_sensitive_looking_path_inside_workspace_is_allowed(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "false")
+    clear_settings_cache()
+
+    assert _resolve_ambient_path(".env") == tmp_path / ".env"
 
 
 def test_read_text_handles_truncated_utf8_sequence(tmp_path, monkeypatch):
