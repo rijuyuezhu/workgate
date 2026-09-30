@@ -1,9 +1,39 @@
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from workgate.config.settings import clear_settings_cache
 from workgate.control.http.app import build_http_app
+from workgate.oauth.http.auth import is_direct_localhost_request
 from workgate.tools.catalog import build_tool_catalog
+
+
+def _auth_request(
+    *,
+    peer: tuple[str, int] | None,
+    host: str | None,
+    headers: tuple[tuple[str, str], ...] = (),
+) -> Request:
+    raw_headers: list[tuple[bytes, bytes]] = []
+    if host is not None:
+        raw_headers.append((b"host", host.encode("ascii")))
+    raw_headers.extend(
+        (name.encode("ascii"), value.encode("ascii")) for name, value in headers
+    )
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "raw_path": b"/",
+            "root_path": "",
+            "scheme": "http",
+            "query_string": b"",
+            "headers": raw_headers,
+            "client": peer,
+            "server": ("127.0.0.1", 8765),
+        }
+    )
 
 
 def test_http_missing_required_argument_returns_validation_error(
@@ -185,3 +215,31 @@ def test_http_localhost_bypass_rejects_proxy_or_ambiguous_requests(
     ).post("/tools/read", json={}, headers=headers)
 
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("peer", "host", "headers", "expected"),
+    (
+        (("localhost", 50000), "localhost", (), True),
+        (("127.0.0.1", 50000), None, (), False),
+        (("127.0.0.1", 50000), "[", (), False),
+        (("127.0.0.1", 50000), "[::1]suffix", (), False),
+        (("127.0.0.1", 50000), "::1", (), False),
+        (("127.0.0.1", 50000), "127.0.0.1:bad", (), False),
+        (("127.0.0.1", 50000), "not-an-ip", (), False),
+        (None, "localhost", (), False),
+        (("not-an-ip", 50000), "localhost", (), False),
+        (
+            ("127.0.0.1", 50000),
+            "localhost",
+            (("x-forwarded-prefix", ""),),
+            False,
+        ),
+    ),
+)
+def test_direct_localhost_predicate_fails_closed_on_ambiguous_inputs(
+    peer, host, headers, expected
+):
+    request = _auth_request(peer=peer, host=host, headers=headers)
+
+    assert is_direct_localhost_request(request) is expected

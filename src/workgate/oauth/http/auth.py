@@ -17,6 +17,17 @@ def client_host(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+def _is_loopback_host(value: str) -> bool:
+    """Return whether one host name or address identifies loopback."""
+    host = value.split("%", 1)[0]
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _host_is_loopback(value: str) -> bool:
     """Return whether one Host-style authority names a loopback endpoint."""
     authority = value.strip()
@@ -38,24 +49,12 @@ def _host_is_loopback(value: str) -> bool:
         if separator and not port.isdigit():
             return False
 
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return _is_loopback_host(host)
 
 
 def _peer_is_loopback(request: Request) -> bool:
     """Return whether the transport peer itself is loopback."""
-    host = client_host(request).strip()
-    if host.lower() == "localhost":
-        return True
-    candidate = host.split("%", 1)[0].strip("[]")
-    try:
-        return ipaddress.ip_address(candidate).is_loopback
-    except ValueError:
-        return False
+    return _is_loopback_host(client_host(request).strip().strip("[]"))
 
 
 def _has_forwarding_metadata(request: Request) -> bool:
