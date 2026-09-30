@@ -14,6 +14,7 @@ from pathlib import Path
 from ..config.executor import ExecutorConfig
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
+    EditContextOutput,
     EditLinesOutput,
     EntryInfo,
     HashlineEditHunkOutput,
@@ -881,7 +882,7 @@ def _hashline_hunk_contexts(
                 start_line=hunk.start_line,
                 end_line=hunk.end_line,
                 replacement_line_count=replacement_line_count,
-                context=context,
+                context=EditContextOutput.from_read_result(context),
             )
             delta += replacement_line_count - (
                 hunk.end_line - hunk.start_line + 1
@@ -970,7 +971,6 @@ def _hashline_edit_locked(
             hunk.replacement_line_count for hunk in hunk_outputs
         ),
         diff="".join(diff_parts),
-        context=first_hunk.context,
         hunk_count=len(hunk_outputs),
         hunks=hunk_outputs,
     )
@@ -1083,7 +1083,7 @@ def _edit_lines_local(
         end_line=end_line,
         replacement_line_count=replacement_line_count,
         diff=diff,
-        context=context,
+        context=EditContextOutput.from_read_result(context),
     )
 
 

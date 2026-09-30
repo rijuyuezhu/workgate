@@ -30,6 +30,22 @@ _HEADER_MISMATCH = -32020
 _UNSUPPORTED_PROTOCOL_VERSION = -32022
 
 
+def _tool_text(name: str, structured: Any) -> str:
+    """Return concise model-facing text for compact edit results."""
+    if name == "edit_lines":
+        result = cast(dict[str, Any], structured)
+        context = cast(dict[str, Any], result["context"])
+        return str(context["numbered_content"])
+    if name == "hashline_edit":
+        result = cast(dict[str, Any], structured)
+        hunks = cast(list[dict[str, Any]], result["hunks"])
+        return "\n\n".join(
+            str(cast(dict[str, Any], hunk["context"])["numbered_content"])
+            for hunk in hunks
+        )
+    return json.dumps(structured, ensure_ascii=False, sort_keys=True)
+
+
 class HostedMcpGateway:
     """Expose the supported hosted tool subset through stateless MCP JSON-RPC."""
 
@@ -257,11 +273,7 @@ class HostedMcpGateway:
                     "content": [
                         {
                             "type": "text",
-                            "text": json.dumps(
-                                structured,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
+                            "text": _tool_text(name, structured),
                         }
                     ],
                     "structuredContent": structured,

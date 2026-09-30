@@ -73,8 +73,8 @@ async def test_composed_files_cover_read_write_edit_hashline_and_delete(
     )
 
     assert written.path == "demo.txt"
-    assert "TWO" in edited.context.content
-    assert "THREE" in hashline.context.content
+    assert "2:TWO" in edited.context.numbered_content
+    assert "3:THREE" in hashline.hunks[0].context.numbered_content
     assert any(entry.path == "demo.txt" for entry in listed.entries)
     assert deleted.deleted == "file"
     assert not (tmp_path / "demo.txt").exists()

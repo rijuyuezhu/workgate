@@ -517,53 +517,9 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
     "name": "edit_lines",
     "outputSchema": {
       "$defs": {
-        "LineRange": {
-          "description": "Inclusive 1-based line range shown to the agent.",
+        "EditContextOutput": {
+          "description": "Compact fresh grounding returned after an edit.",
           "properties": {
-            "end": {
-              "description": "Final visible 1-based line number.",
-              "title": "End",
-              "type": "integer"
-            },
-            "start": {
-              "description": "First visible 1-based line number.",
-              "title": "Start",
-              "type": "integer"
-            }
-          },
-          "required": [
-            "start",
-            "end"
-          ],
-          "title": "LineRange",
-          "type": "object"
-        },
-        "ReadFileOutput": {
-          "description": "UTF-8 text file content plus edit-grounding metadata.",
-          "properties": {
-            "bytes": {
-              "description": "Total file size in bytes.",
-              "title": "Bytes",
-              "type": "integer"
-            },
-            "bytes_read": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Number of bytes read into the text response, when applicable.",
-              "title": "Bytes Read"
-            },
-            "content": {
-              "description": "Decoded UTF-8 text content. Prefer numbered_content/hashline output for grounded edits.",
-              "title": "Content",
-              "type": "string"
-            },
             "end_line": {
               "anyOf": [
                 {
@@ -574,67 +530,18 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
                 }
               ],
               "default": null,
-              "description": "Final original 1-based line number returned across selected ranges, or null when no lines were returned.",
+              "description": "Final original 1-based line shown in this context, or null when empty.",
               "title": "End Line"
             },
-            "file_sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "SHA-256 digest of the complete file at the time it was read.",
-              "title": "File Sha256"
-            },
-            "line_count": {
-              "default": 0,
-              "description": "Number of decoded text lines returned in lines and grounded numbered_content across all selected ranges.",
-              "title": "Line Count",
-              "type": "integer"
-            },
-            "lines": {
-              "description": "Returned lines with original 1-based line numbers for precise follow-up edits.",
-              "items": {
-                "$ref": "#/$defs/ReadLine"
-              },
-              "title": "Lines",
-              "type": "array"
-            },
             "numbered_content": {
-              "default": "",
-              "description": "Grounded model-facing text: optional [path#snapshot_id] header plus 'line:text' rows for all selected ranges.",
+              "description": "Canonical [path#snapshot_id] plus line:text grounding for the next edit.",
               "title": "Numbered Content",
               "type": "string"
             },
             "path": {
-              "description": "Workspace-relative file path that was read.",
+              "description": "Workspace-relative file path for this context.",
               "title": "Path",
               "type": "string"
-            },
-            "seen_ranges": {
-              "description": "Inclusive original line ranges that were actually shown and are eligible for grounded line edits.",
-              "items": {
-                "$ref": "#/$defs/LineRange"
-              },
-              "title": "Seen Ranges",
-              "type": "array"
-            },
-            "session_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Explicit agent/workspace session that recorded this read, or null when no grounding snapshot was recorded.",
-              "title": "Session Id"
             },
             "snapshot_id": {
               "anyOf": [
@@ -646,7 +553,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
                 }
               ],
               "default": null,
-              "description": "Opaque handle for this displayed file snapshot, used by line-based edit tools to reject stale edits.",
+              "description": "Fresh snapshot handle embedded in numbered_content for follow-up edits.",
               "title": "Snapshot Id"
             },
             "start_line": {
@@ -659,77 +566,29 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
                 }
               ],
               "default": null,
-              "description": "First original 1-based line number returned across selected ranges, or null when no lines were returned.",
+              "description": "First original 1-based line shown in this context, or null when empty.",
               "title": "Start Line"
-            },
-            "total_lines": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Total decoded text line count before optional line-range selection.",
-              "title": "Total Lines"
             },
             "truncated": {
               "default": false,
-              "description": "Whether text content was truncated to fit the read limit.",
+              "description": "Whether the underlying bounded read truncated file text.",
               "title": "Truncated",
               "type": "boolean"
-            },
-            "truncated_bytes": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Number of file bytes omitted due to the read limit, when applicable.",
-              "title": "Truncated Bytes"
             }
           },
           "required": [
             "path",
-            "bytes",
-            "content"
+            "numbered_content"
           ],
-          "title": "ReadFileOutput",
-          "type": "object"
-        },
-        "ReadLine": {
-          "description": "One decoded line with its original file line number.",
-          "properties": {
-            "line": {
-              "description": "Original 1-based line number in the file.",
-              "title": "Line",
-              "type": "integer"
-            },
-            "text": {
-              "description": "Line text without its trailing newline.",
-              "title": "Text",
-              "type": "string"
-            }
-          },
-          "required": [
-            "line",
-            "text"
-          ],
-          "title": "ReadLine",
+          "title": "EditContextOutput",
           "type": "object"
         }
       },
       "description": "Grounded whole-line edit result.",
       "properties": {
         "context": {
-          "$ref": "#/$defs/ReadFileOutput",
-          "description": "Hashline post-edit context around the changed line range, including a fresh snapshot_id."
+          "$ref": "#/$defs/EditContextOutput",
+          "description": "Compact fresh hashline context around the changed line range."
         },
         "diff": {
           "description": "Unified diff for the applied line edit.",
@@ -803,12 +662,78 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
     "name": "hashline_edit",
     "outputSchema": {
       "$defs": {
+        "EditContextOutput": {
+          "description": "Compact fresh grounding returned after an edit.",
+          "properties": {
+            "end_line": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Final original 1-based line shown in this context, or null when empty.",
+              "title": "End Line"
+            },
+            "numbered_content": {
+              "description": "Canonical [path#snapshot_id] plus line:text grounding for the next edit.",
+              "title": "Numbered Content",
+              "type": "string"
+            },
+            "path": {
+              "description": "Workspace-relative file path for this context.",
+              "title": "Path",
+              "type": "string"
+            },
+            "snapshot_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Fresh snapshot handle embedded in numbered_content for follow-up edits.",
+              "title": "Snapshot Id"
+            },
+            "start_line": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "First original 1-based line shown in this context, or null when empty.",
+              "title": "Start Line"
+            },
+            "truncated": {
+              "default": false,
+              "description": "Whether the underlying bounded read truncated file text.",
+              "title": "Truncated",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "numbered_content"
+          ],
+          "title": "EditContextOutput",
+          "type": "object"
+        },
         "HashlineEditHunkOutput": {
           "description": "One applied hashline edit hunk.",
           "properties": {
             "context": {
-              "$ref": "#/$defs/ReadFileOutput",
-              "description": "Hashline post-edit context around this hunk, including a fresh snapshot_id."
+              "$ref": "#/$defs/EditContextOutput",
+              "description": "Compact fresh hashline context around this hunk."
             },
             "end_line": {
               "description": "Original 1-based final line touched by this hunk.",
@@ -840,228 +765,17 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           ],
           "title": "HashlineEditHunkOutput",
           "type": "object"
-        },
-        "LineRange": {
-          "description": "Inclusive 1-based line range shown to the agent.",
-          "properties": {
-            "end": {
-              "description": "Final visible 1-based line number.",
-              "title": "End",
-              "type": "integer"
-            },
-            "start": {
-              "description": "First visible 1-based line number.",
-              "title": "Start",
-              "type": "integer"
-            }
-          },
-          "required": [
-            "start",
-            "end"
-          ],
-          "title": "LineRange",
-          "type": "object"
-        },
-        "ReadFileOutput": {
-          "description": "UTF-8 text file content plus edit-grounding metadata.",
-          "properties": {
-            "bytes": {
-              "description": "Total file size in bytes.",
-              "title": "Bytes",
-              "type": "integer"
-            },
-            "bytes_read": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Number of bytes read into the text response, when applicable.",
-              "title": "Bytes Read"
-            },
-            "content": {
-              "description": "Decoded UTF-8 text content. Prefer numbered_content/hashline output for grounded edits.",
-              "title": "Content",
-              "type": "string"
-            },
-            "end_line": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Final original 1-based line number returned across selected ranges, or null when no lines were returned.",
-              "title": "End Line"
-            },
-            "file_sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "SHA-256 digest of the complete file at the time it was read.",
-              "title": "File Sha256"
-            },
-            "line_count": {
-              "default": 0,
-              "description": "Number of decoded text lines returned in lines and grounded numbered_content across all selected ranges.",
-              "title": "Line Count",
-              "type": "integer"
-            },
-            "lines": {
-              "description": "Returned lines with original 1-based line numbers for precise follow-up edits.",
-              "items": {
-                "$ref": "#/$defs/ReadLine"
-              },
-              "title": "Lines",
-              "type": "array"
-            },
-            "numbered_content": {
-              "default": "",
-              "description": "Grounded model-facing text: optional [path#snapshot_id] header plus 'line:text' rows for all selected ranges.",
-              "title": "Numbered Content",
-              "type": "string"
-            },
-            "path": {
-              "description": "Workspace-relative file path that was read.",
-              "title": "Path",
-              "type": "string"
-            },
-            "seen_ranges": {
-              "description": "Inclusive original line ranges that were actually shown and are eligible for grounded line edits.",
-              "items": {
-                "$ref": "#/$defs/LineRange"
-              },
-              "title": "Seen Ranges",
-              "type": "array"
-            },
-            "session_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Explicit agent/workspace session that recorded this read, or null when no grounding snapshot was recorded.",
-              "title": "Session Id"
-            },
-            "snapshot_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Opaque handle for this displayed file snapshot, used by line-based edit tools to reject stale edits.",
-              "title": "Snapshot Id"
-            },
-            "start_line": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "First original 1-based line number returned across selected ranges, or null when no lines were returned.",
-              "title": "Start Line"
-            },
-            "total_lines": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Total decoded text line count before optional line-range selection.",
-              "title": "Total Lines"
-            },
-            "truncated": {
-              "default": false,
-              "description": "Whether text content was truncated to fit the read limit.",
-              "title": "Truncated",
-              "type": "boolean"
-            },
-            "truncated_bytes": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "description": "Number of file bytes omitted due to the read limit, when applicable.",
-              "title": "Truncated Bytes"
-            }
-          },
-          "required": [
-            "path",
-            "bytes",
-            "content"
-          ],
-          "title": "ReadFileOutput",
-          "type": "object"
-        },
-        "ReadLine": {
-          "description": "One decoded line with its original file line number.",
-          "properties": {
-            "line": {
-              "description": "Original 1-based line number in the file.",
-              "title": "Line",
-              "type": "integer"
-            },
-            "text": {
-              "description": "Line text without its trailing newline.",
-              "title": "Text",
-              "type": "string"
-            }
-          },
-          "required": [
-            "line",
-            "text"
-          ],
-          "title": "ReadLine",
-          "type": "object"
         }
       },
       "description": "Grounded hashline edit result for one or more applied hunks.",
       "properties": {
-        "context": {
-          "$ref": "#/$defs/ReadFileOutput",
-          "description": "Hashline post-edit context around the changed line range, including a fresh snapshot_id."
-        },
         "diff": {
-          "description": "Unified diff for the applied line edit.",
+          "description": "Combined unified diff for the applied edits.",
           "title": "Diff",
           "type": "string"
         },
         "end_line": {
-          "description": "Original 1-based final line replaced by this edit.",
+          "description": "Original final edited line, aggregated for one-file edits.",
           "title": "End Line",
           "type": "integer"
         },
@@ -1079,17 +793,17 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "array"
         },
         "path": {
-          "description": "Workspace-relative file path that was edited.",
+          "description": "Workspace-relative path of the first edited hunk.",
           "title": "Path",
           "type": "string"
         },
         "replacement_line_count": {
-          "description": "Number of replacement lines inserted for the selected range.",
+          "description": "Total number of replacement lines inserted across hunks.",
           "title": "Replacement Line Count",
           "type": "integer"
         },
         "start_line": {
-          "description": "Original 1-based first line replaced by this edit.",
+          "description": "Original first edited line, aggregated for one-file edits.",
           "title": "Start Line",
           "type": "integer"
         }
@@ -1100,7 +814,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "end_line",
         "replacement_line_count",
         "diff",
-        "context",
         "hunk_count",
         "hunks"
       ],

@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Literal, Protocol
 
 from fastapi import HTTPException
 from mcp.server.fastmcp import FastMCP
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
 from ..config.control import ControlConfig, get_control_config
@@ -19,6 +19,7 @@ from ..oauth.core.context import (
     require_oauth_scopes,
 )
 from ..oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
+from ..utils.serialization import to_jsonable
 from .contracts import (
     HttpMethod,
     HttpToolRoute,
@@ -33,6 +34,7 @@ type ToolAnnotation = Literal["read_only"]
 type ToolDescription = str | Callable[[McpToolContext], str]
 type ToolEnabled = Callable[[ControlConfig], bool]
 type ToolFunc = Callable[..., Awaitable[Any]]
+type McpTextRenderer = Callable[[Any], str]
 type McpErrorHandler = Callable[
     [Exception, tuple[Any, ...], dict[str, Any]], Any
 ]
@@ -83,6 +85,7 @@ class ToolDecoratorFactory(Protocol):
         annotations: ToolAnnotation | None = None,
         description: ToolDescription | None = None,
         mcp_error_handler: McpErrorHandler | None = None,
+        mcp_text_renderer: McpTextRenderer | None = None,
         enabled: ToolEnabled = ...,
         timeout_cancellable: bool = True,
     ) -> Callable[[ToolFunc], ToolDefinition]: ...
@@ -151,6 +154,8 @@ class ToolDefinition:
     """Static or context-derived MCP description override. If not provided, the tool's docstring is used."""
     mcp_error_handler: McpErrorHandler | None = None
     """Optional MCP exception-to-result conversion used for tool errors and timeouts."""
+    mcp_text_renderer: McpTextRenderer | None = None
+    """Optional MCP-only text renderer for a successful canonical tool result."""
     enabled: ToolEnabled = _always_enabled
     """Predicate controlling whether the tool is exposed for current settings."""
     timeout_cancellable: bool = True
@@ -240,7 +245,18 @@ class ToolDefinition:
         async def mcp_handler(*args: Any, **kwargs: Any) -> Any:
             try:
                 _enforce_oauth_scopes(self.required_oauth_scopes())
-                return await self.func(*args, **kwargs)
+                result = await self.func(*args, **kwargs)
+                if self.mcp_text_renderer is not None:
+                    return CallToolResult(
+                        content=[
+                            TextContent(
+                                type="text",
+                                text=self.mcp_text_renderer(result),
+                            )
+                        ],
+                        structuredContent=to_jsonable(result),
+                    )
+                return result
             except SessionTerminationRequestedError:
                 raise
             except MissingOAuthScopeError as exc:
@@ -299,6 +315,7 @@ class DeclarativeToolRegistry(ToolRegistry):
             annotations: ToolAnnotation | None = None,
             description: ToolDescription | None = None,
             mcp_error_handler: McpErrorHandler | None = None,
+            mcp_text_renderer: McpTextRenderer | None = None,
             enabled: ToolEnabled = _always_enabled,
             timeout_cancellable: bool = True,
         ) -> Callable[[ToolFunc], ToolDefinition]:
@@ -314,6 +331,7 @@ class DeclarativeToolRegistry(ToolRegistry):
                         annotations=annotations,
                         description=description,
                         mcp_error_handler=mcp_error_handler,
+                        mcp_text_renderer=mcp_text_renderer,
                         enabled=enabled,
                         timeout_cancellable=timeout_cancellable,
                     )

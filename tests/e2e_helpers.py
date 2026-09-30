@@ -640,6 +640,11 @@ class McpSessionToolClient:
             getattr(result.content[0], "text", "") if result.content else ""
         )
         assert not result.isError, error_text
+        if (
+            name in {"edit_lines", "hashline_edit"}
+            and result.structuredContent is not None
+        ):
+            return result.structuredContent
         assert result.content
         text = getattr(result.content[0], "text", "")
         return unwrap_tool_payload(text)
