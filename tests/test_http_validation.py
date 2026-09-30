@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from workgate.config.settings import clear_settings_cache
@@ -90,15 +91,97 @@ def test_http_localhost_bypass_is_opt_in(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    protected = TestClient(build_http_app(), client=("127.0.0.1", 50000)).post(
-        "/tools/read", json={}
-    )
+    protected = TestClient(
+        build_http_app(),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    ).post("/tools/read", json={})
     assert protected.status_code == 401
 
     monkeypatch.setenv("WORKGATE_AUTH_BYPASS_LOCALHOST", "true")
     clear_settings_cache()
-    bypassed = TestClient(build_http_app(), client=("127.0.0.1", 50000)).post(
-        "/tools/read", json={}
-    )
+    bypassed = TestClient(
+        build_http_app(),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    ).post("/tools/read", json={})
     assert bypassed.status_code == 400
     assert bypassed.json()["error"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    ("base_url", "peer", "headers"),
+    (
+        ("http://127.0.0.1:8765", ("127.0.0.1", 50000), {}),
+        (
+            "http://localhost:8765",
+            ("::1", 50000),
+            {"Host": "[::1]:8765"},
+        ),
+    ),
+)
+def test_http_localhost_bypass_accepts_direct_loopback(
+    tmp_path, monkeypatch, base_url, peer, headers
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_MODE", "http")
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
+    monkeypatch.setenv("WORKGATE_AUTH_BYPASS_LOCALHOST", "true")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    response = TestClient(
+        build_http_app(), base_url=base_url, client=peer
+    ).post("/tools/read", json={}, headers=headers)
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    ("base_url", "peer", "headers"),
+    (
+        ("http://workgate.example", ("127.0.0.1", 50000), {}),
+        ("http://127.0.0.1:8765", ("203.0.113.10", 50000), {}),
+        (
+            "http://127.0.0.1:8765",
+            ("127.0.0.1", 50000),
+            {"Forwarded": "for=203.0.113.10"},
+        ),
+        (
+            "http://127.0.0.1:8765",
+            ("127.0.0.1", 50000),
+            {"X-Real-IP": "203.0.113.10"},
+        ),
+        (
+            "http://127.0.0.1:8765",
+            ("127.0.0.1", 50000),
+            {"X-Forwarded-For": "203.0.113.10"},
+        ),
+        (
+            "http://127.0.0.1:8765",
+            ("127.0.0.1", 50000),
+            {"X-Forwarded-For": ""},
+        ),
+        (
+            "http://127.0.0.1:8765",
+            ("127.0.0.1", 50000),
+            {"X-Forwarded-Port": "443"},
+        ),
+    ),
+)
+def test_http_localhost_bypass_rejects_proxy_or_ambiguous_requests(
+    tmp_path, monkeypatch, base_url, peer, headers
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_MODE", "http")
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
+    monkeypatch.setenv("WORKGATE_AUTH_BYPASS_LOCALHOST", "true")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    response = TestClient(
+        build_http_app(), base_url=base_url, client=peer
+    ).post("/tools/read", json={}, headers=headers)
+
+    assert response.status_code == 401

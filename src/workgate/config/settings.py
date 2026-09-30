@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     auth_mode: Literal["none", "oauth"] = "oauth"
     """Authentication mode. Do not expose public services with none."""
     auth_bypass_localhost: bool = False
-    """Allow localhost requests without bearer authentication. Keep disabled when exposing HTTP through proxies or shared hosts."""
+    """Allow direct loopback HTTP requests without bearer authentication. Forwarded or non-loopback Host requests still require OAuth."""
     mcp_session_idle_timeout_s: _PositiveInt = 180
     """Idle timeout for stateful Streamable HTTP MCP sessions in seconds."""
     mcp_max_sessions: _PositiveInt = 1024

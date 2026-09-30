@@ -46,7 +46,7 @@ The HTTP OAuth flow follows the security boundaries required by the [MCP authori
 
 - Serve public deployments over HTTPS and set `base_url` to the externally visible origin. This keeps metadata, issuer, resource, redirect, and transport allowlist calculations stable behind a tunnel or reverse proxy.
 - When OAuth and `base_url` are configured together, startup requires `oauth_admin_pin` to be a non-placeholder value of at least 8 characters. Use a substantially longer random value in production and treat it as an approval secret, not as a user account password.
-- Keep `auth_bypass_localhost: false` for shared hosts or any environment where local processes are not fully trusted.
+- `auth_bypass_localhost: true` applies only to direct loopback HTTP traffic with a loopback `Host` and no forwarding metadata. Keep it `false` on shared hosts or anywhere local processes are not fully trusted.
 - Keep the state directory private. It contains the JWT signing secret and may coexist with audit logs that include sensitive request context.
 - Prefer short access-token lifetimes for public deployments. There is no refresh-token flow and no server-side token revocation list, so token expiry is the primary recovery mechanism after bearer-token disclosure.
 - Review audit logs and rotate the state directory when moving a server between trust domains.

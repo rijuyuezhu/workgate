@@ -40,8 +40,8 @@ ui_wallpaper: "aurora"
 # Authentication mode. Do not expose public services with none.
 # Choices: none, oauth.
 auth_mode: "oauth"
-# Allow localhost requests without bearer authentication. Keep disabled when exposing HTTP through
-# proxies or shared hosts.
+# Allow direct loopback HTTP requests without bearer authentication. Forwarded or non-loopback Host
+# requests still require OAuth.
 auth_bypass_localhost: false
 # Idle timeout for stateful Streamable HTTP MCP sessions in seconds.
 mcp_session_idle_timeout_s: 180
