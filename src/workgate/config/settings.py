@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     """Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments."""
     port: _Port = 8765
     """Bind port for HTTP/MCP transports."""
+    log_level: Literal["critical", "error", "warning", "info", "debug"] = (
+        "warning"
+    )
+    """Runtime log level for Workgate and its HTTP server."""
+    forwarded_allow_ips: str = "127.0.0.1"
+    """Comma-separated proxy addresses/networks trusted for forwarded HTTP headers."""
 
     # Human interface.
     ui_enabled: bool = True
@@ -374,6 +380,12 @@ class Settings(BaseSettings):
     def validate_ui_path(cls, value: str) -> str:
         """Reject root, traversal, and service-reserved Human UI paths."""
         return normalize_ui_path(value)
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def normalize_log_level(cls, value: str) -> str:
+        """Normalize supported log levels before Literal validation."""
+        return str(value).strip().lower()
 
     @field_validator("command_denylist", "path_denylist", mode="before")
     @classmethod

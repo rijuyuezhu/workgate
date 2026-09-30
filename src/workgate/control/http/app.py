@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-import uvicorn
 from fastapi import FastAPI
 from starlette.routing import BaseRoute
 
@@ -20,6 +19,7 @@ from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..execution_context import ControlExecutionContextMiddleware
 from ..runtime import ControlRuntime, build_control_runtime
+from ..server import run_uvicorn
 from .errors import install_error_handlers
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
@@ -165,4 +165,4 @@ def run_http(
     """Run the REST HTTP server with one explicit control runtime owner."""
     validate_public_oauth_configuration(runtime.config)
     app = build_http_app(tool_catalog=tool_catalog, runtime=runtime)
-    uvicorn.run(app, host=runtime.config.host, port=runtime.config.port)
+    run_uvicorn(app, config=runtime.config)

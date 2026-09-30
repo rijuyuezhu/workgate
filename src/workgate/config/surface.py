@@ -144,6 +144,8 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("mode", "Server"),
     SettingSpec("host", "Server", metavar="HOST"),
     SettingSpec("port", "Server", metavar="PORT"),
+    SettingSpec("log_level", "Server", metavar="LEVEL"),
+    SettingSpec("forwarded_allow_ips", "Server", metavar="IPS"),
     SettingSpec("ui_enabled", "Human interface"),
     SettingSpec("ui_path", "Human interface", metavar="PATH"),
     SettingSpec("ui_tui_command", "Human interface", metavar="COMMAND"),

@@ -44,6 +44,34 @@ auth_mode: oauth
     assert settings.auth_mode == "none"
 
 
+def test_server_runtime_controls_resolve_from_yaml_and_env(
+    monkeypatch, tmp_path
+):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "log_level: INFO\nforwarded_allow_ips: 10.0.0.0/8\n",
+        encoding="utf-8",
+    )
+
+    from_yaml = load_settings(config)
+    assert from_yaml.log_level == "info"
+    assert from_yaml.forwarded_allow_ips == "10.0.0.0/8"
+
+    monkeypatch.setenv("WORKGATE_LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("WORKGATE_FORWARDED_ALLOW_IPS", "127.0.0.1,192.0.2.0/24")
+    from_env = load_settings(config)
+    assert from_env.log_level == "debug"
+    assert from_env.forwarded_allow_ips == "127.0.0.1,192.0.2.0/24"
+
+
+def test_log_level_validation_is_early_and_case_insensitive():
+    assert (
+        Settings.model_validate({"log_level": " ERROR "}).log_level == "error"
+    )
+    with pytest.raises(ValueError, match="log_level"):
+        Settings.model_validate({"log_level": "verbose"})
+
+
 def test_loading_settings_does_not_create_runtime_directories(tmp_path):
     workspace = tmp_path / "workspace"
     state = tmp_path / "state"
