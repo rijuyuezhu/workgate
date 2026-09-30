@@ -1,4 +1,3 @@
-import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import workgate.executor.files as files_ops
-from tests.helpers import build_paired_mcp, mcp_structured, nested_mcp_text
+from tests.helpers import build_paired_mcp, mcp_structured
 from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -430,7 +429,7 @@ async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
     response = await mcp.call_tool(
         "fetch", {"session_id": session["session_id"], "id": "blob.bin"}
     )
-    payload = json.loads(nested_mcp_text(response))
+    payload = mcp_structured(response)
 
     assert payload["text"].startswith(
         "Unable to fetch file: UnicodeDecodeError:"

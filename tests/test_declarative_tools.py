@@ -152,30 +152,31 @@ async def test_mcp_handler_enforces_required_oauth_scopes():
 
 
 @pytest.mark.asyncio
-async def test_mcp_text_renderer_does_not_change_canonical_http_result():
-    async def sample_tool() -> dict[str, bool]:
-        return {"ok": True}
-
-    def render(result: Any) -> str:
-        assert result == {"ok": True}
-        return "compact"
+async def test_explicit_mcp_text_projection_does_not_change_canonical_http_result():
+    async def sample_tool() -> dict[str, object]:
+        return {"kind": "file", "content": "compact"}
 
     definition = ToolDefinition(
         func=sample_tool,
-        name="sample_tool",
+        name="read",
         http_method="POST",
         http_path="/tools/sample_tool",
-        mcp_text_renderer=render,
     )
 
-    assert await definition.call_from_mapping({}) == {"ok": True}
+    assert await definition.call_from_mapping({}) == {
+        "kind": "file",
+        "content": "compact",
+    }
 
     mcp = _FakeMcp()
     definition.register_mcp(cast(Any, mcp), _sample_context())
     assert mcp.handler is not None
     handler = cast(Callable[[], Awaitable[CallToolResult]], mcp.handler)
     rendered = await handler()
-    assert rendered.structuredContent == {"ok": True}
+    assert rendered.structuredContent == {
+        "kind": "file",
+        "content": "compact",
+    }
     assert isinstance(rendered.content[0], TextContent)
     assert rendered.content[0].text == "compact"
 

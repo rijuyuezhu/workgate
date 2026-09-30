@@ -713,7 +713,7 @@ async def test_hosted_mcp_routes_sessions_and_machine_tools() -> None:
     assert actor.session_coordinator.calls[-1][0] == "bash"
 
 
-def test_hosted_mcp_edit_tools_use_compact_grounding_text() -> None:
+def test_hosted_mcp_uses_shared_model_facing_text_projections() -> None:
     first = {"numbered_content": "[edit.txt#fresh-one]\n1:ONE\n2:two"}
     second = {"numbered_content": "[edit.txt#fresh-two]\n3:three\n4:FOUR"}
 
@@ -726,6 +726,33 @@ def test_hosted_mcp_edit_tools_use_compact_grounding_text() -> None:
     ) == (
         "[edit.txt#fresh-one]\n1:ONE\n2:two\n\n"
         "[edit.txt#fresh-two]\n3:three\n4:FOUR"
+    )
+    assert (
+        _tool_text(
+            "bash",
+            {
+                "mode": "command",
+                "result": {
+                    "stdout": "ok\n",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "timed_out": False,
+                    "truncated": False,
+                },
+            },
+        )
+        == "ok"
+    )
+    assert (
+        _tool_text(
+            "session_start",
+            {
+                "session_id": "sess_1",
+                "workdir": "/workspace",
+                "message": "Reuse this session_id.",
+            },
+        )
+        == "Session sess_1 ready in /workspace.\nReuse this session_id."
     )
     assert _tool_text("bash", {"z": 1, "a": 2}) == '{"a": 2, "z": 1}'
 

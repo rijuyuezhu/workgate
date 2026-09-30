@@ -27,6 +27,7 @@ from .contracts import (
     ToolHandler,
     ToolRegistry,
 )
+from .mcp_text import render_tool_text
 from .metadata import oauth_security_meta
 
 type McpSecurityProfile = Literal["oauth", "connector_compatible"]
@@ -34,7 +35,6 @@ type ToolAnnotation = Literal["read_only"]
 type ToolDescription = str | Callable[[McpToolContext], str]
 type ToolEnabled = Callable[[ControlConfig], bool]
 type ToolFunc = Callable[..., Awaitable[Any]]
-type McpTextRenderer = Callable[[Any], str]
 type McpErrorHandler = Callable[
     [Exception, tuple[Any, ...], dict[str, Any]], Any
 ]
@@ -85,7 +85,6 @@ class ToolDecoratorFactory(Protocol):
         annotations: ToolAnnotation | None = None,
         description: ToolDescription | None = None,
         mcp_error_handler: McpErrorHandler | None = None,
-        mcp_text_renderer: McpTextRenderer | None = None,
         enabled: ToolEnabled = ...,
         timeout_cancellable: bool = True,
     ) -> Callable[[ToolFunc], ToolDefinition]: ...
@@ -154,8 +153,6 @@ class ToolDefinition:
     """Static or context-derived MCP description override. If not provided, the tool's docstring is used."""
     mcp_error_handler: McpErrorHandler | None = None
     """Optional MCP exception-to-result conversion used for tool errors and timeouts."""
-    mcp_text_renderer: McpTextRenderer | None = None
-    """Optional MCP-only text renderer for a successful canonical tool result."""
     enabled: ToolEnabled = _always_enabled
     """Predicate controlling whether the tool is exposed for current settings."""
     timeout_cancellable: bool = True
@@ -246,15 +243,12 @@ class ToolDefinition:
             try:
                 _enforce_oauth_scopes(self.required_oauth_scopes())
                 result = await self.func(*args, **kwargs)
-                if self.mcp_text_renderer is not None:
+                structured = to_jsonable(result)
+                text = render_tool_text(self.name, structured)
+                if text is not None:
                     return CallToolResult(
-                        content=[
-                            TextContent(
-                                type="text",
-                                text=self.mcp_text_renderer(result),
-                            )
-                        ],
-                        structuredContent=to_jsonable(result),
+                        content=[TextContent(type="text", text=text)],
+                        structuredContent=structured,
                     )
                 return result
             except SessionTerminationRequestedError:
@@ -315,7 +309,6 @@ class DeclarativeToolRegistry(ToolRegistry):
             annotations: ToolAnnotation | None = None,
             description: ToolDescription | None = None,
             mcp_error_handler: McpErrorHandler | None = None,
-            mcp_text_renderer: McpTextRenderer | None = None,
             enabled: ToolEnabled = _always_enabled,
             timeout_cancellable: bool = True,
         ) -> Callable[[ToolFunc], ToolDefinition]:
@@ -331,7 +324,6 @@ class DeclarativeToolRegistry(ToolRegistry):
                         annotations=annotations,
                         description=description,
                         mcp_error_handler=mcp_error_handler,
-                        mcp_text_renderer=mcp_text_renderer,
                         enabled=enabled,
                         timeout_cancellable=timeout_cancellable,
                     )

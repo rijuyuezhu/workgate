@@ -26,6 +26,7 @@ from workgate.protocol.credentials import (
     new_executor_credential,
 )
 from workgate.protocol.ids import new_executor_id
+from workgate.tools.mcp_text import has_explicit_tool_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -640,11 +641,10 @@ class McpSessionToolClient:
             getattr(result.content[0], "text", "") if result.content else ""
         )
         assert not result.isError, error_text
-        if (
-            name in {"edit_lines", "hashline_edit"}
-            and result.structuredContent is not None
+        if result.structuredContent is not None and has_explicit_tool_text(
+            name
         ):
-            return result.structuredContent
+            return unwrap_tool_payload(result.structuredContent)
         assert result.content
         text = getattr(result.content[0], "text", "")
         return unwrap_tool_payload(text)

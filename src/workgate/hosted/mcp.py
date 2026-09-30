@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from .. import __version__
+from ..tools.mcp_text import render_tool_text
 from ._tool_manifest import (
     HOSTED_TOOL_MANIFEST,
     LATEST_MCP_PROTOCOL_VERSION,
@@ -31,18 +32,10 @@ _UNSUPPORTED_PROTOCOL_VERSION = -32022
 
 
 def _tool_text(name: str, structured: Any) -> str:
-    """Return concise model-facing text for compact edit results."""
-    if name == "edit_lines":
-        result = cast(dict[str, Any], structured)
-        context = cast(dict[str, Any], result["context"])
-        return str(context["numbered_content"])
-    if name == "hashline_edit":
-        result = cast(dict[str, Any], structured)
-        hunks = cast(list[dict[str, Any]], result["hunks"])
-        return "\n\n".join(
-            str(cast(dict[str, Any], hunk["context"])["numbered_content"])
-            for hunk in hunks
-        )
+    """Return explicit model-facing text or the compatibility JSON fallback."""
+    rendered = render_tool_text(name, structured)
+    if rendered is not None:
+        return rendered
     return json.dumps(structured, ensure_ascii=False, sort_keys=True)
 
 

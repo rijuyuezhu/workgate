@@ -1,7 +1,5 @@
 """File operation tool registry."""
 
-from typing import Any
-
 from ...schemas.input_models.files import (
     EditEndLineArg,
     EditStartLineArg,
@@ -56,18 +54,6 @@ def _hashline_edit_description(context: McpToolContext) -> str:
     return """Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit."""
 
 
-def _edit_lines_mcp_text(result: Any) -> str:
-    """Return one edit's fresh hashline context as canonical MCP text."""
-    output = EditLinesOutput.model_validate(result)
-    return output.context.numbered_content
-
-
-def _hashline_edit_mcp_text(result: Any) -> str:
-    """Return fresh per-hunk hashline contexts as canonical MCP text."""
-    output = HashlineEditOutput.model_validate(result)
-    return "\n\n".join(hunk.context.numbered_content for hunk in output.hunks)
-
-
 @file_tool(
     http_method="POST",
     http_path="/tools/list_files",
@@ -109,7 +95,6 @@ async def write_file(
     http_path="/tools/edit_lines",
     description=_edit_lines_description,
     oauth_scopes=("shell:read", "shell:write"),
-    mcp_text_renderer=_edit_lines_mcp_text,
     timeout_cancellable=False,
 )
 async def edit_lines(
@@ -130,7 +115,6 @@ async def edit_lines(
     http_path="/tools/hashline_edit",
     description=_hashline_edit_description,
     oauth_scopes=("shell:read", "shell:write"),
-    mcp_text_renderer=_hashline_edit_mcp_text,
     timeout_cancellable=False,
 )
 async def hashline_edit(

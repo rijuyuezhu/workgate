@@ -28,7 +28,10 @@ from workgate.tools.registry import agent as tools_module
 
 
 def _payload(response: Any) -> dict[str, Any]:
-    if isinstance(response, tuple):
+    structured = getattr(response, "structuredContent", None)
+    if isinstance(structured, dict):
+        return cast(dict[str, Any], structured)
+    if isinstance(response, tuple) and isinstance(response[1], dict):
         return cast(dict[str, Any], response[1])
     return cast(dict[str, Any], json.loads(mcp_text(response)))
 
@@ -309,9 +312,10 @@ async def test_activate_agent_skill_returns_skill_content(
         {"session_id": session["session_id"], "name": "debugging"},
     )
     payload = mcp_text(response)
+    structured = mcp_structured(response)
 
     assert "Find root causes." in payload
-    assert "skills/debugging/SKILL.md" in payload
+    assert structured["entry_path"] == "skills/debugging/SKILL.md"
 
 
 @pytest.mark.asyncio

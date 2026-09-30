@@ -301,6 +301,81 @@ async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
+    target = tmp_path / "context.txt"
+    target.write_text("alpha\nneedle\nomega\n", encoding="utf-8")
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    app = _build_paired_surface_http_app()
+    mcp = build_mcp(runtime=app.state.control_runtime)
+
+    started = await mcp.call_tool("session_start", {"workdir": "."})
+    assert isinstance(started, CallToolResult)
+    assert isinstance(started.structuredContent, dict)
+    assert isinstance(started.content[0], TextContent)
+    assert started.structuredContent["session_id"] in started.content[0].text
+    assert started.structuredContent["workdir"] in started.content[0].text
+    assert not started.content[0].text.lstrip().startswith("{")
+    session_id = started.structuredContent["session_id"]
+
+    read = await mcp.call_tool(
+        "read", {"session_id": session_id, "path": "context.txt:1-3"}
+    )
+    assert isinstance(read, CallToolResult)
+    assert isinstance(read.structuredContent, dict)
+    assert isinstance(read.content[0], TextContent)
+    assert read.content[0].text == read.structuredContent["content"]
+
+    search = await mcp.call_tool(
+        "search",
+        {
+            "session_id": session_id,
+            "pattern": "needle",
+            "regex": False,
+            "paths": "context.txt",
+        },
+    )
+    assert isinstance(search, CallToolResult)
+    assert isinstance(search.structuredContent, dict)
+    assert isinstance(search.content[0], TextContent)
+    assert (
+        search.content[0].text == search.structuredContent["numbered_content"]
+    )
+
+    bash = await mcp.call_tool(
+        "bash",
+        {"session_id": session_id, "command": "printf shell-output"},
+    )
+    assert isinstance(bash, CallToolResult)
+    assert isinstance(bash.structuredContent, dict)
+    assert isinstance(bash.content[0], TextContent)
+    assert bash.content[0].text == "shell-output"
+
+    tree = await mcp.call_tool(
+        "tree_view", {"session_id": session_id, "cwd": ".", "depth": 1}
+    )
+    assert isinstance(tree, CallToolResult)
+    assert isinstance(tree.structuredContent, dict)
+    assert isinstance(tree.content[0], TextContent)
+    assert tree.content[0].text == "\n".join(tree.structuredContent["entries"])
+
+    glob = await mcp.call_tool(
+        "glob_search", {"session_id": session_id, "pattern": "**/*.txt"}
+    )
+    assert isinstance(glob, CallToolResult)
+    assert isinstance(glob.structuredContent, dict)
+    assert isinstance(glob.content[0], TextContent)
+    paths = glob.structuredContent["paths"]
+    assert glob.content[0].text == (
+        "\n".join(paths) if paths else "No matches."
+    )
+
+
+@pytest.mark.asyncio
 async def test_edit_tools_return_compact_grounded_mcp_content(
     tmp_path, monkeypatch
 ):

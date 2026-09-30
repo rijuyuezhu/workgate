@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import threading
 from collections.abc import Generator
@@ -17,7 +16,7 @@ import workgate.executor.browser as browser_ops
 from tests.helpers import (
     build_paired_control_harness,
     build_tool_session_store,
-    mcp_text,
+    mcp_structured,
 )
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
@@ -71,13 +70,7 @@ def _require_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _mcp_data(response: Any) -> dict[str, Any]:
-    data = (
-        response[1]
-        if isinstance(response, tuple)
-        else json.loads(mcp_text(response))
-    )
-    assert isinstance(data, dict)
-    return data
+    return mcp_structured(response)
 
 
 async def _wait_executor_online(control, executor_id: str) -> None:
