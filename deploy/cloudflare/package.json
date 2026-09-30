@@ -1,6 +1,6 @@
 {
   "private": true,
   "devDependencies": {
-    "wrangler": "4.139.0"
+    "wrangler": "4.144.0"
   }
 }
