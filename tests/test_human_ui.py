@@ -342,8 +342,11 @@ def test_disabled_auth_ignores_stale_ui_session_cookie(monkeypatch, tmp_path):
     assert response.json()["data"]["executor_targets"] == []
 
 
-def test_localhost_bypass_ignores_ui_session_cookies(monkeypatch, tmp_path):
+def test_direct_localhost_bypass_ignores_ui_session_cookies(
+    monkeypatch, tmp_path
+):
     base_url = "https://workgate.example"
+    transport_url = "http://127.0.0.1:8765"
     _configure_ui(
         monkeypatch,
         tmp_path,
@@ -354,7 +357,7 @@ def test_localhost_bypass_ignores_ui_session_cookies(monkeypatch, tmp_path):
     )
     client = TestClient(
         build_http_app(),
-        base_url=base_url,
+        base_url=transport_url,
         client=("127.0.0.1", 50000),
     )
     cookie_name = ui_session_cookie_name(base_url)
@@ -381,6 +384,19 @@ def test_localhost_bypass_ignores_ui_session_cookies(monkeypatch, tmp_path):
         },
     )
     assert reduced_scope.status_code == 200
+
+    proxied = TestClient(
+        build_http_app(),
+        base_url=base_url,
+        client=("127.0.0.1", 50000),
+    )
+    assert (
+        proxied.get(
+            "/api/ui/bootstrap",
+            headers={"Cookie": f"{cookie_name}=not-a-jwt"},
+        ).status_code
+        == 401
+    )
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,6 @@
 """HTTP authentication helpers for protected OAuth routes."""
 
+import ipaddress
 from typing import Any
 
 from authlib.oauth2.rfc6749.errors import MissingAuthorizationError, OAuth2Error
@@ -16,9 +17,64 @@ def client_host(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
-def is_localhost(request: Request) -> bool:
-    """Return whether the request came from a localhost peer."""
-    return client_host(request) in {"127.0.0.1", "::1", "localhost"}
+def _is_loopback_host(value: str) -> bool:
+    """Return whether one host name or address identifies loopback."""
+    host = value.split("%", 1)[0]
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _host_is_loopback(value: str) -> bool:
+    """Return whether one Host-style authority names a loopback endpoint."""
+    authority = value.strip()
+    if not authority:
+        return False
+
+    if authority.startswith("["):
+        end = authority.find("]")
+        if end <= 1:
+            return False
+        host = authority[1:end]
+        suffix = authority[end + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+    else:
+        if authority.count(":") > 1:
+            return False
+        host, separator, port = authority.partition(":")
+        if separator and not port.isdigit():
+            return False
+
+    return _is_loopback_host(host)
+
+
+def _peer_is_loopback(request: Request) -> bool:
+    """Return whether the transport peer itself is loopback."""
+    return _is_loopback_host(client_host(request).strip().strip("[]"))
+
+
+def _has_forwarding_metadata(request: Request) -> bool:
+    """Return whether request headers indicate a forwarding intermediary."""
+    for name in request.headers:
+        normalized = name.lower()
+        if normalized in {"forwarded", "x-real-ip"} or normalized.startswith(
+            "x-forwarded-"
+        ):
+            return True
+    return False
+
+
+def is_direct_localhost_request(request: Request) -> bool:
+    """Return whether one request is unambiguously direct loopback traffic."""
+    return (
+        _peer_is_loopback(request)
+        and _host_is_loopback(request.headers.get("host", ""))
+        and not _has_forwarding_metadata(request)
+    )
 
 
 def request_authentication_is_bypassed(
@@ -30,7 +86,7 @@ def request_authentication_is_bypassed(
         resolved.auth_mode == "oauth"
         and resolved.auth_bypass_localhost
         and resolved.mode == "http"
-        and is_localhost(request)
+        and is_direct_localhost_request(request)
     )
 
 

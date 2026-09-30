@@ -351,7 +351,7 @@
           {
             "code": "false"
           },
-          "Allow localhost requests without bearer authentication. Keep disabled when exposing HTTP through proxies or shared hosts."
+          "Allow direct loopback HTTP requests without bearer authentication. Forwarded or non-loopback Host requests still require OAuth."
         ],
         [
           {
@@ -2043,7 +2043,7 @@
       "cli": "--auth-bypass-localhost",
       "default": false,
       "default_display": "false",
-      "description": "Allow localhost requests without bearer authentication. Keep disabled when exposing HTTP through proxies or shared hosts.",
+      "description": "Allow direct loopback HTTP requests without bearer authentication. Forwarded or non-loopback Host requests still require OAuth.",
       "env": "WORKGATE_AUTH_BYPASS_LOCALHOST",
       "name": "auth_bypass_localhost",
       "nullable": false,
