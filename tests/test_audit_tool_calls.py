@@ -5,7 +5,11 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tests.helpers import build_paired_http_app, build_paired_mcp, mcp_text
+from tests.helpers import (
+    build_paired_http_app,
+    build_paired_mcp,
+    mcp_structured,
+)
 from workgate.config.settings import clear_settings_cache, get_settings
 
 
@@ -198,14 +202,14 @@ async def test_mcp_tool_calls_audit_full_input_output(tmp_path, monkeypatch):
     clear_settings_cache()
 
     mcp, _harness = build_paired_mcp(get_settings())
-    session = json.loads(
-        mcp_text(await mcp.call_tool("session_start", {"workdir": "."}))
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
     )
     response = await mcp.call_tool(
         "read",
         {"session_id": session["session_id"], "path": "beta.txt:raw"},
     )
-    payload = json.loads(mcp_text(response))
+    payload = mcp_structured(response)
 
     records = _audit_records(get_settings().audit_log_path)
     starts, ends = _tool_call_pairs(records, "read", transport="mcp")
@@ -231,8 +235,8 @@ async def test_mcp_tool_structured_errors_are_audited_with_input_and_output(
     clear_settings_cache()
 
     mcp, _harness = build_paired_mcp(get_settings())
-    session = json.loads(
-        mcp_text(await mcp.call_tool("session_start", {"workdir": "."}))
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
     )
     with pytest.raises(ToolError, match="Error executing tool read"):
         await mcp.call_tool(

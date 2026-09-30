@@ -1,5 +1,4 @@
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +6,7 @@ import httpx
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tests.helpers import mcp_text
+from tests.helpers import mcp_structured
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
@@ -26,13 +25,7 @@ from workgate.protocol.ids import new_executor_id
 
 
 def _mcp_data(response: Any) -> dict[str, Any]:
-    data = (
-        response[1]
-        if isinstance(response, tuple)
-        else json.loads(mcp_text(response))
-    )
-    assert isinstance(data, dict)
-    return data
+    return mcp_structured(response)
 
 
 async def _wait_executor_online(control, executor_id: str) -> None:

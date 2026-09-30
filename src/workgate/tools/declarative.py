@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Literal, Protocol
 
 from fastapi import HTTPException
 from mcp.server.fastmcp import FastMCP
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
 from ..config.control import ControlConfig, get_control_config
@@ -19,6 +19,7 @@ from ..oauth.core.context import (
     require_oauth_scopes,
 )
 from ..oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
+from ..utils.serialization import to_jsonable
 from .contracts import (
     HttpMethod,
     HttpToolRoute,
@@ -26,6 +27,7 @@ from .contracts import (
     ToolHandler,
     ToolRegistry,
 )
+from .mcp_text import has_explicit_tool_text, render_tool_text
 from .metadata import oauth_security_meta
 
 type McpSecurityProfile = Literal["oauth", "connector_compatible"]
@@ -240,7 +242,17 @@ class ToolDefinition:
         async def mcp_handler(*args: Any, **kwargs: Any) -> Any:
             try:
                 _enforce_oauth_scopes(self.required_oauth_scopes())
-                return await self.func(*args, **kwargs)
+                result = await self.func(*args, **kwargs)
+                if not has_explicit_tool_text(self.name):
+                    return result
+                structured = to_jsonable(result)
+                text = render_tool_text(self.name, structured)
+                if text is None:
+                    return result
+                return CallToolResult(
+                    content=[TextContent(type="text", text=text)],
+                    structuredContent=structured,
+                )
             except SessionTerminationRequestedError:
                 raise
             except MissingOAuthScopeError as exc:

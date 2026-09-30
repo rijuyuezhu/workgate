@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from .. import __version__
+from ..tools.mcp_text import render_tool_text
 from ._tool_manifest import (
     HOSTED_TOOL_MANIFEST,
     LATEST_MCP_PROTOCOL_VERSION,
@@ -28,6 +29,14 @@ _CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo"
 _SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo"
 _HEADER_MISMATCH = -32020
 _UNSUPPORTED_PROTOCOL_VERSION = -32022
+
+
+def _tool_text(name: str, structured: Any) -> str:
+    """Return explicit model-facing text or the compatibility JSON fallback."""
+    rendered = render_tool_text(name, structured)
+    if rendered is not None:
+        return rendered
+    return json.dumps(structured, ensure_ascii=False, sort_keys=True)
 
 
 class HostedMcpGateway:
@@ -257,11 +266,7 @@ class HostedMcpGateway:
                     "content": [
                         {
                             "type": "text",
-                            "text": json.dumps(
-                                structured,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
+                            "text": _tool_text(name, structured),
                         }
                     ],
                     "structuredContent": structured,

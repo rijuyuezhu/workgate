@@ -193,6 +193,45 @@ class WriteFileOutput(BaseModel):
     )
 
 
+class EditContextOutput(BaseModel):
+    """Compact fresh grounding returned after an edit."""
+
+    path: str = Field(
+        description="Workspace-relative file path for this context."
+    )
+    snapshot_id: str | None = Field(
+        default=None,
+        description="Fresh snapshot handle embedded in numbered_content for follow-up edits.",
+    )
+    start_line: int | None = Field(
+        default=None,
+        description="First original 1-based line shown in this context, or null when empty.",
+    )
+    end_line: int | None = Field(
+        default=None,
+        description="Final original 1-based line shown in this context, or null when empty.",
+    )
+    numbered_content: str = Field(
+        description="Canonical [path#snapshot_id] plus line:text grounding for the next edit."
+    )
+    truncated: bool = Field(
+        default=False,
+        description="Whether the underlying bounded read truncated file text.",
+    )
+
+    @classmethod
+    def from_read_result(cls, result: ReadFileOutput) -> EditContextOutput:
+        """Build one compact post-edit grounding context."""
+        return cls(
+            path=result.path,
+            snapshot_id=result.snapshot_id,
+            start_line=result.start_line,
+            end_line=result.end_line,
+            numbered_content=result.numbered_content,
+            truncated=result.truncated,
+        )
+
+
 class EditLinesOutput(BaseModel):
     """Grounded whole-line edit result."""
 
@@ -209,8 +248,8 @@ class EditLinesOutput(BaseModel):
         description="Number of replacement lines inserted for the selected range."
     )
     diff: str = Field(description="Unified diff for the applied line edit.")
-    context: ReadFileOutput = Field(
-        description="Hashline post-edit context around the changed line range, including a fresh snapshot_id."
+    context: EditContextOutput = Field(
+        description="Compact fresh hashline context around the changed line range."
     )
 
 
@@ -229,14 +268,29 @@ class HashlineEditHunkOutput(BaseModel):
     replacement_line_count: int = Field(
         description="Number of replacement lines inserted for this hunk."
     )
-    context: ReadFileOutput = Field(
-        description="Hashline post-edit context around this hunk, including a fresh snapshot_id."
+    context: EditContextOutput = Field(
+        description="Compact fresh hashline context around this hunk."
     )
 
 
-class HashlineEditOutput(EditLinesOutput):
+class HashlineEditOutput(BaseModel):
     """Grounded hashline edit result for one or more applied hunks."""
 
+    path: str = Field(
+        description="Workspace-relative path of the first edited hunk."
+    )
+    start_line: int = Field(
+        description="Original first edited line, aggregated for one-file edits."
+    )
+    end_line: int = Field(
+        description="Original final edited line, aggregated for one-file edits."
+    )
+    replacement_line_count: int = Field(
+        description="Total number of replacement lines inserted across hunks."
+    )
+    diff: str = Field(
+        description="Combined unified diff for the applied edits."
+    )
     hunk_count: int = Field(description="Number of hashline hunks applied.")
     hunks: list[HashlineEditHunkOutput] = Field(
         description="Per-hunk edit summaries in original input order."

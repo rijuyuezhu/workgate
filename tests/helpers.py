@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from mcp.types import CallToolResult
 from pydantic import JsonValue, TypeAdapter
 
 from workgate.config.executor import resolve_executor_config
@@ -165,6 +166,8 @@ def build_paired_http_app(settings: Settings):
 
 
 def _mcp_content(response: Any, index: int = 0) -> Any:
+    if isinstance(response, CallToolResult):
+        return response.content[index]
     first = response[0]
     if isinstance(first, list):
         return first[index]
@@ -188,6 +191,9 @@ def nested_mcp_text(
 
 def mcp_structured(response: Any) -> dict[str, Any]:
     """Return structured content from a FastMCP structured-output response."""
+    if isinstance(response, CallToolResult):
+        assert isinstance(response.structuredContent, dict)
+        return cast(dict[str, Any], response.structuredContent)
     assert isinstance(response, tuple)
     assert isinstance(response[1], dict)
     return response[1]

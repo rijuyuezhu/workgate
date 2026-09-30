@@ -1,4 +1,3 @@
-import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import workgate.executor.files as files_ops
-from tests.helpers import build_paired_mcp, mcp_structured, nested_mcp_text
+from tests.helpers import build_paired_mcp, mcp_structured
 from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -430,7 +429,7 @@ async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
     response = await mcp.call_tool(
         "fetch", {"session_id": session["session_id"], "id": "blob.bin"}
     )
-    payload = json.loads(nested_mcp_text(response))
+    payload = mcp_structured(response)
 
     assert payload["text"].startswith(
         "Unable to fetch file: UnicodeDecodeError:"
@@ -594,6 +593,14 @@ def test_edit_lines_uses_snapshot_and_returns_diff_context(
         "]\n1:alpha\n2:BETA\n3:GAMMA\n4:delta"
     )
     assert result.context.snapshot_id != read_result.snapshot_id
+    assert set(result.context.model_dump()) == {
+        "path",
+        "snapshot_id",
+        "start_line",
+        "end_line",
+        "numbered_content",
+        "truncated",
+    }
 
 
 def test_edit_lines_rejects_stale_snapshot(tmp_path, monkeypatch):
@@ -656,8 +663,9 @@ def test_hashline_edit_replaces_copied_line_rows(tmp_path, monkeypatch):
     )
     assert result.start_line == 2
     assert result.end_line == 2
-    assert result.context.numbered_content.startswith("[edit.py#")
-    assert result.context.snapshot_id != read_result.snapshot_id
+    assert result.hunks[0].context.numbered_content.startswith("[edit.py#")
+    assert result.hunks[0].context.snapshot_id != read_result.snapshot_id
+    assert "context" not in result.model_dump()
 
 
 def test_hashline_edit_deletes_when_no_replacement_lines(tmp_path, monkeypatch):

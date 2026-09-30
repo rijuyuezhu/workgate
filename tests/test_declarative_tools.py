@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from workgate.oauth.core.context import (
     bind_oauth_claims,
@@ -149,6 +149,36 @@ async def test_mcp_handler_enforces_required_oauth_scopes():
         assert await handler() == {"ok": True}
     finally:
         reset_oauth_claims(claims_token)
+
+
+@pytest.mark.asyncio
+async def test_explicit_mcp_text_projection_does_not_change_canonical_http_result():
+    async def sample_tool() -> dict[str, object]:
+        return {"kind": "file", "content": "compact"}
+
+    definition = ToolDefinition(
+        func=sample_tool,
+        name="read",
+        http_method="POST",
+        http_path="/tools/sample_tool",
+    )
+
+    assert await definition.call_from_mapping({}) == {
+        "kind": "file",
+        "content": "compact",
+    }
+
+    mcp = _FakeMcp()
+    definition.register_mcp(cast(Any, mcp), _sample_context())
+    assert mcp.handler is not None
+    handler = cast(Callable[[], Awaitable[CallToolResult]], mcp.handler)
+    rendered = await handler()
+    assert rendered.structuredContent == {
+        "kind": "file",
+        "content": "compact",
+    }
+    assert isinstance(rendered.content[0], TextContent)
+    assert rendered.content[0].text == "compact"
 
 
 @pytest.mark.asyncio

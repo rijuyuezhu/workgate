@@ -4,6 +4,7 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent
 
 import workgate.control.http.tool_routes as http_tool_routes_module
 from tests.helpers import build_paired_http_app, mcp_text
@@ -264,6 +265,9 @@ async def test_http_version_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
 
 def _mcp_payload_data(response):
+    if isinstance(response, CallToolResult):
+        assert isinstance(response.structuredContent, dict)
+        return response.structuredContent
     return (
         response[1]
         if isinstance(response, tuple)
@@ -294,6 +298,187 @@ async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
         "list_files", args
     )
     assert http_payload == _mcp_payload_data(mcp_response)
+
+
+@pytest.mark.asyncio
+async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
+    target = tmp_path / "context.txt"
+    target.write_text("alpha\nneedle\nomega\n", encoding="utf-8")
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    app = _build_paired_surface_http_app()
+    mcp = build_mcp(runtime=app.state.control_runtime)
+
+    started = await mcp.call_tool("session_start", {"workdir": "."})
+    assert isinstance(started, CallToolResult)
+    assert isinstance(started.structuredContent, dict)
+    assert isinstance(started.content[0], TextContent)
+    assert started.structuredContent["session_id"] in started.content[0].text
+    assert started.structuredContent["workdir"] in started.content[0].text
+    assert not started.content[0].text.lstrip().startswith("{")
+    session_id = started.structuredContent["session_id"]
+
+    read = await mcp.call_tool(
+        "read", {"session_id": session_id, "path": "context.txt:1-3"}
+    )
+    assert isinstance(read, CallToolResult)
+    assert isinstance(read.structuredContent, dict)
+    assert isinstance(read.content[0], TextContent)
+    assert read.content[0].text == read.structuredContent["content"]
+
+    search = await mcp.call_tool(
+        "search",
+        {
+            "session_id": session_id,
+            "pattern": "needle",
+            "regex": False,
+            "paths": "context.txt",
+        },
+    )
+    assert isinstance(search, CallToolResult)
+    assert isinstance(search.structuredContent, dict)
+    assert isinstance(search.content[0], TextContent)
+    numbered = search.structuredContent["numbered_content"]
+    stderr = search.structuredContent["stderr"].strip()
+    expected_search_text = (
+        numbered
+        or stderr
+        or ("No matches." if search.structuredContent["count"] == 0 else "")
+    )
+    assert search.content[0].text == expected_search_text
+
+    bash = await mcp.call_tool(
+        "bash",
+        {"session_id": session_id, "command": "printf shell-output"},
+    )
+    assert isinstance(bash, CallToolResult)
+    assert isinstance(bash.structuredContent, dict)
+    assert isinstance(bash.content[0], TextContent)
+    assert bash.content[0].text == "shell-output"
+
+    tree = await mcp.call_tool(
+        "tree_view", {"session_id": session_id, "cwd": ".", "depth": 1}
+    )
+    assert isinstance(tree, CallToolResult)
+    assert isinstance(tree.structuredContent, dict)
+    assert isinstance(tree.content[0], TextContent)
+    assert tree.content[0].text == "\n".join(tree.structuredContent["entries"])
+
+    glob = await mcp.call_tool(
+        "glob_search", {"session_id": session_id, "pattern": "**/*.txt"}
+    )
+    assert isinstance(glob, CallToolResult)
+    assert isinstance(glob.structuredContent, dict)
+    assert isinstance(glob.content[0], TextContent)
+    paths = glob.structuredContent["paths"]
+    assert glob.content[0].text == (
+        "\n".join(paths) if paths else "No matches."
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_tools_return_compact_grounded_mcp_content(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "edit.txt"
+    target.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    app = _build_paired_surface_http_app()
+    client = TestClient(app)
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session_id = session["session_id"]
+    compact_context_keys = {
+        "path",
+        "snapshot_id",
+        "start_line",
+        "end_line",
+        "numbered_content",
+        "truncated",
+    }
+
+    first_read = client.post(
+        "/tools/read",
+        json={"session_id": session_id, "path": "edit.txt:2"},
+    ).json()
+    http_edit = client.post(
+        "/tools/edit_lines",
+        json={
+            "session_id": session_id,
+            "path": "edit.txt",
+            "start_line": 2,
+            "end_line": 2,
+            "replacement": "TWO",
+            "snapshot_id": first_read["file"]["snapshot_id"],
+        },
+    ).json()
+    assert set(http_edit["context"]) == compact_context_keys
+    assert "content" not in http_edit["context"]
+    assert "lines" not in http_edit["context"]
+
+    mcp = build_mcp(runtime=app.state.control_runtime)
+    second_read = client.post(
+        "/tools/read",
+        json={"session_id": session_id, "path": "edit.txt:3"},
+    ).json()
+    mcp_edit = await mcp.call_tool(
+        "edit_lines",
+        {
+            "session_id": session_id,
+            "path": "edit.txt",
+            "start_line": 3,
+            "end_line": 3,
+            "replacement": "THREE",
+            "snapshot_id": second_read["file"]["snapshot_id"],
+        },
+    )
+    assert isinstance(mcp_edit, CallToolResult)
+    assert isinstance(mcp_edit.structuredContent, dict)
+    assert set(mcp_edit.structuredContent) == set(http_edit)
+    assert set(mcp_edit.structuredContent["context"]) == compact_context_keys
+    assert len(mcp_edit.content) == 1
+    assert isinstance(mcp_edit.content[0], TextContent)
+    assert (
+        mcp_edit.content[0].text
+        == (mcp_edit.structuredContent["context"]["numbered_content"])
+    )
+    assert not mcp_edit.content[0].text.lstrip().startswith("{")
+
+    hash_read = client.post(
+        "/tools/read",
+        json={"session_id": session_id, "path": "edit.txt:1-4"},
+    ).json()
+    header = hash_read["content"].splitlines()[0]
+    hash_edit = await mcp.call_tool(
+        "hashline_edit",
+        {
+            "session_id": session_id,
+            "input": (header + "\n1:one\n+ONE\n\n4:four\n+FOUR"),
+        },
+    )
+    assert isinstance(hash_edit, CallToolResult)
+    assert isinstance(hash_edit.structuredContent, dict)
+    assert "context" not in hash_edit.structuredContent
+    assert hash_edit.structuredContent["hunk_count"] == 2
+    assert all(
+        set(hunk["context"]) == compact_context_keys
+        for hunk in hash_edit.structuredContent["hunks"]
+    )
+    assert len(hash_edit.content) == 1
+    assert isinstance(hash_edit.content[0], TextContent)
+    assert hash_edit.content[0].text == "\n\n".join(
+        hunk["context"]["numbered_content"]
+        for hunk in hash_edit.structuredContent["hunks"]
+    )
+    assert not hash_edit.content[0].text.lstrip().startswith("{")
 
 
 @pytest.mark.asyncio

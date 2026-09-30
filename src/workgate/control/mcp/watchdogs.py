@@ -7,6 +7,7 @@ from functools import wraps
 from typing import Any, Protocol, cast
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import CallToolResult
 
 from ...audit import (
     audit,
@@ -21,6 +22,7 @@ from ...jobs.managed import ManagedJobsRuntime
 from ...oauth.core.state import OAuthState
 from ...persistence import StateStore
 from ...tools.declarative import mcp_handler_error_handler
+from ...tools.mcp_text import has_explicit_tool_text
 from ...utils.serialization import to_jsonable
 from ..execution_context import control_execution_context
 from ..tool_timeouts import tool_timeout_s
@@ -137,13 +139,20 @@ def _mcp_tool_audit_watchdog_wrapper(
             )
             raise
         duration_ms = int((time.time() - start) * 1000)
+        audit_output = (
+            result.structuredContent
+            if isinstance(result, CallToolResult)
+            and result.structuredContent is not None
+            and has_explicit_tool_text(tool_name)
+            else result
+        )
         audit_tool_call_end(
             call_id=call_id,
             transport="mcp",
             tool=tool_name,
             ok=True,
             duration_ms=duration_ms,
-            output=to_jsonable(result),
+            output=to_jsonable(audit_output),
             session_ids=session_ids,
         )
         return result
