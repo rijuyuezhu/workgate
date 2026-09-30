@@ -30,6 +30,11 @@ _RESERVED_UI_PATHS = (
     "/docs",
 )
 
+_PositiveInt = Annotated[int, Field(gt=0)]
+_NonNegativeInt = Annotated[int, Field(ge=0)]
+_PositiveFloat = Annotated[float, Field(gt=0)]
+_Port = Annotated[int, Field(ge=1, le=65535)]
+
 
 def _split_csv(value: str | list[str] | None) -> list[str]:
     """Normalize comma-delimited environment values into list."""
@@ -83,7 +88,7 @@ class Settings(BaseSettings):
     """Server transport mode."""
     host: str = "127.0.0.1"
     """Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments."""
-    port: int = 8765
+    port: _Port = 8765
     """Bind port for HTTP/MCP transports."""
 
     # Human interface.
@@ -93,9 +98,9 @@ class Settings(BaseSettings):
     """Non-root URL path where the browser Human UI is mounted."""
     ui_tui_command: str | None = None
     """Optional administrator-supplied OpenTUI executable command."""
-    ui_terminal_idle_timeout_s: int = 3600
+    ui_terminal_idle_timeout_s: _NonNegativeInt = 3600
     """Idle timeout for authenticated Human UI terminal WebSockets; 0 disables idle expiry."""
-    ui_terminal_max_connections: int = 8
+    ui_terminal_max_connections: int = Field(default=8, ge=1, le=128)
     """Maximum concurrent Human UI terminal WebSocket connections."""
     ui_wallpaper: Literal["aurora", "grid", "none"] = "aurora"
     """Browser Human UI background treatment; no external network image is fetched."""
@@ -113,9 +118,9 @@ class Settings(BaseSettings):
     """Authentication mode. Do not expose public services with none."""
     auth_bypass_localhost: bool = False
     """Allow localhost requests without bearer authentication. Keep disabled when exposing HTTP through proxies or shared hosts."""
-    mcp_session_idle_timeout_s: int = 180
+    mcp_session_idle_timeout_s: _PositiveInt = 180
     """Idle timeout for stateful Streamable HTTP MCP sessions in seconds."""
-    mcp_max_sessions: int = 1024
+    mcp_max_sessions: _PositiveInt = 1024
     """Maximum concurrent stateful Streamable HTTP MCP sessions."""
     base_url: str | None = None
     """Externally reachable base URL used for OAuth metadata, callbacks, and generated links. If unset, URLs fall back to the bind host and port; configure this before exposing the service behind a proxy or public hostname."""
@@ -125,41 +130,41 @@ class Settings(BaseSettings):
     """Override URL for OAuth resource metadata; usually derived from base_url plus /mcp."""
     oauth_admin_pin: str | None = None
     """Admin PIN required to approve OAuth authorization. Public OAuth URLs require a non-placeholder value of at least 8 characters."""
-    oauth_access_token_ttl_s: int = 3600
-    """Bearer token lifetime in seconds. After this time, the token must be re-authorized and refreshed."""
-    oauth_code_ttl_s: int = 300
+    oauth_access_token_ttl_s: _NonNegativeInt = 3600
+    """Bearer token lifetime in seconds; 0 disables token expiry."""
+    oauth_code_ttl_s: _PositiveInt = 300
     """OAuth authorization-code lifetime in seconds. The authorization must be done within this time."""
-    oauth_max_pending_codes: int = 2048
+    oauth_max_pending_codes: _NonNegativeInt = 2048
     """Maximum unused, unexpired OAuth authorization codes kept in memory; set to 0 to disable this capacity limit."""
-    oauth_client_ttl_s: int = 86400
+    oauth_client_ttl_s: _NonNegativeInt = 86400
     """Pending OAuth client registration lifetime in seconds. Approved clients are persisted without this TTL; set to 0 to disable pending expiration."""
-    oauth_max_dynamic_clients: int = 256
+    oauth_max_dynamic_clients: _NonNegativeInt = 256
     """Maximum pending OAuth client registrations kept in memory. Approved clients do not count; set to 0 to disable this capacity limit."""
-    oauth_registration_max_body_bytes: int = 16384
+    oauth_registration_max_body_bytes: _PositiveInt = 16384
     """Maximum JSON body size accepted by dynamic OAuth client registration."""
-    oauth_registration_max_redirect_uris: int = 10
+    oauth_registration_max_redirect_uris: _PositiveInt = 10
     """Maximum redirect URIs accepted in one dynamic OAuth client registration."""
-    oauth_registration_max_redirect_uri_chars: int = 2048
+    oauth_registration_max_redirect_uri_chars: _PositiveInt = 2048
     """Maximum length of each dynamic OAuth client redirect URI."""
-    oauth_registration_max_client_name_chars: int = 200
+    oauth_registration_max_client_name_chars: _PositiveInt = 200
     """Maximum length of a dynamic OAuth client display name."""
 
     # Safety and resource limits.
     allow_full_control: bool = False
     """Disable built-in workspace and command restrictions; use only in disposable containers or VMs. MCP safety annotations remain conservative in this mode."""
     """Allow network-capable operations."""
-    tool_timeout_s: float = 60
+    tool_timeout_s: _PositiveFloat = 60
     """Base control-owned MCP/HTTP tool watchdog timeout in seconds."""
-    run_shell_default_timeout_s: int = 10
+    run_shell_default_timeout_s: _PositiveInt = 10
     """Default timeout for bounded shell command calls in seconds."""
-    run_shell_max_timeout_s: int = 120
+    run_shell_max_timeout_s: _PositiveInt = 120
     """Maximum timeout accepted by bounded shell command calls in seconds."""
-    max_output_bytes: int = 200_000
+    max_output_bytes: _PositiveInt = 200_000
     """Command output limit in bytes."""
-    max_job_log_bytes: int = 10_000_000
+    max_job_log_bytes: _PositiveInt = 10_000_000
     """Maximum retained output bytes for one tracked background-job attempt."""
-    max_jobs: int = 1_000
-    """Maximum retained tracked-job records; active jobs are never pruned."""
+    max_jobs: _NonNegativeInt = 1_000
+    """Maximum retained tracked-job records; 0 keeps only active jobs."""
     max_agent_sessions: int = Field(default=256, ge=1, le=10_000)
     """Maximum durable agent/workspace sessions after stale-session pruning."""
     agent_session_retention_s: int = Field(
@@ -176,37 +181,37 @@ class Settings(BaseSettings):
         le=16_000_000,
     )
     """Maximum encoded grounding-snapshot metadata retained for one session."""
-    max_file_read_bytes: int = 512_000
+    max_file_read_bytes: _PositiveInt = 512_000
     """Per-file read limit in bytes."""
-    max_view_image_bytes: int = 20 * 1024 * 1024
+    max_view_image_bytes: _PositiveInt = 20 * 1024 * 1024
     """Maximum raw bytes accepted by the native MCP image viewer."""
-    max_skills: int = 256
+    max_skills: _PositiveInt = 256
     """Maximum number of discovered Skills across all configured sources."""
-    max_skill_related_files: int = 1_000
+    max_skill_related_files: _PositiveInt = 1_000
     """Maximum related files returned for one Skill."""
-    max_skill_scan_entries: int = 5_000
+    max_skill_scan_entries: _PositiveInt = 5_000
     """Maximum filesystem entries inspected during one Skill registry scan."""
-    max_skill_path_bytes: int = 200_000
+    max_skill_path_bytes: _PositiveInt = 200_000
     """Maximum UTF-8 bytes used by returned related Skill paths."""
-    max_file_write_bytes: int = 5_000_000
+    max_file_write_bytes: _PositiveInt = 5_000_000
     """Per-file write/edit limit in bytes."""
-    max_grep_results: int = 200
+    max_grep_results: _PositiveInt = 200
     """Maximum grep result count."""
-    max_directory_entries: int = 5_000
+    max_directory_entries: _PositiveInt = 5_000
     """Maximum listed directory entries."""
-    max_glob_results: int = 5_000
+    max_glob_results: _PositiveInt = 5_000
     """Maximum glob search results."""
-    max_tree_entries: int = 5_000
+    max_tree_entries: _PositiveInt = 5_000
     """Maximum tree-view entries."""
-    max_todos: int = 1_000
+    max_todos: _PositiveInt = 1_000
     """Todo-list item limit."""
-    max_todo_bytes: int = 1_000_000
+    max_todo_bytes: _PositiveInt = 1_000_000
     """Todo-list total byte limit."""
-    max_http_request_bytes: int = 16_000_000
+    max_http_request_bytes: _NonNegativeInt = 16_000_000
     """Maximum inbound HTTP request-body bytes; 0 disables the shared limit."""
-    max_audit_log_bytes: int = 20_000_000
-    """Maximum active audit JSONL bytes before atomic recent-record retention."""
-    max_audit_event_bytes: int = 1_000_000
+    max_audit_log_bytes: _NonNegativeInt = 20_000_000
+    """Maximum active audit JSONL bytes before recent-record retention; 0 disables this size cap."""
+    max_audit_event_bytes: _PositiveInt = 1_000_000
     """Maximum encoded bytes retained for one audit event before preview truncation."""
     audit_payloads_enabled: bool = True
     """Store large sanitized audit field values as private content-addressed payloads."""
@@ -226,27 +231,27 @@ class Settings(BaseSettings):
         default=7 * 24 * 60 * 60, ge=0, le=366 * 24 * 60 * 60
     )
     """Recovery lifetime and orphan grace period for private audit payload objects."""
-    max_tmp_files: int = 500
-    """Temporary-file count limit. When exceeded, old files are deleted."""
-    max_tmp_bytes: int = 50_000_000
-    """Temporary-file byte limit. When exceeded, old files are deleted."""
-    max_transfer_archive_entries: int = 100_000
+    max_tmp_files: _NonNegativeInt = 500
+    """Temporary-file count limit; 0 removes all eligible scratch files during pruning."""
+    max_tmp_bytes: _NonNegativeInt = 50_000_000
+    """Temporary-file byte limit; 0 removes all eligible scratch files during pruning."""
+    max_transfer_archive_entries: _PositiveInt = 100_000
     """Maximum entries accepted from one transferred archive."""
-    max_transfer_unpacked_bytes: int = 10_000_000_000
+    max_transfer_unpacked_bytes: _PositiveInt = 10_000_000_000
     """Maximum declared regular-file bytes accepted while unpacking an archive."""
-    max_concurrent_commands: int = 4
+    max_concurrent_commands: _PositiveInt = 4
     """Concurrent command limit."""
-    max_tmux_sessions: int = 16
+    max_tmux_sessions: _PositiveInt = 16
     """Persistent shell limit."""
     file_download_enabled: bool = True
     """Enable download links created by protected tools."""
-    file_download_default_ttl_s: int = 3600
+    file_download_default_ttl_s: _PositiveInt = 3600
     """Default lifetime for file download links in seconds."""
-    file_download_max_ttl_s: int = 604800
+    file_download_max_ttl_s: _PositiveInt = 604800
     """Maximum lifetime accepted for file download links in seconds."""
-    file_download_default_max_downloads: int = 0
+    file_download_default_max_downloads: _NonNegativeInt = 0
     """Default download-count limit for file links; 0 means unlimited until expiry."""
-    file_download_max_file_bytes: int = 0
+    file_download_max_file_bytes: _NonNegativeInt = 0
     """Maximum file size allowed for download links; 0 disables this size limit."""
     command_denylist: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
@@ -286,9 +291,9 @@ class Settings(BaseSettings):
     # Agent capability bridge.
     agent_bridge_enabled: bool = True
     """Enable agent capability bridge tools."""
-    agent_mcp_probe_timeout_s: int = 5
+    agent_mcp_probe_timeout_s: _PositiveInt = 5
     """Agent MCP server probe timeout in seconds."""
-    agent_mcp_call_timeout_s: int = 60
+    agent_mcp_call_timeout_s: _PositiveInt = 60
     """Agent MCP tool-call timeout in seconds."""
     agent_dynamic_mcp_tools: bool = True
     """Register dynamic MCP bridge tools."""
@@ -370,24 +375,6 @@ class Settings(BaseSettings):
         """Reject root, traversal, and service-reserved Human UI paths."""
         return normalize_ui_path(value)
 
-    @field_validator("ui_terminal_idle_timeout_s")
-    @classmethod
-    def validate_ui_terminal_idle_timeout(cls, value: int) -> int:
-        """Reject negative Human UI terminal idle timeouts."""
-        if value < 0:
-            raise ValueError("ui_terminal_idle_timeout_s must be non-negative")
-        return value
-
-    @field_validator("ui_terminal_max_connections")
-    @classmethod
-    def validate_ui_terminal_max_connections(cls, value: int) -> int:
-        """Bound concurrent Human UI terminal WebSocket connections."""
-        if not 1 <= value <= 128:
-            raise ValueError(
-                "ui_terminal_max_connections must be between 1 and 128"
-            )
-        return value
-
     @field_validator("command_denylist", "path_denylist", mode="before")
     @classmethod
     def split_csv_fields(cls, value: str | list[str] | None) -> list[str]:
@@ -395,8 +382,18 @@ class Settings(BaseSettings):
         return _split_csv(value)
 
     @model_validator(mode="after")
-    def validate_audit_payload_limits(self) -> Settings:
-        """Keep nested audit payload limits internally consistent."""
+    def validate_limit_relationships(self) -> Settings:
+        """Keep related runtime limits internally consistent."""
+        if self.run_shell_max_timeout_s < self.run_shell_default_timeout_s:
+            raise ValueError(
+                "run_shell_max_timeout_s must be greater than or equal to "
+                "run_shell_default_timeout_s"
+            )
+        if self.file_download_max_ttl_s < self.file_download_default_ttl_s:
+            raise ValueError(
+                "file_download_max_ttl_s must be greater than or equal to "
+                "file_download_default_ttl_s"
+            )
         if self.audit_inline_value_bytes > self.max_audit_payload_bytes:
             raise ValueError(
                 "audit_inline_value_bytes must not exceed max_audit_payload_bytes"

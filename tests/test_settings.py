@@ -167,3 +167,120 @@ def test_audit_payload_limits_must_be_nested():
             raise AssertionError(
                 "expected nested audit payload limit validation"
             )
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "mcp_session_idle_timeout_s",
+        "mcp_max_sessions",
+        "oauth_code_ttl_s",
+        "oauth_registration_max_body_bytes",
+        "oauth_registration_max_redirect_uris",
+        "oauth_registration_max_redirect_uri_chars",
+        "oauth_registration_max_client_name_chars",
+        "tool_timeout_s",
+        "run_shell_default_timeout_s",
+        "run_shell_max_timeout_s",
+        "max_output_bytes",
+        "max_job_log_bytes",
+        "max_file_read_bytes",
+        "max_view_image_bytes",
+        "max_skills",
+        "max_skill_related_files",
+        "max_skill_scan_entries",
+        "max_skill_path_bytes",
+        "max_file_write_bytes",
+        "max_grep_results",
+        "max_directory_entries",
+        "max_glob_results",
+        "max_tree_entries",
+        "max_todos",
+        "max_todo_bytes",
+        "max_audit_event_bytes",
+        "max_transfer_archive_entries",
+        "max_transfer_unpacked_bytes",
+        "max_concurrent_commands",
+        "max_tmux_sessions",
+        "file_download_default_ttl_s",
+        "file_download_max_ttl_s",
+        "agent_mcp_probe_timeout_s",
+        "agent_mcp_call_timeout_s",
+    ),
+)
+def test_positive_runtime_settings_reject_zero(name):
+    with pytest.raises(ValueError):
+        Settings.model_validate({name: 0})
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "ui_terminal_idle_timeout_s",
+        "oauth_access_token_ttl_s",
+        "oauth_max_pending_codes",
+        "oauth_client_ttl_s",
+        "oauth_max_dynamic_clients",
+        "max_jobs",
+        "agent_session_retention_s",
+        "max_http_request_bytes",
+        "max_audit_log_bytes",
+        "audit_payload_retention_s",
+        "max_tmp_files",
+        "max_tmp_bytes",
+        "file_download_default_max_downloads",
+        "file_download_max_file_bytes",
+    ),
+)
+def test_nonnegative_runtime_settings_accept_zero_and_reject_negative(name):
+    assert getattr(Settings.model_validate({name: 0}), name) == 0
+    with pytest.raises(ValueError):
+        Settings.model_validate({name: -1})
+
+
+@pytest.mark.parametrize("port", (1, 65535))
+def test_port_accepts_valid_boundaries(port):
+    assert Settings(port=port).port == port
+
+
+@pytest.mark.parametrize("port", (0, 65536))
+def test_port_rejects_values_outside_tcp_range(port):
+    with pytest.raises(ValueError):
+        Settings(port=port)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        (
+            {
+                "run_shell_default_timeout_s": 10,
+                "run_shell_max_timeout_s": 9,
+            },
+            "run_shell_max_timeout_s",
+        ),
+        (
+            {
+                "file_download_default_ttl_s": 60,
+                "file_download_max_ttl_s": 59,
+            },
+            "file_download_max_ttl_s",
+        ),
+    ),
+)
+def test_related_runtime_limits_must_be_ordered(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        Settings(**overrides)
+
+
+def test_numeric_validation_applies_to_yaml_and_environment(
+    monkeypatch, tmp_path
+):
+    config = tmp_path / "config.yaml"
+    config.write_text("mcp_max_sessions: 0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mcp_max_sessions"):
+        load_settings(config)
+
+    monkeypatch.setenv("WORKGATE_MCP_MAX_SESSIONS", "0")
+    with pytest.raises(ValueError, match="mcp_max_sessions"):
+        load_settings(default_config_path=tmp_path / "missing.yaml")
