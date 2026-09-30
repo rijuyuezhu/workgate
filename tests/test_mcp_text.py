@@ -93,6 +93,28 @@ from workgate.tools.mcp_text import render_tool_text
             },
             "job_1\trunning\tbuild",
         ),
+        (
+            "job",
+            {
+                "operation": "cancel",
+                "cancelled": [
+                    {
+                        "job": {"job_id": "job_1"},
+                        "killed": True,
+                        "stderr": "cleanup warning",
+                    }
+                ],
+            },
+            "job_1: stopped\n[stderr]\ncleanup warning",
+        ),
+        (
+            "job",
+            {
+                "operation": "retry",
+                "retried": [{"job_id": "job_2", "status": "running"}],
+            },
+            "job_2: running",
+        ),
         ("activate_agent_skill", {"content": "# Skill"}, "# Skill"),
         ("read_agent_skill_file", {"content": "guide"}, "guide"),
         ("fetch", {"text": "document"}, "document"),
