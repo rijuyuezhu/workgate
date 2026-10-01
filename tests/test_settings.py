@@ -357,3 +357,18 @@ def test_subprocess_env_filters_accept_empty_values():
 
     assert settings.subprocess_env_blocklist == []
     assert settings.subprocess_env_blocked_prefixes == []
+
+
+def test_subprocess_env_filters_normalize_edge_cases():
+    settings = Settings.model_validate(
+        {
+            "subprocess_env_blocklist": [" SECRET ", "SECRET", ""],
+            "subprocess_env_blocked_prefixes": ["PRIVATE_"],
+        }
+    )
+
+    assert settings.subprocess_env_blocklist == ["SECRET"]
+    assert settings.subprocess_env_blocked_prefixes == ["PRIVATE_"]
+
+    with pytest.raises(ValueError, match="must be a list"):
+        Settings.model_validate({"subprocess_env_blocklist": 123})
