@@ -837,6 +837,16 @@ async def _tmux_default_shell(config: ExecutorConfig) -> str:
     return shell
 
 
+async def _tmux_default_command(config: ExecutorConfig) -> str:
+    """Return the existing tmux server default command."""
+    result = await tmux(
+        config, ["show-options", "-gv", "default-command"], timeout_s=5
+    )
+    if not result.ok:
+        raise RuntimeError(result.stderr or result.stdout)
+    return result.stdout.rstrip("\n")
+
+
 def _tmux_sanitized_shell_argv(
     configured_shell: str,
     command: str | None,
@@ -966,9 +976,12 @@ async def _start_persistent_shell_locked(
     blocked_env_names = await _tmux_blocked_environment_names(config)
     if blocked_env_names:
         tmux_default_shell = await _tmux_default_shell(config)
+        tmux_command = command
+        if tmux_command is None:
+            tmux_command = await _tmux_default_command(config) or None
         cmd.extend(
             _tmux_sanitized_shell_argv(
-                tmux_default_shell, command, blocked_env_names
+                tmux_default_shell, tmux_command, blocked_env_names
             )
         )
     elif command is not None:
