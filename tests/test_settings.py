@@ -345,3 +345,15 @@ def test_subprocess_env_filters_load_from_yaml_and_env(monkeypatch, tmp_path):
 def test_subprocess_env_filters_reject_invalid_entries():
     with pytest.raises(ValueError, match="environment filter entries"):
         Settings.model_validate({"subprocess_env_blocklist": ["BAD-NAME"]})
+
+
+def test_subprocess_env_filters_accept_empty_values():
+    settings = Settings.model_validate(
+        {
+            "subprocess_env_blocklist": "",
+            "subprocess_env_blocked_prefixes": None,
+        }
+    )
+
+    assert settings.subprocess_env_blocklist == []
+    assert settings.subprocess_env_blocked_prefixes == []
