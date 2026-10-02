@@ -134,6 +134,7 @@ class ControlSessionCoordinator:
         workdir: str,
         label: str | None = None,
         executor_id: str | None = None,
+        task_id: str | None = None,
     ) -> JsonValue:
         selected = await self.select_executor(executor_id)
         session_id = str(new_session_id())
@@ -144,6 +145,7 @@ class ControlSessionCoordinator:
             record = ControlSessionRecord(
                 session_id=session_id,
                 executor_id=selected,
+                task_id=task_id,
                 requested_workdir=workdir,
                 resolved_workdir_display=None,
                 label=label,
@@ -792,4 +794,7 @@ class ControlSessionCoordinator:
     ) -> dict[str, JsonValue]:
         if not isinstance(payload, dict):
             raise RuntimeError("executor session result is not an object")
-        return {**payload, "executor_id": str(record.executor_id)}
+        result = {**payload, "executor_id": str(record.executor_id)}
+        if record.task_id is not None:
+            result["task_id"] = str(record.task_id)
+        return result

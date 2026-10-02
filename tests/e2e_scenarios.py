@@ -30,9 +30,8 @@ CORE_TOOL_NAMES = {
     "secret_scan",
     "run_python_code",
     "list_persistent_shells",
-    "read_session_task",
-    "report_session_progress",
-    "update_session_plan",
+    "task",
+    "task_plan",
     "read_todos",
     "write_todos",
 }
@@ -637,8 +636,8 @@ async def exercise_interactive_shell_tools(client: ToolClient) -> None:
 
 
 async def exercise_todo_tools(client: ToolClient) -> None:
-    session = await client.call_tool("session_start", {"workdir": "."})
-    session_id = session["session_id"]
+    task = await client.call_tool("task", {"action": "create"})
+    task_id = task["task_id"]
     todos = [
         {
             "id": "e2e-1",
@@ -648,11 +647,9 @@ async def exercise_todo_tools(client: ToolClient) -> None:
         }
     ]
     write_result = await client.call_tool(
-        "write_todos", {"session_id": session_id, "todos": todos}
+        "write_todos", {"task_id": task_id, "todos": todos}
     )
     assert write_result["todos"] == todos
 
-    read_result = await client.call_tool(
-        "read_todos", {"session_id": session_id}
-    )
+    read_result = await client.call_tool("read_todos", {"task_id": task_id})
     assert read_result["todos"] == todos

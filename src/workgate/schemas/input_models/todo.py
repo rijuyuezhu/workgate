@@ -1,4 +1,4 @@
-"""Typed input annotations for todo tools."""
+"""Typed input annotations for Todo compatibility tools."""
 
 from typing import Annotated, Any
 
@@ -9,7 +9,8 @@ ExpectedTodoRevisionArg = Annotated[
     Field(
         default=None,
         ge=0,
-        description="Optional revision that must still be current before replacement.",
+        strict=True,
+        description="Optional task revision that must still match before replacement.",
     ),
 ]
 
@@ -17,6 +18,6 @@ ExpectedTodoRevisionArg = Annotated[
 TodosArg = Annotated[
     list[dict[str, Any]],
     Field(
-        description="Replacement todo list. Each item may include id, content, status, and priority."
+        description="Replacement Todo projection. Each item may include id, content, status, and priority."
     ),
 ]

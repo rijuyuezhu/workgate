@@ -2093,7 +2093,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool.",
+    "description": "Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools.",
     "inputSchema": {
       "properties": {
         "executor_id": {
@@ -2613,6 +2613,19 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
           "title": "Session Id",
           "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional semantic task explicitly attached to this execution session.",
+          "title": "Task Id"
         },
         "updated_at": {
           "description": "Unix timestamp when the session was last touched.",
@@ -3152,6 +3165,19 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "title": "Session Id",
           "type": "string"
         },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional semantic task explicitly attached to this execution session.",
+          "title": "Task Id"
+        },
         "updated_at": {
           "description": "Unix timestamp when the session was last touched.",
           "title": "Updated At",
@@ -3190,7 +3216,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. This releases execution capacity; it does not mark the semantic task completed or cancelled. Durable task/progress/plan state remains readable as history after session_end but becomes read-only. This is destructive for running work in that session but does not delete workspace files.",
+    "description": "End one explicit executor-backed execution session. This stops owned work and releases execution capacity but does not finish, cancel, freeze, or delete an attached semantic task. The task remains independently readable and mutable by task_id. This is destructive for running work in that session but does not delete workspace files.",
     "inputSchema": {
       "properties": {
         "force": {

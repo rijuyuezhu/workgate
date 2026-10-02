@@ -7,6 +7,7 @@ from ...audit import (
     audit_call_context,
     audit_tool_call_end,
     audit_tool_call_start,
+    audit_tool_input_task_ids,
     new_audit_call_id,
 )
 from ...tools.contracts import ToolHandler
@@ -29,8 +30,9 @@ async def call_http_tool(
         tool=tool_name,
         input=payload,
     )
+    task_ids = audit_tool_input_task_ids(payload, session_ids)
     try:
-        with audit_call_context(call_id, session_ids):
+        with audit_call_context(call_id, session_ids, task_ids):
             result = await handler(payload)
     except BaseException as exc:
         duration_ms = int((time.time() - start) * 1000)
@@ -46,6 +48,7 @@ async def call_http_tool(
                 "repr": repr(exc),
             },
             session_ids=session_ids,
+            task_ids=task_ids,
         )
         raise
     duration_ms = int((time.time() - start) * 1000)
@@ -57,5 +60,6 @@ async def call_http_tool(
         duration_ms=duration_ms,
         output=to_jsonable(result),
         session_ids=session_ids,
+        task_ids=task_ids,
     )
     return result

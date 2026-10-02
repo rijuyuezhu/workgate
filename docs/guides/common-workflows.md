@@ -75,13 +75,13 @@ Pair or select the intended executor, then start a session with its stable execu
 Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that shared session. Durable task/progress/plan state and the Todo compatibility view are control-owned, but they are still addressed by that same explicit `session_id`; executor disconnect or restart does not erase them. See [Executors](executors.md) for pairing, reconnect, and trust management.
+File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that execution session. Semantic task/progress/plan state is control-owned under a separate `task_id`. Pass `task_id` to `session_start` when the execution context belongs to that task; the attachment never selects or rebinds a machine/workdir. See [Executors](executors.md) for pairing, reconnect, and trust management.
 
 ## Keep durable task progress
 
-For substantial multi-step work, use `read_session_task` to resume the durable handoff, `report_session_progress` to update the objective, summary, findings, next action, blockers, or semantic task status, and `update_session_plan` for stable plan steps. Both mutation tools require the latest `expected_revision`; reload after a conflict instead of overwriting another client.
+For substantial multi-step work, create or resume a semantic task with `task`, use `task(action="get", task_id=...)` for durable handoff, `task(action="report", ...)` for progress, and `task_plan` for stable plan steps. Mutations require the latest `expected_revision`; reload after a conflict instead of overwriting another client. `read_todos` and `write_todos` are compatibility projections over that same task plan.
 
-`session_end` releases the execution context without changing semantic task status. The task document remains readable afterward as history, but it is no longer writable because the associated execution session is ended.
+`session_end` releases only one execution context. The semantic task remains independently readable and mutable by `task_id`, including when it has zero active sessions.
 
 ## Review activity
 

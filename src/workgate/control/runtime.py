@@ -77,6 +77,7 @@ class ControlRuntime:
         executor_transport_started = False
         try:
             self.control_state.start()
+            await self.task_service.migrate_legacy_sessions()
             self.executor_transport.start()
             executor_transport_started = True
             await self.managed_jobs_runtime.start()
@@ -206,10 +207,8 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
-    task_service = ControlTaskService(
-        control_state, state_store, config, session_coordinator
-    )
-    audit_service = ControlAuditService(session_coordinator)
+    task_service = ControlTaskService(control_state, state_store, config)
+    audit_service = ControlAuditService(task_service, control_state)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,
         before_terminate=job_service.stop_referencing_jobs,

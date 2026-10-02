@@ -119,6 +119,10 @@ def test_cloudflare_tool_manifest_matches_canonical_mcp_definitions() -> None:
     )
     generated = asyncio.run(generator.build_manifest())
     assert tuple(generated) == HOSTED_TOOL_MANIFEST
+    session_start = next(
+        tool for tool in generated if tool["name"] == "session_start"
+    )
+    assert "task_id" not in session_start["inputSchema"]["properties"]
 
 
 def test_cloudflare_manifest_generator_rejects_unvalidated_schema_keywords() -> (

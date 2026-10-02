@@ -24,22 +24,28 @@ def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
         "completed": ["resume"],
         "cancelled": [],
     }.get(status, [])
+    session = {
+        "session_id": "sess_browser_live",
+        "label": "Browser execution",
+        "executor_id": "exec_browser",
+        "executor_name": "browser-loopback",
+        "workdir": "/workspace/demo",
+        "status": "active",
+        "availability": "available",
+        "created_at": 1.0,
+        "updated_at": 2.0,
+        "last_active_at": 2.0,
+    }
     return {
-        "version": 1,
-        "session": {
-            "session_id": "sess_browser_live",
-            "label": "Browser handoff",
-            "executor_id": "exec_browser",
-            "executor_name": "browser-loopback",
-            "workdir": "/workspace/demo",
-            "status": "active",
-            "availability": "available",
+        "version": 2,
+        "task": {
+            "version": 2,
+            "task_id": "task_browser_live",
+            "session_ids": ["sess_browser_live"],
+            "revision": revision,
             "created_at": 1.0,
             "updated_at": 2.0,
-            "last_active_at": 2.0,
-        },
-        "task": {
-            "revision": revision,
+            "label": "Browser handoff",
             "objective": "Review the Live Workspace safely",
             "status": status,
             "progress": {
@@ -59,6 +65,8 @@ def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
                 ]
             },
         },
+        "sessions": [session],
+        "session": session,
         "task_control_actions": actions,
         "task_controls_message": None,
         "jobs": [
@@ -91,6 +99,7 @@ def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
                 "event": "tool_call",
                 "tool": "bash",
                 "operation": "execute",
+                "session": "sess_browser_live",
                 "ok": True,
                 "duration_ms": 9.0,
                 # Deliberately hostile extra fields: the App must never render them.
@@ -246,18 +255,20 @@ def run_live_workspace(harness: BrowserHarness) -> None:
                 method: "ui/notifications/tool-result",
                 params: {
                     structuredContent: {
-                        session: {
-                            session_id: "sess_other",
-                            label: "wrong workspace"
+                        task: {
+                            task_id: "task_other",
+                            label: "wrong task"
                         }
                     }
                 }
             }, "*")"""
         )
-        expect(page.locator("#session-id")).to_have_text("sess_browser_live")
+        expect(page.locator("#session-id")).to_have_text(
+            "Selected session: sess_browser_live"
+        )
         expect(page.locator("#title")).to_have_text("Browser handoff")
         expect(page.locator("#status")).to_have_text(
-            "Ignored snapshot for a different session."
+            "Ignored snapshot for a different task."
         )
 
         calls = page.evaluate("window.__liveCalls")
@@ -290,6 +301,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
                 "args": {
                     "name": "workspace_task_control",
                     "arguments": {
+                        "task_id": "task_browser_live",
                         "session_id": "sess_browser_live",
                         "action": "block",
                         "expected_revision": 7,
@@ -309,7 +321,8 @@ def run_live_workspace(harness: BrowserHarness) -> None:
         ]
         assert len(snapshot_calls) == 1
         assert snapshot_calls[0]["args"]["arguments"] == {
-            "session_id": "sess_browser_live"
+            "task_id": "task_browser_live",
+            "session_id": "sess_browser_live",
         }
 
         # Wrong confirmation is rejected locally and never reaches the tool.
@@ -325,7 +338,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
             "does not exactly match"
         )
 
-        # Exact confirmation sends only the current canonical session identity.
+        # Exact confirmation sends the task identity plus the explicit selected session.
         page.locator("#end-confirm").fill("sess_browser_live")
         page.get_by_role("button", name="End session").click()
         expect(page.locator("#status")).to_have_text("Execution session ended.")
@@ -342,6 +355,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
                 "args": {
                     "name": "workspace_end",
                     "arguments": {
+                        "task_id": "task_browser_live",
                         "session_id": "sess_browser_live",
                         "confirm_session_id": "sess_browser_live",
                     },

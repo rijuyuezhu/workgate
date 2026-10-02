@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import copy
 import json
 from pathlib import Path
 
@@ -102,11 +103,16 @@ async def build_manifest() -> list[dict[str, object]]:
     manifest: list[dict[str, object]] = []
     for name in HOSTED_TOOL_NAMES:
         tool = by_name[name]
-        _validate_input_schema(tool.inputSchema, path=f"{name}.inputSchema")
+        input_schema = copy.deepcopy(tool.inputSchema)
+        if name == "session_start":
+            properties = input_schema.get("properties")
+            if isinstance(properties, dict):
+                properties.pop("task_id", None)
+        _validate_input_schema(input_schema, path=f"{name}.inputSchema")
         row: dict[str, object] = {
             "name": tool.name,
             "description": tool.description or "",
-            "inputSchema": tool.inputSchema,
+            "inputSchema": input_schema,
         }
         if tool.outputSchema is not None:
             row["outputSchema"] = tool.outputSchema

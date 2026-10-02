@@ -1,11 +1,11 @@
 {
-  "count": 50,
+  "count": 49,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "50"
+          "code": "49"
         },
         "."
       ],
@@ -182,7 +182,7 @@
       ]
     },
     {
-      "body": "Register session-bound audit tools.",
+      "body": "Register canonical audit query tools.",
       "headers": [
         "Tool",
         "Parameters",
@@ -197,13 +197,6 @@
           },
           {
             "items": [
-              {
-                "description": "Optional audit-record session identifier filter.",
-                "head": {
-                  "code": "audit_session"
-                },
-                "note": "(string / null, optional)"
-              },
               {
                 "description": "Optional Unix timestamp boundary.",
                 "head": {
@@ -254,11 +247,11 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string, required)"
+                "note": "(string / null, optional)"
               },
               {
                 "description": "Timestamp sort order.",
@@ -273,10 +266,17 @@
                   "code": "start_ts"
                 },
                 "note": "(number / null, optional)"
+              },
+              {
+                "description": "Task id required by every task action except create.",
+                "head": {
+                  "code": "task_id"
+                },
+                "note": "(string / null, optional)"
               }
             ]
           },
-          "Read bounded canonical control audit history through an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot."
+          "Read bounded canonical audit history by semantic task_id, concrete execution session_id, or their intersection. At least one identity is required. A task_id never selects execution routing."
         ]
       ]
     },
@@ -1288,7 +1288,7 @@
               }
             ]
           },
-          "End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. This releases execution capacity; it does not mark the semantic task completed or cancelled. Durable task/progress/plan state remains readable as history after session_end but becomes read-only. This is destructive for running work in that session but does not delete workspace files."
+          "End one explicit executor-backed execution session. This stops owned work and releases execution capacity but does not finish, cancel, freeze, or delete an attached semantic task. The task remains independently readable and mutable by task_id. This is destructive for running work in that session but does not delete workspace files."
         ],
         [
           {
@@ -1311,6 +1311,13 @@
                 "note": "(string / null, optional)"
               },
               {
+                "description": "Optional existing semantic task_id to attach to this execution session. It never selects or changes the executor or workdir.",
+                "head": {
+                  "code": "task_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
                 "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
                 "head": {
                   "code": "workdir"
@@ -1319,7 +1326,7 @@
               }
             ]
           },
-          "Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool."
+          "Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools."
         ]
       ]
     },
@@ -1644,7 +1651,7 @@
       ]
     },
     {
-      "body": "Register durable session task/progress/plan tools.",
+      "body": "Register semantic task lifecycle and plan tools.",
       "headers": [
         "Tool",
         "Parameters",
@@ -1655,27 +1662,17 @@
       "rows": [
         [
           {
-            "code": "read_session_task"
+            "code": "task"
           },
           {
             "items": [
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Semantic task lifecycle action.",
                 "head": {
-                  "code": "session_id"
+                  "code": "action"
                 },
-                "note": "(string, required)"
-              }
-            ]
-          },
-          "Read control-owned task progress and plan state for one explicit Workgate session. Ended sessions remain readable."
-        ],
-        [
-          {
-            "code": "report_session_progress"
-          },
-          {
-            "items": [
+                "note": "(create / get / block / resume / report / finish / cancel / delete, required)"
+              },
               {
                 "description": "Optional replacement blockers list; [] clears blockers.",
                 "head": {
@@ -1684,11 +1681,11 @@
                 "note": "(array / null, optional)"
               },
               {
-                "description": "Current task revision that must still match before mutation.",
+                "description": "Current task revision. Required for block/resume/report/finish/cancel/delete.",
                 "head": {
                   "code": "expected_revision"
                 },
-                "note": "(integer, required)"
+                "note": "(integer / null, optional)"
               },
               {
                 "description": "Optional replacement findings list; [] clears findings.",
@@ -1696,6 +1693,13 @@
                   "code": "findings"
                 },
                 "note": "(array / null, optional)"
+              },
+              {
+                "description": "Optional human-readable task label.",
+                "head": {
+                  "code": "label"
+                },
+                "note": "(string / null, optional)"
               },
               {
                 "description": "Optional replacement next action.",
@@ -1712,13 +1716,6 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
-                "head": {
-                  "code": "session_id"
-                },
-                "note": "(string, required)"
-              },
-              {
                 "description": "Optional replacement progress summary.",
                 "head": {
                   "code": "summary"
@@ -1726,19 +1723,19 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Optional task status: active, blocked, completed, or cancelled.",
+                "description": "Task id required by every task action except create.",
                 "head": {
-                  "code": "task_status"
+                  "code": "task_id"
                 },
                 "note": "(string / null, optional)"
               }
             ]
           },
-          "Update durable task progress for one active session using expected_revision. Completing requires every plan step to be completed or skipped."
+          "Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity. Mutating an existing task requires its latest expected_revision."
         ],
         [
           {
-            "code": "update_session_plan"
+            "code": "task_plan"
           },
           {
             "items": [
@@ -1750,27 +1747,27 @@
                 "note": "(integer, required)"
               },
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
-                "head": {
-                  "code": "session_id"
-                },
-                "note": "(string, required)"
-              },
-              {
                 "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
                 "head": {
                   "code": "steps"
                 },
                 "note": "(array, required)"
+              },
+              {
+                "description": "Opaque semantic task_id returned by task(action='create').",
+                "head": {
+                  "code": "task_id"
+                },
+                "note": "(string, required)"
               }
             ]
           },
-          "Replace the structured plan for one active session using expected_revision. Every step requires a stable ID; Todo APIs expose the same plan."
+          "Replace one semantic task's complete plan using the latest expected_revision. This never chooses or changes an execution session."
         ]
       ]
     },
     {
-      "body": "Register todo-list tools.",
+      "body": "Register the Todo projection of semantic task plans.",
       "headers": [
         "Tool",
         "Parameters",
@@ -1786,15 +1783,15 @@
           {
             "items": [
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Opaque semantic task_id returned by task(action='create').",
                 "head": {
-                  "code": "session_id"
+                  "code": "task_id"
                 },
                 "note": "(string, required)"
               }
             ]
           },
-          "Read the legacy Todo compatibility view of one explicit Workgate session's canonical plan. The returned items and revision come from the same control-owned task document used by read_session_task/update_session_plan; this is not a second checklist. The view remains readable after session_end as retained history. For new plan-aware clients prefer read_session_task and update_session_plan."
+          "Read the Todo compatibility projection of one explicit semantic task plan. This is not a second checklist or session-owned store."
         ],
         [
           {
@@ -1803,21 +1800,21 @@
           {
             "items": [
               {
-                "description": "Optional revision that must still be current before replacement.",
+                "description": "Optional task revision that must still match before replacement.",
                 "head": {
                   "code": "expected_revision"
                 },
                 "note": "(integer / null, optional)"
               },
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Opaque semantic task_id returned by task(action='create').",
                 "head": {
-                  "code": "session_id"
+                  "code": "task_id"
                 },
                 "note": "(string, required)"
               },
               {
-                "description": "Replacement todo list. Each item may include id, content, status, and priority.",
+                "description": "Replacement Todo projection. Each item may include id, content, status, and priority.",
                 "head": {
                   "code": "todos"
                 },
@@ -1825,7 +1822,7 @@
               }
             ]
           },
-          "Replace canonical plan steps through the legacy Todo compatibility surface for one explicit active Workgate session. Provide the full desired list; omitted steps are removed, while plan-only metadata on retained step IDs is preserved. The write shares the canonical task revision, so use expected_revision from read_todos when stale replacement must be rejected. Prefer update_session_plan for new clients that need blocked/skipped states or plan notes."
+          "Replace canonical task plan steps through the Todo compatibility surface. Use the explicit task_id; execution sessions are unrelated to this write."
         ]
       ]
     },
@@ -1937,10 +1934,17 @@
                   "code": "session_id"
                 },
                 "note": "(string, required)"
+              },
+              {
+                "description": "Opaque semantic task_id returned by task(action='create').",
+                "head": {
+                  "code": "task_id"
+                },
+                "note": "(string, required)"
               }
             ]
           },
-          "End the explicit Live Workspace session after a separate human confirmation. confirm_session_id must repeat session_id exactly."
+          "End one explicitly selected execution session attached to the task after a separate human confirmation."
         ],
         [
           {
@@ -1949,15 +1953,22 @@
           {
             "items": [
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
                 "head": {
                   "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque semantic task_id returned by task(action='create').",
+                "head": {
+                  "code": "task_id"
                 },
                 "note": "(string, required)"
               }
             ]
           },
-          "Open the Live Workspace for one explicit existing Workgate session_id. This never creates, lists, guesses, rebinds, or revives a session."
+          "Open the Live Workspace for one explicit semantic task_id. Pass session_id only to select one already-attached execution context; omitting it never guesses a machine or workdir."
         ],
         [
           {
@@ -1966,15 +1977,22 @@
           {
             "items": [
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
                 "head": {
                   "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque semantic task_id returned by task(action='create').",
+                "head": {
+                  "code": "task_id"
                 },
                 "note": "(string, required)"
               }
             ]
           },
-          "Refresh the MCP App snapshot for the same explicit Workgate session."
+          "Refresh one explicit semantic task and optional selected execution session."
         ],
         [
           {
@@ -2004,15 +2022,22 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Opaque shared agent/workspace session_id returned by session_start.",
+                "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
                 "head": {
                   "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque semantic task_id returned by task(action='create').",
+                "head": {
+                  "code": "task_id"
                 },
                 "note": "(string, required)"
               }
             ]
           },
-          "Apply one safe semantic task control from the Live Workspace."
+          "Apply one safe semantic task control without changing execution routing."
         ]
       ]
     }
@@ -2364,23 +2389,9 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read bounded canonical control audit history through an explicit shared agent session. Listing and previews require audit:read. Set entry_id to retrieve one logical entry; set include_full_payloads=true only with entry_id to resolve retained sanitized payloads, which additionally requires audit:full. Searches cover metadata rather than stored payload bodies. The current audit_tail lifecycle is excluded from its own stable read snapshot.",
+      "description": "Read bounded canonical audit history by semantic task_id, concrete execution session_id, or their intersection. At least one identity is required. A task_id never selects execution routing.",
       "inputSchema": {
         "properties": {
-          "audit_session": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional audit-record session identifier filter.",
-            "title": "Audit Session"
-          },
           "end_ts": {
             "anyOf": [
               {
@@ -2466,12 +2477,20 @@
             "title": "Search"
           },
           "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
-            "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
+            "title": "Session Id"
           },
           "sort": {
             "default": "desc",
@@ -2496,11 +2515,23 @@
             "default": null,
             "description": "Optional Unix timestamp boundary.",
             "title": "Start Ts"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Task id required by every task action except create.",
+            "title": "Task Id"
           }
         },
-        "required": [
-          "session_id"
-        ],
         "title": "audit_tailArguments",
         "type": "object"
       },
@@ -2552,8 +2583,28 @@
             "type": "boolean"
           },
           "session_id": {
-            "title": "Session Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Id"
           },
           "total_matched": {
             "title": "Total Matched",
@@ -2561,7 +2612,6 @@
           }
         },
         "required": [
-          "session_id",
           "count",
           "total_matched",
           "failed_matched"
@@ -6769,247 +6819,20 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read control-owned task progress and plan state for one explicit Workgate session. Ended sessions remain readable.",
+      "description": "Read the Todo compatibility projection of one explicit semantic task plan. This is not a second checklist or session-owned store.",
       "inputSchema": {
         "properties": {
-          "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
             "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
             "type": "string"
           }
         },
         "required": [
-          "session_id"
-        ],
-        "title": "read_session_taskArguments",
-        "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
-      "name": "read_session_task",
-      "outputSchema": {
-        "$defs": {
-          "SessionPlan": {
-            "description": "Structured machine-readable plan for one session task.",
-            "properties": {
-              "steps": {
-                "description": "Ordered plan steps with stable IDs.",
-                "items": {
-                  "$ref": "#/$defs/SessionPlanStep"
-                },
-                "title": "Steps",
-                "type": "array"
-              }
-            },
-            "title": "SessionPlan",
-            "type": "object"
-          },
-          "SessionPlanStep": {
-            "description": "One stable step in the session task plan.",
-            "properties": {
-              "content": {
-                "description": "Human-readable plan step text.",
-                "title": "Content",
-                "type": "string"
-              },
-              "id": {
-                "description": "Stable caller-visible plan step identifier.",
-                "title": "Id",
-                "type": "string"
-              },
-              "priority": {
-                "default": "medium",
-                "description": "Compatibility priority label retained from Todo state.",
-                "title": "Priority",
-                "type": "string"
-              },
-              "status": {
-                "default": "pending",
-                "description": "Plan step status: pending, in_progress, completed, skipped, or blocked.",
-                "title": "Status",
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "content"
-            ],
-            "title": "SessionPlanStep",
-            "type": "object"
-          },
-          "SessionProgress": {
-            "description": "Latest semantic progress handoff for one session task.",
-            "properties": {
-              "blockers": {
-                "description": "Current blockers preventing or constraining progress.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Blockers",
-                "type": "array"
-              },
-              "findings": {
-                "description": "Current durable findings worth carrying across turns.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Findings",
-                "type": "array"
-              },
-              "next_action": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Recommended next concrete action.",
-                "title": "Next Action"
-              },
-              "summary": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Current concise progress summary.",
-                "title": "Summary"
-              }
-            },
-            "title": "SessionProgress",
-            "type": "object"
-          }
-        },
-        "description": "Canonical task state plus its existing execution-session projection.",
-        "properties": {
-          "execution_status": {
-            "description": "Execution-session lifecycle status, separate from task status.",
-            "title": "Execution Status",
-            "type": "string"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Existing canonical human-readable session label.",
-            "title": "Label"
-          },
-          "objective": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional durable task objective.",
-            "title": "Objective"
-          },
-          "plan": {
-            "$ref": "#/$defs/SessionPlan"
-          },
-          "progress": {
-            "$ref": "#/$defs/SessionProgress"
-          },
-          "revision": {
-            "default": 0,
-            "description": "Monotonic document revision used for optimistic concurrency.",
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "session_id": {
-            "description": "Explicit Workgate session identifier.",
-            "title": "Session Id",
-            "type": "string"
-          },
-          "status": {
-            "default": "active",
-            "description": "Semantic task lifecycle status.",
-            "enum": [
-              "active",
-              "blocked",
-              "completed",
-              "cancelled"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Unix timestamp of the latest task mutation.",
-            "title": "Updated At"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "session_id",
-          "execution_status"
-        ],
-        "title": "SessionTaskOutput",
-        "type": "object"
-      }
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true
-      },
-      "description": "Read the legacy Todo compatibility view of one explicit Workgate session's canonical plan. The returned items and revision come from the same control-owned task document used by read_session_task/update_session_plan; this is not a second checklist. The view remains readable after session_end as retained history. For new plan-aware clients prefer read_session_task and update_session_plan.",
-      "inputSchema": {
-        "properties": {
-          "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
-            "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id"
+          "task_id"
         ],
         "title": "read_todosArguments",
         "type": "object"
@@ -7096,325 +6919,6 @@
           "todos"
         ],
         "title": "ReadTodosOutput",
-        "type": "object"
-      }
-    },
-    {
-      "annotations": {
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      },
-      "description": "Update durable task progress for one active session using expected_revision. Completing requires every plan step to be completed or skipped.",
-      "inputSchema": {
-        "properties": {
-          "blockers": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement blockers list; [] clears blockers.",
-            "title": "Blockers"
-          },
-          "expected_revision": {
-            "description": "Current task revision that must still match before mutation.",
-            "minimum": 0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "findings": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement findings list; [] clears findings.",
-            "title": "Findings"
-          },
-          "next_action": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement next action.",
-            "title": "Next Action"
-          },
-          "objective": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement task objective; empty text clears it.",
-            "title": "Objective"
-          },
-          "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
-            "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
-            "type": "string"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional replacement progress summary.",
-            "title": "Summary"
-          },
-          "task_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional task status: active, blocked, completed, or cancelled.",
-            "title": "Task Status"
-          }
-        },
-        "required": [
-          "session_id",
-          "expected_revision"
-        ],
-        "title": "report_session_progressArguments",
-        "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
-      "name": "report_session_progress",
-      "outputSchema": {
-        "$defs": {
-          "SessionPlan": {
-            "description": "Structured machine-readable plan for one session task.",
-            "properties": {
-              "steps": {
-                "description": "Ordered plan steps with stable IDs.",
-                "items": {
-                  "$ref": "#/$defs/SessionPlanStep"
-                },
-                "title": "Steps",
-                "type": "array"
-              }
-            },
-            "title": "SessionPlan",
-            "type": "object"
-          },
-          "SessionPlanStep": {
-            "description": "One stable step in the session task plan.",
-            "properties": {
-              "content": {
-                "description": "Human-readable plan step text.",
-                "title": "Content",
-                "type": "string"
-              },
-              "id": {
-                "description": "Stable caller-visible plan step identifier.",
-                "title": "Id",
-                "type": "string"
-              },
-              "priority": {
-                "default": "medium",
-                "description": "Compatibility priority label retained from Todo state.",
-                "title": "Priority",
-                "type": "string"
-              },
-              "status": {
-                "default": "pending",
-                "description": "Plan step status: pending, in_progress, completed, skipped, or blocked.",
-                "title": "Status",
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "content"
-            ],
-            "title": "SessionPlanStep",
-            "type": "object"
-          },
-          "SessionProgress": {
-            "description": "Latest semantic progress handoff for one session task.",
-            "properties": {
-              "blockers": {
-                "description": "Current blockers preventing or constraining progress.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Blockers",
-                "type": "array"
-              },
-              "findings": {
-                "description": "Current durable findings worth carrying across turns.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Findings",
-                "type": "array"
-              },
-              "next_action": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Recommended next concrete action.",
-                "title": "Next Action"
-              },
-              "summary": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Current concise progress summary.",
-                "title": "Summary"
-              }
-            },
-            "title": "SessionProgress",
-            "type": "object"
-          }
-        },
-        "description": "Canonical task state plus its existing execution-session projection.",
-        "properties": {
-          "execution_status": {
-            "description": "Execution-session lifecycle status, separate from task status.",
-            "title": "Execution Status",
-            "type": "string"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Existing canonical human-readable session label.",
-            "title": "Label"
-          },
-          "objective": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional durable task objective.",
-            "title": "Objective"
-          },
-          "plan": {
-            "$ref": "#/$defs/SessionPlan"
-          },
-          "progress": {
-            "$ref": "#/$defs/SessionProgress"
-          },
-          "revision": {
-            "default": 0,
-            "description": "Monotonic document revision used for optimistic concurrency.",
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "session_id": {
-            "description": "Explicit Workgate session identifier.",
-            "title": "Session Id",
-            "type": "string"
-          },
-          "status": {
-            "default": "active",
-            "description": "Semantic task lifecycle status.",
-            "enum": [
-              "active",
-              "blocked",
-              "completed",
-              "cancelled"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Unix timestamp of the latest task mutation.",
-            "title": "Updated At"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "session_id",
-          "execution_status"
-        ],
-        "title": "SessionTaskOutput",
         "type": "object"
       }
     },
@@ -8891,6 +8395,19 @@
             "title": "Session Id",
             "type": "string"
           },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional semantic task explicitly attached to this execution session.",
+            "title": "Task Id"
+          },
           "updated_at": {
             "description": "Unix timestamp when the session was last touched.",
             "title": "Updated At",
@@ -9444,7 +8961,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. This releases execution capacity; it does not mark the semantic task completed or cancelled. Durable task/progress/plan state remains readable as history after session_end but becomes read-only. This is destructive for running work in that session but does not delete workspace files.",
+      "description": "End one explicit executor-backed execution session. This stops owned work and releases execution capacity but does not finish, cancel, freeze, or delete an attached semantic task. The task remains independently readable and mutable by task_id. This is destructive for running work in that session but does not delete workspace files.",
       "inputSchema": {
         "properties": {
           "force": {
@@ -9551,7 +9068,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool.",
+      "description": "Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools.",
       "inputSchema": {
         "properties": {
           "executor_id": {
@@ -9583,6 +9100,21 @@
             "default": null,
             "description": "Optional human-readable label for this agent session.",
             "title": "Label"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional existing semantic task_id to attach to this execution session. It never selects or changes the executor or workdir.",
+            "title": "Task Id"
           },
           "workdir": {
             "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
@@ -10082,6 +9614,19 @@
             "title": "Session Id",
             "type": "string"
           },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional semantic task explicitly attached to this execution session.",
+            "title": "Task Id"
+          },
           "updated_at": {
             "description": "Unix timestamp when the session was last touched.",
             "title": "Updated At",
@@ -10110,6 +9655,643 @@
           "message"
         ],
         "title": "SessionStartOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity. Mutating an existing task requires its latest expected_revision.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "Semantic task lifecycle action.",
+            "enum": [
+              "create",
+              "get",
+              "block",
+              "resume",
+              "report",
+              "finish",
+              "cancel",
+              "delete"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "blockers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional replacement blockers list; [] clears blockers.",
+            "title": "Blockers"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Current task revision. Required for block/resume/report/finish/cancel/delete.",
+            "title": "Expected Revision"
+          },
+          "findings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional replacement findings list; [] clears findings.",
+            "title": "Findings"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional human-readable task label.",
+            "title": "Label"
+          },
+          "next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional replacement next action.",
+            "title": "Next Action"
+          },
+          "objective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional replacement task objective; empty text clears it.",
+            "title": "Objective"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional replacement progress summary.",
+            "title": "Summary"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Task id required by every task action except create.",
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "taskArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "task",
+      "outputSchema": {
+        "$defs": {
+          "TaskDeleteOutput": {
+            "description": "Result of deleting one terminal semantic task.",
+            "properties": {
+              "deleted": {
+                "const": true,
+                "default": true,
+                "title": "Deleted",
+                "type": "boolean"
+              },
+              "task_id": {
+                "title": "Task Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id"
+            ],
+            "title": "TaskDeleteOutput",
+            "type": "object"
+          },
+          "TaskOutput": {
+            "description": "Canonical task state plus its execution-session attachments.",
+            "properties": {
+              "created_at": {
+                "description": "Unix timestamp when the task was created.",
+                "title": "Created At",
+                "type": "number"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable task label.",
+                "title": "Label"
+              },
+              "objective": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional durable task objective.",
+                "title": "Objective"
+              },
+              "plan": {
+                "$ref": "#/$defs/TaskPlan"
+              },
+              "progress": {
+                "$ref": "#/$defs/TaskProgress"
+              },
+              "revision": {
+                "default": 0,
+                "description": "Monotonic document revision used for optimistic concurrency.",
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "session_ids": {
+                "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Session Ids",
+                "type": "array"
+              },
+              "status": {
+                "default": "active",
+                "description": "Semantic task lifecycle status.",
+                "enum": [
+                  "active",
+                  "blocked",
+                  "completed",
+                  "cancelled"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "Opaque durable semantic task identifier.",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "updated_at": {
+                "description": "Unix timestamp of the latest task mutation.",
+                "title": "Updated At",
+                "type": "number"
+              },
+              "version": {
+                "const": 2,
+                "default": 2,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "created_at",
+              "updated_at",
+              "task_id"
+            ],
+            "title": "TaskOutput",
+            "type": "object"
+          },
+          "TaskPlan": {
+            "description": "Structured machine-readable plan for one semantic task.",
+            "properties": {
+              "steps": {
+                "description": "Ordered plan steps with stable IDs.",
+                "items": {
+                  "$ref": "#/$defs/TaskPlanStep"
+                },
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "title": "TaskPlan",
+            "type": "object"
+          },
+          "TaskPlanStep": {
+            "description": "One stable step in a semantic task plan.",
+            "properties": {
+              "content": {
+                "description": "Human-readable plan step text.",
+                "title": "Content",
+                "type": "string"
+              },
+              "id": {
+                "description": "Stable caller-visible plan step identifier.",
+                "title": "Id",
+                "type": "string"
+              },
+              "priority": {
+                "default": "medium",
+                "description": "Compatibility priority label retained from Todo state.",
+                "title": "Priority",
+                "type": "string"
+              },
+              "status": {
+                "default": "pending",
+                "description": "Plan step status: pending, in_progress, completed, skipped, or blocked.",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "content"
+            ],
+            "title": "TaskPlanStep",
+            "type": "object"
+          },
+          "TaskProgress": {
+            "description": "Latest durable progress handoff for one semantic task.",
+            "properties": {
+              "blockers": {
+                "description": "Current blockers preventing or constraining progress.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Blockers",
+                "type": "array"
+              },
+              "findings": {
+                "description": "Current durable findings worth carrying across turns.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Findings",
+                "type": "array"
+              },
+              "next_action": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Recommended next concrete action.",
+                "title": "Next Action"
+              },
+              "summary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Current concise progress summary.",
+                "title": "Summary"
+              }
+            },
+            "title": "TaskProgress",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TaskOutput"
+              },
+              {
+                "$ref": "#/$defs/TaskDeleteOutput"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "taskOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Replace one semantic task's complete plan using the latest expected_revision. This never chooses or changes an execution session.",
+      "inputSchema": {
+        "properties": {
+          "expected_revision": {
+            "description": "Current task revision that must still match before mutation.",
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "steps": {
+            "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
+            "maxLength": 128,
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "expected_revision",
+          "steps"
+        ],
+        "title": "task_planArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "task_plan",
+      "outputSchema": {
+        "$defs": {
+          "TaskPlan": {
+            "description": "Structured machine-readable plan for one semantic task.",
+            "properties": {
+              "steps": {
+                "description": "Ordered plan steps with stable IDs.",
+                "items": {
+                  "$ref": "#/$defs/TaskPlanStep"
+                },
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "title": "TaskPlan",
+            "type": "object"
+          },
+          "TaskPlanStep": {
+            "description": "One stable step in a semantic task plan.",
+            "properties": {
+              "content": {
+                "description": "Human-readable plan step text.",
+                "title": "Content",
+                "type": "string"
+              },
+              "id": {
+                "description": "Stable caller-visible plan step identifier.",
+                "title": "Id",
+                "type": "string"
+              },
+              "priority": {
+                "default": "medium",
+                "description": "Compatibility priority label retained from Todo state.",
+                "title": "Priority",
+                "type": "string"
+              },
+              "status": {
+                "default": "pending",
+                "description": "Plan step status: pending, in_progress, completed, skipped, or blocked.",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "content"
+            ],
+            "title": "TaskPlanStep",
+            "type": "object"
+          },
+          "TaskProgress": {
+            "description": "Latest durable progress handoff for one semantic task.",
+            "properties": {
+              "blockers": {
+                "description": "Current blockers preventing or constraining progress.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Blockers",
+                "type": "array"
+              },
+              "findings": {
+                "description": "Current durable findings worth carrying across turns.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Findings",
+                "type": "array"
+              },
+              "next_action": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Recommended next concrete action.",
+                "title": "Next Action"
+              },
+              "summary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Current concise progress summary.",
+                "title": "Summary"
+              }
+            },
+            "title": "TaskProgress",
+            "type": "object"
+          }
+        },
+        "description": "Canonical task state plus its execution-session attachments.",
+        "properties": {
+          "created_at": {
+            "description": "Unix timestamp when the task was created.",
+            "title": "Created At",
+            "type": "number"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional human-readable task label.",
+            "title": "Label"
+          },
+          "objective": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional durable task objective.",
+            "title": "Objective"
+          },
+          "plan": {
+            "$ref": "#/$defs/TaskPlan"
+          },
+          "progress": {
+            "$ref": "#/$defs/TaskProgress"
+          },
+          "revision": {
+            "default": 0,
+            "description": "Monotonic document revision used for optimistic concurrency.",
+            "minimum": 0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "session_ids": {
+            "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Session Ids",
+            "type": "array"
+          },
+          "status": {
+            "default": "active",
+            "description": "Semantic task lifecycle status.",
+            "enum": [
+              "active",
+              "blocked",
+              "completed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Opaque durable semantic task identifier.",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "Unix timestamp of the latest task mutation.",
+            "title": "Updated At",
+            "type": "number"
+          },
+          "version": {
+            "const": 2,
+            "default": 2,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created_at",
+          "updated_at",
+          "task_id"
+        ],
+        "title": "TaskOutput",
         "type": "object"
       }
     },
@@ -10273,251 +10455,6 @@
     },
     {
       "annotations": {
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false
-      },
-      "description": "Replace the structured plan for one active session using expected_revision. Every step requires a stable ID; Todo APIs expose the same plan.",
-      "inputSchema": {
-        "properties": {
-          "expected_revision": {
-            "description": "Current task revision that must still match before mutation.",
-            "minimum": 0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
-            "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
-            "type": "string"
-          },
-          "steps": {
-            "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Steps",
-            "type": "array"
-          }
-        },
-        "required": [
-          "session_id",
-          "expected_revision",
-          "steps"
-        ],
-        "title": "update_session_planArguments",
-        "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
-      "name": "update_session_plan",
-      "outputSchema": {
-        "$defs": {
-          "SessionPlan": {
-            "description": "Structured machine-readable plan for one session task.",
-            "properties": {
-              "steps": {
-                "description": "Ordered plan steps with stable IDs.",
-                "items": {
-                  "$ref": "#/$defs/SessionPlanStep"
-                },
-                "title": "Steps",
-                "type": "array"
-              }
-            },
-            "title": "SessionPlan",
-            "type": "object"
-          },
-          "SessionPlanStep": {
-            "description": "One stable step in the session task plan.",
-            "properties": {
-              "content": {
-                "description": "Human-readable plan step text.",
-                "title": "Content",
-                "type": "string"
-              },
-              "id": {
-                "description": "Stable caller-visible plan step identifier.",
-                "title": "Id",
-                "type": "string"
-              },
-              "priority": {
-                "default": "medium",
-                "description": "Compatibility priority label retained from Todo state.",
-                "title": "Priority",
-                "type": "string"
-              },
-              "status": {
-                "default": "pending",
-                "description": "Plan step status: pending, in_progress, completed, skipped, or blocked.",
-                "title": "Status",
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "content"
-            ],
-            "title": "SessionPlanStep",
-            "type": "object"
-          },
-          "SessionProgress": {
-            "description": "Latest semantic progress handoff for one session task.",
-            "properties": {
-              "blockers": {
-                "description": "Current blockers preventing or constraining progress.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Blockers",
-                "type": "array"
-              },
-              "findings": {
-                "description": "Current durable findings worth carrying across turns.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Findings",
-                "type": "array"
-              },
-              "next_action": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Recommended next concrete action.",
-                "title": "Next Action"
-              },
-              "summary": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Current concise progress summary.",
-                "title": "Summary"
-              }
-            },
-            "title": "SessionProgress",
-            "type": "object"
-          }
-        },
-        "description": "Canonical task state plus its existing execution-session projection.",
-        "properties": {
-          "execution_status": {
-            "description": "Execution-session lifecycle status, separate from task status.",
-            "title": "Execution Status",
-            "type": "string"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Existing canonical human-readable session label.",
-            "title": "Label"
-          },
-          "objective": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional durable task objective.",
-            "title": "Objective"
-          },
-          "plan": {
-            "$ref": "#/$defs/SessionPlan"
-          },
-          "progress": {
-            "$ref": "#/$defs/SessionProgress"
-          },
-          "revision": {
-            "default": 0,
-            "description": "Monotonic document revision used for optimistic concurrency.",
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
-          },
-          "session_id": {
-            "description": "Explicit Workgate session identifier.",
-            "title": "Session Id",
-            "type": "string"
-          },
-          "status": {
-            "default": "active",
-            "description": "Semantic task lifecycle status.",
-            "enum": [
-              "active",
-              "blocked",
-              "completed",
-              "cancelled"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Unix timestamp of the latest task mutation.",
-            "title": "Updated At"
-          },
-          "version": {
-            "const": 1,
-            "default": 1,
-            "title": "Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "session_id",
-          "execution_status"
-        ],
-        "title": "SessionTaskOutput",
-        "type": "object"
-      }
-    },
-    {
-      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
@@ -10657,7 +10594,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "End the explicit Live Workspace session after a separate human confirmation. confirm_session_id must repeat session_id exactly.",
+      "description": "End one explicitly selected execution session attached to the task after a separate human confirmation.",
       "inputSchema": {
         "properties": {
           "confirm_session_id": {
@@ -10671,9 +10608,18 @@
             "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
+          },
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
+            "maxLength": 128,
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
+            "type": "string"
           }
         },
         "required": [
+          "task_id",
           "session_id",
           "confirm_session_id"
         ],
@@ -10768,26 +10714,42 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Open the Live Workspace for one explicit existing Workgate session_id. This never creates, lists, guesses, rebinds, or revives a session.",
+      "description": "Open the Live Workspace for one explicit semantic task_id. Pass session_id only to select one already-attached execution context; omitting it never guesses a machine or workdir.",
       "inputSchema": {
         "properties": {
           "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
+            "title": "Session Id"
+          },
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
             "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
             "type": "string"
           }
         },
         "required": [
-          "session_id"
+          "task_id"
         ],
         "title": "workspace_openArguments",
         "type": "object"
       },
       "meta": {
-        "openai/outputTemplate": "ui://workgate/live-workspace-1e9a13f41a9977a0.html",
+        "openai/outputTemplate": "ui://workgate/live-workspace-f541b25b881be44f.html",
         "openai/toolInvocation/invoked": "Live Workspace ready",
         "openai/toolInvocation/invoking": "Opening Live Workspace",
         "openai/widgetAccessible": true,
@@ -10801,15 +10763,15 @@
           }
         ],
         "ui": {
-          "resourceUri": "ui://workgate/live-workspace-1e9a13f41a9977a0.html"
+          "resourceUri": "ui://workgate/live-workspace-f541b25b881be44f.html"
         },
-        "ui/resourceUri": "ui://workgate/live-workspace-1e9a13f41a9977a0.html"
+        "ui/resourceUri": "ui://workgate/live-workspace-f541b25b881be44f.html"
       },
       "name": "workspace_open",
       "outputSchema": {
         "$defs": {
           "LiveWorkspaceActivity": {
-            "description": "Allow-listed audit identity fields for recent activity.",
+            "description": "Allow-listed task-attributed audit identity fields.",
             "properties": {
               "duration_ms": {
                 "anyOf": [
@@ -10871,6 +10833,18 @@
                 "default": null,
                 "title": "Operation"
               },
+              "session": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Session"
+              },
               "tool": {
                 "anyOf": [
                   {
@@ -10900,7 +10874,7 @@
             "type": "object"
           },
           "LiveWorkspaceJob": {
-            "description": "Bounded job metadata safe for the compact Live Workspace.",
+            "description": "Bounded job metadata for one explicitly selected execution session.",
             "properties": {
               "attempts": {
                 "title": "Attempts",
@@ -10961,7 +10935,7 @@
             "type": "object"
           },
           "LiveWorkspaceLinks": {
-            "description": "Links to fuller authenticated Human UI views.",
+            "description": "Links to fuller authenticated Human UI views for a selected session.",
             "properties": {
               "audit": {
                 "title": "Audit",
@@ -10990,7 +10964,7 @@
             "type": "object"
           },
           "LiveWorkspaceSession": {
-            "description": "Canonical Workgate session identity and availability projection.",
+            "description": "One execution session attached to the displayed semantic task.",
             "properties": {
               "availability": {
                 "title": "Availability",
@@ -11119,23 +11093,115 @@
             "title": "LiveWorkspaceShell",
             "type": "object"
           },
-          "SessionPlan": {
-            "description": "Structured machine-readable plan for one session task.",
+          "TaskOutput": {
+            "description": "Canonical task state plus its execution-session attachments.",
+            "properties": {
+              "created_at": {
+                "description": "Unix timestamp when the task was created.",
+                "title": "Created At",
+                "type": "number"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable task label.",
+                "title": "Label"
+              },
+              "objective": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional durable task objective.",
+                "title": "Objective"
+              },
+              "plan": {
+                "$ref": "#/$defs/TaskPlan"
+              },
+              "progress": {
+                "$ref": "#/$defs/TaskProgress"
+              },
+              "revision": {
+                "default": 0,
+                "description": "Monotonic document revision used for optimistic concurrency.",
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "session_ids": {
+                "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Session Ids",
+                "type": "array"
+              },
+              "status": {
+                "default": "active",
+                "description": "Semantic task lifecycle status.",
+                "enum": [
+                  "active",
+                  "blocked",
+                  "completed",
+                  "cancelled"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "Opaque durable semantic task identifier.",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "updated_at": {
+                "description": "Unix timestamp of the latest task mutation.",
+                "title": "Updated At",
+                "type": "number"
+              },
+              "version": {
+                "const": 2,
+                "default": 2,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "created_at",
+              "updated_at",
+              "task_id"
+            ],
+            "title": "TaskOutput",
+            "type": "object"
+          },
+          "TaskPlan": {
+            "description": "Structured machine-readable plan for one semantic task.",
             "properties": {
               "steps": {
                 "description": "Ordered plan steps with stable IDs.",
                 "items": {
-                  "$ref": "#/$defs/SessionPlanStep"
+                  "$ref": "#/$defs/TaskPlanStep"
                 },
                 "title": "Steps",
                 "type": "array"
               }
             },
-            "title": "SessionPlan",
+            "title": "TaskPlan",
             "type": "object"
           },
-          "SessionPlanStep": {
-            "description": "One stable step in the session task plan.",
+          "TaskPlanStep": {
+            "description": "One stable step in a semantic task plan.",
             "properties": {
               "content": {
                 "description": "Human-readable plan step text.",
@@ -11164,11 +11230,11 @@
               "id",
               "content"
             ],
-            "title": "SessionPlanStep",
+            "title": "TaskPlanStep",
             "type": "object"
           },
-          "SessionProgress": {
-            "description": "Latest semantic progress handoff for one session task.",
+          "TaskProgress": {
+            "description": "Latest durable progress handoff for one semantic task.",
             "properties": {
               "blockers": {
                 "description": "Current blockers preventing or constraining progress.",
@@ -11213,75 +11279,11 @@
                 "title": "Summary"
               }
             },
-            "title": "SessionProgress",
-            "type": "object"
-          },
-          "SessionTaskDocument": {
-            "description": "Canonical persisted task state associated with one Workgate session.",
-            "properties": {
-              "objective": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Optional durable task objective.",
-                "title": "Objective"
-              },
-              "plan": {
-                "$ref": "#/$defs/SessionPlan"
-              },
-              "progress": {
-                "$ref": "#/$defs/SessionProgress"
-              },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
-              },
-              "status": {
-                "default": "active",
-                "description": "Semantic task lifecycle status.",
-                "enum": [
-                  "active",
-                  "blocked",
-                  "completed",
-                  "cancelled"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "updated_at": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Unix timestamp of the latest task mutation.",
-                "title": "Updated At"
-              },
-              "version": {
-                "const": 1,
-                "default": 1,
-                "title": "Version",
-                "type": "integer"
-              }
-            },
-            "title": "SessionTaskDocument",
+            "title": "TaskProgress",
             "type": "object"
           }
         },
-        "description": "Server-reconstructed view of one explicit Workgate session.",
+        "description": "Server-reconstructed task view with explicit execution-session attachments.",
         "properties": {
           "activity": {
             "items": {
@@ -11310,10 +11312,34 @@
             "title": "Jobs Message"
           },
           "links": {
-            "$ref": "#/$defs/LiveWorkspaceLinks"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LiveWorkspaceLinks"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "session": {
-            "$ref": "#/$defs/LiveWorkspaceSession"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LiveWorkspaceSession"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Explicitly selected execution session for resource panes. None means the task is displayed without selecting a machine/workdir."
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceSession"
+            },
+            "title": "Sessions",
+            "type": "array"
           },
           "shells": {
             "items": {
@@ -11335,7 +11361,7 @@
             "title": "Shells Message"
           },
           "task": {
-            "$ref": "#/$defs/SessionTaskDocument"
+            "$ref": "#/$defs/TaskOutput"
           },
           "task_control_actions": {
             "items": {
@@ -11363,16 +11389,14 @@
             "title": "Task Controls Message"
           },
           "version": {
-            "const": 1,
-            "default": 1,
+            "const": 2,
+            "default": 2,
             "title": "Version",
             "type": "integer"
           }
         },
         "required": [
-          "session",
-          "task",
-          "links"
+          "task"
         ],
         "title": "LiveWorkspaceSnapshot",
         "type": "object"
@@ -11478,20 +11502,36 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Refresh the MCP App snapshot for the same explicit Workgate session.",
+      "description": "Refresh one explicit semantic task and optional selected execution session.",
       "inputSchema": {
         "properties": {
           "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
+            "title": "Session Id"
+          },
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
             "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
             "type": "string"
           }
         },
         "required": [
-          "session_id"
+          "task_id"
         ],
         "title": "workspace_snapshotArguments",
         "type": "object"
@@ -11516,7 +11556,7 @@
       "outputSchema": {
         "$defs": {
           "LiveWorkspaceActivity": {
-            "description": "Allow-listed audit identity fields for recent activity.",
+            "description": "Allow-listed task-attributed audit identity fields.",
             "properties": {
               "duration_ms": {
                 "anyOf": [
@@ -11578,6 +11618,18 @@
                 "default": null,
                 "title": "Operation"
               },
+              "session": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Session"
+              },
               "tool": {
                 "anyOf": [
                   {
@@ -11607,7 +11659,7 @@
             "type": "object"
           },
           "LiveWorkspaceJob": {
-            "description": "Bounded job metadata safe for the compact Live Workspace.",
+            "description": "Bounded job metadata for one explicitly selected execution session.",
             "properties": {
               "attempts": {
                 "title": "Attempts",
@@ -11668,7 +11720,7 @@
             "type": "object"
           },
           "LiveWorkspaceLinks": {
-            "description": "Links to fuller authenticated Human UI views.",
+            "description": "Links to fuller authenticated Human UI views for a selected session.",
             "properties": {
               "audit": {
                 "title": "Audit",
@@ -11697,7 +11749,7 @@
             "type": "object"
           },
           "LiveWorkspaceSession": {
-            "description": "Canonical Workgate session identity and availability projection.",
+            "description": "One execution session attached to the displayed semantic task.",
             "properties": {
               "availability": {
                 "title": "Availability",
@@ -11826,23 +11878,115 @@
             "title": "LiveWorkspaceShell",
             "type": "object"
           },
-          "SessionPlan": {
-            "description": "Structured machine-readable plan for one session task.",
+          "TaskOutput": {
+            "description": "Canonical task state plus its execution-session attachments.",
+            "properties": {
+              "created_at": {
+                "description": "Unix timestamp when the task was created.",
+                "title": "Created At",
+                "type": "number"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable task label.",
+                "title": "Label"
+              },
+              "objective": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional durable task objective.",
+                "title": "Objective"
+              },
+              "plan": {
+                "$ref": "#/$defs/TaskPlan"
+              },
+              "progress": {
+                "$ref": "#/$defs/TaskProgress"
+              },
+              "revision": {
+                "default": 0,
+                "description": "Monotonic document revision used for optimistic concurrency.",
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "session_ids": {
+                "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Session Ids",
+                "type": "array"
+              },
+              "status": {
+                "default": "active",
+                "description": "Semantic task lifecycle status.",
+                "enum": [
+                  "active",
+                  "blocked",
+                  "completed",
+                  "cancelled"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "Opaque durable semantic task identifier.",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "updated_at": {
+                "description": "Unix timestamp of the latest task mutation.",
+                "title": "Updated At",
+                "type": "number"
+              },
+              "version": {
+                "const": 2,
+                "default": 2,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "created_at",
+              "updated_at",
+              "task_id"
+            ],
+            "title": "TaskOutput",
+            "type": "object"
+          },
+          "TaskPlan": {
+            "description": "Structured machine-readable plan for one semantic task.",
             "properties": {
               "steps": {
                 "description": "Ordered plan steps with stable IDs.",
                 "items": {
-                  "$ref": "#/$defs/SessionPlanStep"
+                  "$ref": "#/$defs/TaskPlanStep"
                 },
                 "title": "Steps",
                 "type": "array"
               }
             },
-            "title": "SessionPlan",
+            "title": "TaskPlan",
             "type": "object"
           },
-          "SessionPlanStep": {
-            "description": "One stable step in the session task plan.",
+          "TaskPlanStep": {
+            "description": "One stable step in a semantic task plan.",
             "properties": {
               "content": {
                 "description": "Human-readable plan step text.",
@@ -11871,11 +12015,11 @@
               "id",
               "content"
             ],
-            "title": "SessionPlanStep",
+            "title": "TaskPlanStep",
             "type": "object"
           },
-          "SessionProgress": {
-            "description": "Latest semantic progress handoff for one session task.",
+          "TaskProgress": {
+            "description": "Latest durable progress handoff for one semantic task.",
             "properties": {
               "blockers": {
                 "description": "Current blockers preventing or constraining progress.",
@@ -11920,75 +12064,11 @@
                 "title": "Summary"
               }
             },
-            "title": "SessionProgress",
-            "type": "object"
-          },
-          "SessionTaskDocument": {
-            "description": "Canonical persisted task state associated with one Workgate session.",
-            "properties": {
-              "objective": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Optional durable task objective.",
-                "title": "Objective"
-              },
-              "plan": {
-                "$ref": "#/$defs/SessionPlan"
-              },
-              "progress": {
-                "$ref": "#/$defs/SessionProgress"
-              },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
-              },
-              "status": {
-                "default": "active",
-                "description": "Semantic task lifecycle status.",
-                "enum": [
-                  "active",
-                  "blocked",
-                  "completed",
-                  "cancelled"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "updated_at": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Unix timestamp of the latest task mutation.",
-                "title": "Updated At"
-              },
-              "version": {
-                "const": 1,
-                "default": 1,
-                "title": "Version",
-                "type": "integer"
-              }
-            },
-            "title": "SessionTaskDocument",
+            "title": "TaskProgress",
             "type": "object"
           }
         },
-        "description": "Server-reconstructed view of one explicit Workgate session.",
+        "description": "Server-reconstructed task view with explicit execution-session attachments.",
         "properties": {
           "activity": {
             "items": {
@@ -12017,10 +12097,34 @@
             "title": "Jobs Message"
           },
           "links": {
-            "$ref": "#/$defs/LiveWorkspaceLinks"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LiveWorkspaceLinks"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "session": {
-            "$ref": "#/$defs/LiveWorkspaceSession"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LiveWorkspaceSession"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Explicitly selected execution session for resource panes. None means the task is displayed without selecting a machine/workdir."
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceSession"
+            },
+            "title": "Sessions",
+            "type": "array"
           },
           "shells": {
             "items": {
@@ -12042,7 +12146,7 @@
             "title": "Shells Message"
           },
           "task": {
-            "$ref": "#/$defs/SessionTaskDocument"
+            "$ref": "#/$defs/TaskOutput"
           },
           "task_control_actions": {
             "items": {
@@ -12070,16 +12174,14 @@
             "title": "Task Controls Message"
           },
           "version": {
-            "const": 1,
-            "default": 1,
+            "const": 2,
+            "default": 2,
             "title": "Version",
             "type": "integer"
           }
         },
         "required": [
-          "session",
-          "task",
-          "links"
+          "task"
         ],
         "title": "LiveWorkspaceSnapshot",
         "type": "object"
@@ -12092,7 +12194,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Apply one safe semantic task control from the Live Workspace.",
+      "description": "Apply one safe semantic task control without changing execution routing.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -12124,16 +12226,32 @@
             "title": "Instruction"
           },
           "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 8,
+                "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional explicit agent/workspace session_id used by internal transfer primitives.",
+            "title": "Session Id"
+          },
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
             "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
             "type": "string"
           }
         },
         "required": [
-          "session_id",
+          "task_id",
           "action",
           "expected_revision"
         ],
@@ -12161,7 +12279,7 @@
       "outputSchema": {
         "$defs": {
           "LiveWorkspaceActivity": {
-            "description": "Allow-listed audit identity fields for recent activity.",
+            "description": "Allow-listed task-attributed audit identity fields.",
             "properties": {
               "duration_ms": {
                 "anyOf": [
@@ -12223,6 +12341,18 @@
                 "default": null,
                 "title": "Operation"
               },
+              "session": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Session"
+              },
               "tool": {
                 "anyOf": [
                   {
@@ -12252,7 +12382,7 @@
             "type": "object"
           },
           "LiveWorkspaceJob": {
-            "description": "Bounded job metadata safe for the compact Live Workspace.",
+            "description": "Bounded job metadata for one explicitly selected execution session.",
             "properties": {
               "attempts": {
                 "title": "Attempts",
@@ -12313,7 +12443,7 @@
             "type": "object"
           },
           "LiveWorkspaceLinks": {
-            "description": "Links to fuller authenticated Human UI views.",
+            "description": "Links to fuller authenticated Human UI views for a selected session.",
             "properties": {
               "audit": {
                 "title": "Audit",
@@ -12342,7 +12472,7 @@
             "type": "object"
           },
           "LiveWorkspaceSession": {
-            "description": "Canonical Workgate session identity and availability projection.",
+            "description": "One execution session attached to the displayed semantic task.",
             "properties": {
               "availability": {
                 "title": "Availability",
@@ -12471,23 +12601,115 @@
             "title": "LiveWorkspaceShell",
             "type": "object"
           },
-          "SessionPlan": {
-            "description": "Structured machine-readable plan for one session task.",
+          "TaskOutput": {
+            "description": "Canonical task state plus its execution-session attachments.",
+            "properties": {
+              "created_at": {
+                "description": "Unix timestamp when the task was created.",
+                "title": "Created At",
+                "type": "number"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable task label.",
+                "title": "Label"
+              },
+              "objective": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional durable task objective.",
+                "title": "Objective"
+              },
+              "plan": {
+                "$ref": "#/$defs/TaskPlan"
+              },
+              "progress": {
+                "$ref": "#/$defs/TaskProgress"
+              },
+              "revision": {
+                "default": 0,
+                "description": "Monotonic document revision used for optimistic concurrency.",
+                "minimum": 0,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "session_ids": {
+                "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Session Ids",
+                "type": "array"
+              },
+              "status": {
+                "default": "active",
+                "description": "Semantic task lifecycle status.",
+                "enum": [
+                  "active",
+                  "blocked",
+                  "completed",
+                  "cancelled"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "Opaque durable semantic task identifier.",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "updated_at": {
+                "description": "Unix timestamp of the latest task mutation.",
+                "title": "Updated At",
+                "type": "number"
+              },
+              "version": {
+                "const": 2,
+                "default": 2,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "created_at",
+              "updated_at",
+              "task_id"
+            ],
+            "title": "TaskOutput",
+            "type": "object"
+          },
+          "TaskPlan": {
+            "description": "Structured machine-readable plan for one semantic task.",
             "properties": {
               "steps": {
                 "description": "Ordered plan steps with stable IDs.",
                 "items": {
-                  "$ref": "#/$defs/SessionPlanStep"
+                  "$ref": "#/$defs/TaskPlanStep"
                 },
                 "title": "Steps",
                 "type": "array"
               }
             },
-            "title": "SessionPlan",
+            "title": "TaskPlan",
             "type": "object"
           },
-          "SessionPlanStep": {
-            "description": "One stable step in the session task plan.",
+          "TaskPlanStep": {
+            "description": "One stable step in a semantic task plan.",
             "properties": {
               "content": {
                 "description": "Human-readable plan step text.",
@@ -12516,11 +12738,11 @@
               "id",
               "content"
             ],
-            "title": "SessionPlanStep",
+            "title": "TaskPlanStep",
             "type": "object"
           },
-          "SessionProgress": {
-            "description": "Latest semantic progress handoff for one session task.",
+          "TaskProgress": {
+            "description": "Latest durable progress handoff for one semantic task.",
             "properties": {
               "blockers": {
                 "description": "Current blockers preventing or constraining progress.",
@@ -12565,75 +12787,11 @@
                 "title": "Summary"
               }
             },
-            "title": "SessionProgress",
-            "type": "object"
-          },
-          "SessionTaskDocument": {
-            "description": "Canonical persisted task state associated with one Workgate session.",
-            "properties": {
-              "objective": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Optional durable task objective.",
-                "title": "Objective"
-              },
-              "plan": {
-                "$ref": "#/$defs/SessionPlan"
-              },
-              "progress": {
-                "$ref": "#/$defs/SessionProgress"
-              },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
-              },
-              "status": {
-                "default": "active",
-                "description": "Semantic task lifecycle status.",
-                "enum": [
-                  "active",
-                  "blocked",
-                  "completed",
-                  "cancelled"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "updated_at": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Unix timestamp of the latest task mutation.",
-                "title": "Updated At"
-              },
-              "version": {
-                "const": 1,
-                "default": 1,
-                "title": "Version",
-                "type": "integer"
-              }
-            },
-            "title": "SessionTaskDocument",
+            "title": "TaskProgress",
             "type": "object"
           }
         },
-        "description": "Server-reconstructed view of one explicit Workgate session.",
+        "description": "Server-reconstructed task view with explicit execution-session attachments.",
         "properties": {
           "activity": {
             "items": {
@@ -12662,10 +12820,34 @@
             "title": "Jobs Message"
           },
           "links": {
-            "$ref": "#/$defs/LiveWorkspaceLinks"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LiveWorkspaceLinks"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "session": {
-            "$ref": "#/$defs/LiveWorkspaceSession"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LiveWorkspaceSession"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Explicitly selected execution session for resource panes. None means the task is displayed without selecting a machine/workdir."
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/$defs/LiveWorkspaceSession"
+            },
+            "title": "Sessions",
+            "type": "array"
           },
           "shells": {
             "items": {
@@ -12687,7 +12869,7 @@
             "title": "Shells Message"
           },
           "task": {
-            "$ref": "#/$defs/SessionTaskDocument"
+            "$ref": "#/$defs/TaskOutput"
           },
           "task_control_actions": {
             "items": {
@@ -12715,16 +12897,14 @@
             "title": "Task Controls Message"
           },
           "version": {
-            "const": 1,
-            "default": 1,
+            "const": 2,
+            "default": 2,
             "title": "Version",
             "type": "integer"
           }
         },
         "required": [
-          "session",
-          "task",
-          "links"
+          "task"
         ],
         "title": "LiveWorkspaceSnapshot",
         "type": "object"
@@ -12820,7 +13000,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Replace canonical plan steps through the legacy Todo compatibility surface for one explicit active Workgate session. Provide the full desired list; omitted steps are removed, while plan-only metadata on retained step IDs is preserved. The write shares the canonical task revision, so use expected_revision from read_todos when stale replacement must be rejected. Prefer update_session_plan for new clients that need blocked/skipped states or plan notes.",
+      "description": "Replace canonical task plan steps through the Todo compatibility surface. Use the explicit task_id; execution sessions are unrelated to this write.",
       "inputSchema": {
         "properties": {
           "expected_revision": {
@@ -12834,19 +13014,19 @@
               }
             ],
             "default": null,
-            "description": "Optional revision that must still be current before replacement.",
+            "description": "Optional task revision that must still match before replacement.",
             "title": "Expected Revision"
           },
-          "session_id": {
-            "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
             "maxLength": 128,
-            "minLength": 8,
-            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-            "title": "Session Id",
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
             "type": "string"
           },
           "todos": {
-            "description": "Replacement todo list. Each item may include id, content, status, and priority.",
+            "description": "Replacement Todo projection. Each item may include id, content, status, and priority.",
             "items": {
               "additionalProperties": true,
               "type": "object"
@@ -12856,7 +13036,7 @@
           }
         },
         "required": [
-          "session_id",
+          "task_id",
           "todos"
         ],
         "title": "write_todosArguments",

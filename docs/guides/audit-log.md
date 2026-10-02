@@ -9,7 +9,7 @@ Treat the entire audit directory as sensitive.
 
 The browser and OpenTUI **Audit** panels are the easiest way to filter recent activity and inspect an entry.
 
-From an MCP client, start an explicit executor-backed session and use `audit_tail(session_id=...)`. The default response is a bounded recent list. Use filters to narrow the result rather than requesting a large history.
+From an MCP client, use `audit_tail(task_id=...)` for task-wide history, `audit_tail(session_id=...)` for one concrete execution session, or pass both to request their intersection. Neither identity selects or rebinds execution. The default response is a bounded recent list; use filters to narrow it rather than requesting a large history.
 
 To retrieve a retained full sanitized value, request one specific entry with `include_full_payloads=true`. This requires the additional `audit:full` scope. Redacted credentials cannot be recovered.
 

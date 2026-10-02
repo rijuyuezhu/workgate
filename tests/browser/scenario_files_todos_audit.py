@@ -71,7 +71,18 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "copy source\n"
     )
 
-    session = harness.api("POST", "/tools/session_start", body={"workdir": "."})
+    task = harness.api(
+        "POST",
+        "/tools/task",
+        body={"action": "create"},
+    )
+    assert task["status"] == 200
+    task_id = task["payload"]["task_id"]
+    session = harness.api(
+        "POST",
+        "/tools/session_start",
+        body={"workdir": ".", "task_id": task_id},
+    )
     assert session["status"] == 200
     session_id = session["payload"]["session_id"]
     session_shell = harness.api(
@@ -118,9 +129,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.unroute("**/api/ui/sessions/snapshot**", forbid_combined_snapshot)
     reported = harness.api(
         "POST",
-        "/tools/session-progress",
+        "/tools/task",
         body={
-            "session_id": session_id,
+            "action": "report",
+            "task_id": task_id,
             "expected_revision": 0,
             "objective": "Browser durable task",
             "summary": "Visible in the Human UI",
@@ -135,11 +147,11 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     completed = harness.api(
         "POST",
-        "/tools/session-progress",
+        "/tools/task",
         body={
-            "session_id": session_id,
+            "action": "finish",
+            "task_id": task_id,
             "expected_revision": 1,
-            "task_status": "completed",
         },
     )
     assert completed["status"] == 200
@@ -150,11 +162,11 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     resumed = harness.api(
         "POST",
-        "/tools/session-progress",
+        "/tools/task",
         body={
-            "session_id": session_id,
+            "action": "resume",
+            "task_id": task_id,
             "expected_revision": 2,
-            "task_status": "active",
         },
     )
     assert resumed["status"] == 200
@@ -242,9 +254,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(rows).to_have_count(1)
 
     page.locator("#todo-save").click()
-    expect(page.locator("#todo-state")).to_contain_text(f"Saved {session_id}")
+    expect(page.locator("#todo-state")).to_contain_text(f"Saved {task_id}")
     expect(page.locator("#task-state")).to_contain_text("revision 4")
-    todos = harness.api("GET", f"/api/ui/todos?session_id={session_id}")
+    todos = harness.api("GET", f"/api/ui/todos?task_id={task_id}")
     assert todos["status"] == 200
     assert todos["payload"]["data"]["todos"][0]["content"] == (
         "verify browser todos"

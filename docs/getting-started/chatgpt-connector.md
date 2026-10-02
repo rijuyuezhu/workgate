@@ -33,7 +33,7 @@ Use a ChatGPT mode that exposes full MCP tools when you need shell, filesystem, 
 ## Test it
 
 ```text
-Use workgate. Start a session in my project workspace, inspect its instructions and Git status, and summarize what you can access. Do not edit files yet.
+Use workgate. Create a task for inspecting my project workspace, start an execution session there attached to that task, inspect its instructions and Git status, and summarize what you can access. Do not edit files yet.
 ```
 
 Then try a harmless command:
@@ -44,7 +44,7 @@ Use workgate to run pwd in that session and report the output.
 
 ## Open a Live Workspace
 
-When the ChatGPT client supports MCP Apps, ask it to open `workspace_open` with the explicit `session_id` returned by `session_start`. The app stays bound to that session and shows its durable task state, jobs, persistent shells, recent activity, and links into the authenticated Human UI. Human controls update the same task document; ending the execution session is a separate confirmed action.
+When the ChatGPT client supports MCP Apps, ask it to open `workspace_open` with the semantic `task_id` returned by `task(action="create")`. You may also pass an attached `session_id` to select one execution context. The app stays bound to the task, shows all attached sessions and task-wide recent activity, and exposes session-specific jobs, persistent shells, and Human UI links when a session is selected. Human controls update the same task document; ending one execution session is a separate confirmed action and does not finish the task.
 
 ## Common mistakes
 

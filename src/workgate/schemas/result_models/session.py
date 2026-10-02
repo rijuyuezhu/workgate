@@ -188,6 +188,10 @@ class SessionStartOutput(BaseModel):
         default=None,
         description="Stable executor id bound to this shared session.",
     )
+    task_id: str | None = Field(
+        default=None,
+        description="Optional semantic task explicitly attached to this execution session.",
+    )
     workdir: str = Field(description="Canonical workdir bound to this session.")
     created_at: float = Field(
         description="Unix timestamp when the session was created."

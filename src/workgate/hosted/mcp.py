@@ -68,6 +68,11 @@ class HostedMcpGateway:
             )
         sessions = self._actor.session_coordinator
         if name == "session_start":
+            if "task_id" in payload:
+                raise ValueError(
+                    "hosted session_start does not support task_id; "
+                    "the hosted subset does not expose semantic task lifecycle tools"
+                )
             return await sessions.start_session(
                 workdir=str(payload["workdir"]),
                 label=payload.get("label"),

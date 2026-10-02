@@ -35,6 +35,18 @@ SessionLabelArg = Annotated[
         description="Optional human-readable label for this agent session.",
     ),
 ]
+SessionTaskIdArg = Annotated[
+    str | None,
+    Field(
+        default=None,
+        max_length=128,
+        pattern=r"^task_[A-Za-z0-9_-]{22,}$",
+        description=(
+            "Optional existing semantic task_id to attach to this execution session. "
+            "It never selects or changes the executor or workdir."
+        ),
+    ),
+]
 SessionEndForceArg = Annotated[
     bool,
     Field(

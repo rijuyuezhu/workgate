@@ -1,20 +1,28 @@
-"""Control-owned revisioned task state and Todo compatibility for shared sessions."""
+"""Control-owned durable semantic task state with Todo compatibility."""
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..audit import audit
 from ..config.control import ControlConfig
+from ..oauth.core.context import current_oauth_claims
 from ..persistence import StateStore
+from ..protocol.ids import TaskId, new_task_id
 from ..schemas.result_models.task import (
-    SessionPlan,
-    SessionPlanStep,
-    SessionTaskDocument,
-    SessionTaskOutput,
+    TaskDeleteOutput,
+    TaskDocument,
+    TaskOutput,
+    TaskPlan,
+    TaskPlanStep,
+    TaskProgress,
 )
 from ..schemas.result_models.todo import (
     ReadTodosOutput,
@@ -23,60 +31,66 @@ from ..schemas.result_models.todo import (
 )
 from .state import ControlState
 
-if TYPE_CHECKING:
-    from .sessions import ControlSessionCoordinator
-
-
 logger = logging.getLogger(__name__)
 
-_TASK_STATUSES = frozenset({"active", "blocked", "completed", "cancelled"})
 _PLAN_STEP_STATUSES = frozenset(
     {"pending", "in_progress", "completed", "skipped", "blocked"}
 )
 _REPORT_LIST_LIMIT = 50
 _TEXT_MAX_BYTES = 20_000
+_LABEL_MAX_BYTES = 256
 _STEP_ID_MAX_BYTES = 256
 _STEP_CONTENT_MAX_BYTES = 16_384
 _STEP_LABEL_MAX_BYTES = 64
+_TASK_HISTORY_LIMIT_PER_PRINCIPAL = 256
+_TASK_TERMINAL_RETENTION_S = 30 * 24 * 60 * 60
 
 
 class TaskRevisionConflictError(RuntimeError):
     """Raised when a revision-guarded task mutation targets stale state."""
 
 
+class _StoredTask(BaseModel):
+    """Private persistence envelope for one semantic task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    task_id: TaskId
+    subject: str = Field(min_length=1, max_length=512)
+    document: TaskDocument
+
+
 class ControlTaskService:
-    """Persist one canonical task document and expose legacy Todo projections."""
+    """Own semantic task lifecycle independently of execution sessions."""
 
     def __init__(
         self,
         state: ControlState,
         store: StateStore,
         settings: ControlConfig,
-        sessions: ControlSessionCoordinator,
     ) -> None:
         self._state = state
         self._store = store
         self._settings = settings
-        self._sessions = sessions
 
-    def _path(self, session_id: str):
-        # Keep the established on-disk location so Todo state upgrades in place.
+    @staticmethod
+    def _subject() -> str:
+        claims = current_oauth_claims()
+        subject = str(claims.get("sub") or "").strip() if claims else ""
+        return subject or "local-user"
+
+    def _path(self, task_id: str):
+        return self._store.layout.control_task_path(task_id)
+
+    def _legacy_path(self, session_id: str):
         return self._store.layout.control_task_state_path(session_id)
 
-    def _require_session(self, session_id: str):
-        record = self._state.snapshot_sessions().get(session_id)
-        if record is None:
-            raise ValueError(f"unknown session_id {session_id!r}")
-        return record
-
-    def _require_writable_session(self, session_id: str):
-        record = self._require_session(session_id)
-        if record.status != "active":
-            raise ValueError(
-                f"session_id {session_id!r} is {record.status}; "
-                "durable task state is read-only"
-            )
-        return record
+    @staticmethod
+    def _legacy_task_id(session_id: str) -> str:
+        digest = hashlib.sha256(session_id.encode("utf-8")).digest()[:16]
+        token = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+        return f"task_{token}"
 
     @staticmethod
     def _bounded_text(
@@ -119,13 +133,13 @@ class ControlTaskService:
 
     def _normalize_steps(
         self, steps: list[dict[str, Any]]
-    ) -> list[SessionPlanStep]:
+    ) -> list[TaskPlanStep]:
         if len(steps) > self._settings.max_todos:
             raise ValueError(
                 f"Refusing to write {len(steps)} plan steps; "
                 f"max is {self._settings.max_todos}"
             )
-        normalized: list[SessionPlanStep] = []
+        normalized: list[TaskPlanStep] = []
         seen: set[str] = set()
         allowed_fields = {"id", "content", "status", "priority"}
         for index, item in enumerate(steps):
@@ -170,7 +184,7 @@ class ControlTaskService:
                     f"expected one of: {allowed}"
                 )
             normalized.append(
-                SessionPlanStep(
+                TaskPlanStep(
                     id=identifier,
                     content=self._bounded_text(
                         item.get("content") or "",
@@ -190,15 +204,15 @@ class ControlTaskService:
 
     def _normalize_legacy_todos(
         self, todos: list[dict[str, Any]]
-    ) -> list[SessionPlanStep]:
-        """Preserve the pre-task-state write_todos input semantics."""
+    ) -> list[TaskPlanStep]:
+        """Preserve the established write_todos compatibility semantics."""
         if len(todos) > self._settings.max_todos:
             raise ValueError(
                 f"Refusing to write {len(todos)} todos; "
                 f"max is {self._settings.max_todos}"
             )
         return [
-            SessionPlanStep(
+            TaskPlanStep(
                 id=str(item.get("id") or index + 1),
                 content=str(item.get("content") or ""),
                 status=str(item.get("status") or "pending"),
@@ -208,14 +222,18 @@ class ControlTaskService:
         ]
 
     @staticmethod
-    def _legacy_document(value: dict[str, Any]) -> SessionTaskDocument:
-        legacy = ReadTodosOutput.model_validate(value)
-        return SessionTaskDocument(
-            revision=legacy.revision,
-            updated_at=legacy.updated_at,
-            plan=SessionPlan(
+    def _legacy_document(
+        value: dict[str, Any],
+        *,
+        created_at: float,
+        label: str | None,
+    ) -> TaskDocument:
+        updated_at = float(value.get("updated_at") or created_at)
+        if "todos" in value and "plan" not in value:
+            legacy = ReadTodosOutput.model_validate(value)
+            plan = TaskPlan(
                 steps=[
-                    SessionPlanStep(
+                    TaskPlanStep(
                         id=item.id,
                         content=item.content,
                         status=item.status,
@@ -223,127 +241,71 @@ class ControlTaskService:
                     )
                     for item in legacy.todos
                 ]
-            ),
+            )
+            revision = legacy.revision
+            updated_at = float(legacy.updated_at or created_at)
+            objective = None
+            status = "active"
+            progress = TaskProgress()
+        else:
+            revision = int(value.get("revision") or 0)
+            objective = (
+                str(value["objective"])
+                if value.get("objective") is not None
+                else None
+            )
+            status = str(value.get("status") or "active")
+            progress = TaskProgress.model_validate(value.get("progress") or {})
+            plan = TaskPlan.model_validate(value.get("plan") or {})
+        return TaskDocument.model_validate(
+            {
+                "revision": revision,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "label": label,
+                "objective": objective,
+                "status": status,
+                "progress": progress,
+                "plan": plan,
+            }
         )
 
-    def _document_from_value(self, value: Any | None) -> SessionTaskDocument:
-        if value is None:
-            return SessionTaskDocument()
-        if isinstance(value, dict) and "todos" in value and "plan" not in value:
-            return self._legacy_document(value)
-        return SessionTaskDocument.model_validate(value)
-
-    def _read_document_unlocked(self, session_id: str) -> SessionTaskDocument:
+    def _read_stored_unlocked(self, task_id: str) -> _StoredTask:
         value = self._store.read_json(
-            self._path(session_id), max_bytes=self._settings.max_todo_bytes
+            self._path(task_id), max_bytes=self._settings.max_todo_bytes
         )
-        return self._document_from_value(value)
+        if value is None:
+            raise ValueError(f"unknown task_id {task_id!r}")
+        try:
+            stored = _StoredTask.model_validate(value)
+        except ValidationError as exc:
+            raise RuntimeError(
+                f"invalid durable task state for {task_id}"
+            ) from exc
+        if stored.subject != self._subject():
+            raise PermissionError("task belongs to a different principal")
+        return stored
 
-    @staticmethod
-    def _todo_output(
-        document: SessionTaskDocument, *, write: bool
-    ) -> ReadTodosOutput | WriteTodosOutput:
-        model = WriteTodosOutput if write else ReadTodosOutput
-        return model(
-            revision=document.revision,
-            updated_at=document.updated_at,
-            todos=[
-                TodoItem(
-                    id=step.id,
-                    content=step.content,
-                    status=step.status,
-                    priority=step.priority,
-                )
-                for step in document.plan.steps
-            ],
-        )
-
-    @staticmethod
-    def _task_output(
-        record: Any, document: SessionTaskDocument
-    ) -> SessionTaskOutput:
-        return SessionTaskOutput(
-            **document.model_dump(mode="python"),
-            session_id=str(record.session_id),
-            label=record.label,
-            execution_status=str(record.status),
-        )
-
-    def _read_with_task_sync(
-        self, session_id: str
-    ) -> tuple[ReadTodosOutput, SessionTaskOutput]:
-        record = self._require_session(session_id)
-        document = self._read_document_unlocked(session_id)
-        return (
-            self._todo_output(document, write=False),  # type: ignore[return-value]
-            self._task_output(record, document),
-        )
-
-    def _read_sync(self, session_id: str) -> ReadTodosOutput:
-        todos, _task = self._read_with_task_sync(session_id)
-        return todos
-
-    async def read(self, session_id: str) -> ReadTodosOutput:
-        """Read the Todo compatibility projection, including for ended sessions."""
-        return await asyncio.to_thread(self._read_sync, session_id)
-
-    def _read_task_sync(self, session_id: str) -> SessionTaskOutput:
-        _todos, task = self._read_with_task_sync(session_id)
-        return task
-
-    async def read_task(self, session_id: str) -> SessionTaskOutput:
-        """Read canonical task state without requiring executor availability."""
-        return await asyncio.to_thread(self._read_task_sync, session_id)
-
-    async def read_with_task(
-        self, session_id: str
-    ) -> tuple[ReadTodosOutput, SessionTaskOutput]:
-        """Read Todo and task projections from one canonical document snapshot."""
-        return await asyncio.to_thread(self._read_with_task_sync, session_id)
-
-    @staticmethod
-    def _require_expected_revision(
-        current: SessionTaskDocument, expected_revision: int | None
-    ) -> None:
-        if expected_revision is None:
-            return
-        if isinstance(expected_revision, bool) or expected_revision < 0:
-            raise ValueError("expected_revision must be a non-negative integer")
-        if expected_revision != current.revision:
-            raise TaskRevisionConflictError(
-                "Session task changed from revision "
-                f"{expected_revision} to {current.revision}; reload before saving"
-            )
-
-    @staticmethod
-    def _require_task_mutable(
-        document: SessionTaskDocument, *, resuming: bool = False
-    ) -> None:
-        if document.status == "cancelled":
-            raise ValueError("cancelled session task is terminal")
-        if document.status == "completed" and not resuming:
-            raise ValueError(
-                "completed session task must be explicitly resumed with "
-                "task_status='active' before further updates"
-            )
-
-    @staticmethod
-    def _require_completable(document: SessionTaskDocument) -> None:
-        unfinished = [
-            step.id
-            for step in document.plan.steps
-            if step.status not in {"completed", "skipped"}
+    def _session_ids(self, task_id: str) -> list[str]:
+        records = [
+            record
+            for record in self._state.snapshot_sessions().values()
+            if str(record.task_id or "") == task_id
         ]
-        if unfinished:
-            raise ValueError(
-                "cannot complete session task while unfinished plan steps remain: "
-                + ", ".join(unfinished)
-            )
+        records.sort(
+            key=lambda record: (record.created_at, str(record.session_id))
+        )
+        return [str(record.session_id) for record in records]
 
-    def _persist_document(
-        self, path: Any, document: SessionTaskDocument
-    ) -> None:
-        data = document.model_dump(mode="json")
+    def _task_output(self, stored: _StoredTask) -> TaskOutput:
+        return TaskOutput(
+            **stored.document.model_dump(mode="python"),
+            task_id=str(stored.task_id),
+            session_ids=self._session_ids(str(stored.task_id)),
+        )
+
+    def _persist_stored(self, path: Any, stored: _StoredTask) -> None:
+        data = stored.model_dump(mode="json")
         encoded_bytes = len(
             json.dumps(
                 data,
@@ -355,192 +317,314 @@ class ControlTaskService:
         )
         if encoded_bytes > self._settings.max_todo_bytes:
             raise ValueError(
-                f"Refusing to write {encoded_bytes} session-task bytes; "
+                f"Refusing to write {encoded_bytes} task bytes; "
                 f"max is {self._settings.max_todo_bytes}"
             )
         self._store.write_json(path, data)
 
     @staticmethod
+    def _check_expected_revision(
+        current: TaskDocument,
+        expected_revision: int | None,
+        *,
+        required: bool,
+    ) -> None:
+        if expected_revision is None:
+            if required:
+                raise ValueError(
+                    "expected_revision is required for task mutations"
+                )
+            return
+        if isinstance(expected_revision, bool) or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
+        if expected_revision != current.revision:
+            raise TaskRevisionConflictError(
+                "Task changed from revision "
+                f"{expected_revision} to {current.revision}; reload before saving"
+            )
+
+    @staticmethod
+    def _require_mutable(document: TaskDocument) -> None:
+        if document.status == "cancelled":
+            raise ValueError("cancelled task is terminal")
+        if document.status == "completed":
+            raise ValueError("completed task must be resumed before mutation")
+
+    @staticmethod
+    def _require_completable(document: TaskDocument) -> None:
+        unfinished = [
+            step.id
+            for step in document.plan.steps
+            if step.status not in {"completed", "skipped"}
+        ]
+        if unfinished:
+            raise ValueError(
+                "cannot finish task while unfinished plan steps remain: "
+                + ", ".join(unfinished)
+            )
+
+    @staticmethod
     def _audit_mutation(
-        session_id: str,
+        task_id: str,
         *,
         operation: str,
         revision: int,
         changed_fields: list[str],
+        session_ids: list[str],
         step_changes: list[dict[str, str]] | None = None,
     ) -> None:
         fields: dict[str, Any] = {
-            "session": session_id,
+            "task": task_id,
             "operation": operation,
             "revision": revision,
             "changed_fields": changed_fields,
         }
+        if session_ids:
+            fields["session"] = session_ids[0]
+            fields["session_ids"] = session_ids
         if step_changes:
             fields["step_changes"] = step_changes
         try:
-            audit("session_task_mutation", **fields)
+            audit("task_mutation", **fields)
         except Exception:
-            # The canonical write is already committed; never turn a successful
-            # revision into an ambiguous client-visible failure because a
-            # secondary audit append failed.
-            logger.exception(
-                "Failed to append session task mutation audit event"
-            )
+            logger.exception("Failed to append task mutation audit event")
 
     def _mutate_sync(
         self,
-        session_id: str,
+        task_id: str,
         expected_revision: int | None,
         operation: str,
         mutate: Callable[
-            [SessionTaskDocument], tuple[list[str], list[dict[str, str]]]
+            [TaskDocument], tuple[list[str], list[dict[str, str]]]
         ],
-    ) -> SessionTaskOutput:
-        record = self._require_writable_session(session_id)
-        path = self._path(session_id)
+        *,
+        revision_required: bool,
+    ) -> TaskOutput:
+        path = self._path(task_id)
         with self._store.transaction(path):
-            record = self._require_writable_session(session_id)
-            current = self._read_document_unlocked(session_id)
-            self._require_expected_revision(current, expected_revision)
-            document = current.model_copy(deep=True)
+            current = self._read_stored_unlocked(task_id)
+            self._check_expected_revision(
+                current.document,
+                expected_revision,
+                required=revision_required,
+            )
+            document = current.document.model_copy(deep=True)
             changed_fields, step_changes = mutate(document)
-            document.revision = current.revision + 1
+            document.revision = current.document.revision + 1
             document.updated_at = time.time()
-            self._persist_document(path, document)
+            stored = current.model_copy(update={"document": document})
+            self._persist_stored(path, stored)
+        session_ids = self._session_ids(task_id)
         self._audit_mutation(
-            session_id,
+            task_id,
             operation=operation,
             revision=document.revision,
             changed_fields=changed_fields,
+            session_ids=session_ids,
             step_changes=step_changes,
         )
-        return self._task_output(record, document)
+        return self._task_output(stored)
 
     async def _mutate(
         self,
-        session_id: str,
+        task_id: str,
         expected_revision: int | None,
         operation: str,
         mutate: Callable[
-            [SessionTaskDocument], tuple[list[str], list[dict[str, str]]]
+            [TaskDocument], tuple[list[str], list[dict[str, str]]]
         ],
-    ) -> SessionTaskOutput:
-        # Hold the execution-session lifecycle lock without requiring the executor
-        # to be online. session_end therefore cannot race a task write.
-        async with self._sessions.session_admission(
-            (session_id,), require_available=()
-        ):
-            return await asyncio.to_thread(
-                self._mutate_sync,
-                session_id,
-                expected_revision,
-                operation,
-                mutate,
+        *,
+        revision_required: bool = True,
+    ) -> TaskOutput:
+        return await asyncio.to_thread(
+            self._mutate_sync,
+            task_id,
+            expected_revision,
+            operation,
+            mutate,
+            revision_required=revision_required,
+        )
+
+    def _iter_subject_tasks(self, subject: str) -> list[_StoredTask]:
+        root = self._store.layout.control_tasks_dir
+        tasks: list[_StoredTask] = []
+        for path in self._store.iter_files(root):
+            if not path.name.startswith("task_") or path.suffix != ".json":
+                continue
+            value = self._store.read_json(
+                path, max_bytes=self._settings.max_todo_bytes
+            )
+            if value is None:
+                continue
+            try:
+                stored = _StoredTask.model_validate(value)
+            except ValidationError:
+                continue
+            if stored.subject == subject:
+                tasks.append(stored)
+        return tasks
+
+    def _has_live_session(self, task_id: str) -> bool:
+        return any(
+            str(record.task_id or "") == task_id
+            and str(record.status) != "ended"
+            for record in self._state.snapshot_sessions().values()
+        )
+
+    def _remove_retained_terminal(
+        self,
+        task_id: str,
+        *,
+        stale_before: float | None = None,
+    ) -> bool:
+        """Remove one still-terminal task under its own mutation lock."""
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            value = self._store.read_json(
+                path, max_bytes=self._settings.max_todo_bytes
+            )
+            if value is None:
+                return True
+            try:
+                current = _StoredTask.model_validate(value)
+            except ValidationError:
+                return False
+            if current.subject != self._subject():
+                return False
+            if current.document.status not in {"completed", "cancelled"}:
+                return False
+            if self._has_live_session(task_id):
+                return False
+            if (
+                stale_before is not None
+                and current.document.updated_at >= stale_before
+            ):
+                return False
+            self._store.remove(path)
+        self._state.detach_task(task_id)
+        return True
+
+    def _prune_for_create(self, subject: str) -> None:
+        tasks = self._iter_subject_tasks(subject)
+        terminal = sorted(
+            (
+                task
+                for task in tasks
+                if task.document.status in {"completed", "cancelled"}
+            ),
+            key=lambda task: (
+                task.document.updated_at,
+                task.document.created_at,
+                str(task.task_id),
+            ),
+        )
+        remaining = {str(task.task_id) for task in tasks}
+        stale_before = time.time() - _TASK_TERMINAL_RETENTION_S
+        for task in terminal:
+            task_id = str(task.task_id)
+            if task.document.updated_at >= stale_before:
+                continue
+            if self._remove_retained_terminal(
+                task_id, stale_before=stale_before
+            ):
+                remaining.discard(task_id)
+        if len(remaining) >= _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
+            for task in terminal:
+                task_id = str(task.task_id)
+                if task_id not in remaining:
+                    continue
+                if self._remove_retained_terminal(task_id):
+                    remaining.discard(task_id)
+                if len(remaining) < _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
+                    break
+        if len(remaining) >= _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
+            raise RuntimeError(
+                "task history limit reached; finish or cancel existing tasks "
+                "before creating another"
             )
 
-    async def _write_task_output(
-        self,
-        session_id: str,
-        todos: list[dict[str, Any]],
-        expected_revision: int | None,
-    ) -> SessionTaskOutput:
-        normalized = self._normalize_legacy_todos(todos)
-
-        def mutate(
-            document: SessionTaskDocument,
-        ) -> tuple[list[str], list[dict[str, str]]]:
-            self._require_task_mutable(document)
-            document.plan.steps = normalized
-            return (
-                ["plan.steps"],
-                [{"id": step.id, "status": step.status} for step in normalized],
+    def _create_sync(
+        self, *, label: str | None, objective: str | None
+    ) -> TaskOutput:
+        subject = self._subject()
+        registry_path = self._store.layout.control_tasks_dir / ".registry"
+        with self._store.transaction(registry_path):
+            self._prune_for_create(subject)
+            now = time.time()
+            task_id = str(new_task_id())
+            document = TaskDocument(
+                created_at=now,
+                updated_at=now,
+                label=self._optional_text(
+                    label, field="label", max_bytes=_LABEL_MAX_BYTES
+                )
+                if label is not None
+                else None,
+                objective=self._optional_text(objective, field="objective")
+                if objective is not None
+                else None,
             )
+            stored = _StoredTask(
+                task_id=task_id,
+                subject=subject,
+                document=document,
+            )
+            self._persist_stored(self._path(task_id), stored)
+        self._audit_mutation(
+            task_id,
+            operation="create",
+            revision=0,
+            changed_fields=["label", "objective"],
+            session_ids=[],
+        )
+        return self._task_output(stored)
 
-        return await self._mutate(
-            session_id, expected_revision, "todo_replace", mutate
+    async def create_task(
+        self, *, label: str | None = None, objective: str | None = None
+    ) -> TaskOutput:
+        return await asyncio.to_thread(
+            self._create_sync, label=label, objective=objective
         )
 
-    @staticmethod
-    def _todo_write_output(output: SessionTaskOutput) -> WriteTodosOutput:
-        return ControlTaskService._todo_output(  # type: ignore[return-value]
-            output, write=True
+    async def read_task(self, task_id: str) -> TaskOutput:
+        return await asyncio.to_thread(
+            lambda: self._task_output(self._read_stored_unlocked(task_id))
         )
-
-    async def write(
-        self,
-        session_id: str,
-        todos: list[dict[str, Any]],
-        expected_revision: int | None = None,
-    ) -> WriteTodosOutput:
-        """Replace plan steps through the legacy Todo compatibility surface."""
-        output = await self._write_task_output(
-            session_id, todos, expected_revision
-        )
-        return self._todo_write_output(output)
-
-    async def write_with_task(
-        self,
-        session_id: str,
-        todos: list[dict[str, Any]],
-        expected_revision: int | None = None,
-    ) -> tuple[WriteTodosOutput, SessionTaskOutput]:
-        """Replace Todos and return both projections from the committed revision."""
-        task = await self._write_task_output(
-            session_id, todos, expected_revision
-        )
-        return self._todo_write_output(task), task
 
     async def report_progress(
         self,
-        session_id: str,
+        task_id: str,
         *,
         expected_revision: int,
+        label: str | None = None,
         objective: str | None = None,
         summary: str | None = None,
         findings: list[str] | None = None,
         next_action: str | None = None,
         blockers: list[str] | None = None,
-        task_status: str | None = None,
-    ) -> SessionTaskOutput:
+    ) -> TaskOutput:
         provided = {
+            "label": label is not None,
             "objective": objective is not None,
             "progress.summary": summary is not None,
             "progress.findings": findings is not None,
             "progress.next_action": next_action is not None,
             "progress.blockers": blockers is not None,
-            "status": task_status is not None,
         }
         if not any(provided.values()):
             raise ValueError(
-                "report_session_progress requires at least one field to update"
+                "task report requires at least one field to update"
             )
-        normalized_status = None
-        if task_status is not None:
-            normalized_status = (
-                self._bounded_text(
-                    task_status,
-                    field="task_status",
-                    max_bytes=_STEP_LABEL_MAX_BYTES,
-                    allow_empty=False,
-                )
-                .strip()
-                .lower()
-            )
-            if normalized_status not in _TASK_STATUSES:
-                allowed = ", ".join(sorted(_TASK_STATUSES))
-                raise ValueError(
-                    f"unsupported task_status {normalized_status!r}; "
-                    f"expected one of: {allowed}"
-                )
 
         def mutate(
-            document: SessionTaskDocument,
+            document: TaskDocument,
         ) -> tuple[list[str], list[dict[str, str]]]:
-            resuming = (
-                document.status == "completed" and normalized_status == "active"
-            )
-            self._require_task_mutable(document, resuming=resuming)
+            self._require_mutable(document)
             changed = [name for name, present in provided.items() if present]
+            if label is not None:
+                document.label = self._optional_text(
+                    label, field="label", max_bytes=_LABEL_MAX_BYTES
+                )
             if objective is not None:
                 document.objective = self._optional_text(
                     objective, field="objective"
@@ -561,30 +645,111 @@ class ControlTaskService:
                 document.progress.blockers = self._report_list(
                     blockers, field="blockers"
                 )
-
-            if normalized_status is not None:
-                if normalized_status == "completed":
-                    self._require_completable(document)
-                document.status = normalized_status  # type: ignore[assignment]
             return changed, []
 
-        return await self._mutate(
-            session_id, expected_revision, "progress_report", mutate
+        return await self._mutate(task_id, expected_revision, "report", mutate)
+
+    async def _set_status(
+        self,
+        task_id: str,
+        *,
+        expected_revision: int,
+        action: Literal["block", "resume", "finish", "cancel"],
+    ) -> TaskOutput:
+        def mutate(
+            document: TaskDocument,
+        ) -> tuple[list[str], list[dict[str, str]]]:
+            current = document.status
+            if action == "block":
+                if current != "active":
+                    raise ValueError(f"cannot block a {current} task")
+                document.status = "blocked"
+            elif action == "resume":
+                if current not in {"blocked", "completed"}:
+                    raise ValueError(f"cannot resume a {current} task")
+                document.status = "active"
+            elif action == "finish":
+                if current not in {"active", "blocked"}:
+                    raise ValueError(f"cannot finish a {current} task")
+                self._require_completable(document)
+                document.status = "completed"
+            else:
+                if current not in {"active", "blocked"}:
+                    raise ValueError(f"cannot cancel a {current} task")
+                document.status = "cancelled"
+            return ["status"], []
+
+        return await self._mutate(task_id, expected_revision, action, mutate)
+
+    async def block_task(
+        self, task_id: str, *, expected_revision: int
+    ) -> TaskOutput:
+        return await self._set_status(
+            task_id, expected_revision=expected_revision, action="block"
+        )
+
+    async def resume_task(
+        self, task_id: str, *, expected_revision: int
+    ) -> TaskOutput:
+        return await self._set_status(
+            task_id, expected_revision=expected_revision, action="resume"
+        )
+
+    async def finish_task(
+        self, task_id: str, *, expected_revision: int
+    ) -> TaskOutput:
+        return await self._set_status(
+            task_id, expected_revision=expected_revision, action="finish"
+        )
+
+    async def cancel_task(
+        self, task_id: str, *, expected_revision: int
+    ) -> TaskOutput:
+        return await self._set_status(
+            task_id, expected_revision=expected_revision, action="cancel"
+        )
+
+    def _delete_sync(
+        self, task_id: str, expected_revision: int | None
+    ) -> TaskDeleteOutput:
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            current = self._read_stored_unlocked(task_id)
+            self._check_expected_revision(
+                current.document, expected_revision, required=True
+            )
+            if current.document.status not in {"completed", "cancelled"}:
+                raise ValueError(
+                    "only completed or cancelled tasks may be deleted"
+                )
+            self._store.remove(path)
+            self._state.detach_task(task_id)
+        try:
+            audit("task_deleted", task=task_id)
+        except Exception:
+            logger.exception("Failed to append task deletion audit event")
+        return TaskDeleteOutput(task_id=task_id)
+
+    async def delete_task(
+        self, task_id: str, *, expected_revision: int
+    ) -> TaskDeleteOutput:
+        return await asyncio.to_thread(
+            self._delete_sync, task_id, expected_revision
         )
 
     async def update_plan(
         self,
-        session_id: str,
+        task_id: str,
         *,
         expected_revision: int,
         steps: list[dict[str, Any]],
-    ) -> SessionTaskOutput:
+    ) -> TaskOutput:
         replacement = self._normalize_steps(steps)
 
         def mutate(
-            document: SessionTaskDocument,
+            document: TaskDocument,
         ) -> tuple[list[str], list[dict[str, str]]]:
-            self._require_task_mutable(document)
+            self._require_mutable(document)
             document.plan.steps = replacement
             return (
                 ["plan.steps"],
@@ -595,5 +760,135 @@ class ControlTaskService:
             )
 
         return await self._mutate(
-            session_id, expected_revision, "plan_replace", mutate
+            task_id, expected_revision, "plan_replace", mutate
         )
+
+    @staticmethod
+    def _todo_output(
+        document: TaskDocument, *, write: bool
+    ) -> ReadTodosOutput | WriteTodosOutput:
+        model = WriteTodosOutput if write else ReadTodosOutput
+        return model(
+            revision=document.revision,
+            updated_at=document.updated_at,
+            todos=[
+                TodoItem(
+                    id=step.id,
+                    content=step.content,
+                    status=step.status,
+                    priority=step.priority,
+                )
+                for step in document.plan.steps
+            ],
+        )
+
+    async def read(self, task_id: str) -> ReadTodosOutput:
+        task = await self.read_task(task_id)
+        return self._todo_output(task, write=False)  # type: ignore[return-value]
+
+    async def _write_task_output(
+        self,
+        task_id: str,
+        todos: list[dict[str, Any]],
+        expected_revision: int | None,
+    ) -> TaskOutput:
+        normalized = self._normalize_legacy_todos(todos)
+
+        def mutate(
+            document: TaskDocument,
+        ) -> tuple[list[str], list[dict[str, str]]]:
+            self._require_mutable(document)
+            document.plan.steps = normalized
+            return (
+                ["plan.steps"],
+                [{"id": step.id, "status": step.status} for step in normalized],
+            )
+
+        return await self._mutate(
+            task_id,
+            expected_revision,
+            "todo_replace",
+            mutate,
+            revision_required=False,
+        )
+
+    async def write(
+        self,
+        task_id: str,
+        todos: list[dict[str, Any]],
+        expected_revision: int | None = None,
+    ) -> WriteTodosOutput:
+        task = await self._write_task_output(task_id, todos, expected_revision)
+        return self._todo_output(task, write=True)  # type: ignore[return-value]
+
+    async def read_with_task(
+        self, task_id: str
+    ) -> tuple[ReadTodosOutput, TaskOutput]:
+        task = await self.read_task(task_id)
+        return self._todo_output(task, write=False), task  # type: ignore[return-value]
+
+    async def write_with_task(
+        self,
+        task_id: str,
+        todos: list[dict[str, Any]],
+        expected_revision: int | None = None,
+    ) -> tuple[WriteTodosOutput, TaskOutput]:
+        task = await self._write_task_output(task_id, todos, expected_revision)
+        return self._todo_output(task, write=True), task  # type: ignore[return-value]
+
+    def _migrate_legacy_sync(self) -> int:
+        migrated = 0
+        for record in sorted(
+            self._state.snapshot_sessions().values(),
+            key=lambda item: (item.created_at, str(item.session_id)),
+        ):
+            if record.task_id is not None:
+                continue
+            session_id = str(record.session_id)
+            legacy_path = self._legacy_path(session_id)
+            value = self._store.read_json(
+                legacy_path, max_bytes=self._settings.max_todo_bytes
+            )
+            if value is None:
+                continue
+            if not isinstance(value, dict):
+                raise RuntimeError(
+                    f"invalid legacy task state for session {session_id}"
+                )
+            task_id = self._legacy_task_id(session_id)
+            task_path = self._path(task_id)
+            with self._store.transaction(task_path):
+                stored_value = self._store.read_json(
+                    task_path, max_bytes=self._settings.max_todo_bytes
+                )
+                if stored_value is None:
+                    document = self._legacy_document(
+                        value,
+                        created_at=float(record.created_at),
+                        label=record.label,
+                    )
+                    stored = _StoredTask(
+                        task_id=task_id,
+                        subject="local-user",
+                        document=document,
+                    )
+                    self._persist_stored(task_path, stored)
+                else:
+                    _StoredTask.model_validate(stored_value)
+                self._state.attach_session_task(session_id, task_id)
+                self._store.remove(legacy_path)
+            try:
+                audit(
+                    "task_migrated",
+                    task=task_id,
+                    session=session_id,
+                    session_ids=[session_id],
+                )
+            except Exception:
+                logger.exception("Failed to append task migration audit event")
+            migrated += 1
+        return migrated
+
+    async def migrate_legacy_sessions(self) -> int:
+        """Move legacy session-keyed task documents to deterministic task ids."""
+        return await asyncio.to_thread(self._migrate_legacy_sync)

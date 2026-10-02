@@ -1,4 +1,4 @@
-"""Session-scoped Live Workspace MCP App composition."""
+"""Task-centric Live Workspace MCP App composition."""
 
 import asyncio
 import hashlib
@@ -17,8 +17,8 @@ from ...oauth.core.scopes import (
     SCOPE_SHELL_READ,
     SCOPE_SHELL_WRITE,
 )
-from ...schemas.input_models.session import SessionIdArg
-from ...schemas.input_models.task import ExpectedTaskRevisionArg
+from ...schemas.input_models.session import OptionalSessionIdArg, SessionIdArg
+from ...schemas.input_models.task import ExpectedTaskRevisionArg, TaskIdArg
 from ...schemas.result_models.live_workspace import (
     LiveWorkspaceActivity,
     LiveWorkspaceJob,
@@ -28,9 +28,10 @@ from ...schemas.result_models.live_workspace import (
     LiveWorkspaceSnapshot,
 )
 from ...schemas.result_models.session import SessionEndOutput
-from ...schemas.result_models.task import SessionTaskDocument, SessionTaskOutput
+from ...schemas.result_models.task import TaskDocument
 from ...tools.metadata import oauth_security_meta
 from ..runtime import ControlRuntime
+from ..state import ControlSessionRecord
 
 _RESOURCE_PATH = Path(__file__).with_name("live_workspace.html")
 _RESOURCE_URI = "ui://workgate/live-workspace.html"
@@ -72,8 +73,8 @@ def _resource_meta(runtime: ControlRuntime) -> dict[str, Any]:
             "prefersBorder": False,
         },
         "openai/widgetDescription": (
-            "A session-scoped Workgate Live Workspace showing task state, "
-            "jobs, shells, recent activity, and safe human controls."
+            "A task-centric Workgate Live Workspace showing semantic task state, "
+            "attached execution sessions, recent activity, and safe human controls."
         ),
         "openai/widgetDomain": origin,
         "openai/widgetPrefersBorder": False,
@@ -114,7 +115,6 @@ def _app_meta(
                 "openai/toolInvocation/invoked": "Live Workspace ready",
             }
         )
-        # workspace_open itself must remain model-visible.
         ui.pop("visibility", None)
     return meta
 
@@ -158,6 +158,9 @@ def _safe_activity(raw: dict[str, Any]) -> LiveWorkspaceActivity:
         operation=(
             str(raw["operation"]) if raw.get("operation") is not None else None
         ),
+        session=(
+            str(raw["session"]) if raw.get("session") is not None else None
+        ),
         ok=raw.get("ok") if isinstance(raw.get("ok"), bool) else None,
         duration_ms=(
             float(raw["duration_ms"])
@@ -167,34 +170,45 @@ def _safe_activity(raw: dict[str, Any]) -> LiveWorkspaceActivity:
     )
 
 
-async def _task_projection(
-    runtime: ControlRuntime, session_id: str
-) -> SessionTaskOutput:
-    return await runtime.task_service.read_task(session_id)
-
-
 def _task_control_actions(
-    task: SessionTaskDocument,
-    *,
-    execution_status: str,
+    task: TaskDocument,
 ) -> tuple[list[TaskAction], str | None]:
-    if execution_status != "active":
-        return (
-            [],
-            f"Task controls are unavailable while session is {execution_status}.",
-        )
-    task_status = task.status
-    if task_status == "active":
+    if task.status == "active":
         return ["block", "cancel", "next_instruction"], None
-    if task_status == "blocked":
+    if task.status == "blocked":
         return ["resume", "cancel", "next_instruction"], None
-    if task_status == "completed":
-        return [
-            "resume"
-        ], "Task is completed; resume it before making other changes."
-    if task_status == "cancelled":
+    if task.status == "completed":
+        return ["resume"], "Task is completed; resume it before making changes."
+    if task.status == "cancelled":
         return [], "Task is cancelled and terminal."
-    return [], f"Task controls are unavailable for task status {task_status!r}."
+    return [], f"Task controls are unavailable for task status {task.status!r}."
+
+
+async def _session_projection(
+    runtime: ControlRuntime, record: ControlSessionRecord
+) -> LiveWorkspaceSession:
+    session_id = str(record.session_id)
+    (
+        availability,
+        last_active_at,
+    ) = await runtime.session_coordinator.session_activity_projection(
+        session_id
+    )
+    executor = runtime.control_state.snapshot_executors().get(
+        str(record.executor_id)
+    )
+    return LiveWorkspaceSession(
+        session_id=session_id,
+        label=record.label,
+        executor_id=str(record.executor_id),
+        executor_name=executor.name if executor is not None else None,
+        workdir=record.resolved_workdir_display or record.requested_workdir,
+        status=str(record.status),
+        availability=availability,
+        created_at=float(record.created_at),
+        updated_at=float(record.updated_at),
+        last_active_at=last_active_at,
+    )
 
 
 async def _job_projection(
@@ -220,9 +234,6 @@ async def _job_projection(
     elif output.message and output.message.startswith(
         "Executor jobs unavailable"
     ):
-        # ControlJobService may append backend exception text to this diagnostic.
-        # Keep the compact App on an explicit allow-list boundary instead of
-        # forwarding arbitrary executor/control error strings.
         message = "Some executor job metadata is unavailable."
     else:
         message = None
@@ -283,15 +294,11 @@ async def _shell_projection(
     return result, message
 
 
-async def _activity_projection(session_id: str) -> list[LiveWorkspaceActivity]:
-    # The public ControlAuditService intentionally admits only active/available
-    # sessions. Live Workspace must retain bounded durable activity while the
-    # executor is offline or the execution session has ended, so query the same
-    # canonical audit store directly after the caller session was resolved.
+async def _activity_projection(task_id: str) -> list[LiveWorkspaceActivity]:
     raw = await asyncio.to_thread(
         query_audit,
         limit=_ACTIVITY_SCAN_LIMIT,
-        session=session_id,
+        task=task_id,
         sort="desc",
         exclude_call_id=current_audit_call_id(),
     )
@@ -305,54 +312,66 @@ async def _activity_projection(session_id: str) -> list[LiveWorkspaceActivity]:
 
 
 async def live_workspace_snapshot(
-    runtime: ControlRuntime, session_id: str
+    runtime: ControlRuntime,
+    task_id: str,
+    session_id: str | None = None,
 ) -> LiveWorkspaceSnapshot:
-    """Reconstruct one Live Workspace solely from canonical session state."""
+    """Reconstruct one task workspace without inferring an execution session."""
 
-    record = runtime.control_state.snapshot_sessions().get(session_id)
-    if record is None:
-        raise ValueError(
-            f"unknown session_id {session_id!r}; call session_start first"
+    task = await runtime.task_service.read_task(task_id)
+    records = [
+        record
+        for record in runtime.control_state.snapshot_sessions().values()
+        if str(record.task_id or "") == task_id
+    ]
+    records.sort(key=lambda item: (item.created_at, str(item.session_id)))
+    sessions = (
+        list(
+            await asyncio.gather(
+                *(_session_projection(runtime, item) for item in records)
+            )
+        )
+        if records
+        else []
+    )
+    by_id = {item.session_id: item for item in sessions}
+
+    selected: LiveWorkspaceSession | None = None
+    jobs: list[LiveWorkspaceJob] = []
+    shells: list[LiveWorkspaceShell] = []
+    jobs_message: str | None = (
+        "Select an attached execution session to inspect jobs."
+    )
+    shells_message: str | None = (
+        "Select an attached execution session to inspect persistent shells."
+    )
+    links: LiveWorkspaceLinks | None = None
+    if session_id is not None:
+        selected = by_id.get(session_id)
+        if selected is None:
+            raise ValueError(
+                f"session_id {session_id!r} is not attached to task_id {task_id!r}"
+            )
+        jobs_result, shells_result = await asyncio.gather(
+            _job_projection(runtime, session_id, selected.status),
+            _shell_projection(runtime, session_id, selected.availability),
+        )
+        jobs, jobs_message = jobs_result
+        shells, shells_message = shells_result
+        links = _human_ui_links(
+            runtime,
+            session_id=session_id,
+            executor_id=selected.executor_id,
+            workdir=selected.workdir,
+            shell_id=shells[0].shell_id if shells else None,
         )
 
-    (
-        availability,
-        last_active_at,
-    ) = await runtime.session_coordinator.session_activity_projection(
-        session_id
-    )
-    executor = runtime.control_state.snapshot_executors().get(
-        str(record.executor_id)
-    )
-
-    task_result, jobs_result, shells_result, activity = await asyncio.gather(
-        _task_projection(runtime, session_id),
-        _job_projection(runtime, session_id, str(record.status)),
-        _shell_projection(runtime, session_id, availability),
-        _activity_projection(session_id),
-    )
-    task = task_result
-    jobs, jobs_message = jobs_result
-    shells, shells_message = shells_result
-    task_actions, controls_message = _task_control_actions(
-        task,
-        execution_status=str(record.status),
-    )
-
+    activity = await _activity_projection(task_id)
+    task_actions, controls_message = _task_control_actions(task)
     return LiveWorkspaceSnapshot(
-        session=LiveWorkspaceSession(
-            session_id=session_id,
-            label=record.label,
-            executor_id=str(record.executor_id),
-            executor_name=executor.name if executor is not None else None,
-            workdir=record.resolved_workdir_display or record.requested_workdir,
-            status=str(record.status),
-            availability=availability,
-            created_at=float(record.created_at),
-            updated_at=float(record.updated_at),
-            last_active_at=last_active_at,
-        ),
         task=task,
+        sessions=sessions,
+        session=selected,
         task_control_actions=task_actions,
         task_controls_message=controls_message,
         jobs=jobs,
@@ -360,38 +379,23 @@ async def live_workspace_snapshot(
         shells=shells,
         shells_message=shells_message,
         activity=activity,
-        links=_human_ui_links(
-            runtime,
-            session_id=session_id,
-            executor_id=str(record.executor_id),
-            # Deep links must follow the session's already-resolved binding, not
-            # re-resolve the user's original cwd spelling later.
-            workdir=record.resolved_workdir_display or record.requested_workdir,
-            shell_id=shells[0].shell_id if shells else None,
-        ),
+        links=links,
     )
 
 
 async def live_workspace_task_control(
     runtime: ControlRuntime,
     *,
-    session_id: str,
+    task_id: str,
+    session_id: str | None,
     action: TaskAction,
     expected_revision: ExpectedTaskRevisionArg,
     instruction: str | None = None,
 ) -> LiveWorkspaceSnapshot:
-    """Apply one semantic mutation to the canonical session task state."""
+    """Apply one semantic task mutation without selecting execution implicitly."""
 
-    record = runtime.control_state.snapshot_sessions().get(session_id)
-    if record is None:
-        raise ValueError(
-            f"unknown session_id {session_id!r}; call session_start first"
-        )
-    current_task = await runtime.task_service.read_task(session_id)
-    allowed_actions, state_message = _task_control_actions(
-        current_task,
-        execution_status=str(record.status),
-    )
+    current_task = await runtime.task_service.read_task(task_id)
+    allowed_actions, state_message = _task_control_actions(current_task)
     if action not in allowed_actions:
         detail = state_message or (
             "allowed actions: " + ", ".join(allowed_actions)
@@ -400,38 +404,48 @@ async def live_workspace_task_control(
         )
         raise ValueError(f"task action {action!r} is not available: {detail}")
 
-    kwargs: dict[str, Any] = {"expected_revision": expected_revision}
-    match action:
-        case "block":
-            kwargs["task_status"] = "blocked"
-        case "resume":
-            kwargs["task_status"] = "active"
-        case "cancel":
-            kwargs["task_status"] = "cancelled"
-        case "next_instruction":
-            note = str(instruction or "").strip()
-            if not note:
-                raise ValueError("instruction is required for next_instruction")
-            kwargs["next_action"] = note
-        case _:
-            raise ValueError(
-                f"unsupported Live Workspace task action: {action}"
-            )
-
-    await runtime.task_service.report_progress(session_id, **kwargs)
-    return await live_workspace_snapshot(runtime, session_id)
+    if action == "block":
+        await runtime.task_service.block_task(
+            task_id, expected_revision=expected_revision
+        )
+    elif action == "resume":
+        await runtime.task_service.resume_task(
+            task_id, expected_revision=expected_revision
+        )
+    elif action == "cancel":
+        await runtime.task_service.cancel_task(
+            task_id, expected_revision=expected_revision
+        )
+    elif action == "next_instruction":
+        note = str(instruction or "").strip()
+        if not note:
+            raise ValueError("instruction is required for next_instruction")
+        await runtime.task_service.report_progress(
+            task_id,
+            expected_revision=expected_revision,
+            next_action=note,
+        )
+    else:
+        raise ValueError(f"unsupported Live Workspace task action: {action}")
+    return await live_workspace_snapshot(runtime, task_id, session_id)
 
 
 async def live_workspace_end(
     runtime: ControlRuntime,
     *,
+    task_id: str,
     session_id: str,
     confirm_session_id: str,
 ) -> SessionEndOutput:
-    """End only when the human confirmation repeats the exact session id."""
+    """End one explicitly selected execution session attached to a task."""
 
     if confirm_session_id != session_id:
         raise ValueError("confirm_session_id must exactly match session_id")
+    record = runtime.control_state.snapshot_sessions().get(session_id)
+    if record is None or str(record.task_id or "") != task_id:
+        raise ValueError(
+            f"session_id {session_id!r} is not attached to task_id {task_id!r}"
+        )
     result = await runtime.session_coordinator.end_session(
         session_id, force=False
     )
@@ -441,7 +455,7 @@ async def live_workspace_end(
 def register_live_workspace(
     mcp: FastMCP, runtime: ControlRuntime | None
 ) -> None:
-    """Register the HTTP-only session-scoped MCP App on a routed runtime."""
+    """Register the HTTP-only task-centric MCP App on a routed runtime."""
 
     if (
         runtime is None
@@ -454,7 +468,7 @@ def register_live_workspace(
     resource_options = {
         "name": "workgate-live-workspace",
         "title": "Workgate Live Workspace",
-        "description": "Session-scoped human view and controls for one Workgate session.",
+        "description": "Task-centric human view with explicit attached execution sessions.",
         "mime_type": _RESOURCE_MIME,
         "meta": _resource_meta(runtime),
     }
@@ -472,45 +486,60 @@ def register_live_workspace(
 
     @mcp.tool(
         description=(
-            "Open the Live Workspace for one explicit existing Workgate session_id. "
-            "This never creates, lists, guesses, rebinds, or revives a session."
+            "Open the Live Workspace for one explicit semantic task_id. "
+            "Pass session_id only to select one already-attached execution context; "
+            "omitting it never guesses a machine or workdir."
         ),
         annotations=_read_only_annotations(),
         meta=_app_meta(read_scopes, resource_uri=versioned_uri),
         structured_output=True,
     )
-    async def workspace_open(session_id: SessionIdArg) -> LiveWorkspaceSnapshot:
+    async def workspace_open(
+        task_id: TaskIdArg,
+        session_id: OptionalSessionIdArg = None,
+    ) -> LiveWorkspaceSnapshot:
         require_oauth_scopes(read_scopes)
-        return await live_workspace_snapshot(runtime, str(session_id))
+        return await live_workspace_snapshot(
+            runtime,
+            str(task_id),
+            str(session_id) if session_id is not None else None,
+        )
 
     @mcp.tool(
-        description="Refresh the MCP App snapshot for the same explicit Workgate session.",
+        description="Refresh one explicit semantic task and optional selected execution session.",
         annotations=_read_only_annotations(),
         meta=_app_meta(read_scopes),
         structured_output=True,
     )
     async def workspace_snapshot(
-        session_id: SessionIdArg,
+        task_id: TaskIdArg,
+        session_id: OptionalSessionIdArg = None,
     ) -> LiveWorkspaceSnapshot:
         require_oauth_scopes(read_scopes)
-        return await live_workspace_snapshot(runtime, str(session_id))
+        return await live_workspace_snapshot(
+            runtime,
+            str(task_id),
+            str(session_id) if session_id is not None else None,
+        )
 
     @mcp.tool(
-        description="Apply one safe semantic task control from the Live Workspace.",
+        description="Apply one safe semantic task control without changing execution routing.",
         annotations=_mutating_annotations(destructive=True),
         meta=_app_meta(task_write_scopes),
         structured_output=True,
     )
     async def workspace_task_control(
-        session_id: SessionIdArg,
+        task_id: TaskIdArg,
         action: TaskAction,
         expected_revision: ExpectedTaskRevisionArg,
+        session_id: OptionalSessionIdArg = None,
         instruction: str | None = None,
     ) -> LiveWorkspaceSnapshot:
         require_oauth_scopes(task_write_scopes)
         return await live_workspace_task_control(
             runtime,
-            session_id=str(session_id),
+            task_id=str(task_id),
+            session_id=str(session_id) if session_id is not None else None,
             action=action,
             expected_revision=expected_revision,
             instruction=instruction,
@@ -518,20 +547,22 @@ def register_live_workspace(
 
     @mcp.tool(
         description=(
-            "End the explicit Live Workspace session after a separate human confirmation. "
-            "confirm_session_id must repeat session_id exactly."
+            "End one explicitly selected execution session attached to the task "
+            "after a separate human confirmation."
         ),
         annotations=_mutating_annotations(destructive=True),
         meta=_app_meta((SCOPE_SHELL_EXECUTE,)),
         structured_output=True,
     )
     async def workspace_end(
+        task_id: TaskIdArg,
         session_id: SessionIdArg,
         confirm_session_id: str,
     ) -> SessionEndOutput:
         require_oauth_scopes((SCOPE_SHELL_EXECUTE,))
         return await live_workspace_end(
             runtime,
+            task_id=str(task_id),
             session_id=str(session_id),
             confirm_session_id=confirm_session_id,
         )

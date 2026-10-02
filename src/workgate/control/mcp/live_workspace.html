@@ -55,6 +55,7 @@
       <span class="pill" id="task-status" hidden></span>
       <button id="refresh-workspace">Refresh</button>
     </div>
+    <div class="mono muted" id="task-id"></div>
     <div class="mono muted" id="session-id"></div>
     <div class="row muted"><span id="executor"></span><span id="workdir"></span></div>
     <p id="objective"></p>
@@ -81,7 +82,13 @@
       </div>
       <textarea id="instruction" placeholder="New human note / next instruction"></textarea>
       <button data-task-action="next_instruction">Set next instruction</button>
-      <p class="muted">Task controls mutate the canonical session task state; they do not end the execution session.</p>
+      <p class="muted">Task controls mutate semantic task state only; they never choose, rebind, or end an execution session.</p>
+    </div>
+
+    <div class="card stack">
+      <h2>Attached execution sessions</h2>
+      <ul id="sessions"></ul>
+      <p class="muted">Resources below are shown only for the explicitly selected session.</p>
     </div>
 
     <div class="card stack">
@@ -106,7 +113,7 @@
       <h2>Full views</h2>
       <div class="row" id="links"></div>
       <h2>End execution session</h2>
-      <p class="muted">Destructive and separate from task cancellation. Type the exact session ID to confirm.</p>
+      <p class="muted">Destructive and separate from task cancellation. Available only when this workspace was opened with an explicit attached session. Type its exact session ID to confirm.</p>
       <input id="end-confirm" autocomplete="off" placeholder="sess_...">
       <button class="danger" id="end-session">End session</button>
     </div>
@@ -117,7 +124,7 @@
   const $ = (id) => document.getElementById(id);
   const UI_PROTOCOL_VERSION = "2026-01-26";
   let snapshot = null;
-  let boundSessionId = null;
+  let boundTaskId = null;
   let standardBridge = null;
   let shuttingDown = false;
 
@@ -227,7 +234,7 @@
     if (!value) return null;
     if (value.structuredContent) return value.structuredContent;
     if (value.structured_content) return value.structured_content;
-    if (value.data && value.data.session) return value.data;
+    if (value.data && value.data.task) return value.data;
     return value;
   }
 
@@ -252,24 +259,41 @@
 
   function render(data) {
     const candidate = payload(data);
-    if (!candidate || !candidate.session || !candidate.session.session_id) {
-      $("status").textContent = "No session snapshot was supplied.";
+    if (!candidate || !candidate.task || !candidate.task.task_id) {
+      $("status").textContent = "No task snapshot was supplied.";
       return false;
     }
-    const candidateSessionId = String(candidate.session.session_id);
-    if (boundSessionId !== null && candidateSessionId !== boundSessionId) {
-      $("status").textContent = "Ignored snapshot for a different session.";
+    const candidateTaskId = String(candidate.task.task_id);
+    if (boundTaskId !== null && candidateTaskId !== boundTaskId) {
+      $("status").textContent = "Ignored snapshot for a different task.";
       return false;
     }
-    if (boundSessionId === null) boundSessionId = candidateSessionId;
+    if (boundTaskId === null) boundTaskId = candidateTaskId;
     snapshot = candidate;
-    const session = snapshot.session;
     const task = snapshot.task;
-    $("title").textContent = session.label || "Live Workspace";
-    $("availability").textContent = text(session.availability, session.status);
-    $("session-id").textContent = session.session_id;
-    $("executor").textContent = `Executor: ${session.executor_name || session.executor_id}`;
-    $("workdir").textContent = `Workdir: ${session.workdir}`;
+    const session = snapshot.session || null;
+    const sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+    $("title").textContent = task.label || "Live Workspace";
+    $("availability").textContent = session
+      ? text(session.availability, session.status)
+      : `${sessions.length} attached session${sessions.length === 1 ? "" : "s"}`;
+    $("task-id").textContent = task.task_id;
+    $("session-id").textContent = session
+      ? `Selected session: ${session.session_id}`
+      : "No execution session selected.";
+    $("executor").textContent = session
+      ? `Executor: ${session.executor_name || session.executor_id}`
+      : "";
+    $("workdir").textContent = session ? `Workdir: ${session.workdir}` : "";
+
+    clear($("sessions"));
+    for (const attached of sessions) {
+      const marker = session && attached.session_id === session.session_id ? "selected · " : "";
+      $("sessions").appendChild(li(
+        `${marker}${attached.session_id} · ${attached.status} · ${attached.workdir}`
+      ));
+    }
+    if (!sessions.length) $("sessions").appendChild(li("No execution sessions attached."));
 
     const taskStatus = $("task-status");
     taskStatus.hidden = false;
@@ -326,7 +350,7 @@
       const right = document.createElement("span");
       left.className = "mono muted";
       left.textContent = event.ts ? new Date(event.ts * 1000).toLocaleTimeString() : "activity";
-      right.textContent = [event.event, event.tool, event.operation].filter(Boolean).join(" · ") || "event";
+      right.textContent = [event.event, event.tool, event.operation, event.session].filter(Boolean).join(" · ") || "event";
       row.append(left, right);
       $("activity").appendChild(row);
     }
@@ -354,6 +378,8 @@
       });
       $("links").appendChild(anchor);
     }
+    $("end-confirm").disabled = !session;
+    $("end-session").disabled = !session;
     return true;
   }
 
@@ -367,9 +393,11 @@
   }
 
   async function refresh() {
-    if (shuttingDown || !snapshot || !snapshot.session) return;
+    if (shuttingDown || !snapshot || !snapshot.task) return;
+    const args = { task_id: snapshot.task.task_id };
+    if (snapshot.session) args.session_id = snapshot.session.session_id;
     try {
-      const accepted = render(await callTool("workspace_snapshot", { session_id: snapshot.session.session_id }));
+      const accepted = render(await callTool("workspace_snapshot", args));
       if (accepted) $("status").textContent = "Updated from Workgate.";
     } catch (error) {
       $("status").textContent = `Refresh failed: ${error instanceof Error ? error.message : error}`;
@@ -380,15 +408,16 @@
 
   for (const button of document.querySelectorAll("[data-task-action]")) {
     button.addEventListener("click", async () => {
-      if (!snapshot || !snapshot.session) return;
+      if (!snapshot || !snapshot.task) return;
       const revision = taskRevision();
       if (revision === null) return;
       const action = button.dataset.taskAction;
       const args = {
-        session_id: snapshot.session.session_id,
+        task_id: snapshot.task.task_id,
         action,
         expected_revision: revision,
       };
+      if (snapshot.session) args.session_id = snapshot.session.session_id;
       if (action === "next_instruction") args.instruction = $("instruction").value;
       $("status").textContent = "Applying task update…";
       try {
@@ -413,7 +442,11 @@
     }
     $("status").textContent = "Ending execution session…";
     try {
-      await callTool("workspace_end", { session_id: sessionId, confirm_session_id: confirmation });
+      await callTool("workspace_end", {
+        task_id: snapshot.task.task_id,
+        session_id: sessionId,
+        confirm_session_id: confirmation,
+      });
       $("end-confirm").value = "";
       await refresh();
       $("status").textContent = "Execution session ended.";

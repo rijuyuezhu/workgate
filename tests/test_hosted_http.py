@@ -664,6 +664,36 @@ async def test_hosted_mcp_2026_notification_rejects_unsupported_version() -> (
 
 
 @pytest.mark.asyncio
+async def test_hosted_session_start_rejects_unavailable_task_attachment() -> (
+    None
+):
+    actor = _actor()
+    gateway = HostedHttpGateway(actor, owner_token="x" * 32)
+
+    response = await gateway.dispatch(
+        method="POST",
+        path="/mcp",
+        headers=_headers(),
+        payload={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "session_start",
+                "arguments": {
+                    "workdir": "/workspace",
+                    "task_id": "task_AAAAAAAAAAAAAAAAAAAAAA",
+                },
+            },
+        },
+    )
+
+    body = _json_body(response)
+    assert body["result"]["isError"] is True
+    assert "does not support task_id" in body["result"]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_hosted_mcp_routes_sessions_and_machine_tools() -> None:
     actor = _actor()
     gateway = HostedHttpGateway(actor, owner_token="x" * 32)

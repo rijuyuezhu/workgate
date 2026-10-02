@@ -1,4 +1,4 @@
-"""Typed structured outputs for durable shared-session task state."""
+"""Typed structured outputs for durable semantic task state."""
 
 from typing import Literal
 
@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 TaskStatus = Literal["active", "blocked", "completed", "cancelled"]
 
 
-class SessionProgress(BaseModel):
-    """Latest semantic progress handoff for one session task."""
+class TaskProgress(BaseModel):
+    """Latest durable progress handoff for one semantic task."""
 
     summary: str | None = Field(
         default=None, description="Current concise progress summary."
@@ -26,8 +26,8 @@ class SessionProgress(BaseModel):
     )
 
 
-class SessionPlanStep(BaseModel):
-    """One stable step in the session task plan."""
+class TaskPlanStep(BaseModel):
+    """One stable step in a semantic task plan."""
 
     id: str = Field(description="Stable caller-visible plan step identifier.")
     content: str = Field(description="Human-readable plan step text.")
@@ -43,25 +43,31 @@ class SessionPlanStep(BaseModel):
     )
 
 
-class SessionPlan(BaseModel):
-    """Structured machine-readable plan for one session task."""
+class TaskPlan(BaseModel):
+    """Structured machine-readable plan for one semantic task."""
 
-    steps: list[SessionPlanStep] = Field(
+    steps: list[TaskPlanStep] = Field(
         default_factory=list, description="Ordered plan steps with stable IDs."
     )
 
 
-class SessionTaskDocument(BaseModel):
-    """Canonical persisted task state associated with one Workgate session."""
+class TaskDocument(BaseModel):
+    """Canonical revisioned semantic task document."""
 
-    version: Literal[1] = 1
+    version: Literal[2] = 2
     revision: int = Field(
         default=0,
         ge=0,
         description="Monotonic document revision used for optimistic concurrency.",
     )
-    updated_at: float | None = Field(
-        default=None, description="Unix timestamp of the latest task mutation."
+    created_at: float = Field(
+        description="Unix timestamp when the task was created."
+    )
+    updated_at: float = Field(
+        description="Unix timestamp of the latest task mutation."
+    )
+    label: str | None = Field(
+        default=None, description="Optional human-readable task label."
     )
     objective: str | None = Field(
         default=None, description="Optional durable task objective."
@@ -69,18 +75,25 @@ class SessionTaskDocument(BaseModel):
     status: TaskStatus = Field(
         default="active", description="Semantic task lifecycle status."
     )
-    progress: SessionProgress = Field(default_factory=SessionProgress)
-    plan: SessionPlan = Field(default_factory=SessionPlan)
+    progress: TaskProgress = Field(default_factory=TaskProgress)
+    plan: TaskPlan = Field(default_factory=TaskPlan)
 
 
-class SessionTaskOutput(SessionTaskDocument):
-    """Canonical task state plus its existing execution-session projection."""
+class TaskOutput(TaskDocument):
+    """Canonical task state plus its execution-session attachments."""
 
-    session_id: str = Field(description="Explicit Workgate session identifier.")
-    label: str | None = Field(
-        default=None,
-        description="Existing canonical human-readable session label.",
+    task_id: str = Field(description="Opaque durable semantic task identifier.")
+    session_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Execution sessions explicitly attached to this task, including retained "
+            "ended-session history while those session records exist."
+        ),
     )
-    execution_status: str = Field(
-        description="Execution-session lifecycle status, separate from task status."
-    )
+
+
+class TaskDeleteOutput(BaseModel):
+    """Result of deleting one terminal semantic task."""
+
+    task_id: str
+    deleted: Literal[True] = True

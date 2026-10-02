@@ -14,12 +14,12 @@ tracks the current repository surface.
 
 ## The main distinction
 
-Workgate makes an explicit **agent/workspace session** the owner of operational
-context. A client starts a session on a paired executor, receives one stable shared
-`session_id`, and uses that identity for files, commands, jobs, task progress and
-plans, Audit, transfers, cwd changes, and teardown. Machine-facing resources remain
-executor-owned while durable task/progress/plan metadata is control-owned under the
-same explicit identity.
+Workgate separates explicit **semantic tasks** from **execution sessions**. A durable
+`task_id` owns objective, progress, plan, Todo compatibility, and task-wide Audit
+history. A client starts an execution session on a paired executor, receives one
+stable `session_id`, and uses that identity for files, commands, jobs, browser,
+transfers, cwd changes, and teardown. Sessions may attach to a task, but that
+attachment never acts as hidden executor/workdir routing authority.
 
 Upstream exposes operations more directly. Its normal tools accept local context
 or an optional remote `machine`, without requiring the same durable workspace
@@ -32,10 +32,10 @@ state recovery, and UI behavior in each project.
 
 | Area | Workgate | Upstream | User-visible consequence |
 |---|---|---|---|
-| Workspace context | Requires `session_start`; operations are owned by a durable `session_id`, and `session_end` explicitly releases the execution session while retaining read-only task history. | Tools are invoked directly against the configured workspace, with optional machine selection where supported. | Workgate is better suited to clients that need explicit, inspectable context instead of relying on conversational memory to remember cwd, machine, and related state. |
-| Executor-backed execution | Starts a workspace session on a paired executor, then reuses the same shared `session_id` for read, edit, shell, job, PTY, Audit, and transfer tools; those machine-facing operations remain bound to that executor/workdir. | Normal execution tools can select a remote machine directly; separate remote administration tools manage workers. | Workgate has a uniform control/executor session contract, while upstream avoids a mandatory execution-session step. |
-| Durable task handoff | `read_session_task`, `report_session_progress`, and `update_session_plan` store revisioned objective/progress/plan state on control under the existing workspace `session_id`; Todo APIs are compatibility projections of the same plan. | `session_manage` and `plan_manage` use a separate Logical Session identity that is deliberately independent of machine/cwd. | Both provide durable semantic handoff, but Workgate intentionally keeps task identity attached to its executor/workdir-owned session instead of importing upstream's floating Logical Session model. |
-| Public tool surface | Uses compact session-owned tools such as `bash`, `read`, `search`, `job`, and `session_copy`, plus persistent-shell and durable task-state tools. | Uses direct domain tools such as `run_shell_tool`, `grep_search`, `shell_*`, `job_*`, and `transfer_path`, plus Logical Session task tools. | Prompts and integrations written for one project generally need adaptation for the other. |
+| Workspace context | Requires `session_start`; machine-facing operations are owned by a durable execution `session_id`, and `session_end` explicitly releases that execution context without changing semantic task state. | Tools are invoked directly against the configured workspace, with optional machine selection where supported. | Workgate is better suited to clients that need explicit, inspectable machine/workdir context instead of relying on conversational memory. |
+| Executor-backed execution | Starts a workspace session on a paired executor, then reuses the same shared `session_id` for read, edit, shell, job, PTY, browser, and transfer tools; those operations remain bound to that executor/workdir. | Normal execution tools can select a remote machine directly; separate remote administration tools manage workers. | Workgate has a uniform control/executor session contract, while upstream avoids a mandatory execution-session step. |
+| Durable task handoff | `task` and `task_plan` own revisioned objective/progress/plan state under an explicit machine-independent `task_id`; `read_todos`/`write_todos` are compatibility projections of the same plan. A task can attach zero or many execution sessions. | `session_manage` and `plan_manage` use a separate Logical Session identity that is deliberately independent of machine/cwd. | Both provide durable semantic handoff; Workgate names the semantic identity `task_id` so it cannot be confused with executor/workdir sessions. |
+| Public tool surface | Uses compact execution-session tools such as `bash`, `read`, `search`, `job`, and `session_copy`, plus task-scoped `task`/`task_plan`/Todo tools and audit queries by explicit task and/or execution session. | Uses direct domain tools such as `run_shell_tool`, `grep_search`, `shell_*`, `job_*`, and `transfer_path`, plus Logical Session task tools. | Prompts and integrations written for one project generally need adaptation for the other. |
 | Jobs and lifecycle recovery | Unifies shell jobs and control-managed work, including background copies, in one durable `job` surface with retry, cancel, lost-state recovery, ownership leases, and session-retention protection. | Provides tracked jobs and persistent shells through its direct tool model. | Workgate treats long-running work and its owning context as one lifecycle domain, including across control restarts and multiple control processes. |
 | Cross-workspace transfer | `session_copy` copies between two existing sessions on the same or different executors. Large cross-executor transfers can use private resumable HTTP streaming while retaining durable retry state. | `transfer_path` moves files or directories between controller and worker endpoints using the upstream machine-oriented model. | Both support transfer, but Workgate binds both endpoints and retry state to explicit shared sessions and managed jobs. |
 | Agent capabilities | Keeps the dynamic Agent Bridge: clients can discover Skills, inspect configured upstream MCP servers, authorize them, and invoke selected bridged tools through server-managed credentials. | Provides a fixed three-tool Skills workflow and intentionally removed the earlier dynamic MCP bridge. | Choose Workgate when one control server must broker reusable Skills and additional MCP servers; choose upstream when a fixed, smaller capability surface is preferred. |
@@ -65,8 +65,8 @@ names, state ownership, modules, security checks, and recovery rules.
 
 Prefer Workgate when you need:
 
-- explicit workspace sessions bound to paired executors;
-- executor-owned cwd/jobs/transfers plus control-owned durable task/progress/plan state under the same `session_id`;
+- explicit execution sessions bound to paired executors plus independent semantic `task_id` state;
+- executor-owned cwd/jobs/transfers and control-owned revisioned task/progress/plan state without hidden machine selection;
 - durable control-managed work, optimistic-concurrency handoff, and explicit teardown semantics;
 - the dynamic Agent Bridge for configured MCP servers;
 - Workgate's browser-native operations UI and release matrix.

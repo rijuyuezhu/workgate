@@ -47,6 +47,10 @@ class StateStore(Protocol):
         """Return regular child directories in stable name order."""
         ...
 
+    def iter_files(self, path: Path) -> Iterable[Path]:
+        """Return regular child files in stable name order."""
+        ...
+
     def transaction(self, path: Path) -> AbstractContextManager[None]:
         """Serialize one state-file transaction across threads and processes."""
         ...
@@ -84,10 +88,6 @@ class StateLayout:
     def session_snapshots_path(self, session_id: str) -> Path:
         """Return the durable grounding-snapshot index for one session."""
         return self.session_dir(session_id) / "snapshots.json"
-
-    def session_todos_path(self, session_id: str) -> Path:
-        """Return the todo-list file colocated with one session's metadata."""
-        return self.session_dir(session_id) / "todos.json"
 
     def session_audit_path(self, session_id: str) -> Path:
         """Return the append-only audit log owned by one explicit session."""
@@ -157,8 +157,19 @@ class StateLayout:
         """Return the durable control session registry path."""
         return self.control_dir / "sessions.json"
 
+    @property
+    def control_tasks_dir(self) -> Path:
+        """Return the directory containing canonical semantic task documents."""
+        return self.control_dir / "tasks"
+
+    def control_task_path(self, task_id: str) -> Path:
+        """Return canonical control-owned state for one semantic task."""
+        return self.control_tasks_dir / (
+            f"{self._component(task_id, field='task_id')}.json"
+        )
+
     def control_task_state_path(self, session_id: str) -> Path:
-        """Return canonical control-owned task state for one shared session."""
+        """Return the legacy session-keyed task path used only for migration."""
         return (
             self.control_dir
             / "todos"
@@ -336,6 +347,19 @@ class FileStateStore:
             child
             for child in sorted(target.iterdir(), key=lambda item: item.name)
             if child.is_dir() and not child.is_symlink()
+        )
+
+    def iter_files(self, path: Path) -> Iterable[Path]:
+        """Return non-symlink child files in stable order."""
+        target = self._contained(path)
+        if not target.exists():
+            return ()
+        if target.is_symlink() or not target.is_dir():
+            raise OSError(f"state path is not a regular directory: {target}")
+        return tuple(
+            child
+            for child in sorted(target.iterdir(), key=lambda item: item.name)
+            if child.is_file() and not child.is_symlink()
         )
 
     def _lock_path(self, path: Path) -> Path:

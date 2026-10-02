@@ -10,6 +10,7 @@ from ...schemas.input_models.session import (
     SessionExecutorIdArg,
     SessionIdArg,
     SessionLabelArg,
+    SessionTaskIdArg,
     SessionWorkdirArg,
 )
 from ...schemas.result_models.jobs import JobStartOutput
@@ -39,7 +40,7 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start an explicit agent/workspace session on an executor and bind it to a required workdir. Omit executor_id only when exactly one trusted, non-revoked, protocol-compatible session-capable executor is currently online; otherwise pass the stable executor_id explicitly. The control plane allocates one opaque shared session_id and the executor stores the same id. Before calling, infer the most specific safe project workdir from the task. Pass the returned session_id to every machine-facing workspace tool."""
+    return """Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools."""
 
 
 def _session_change_cwd_description(_context: McpToolContext) -> str:
@@ -51,7 +52,7 @@ def _session_copy_description(_context: McpToolContext) -> str:
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one explicit executor-backed agent/workspace session. The control plane first persists desired termination, stops owned tracked jobs and persistent PTYs as required, and asks the bound executor to make the shared session absent. If the executor is permanently unreachable, force=true explicitly releases only the control binding and reports that executor cleanup was not confirmed. This releases execution capacity; it does not mark the semantic task completed or cancelled. Durable task/progress/plan state remains readable as history after session_end but becomes read-only. This is destructive for running work in that session but does not delete workspace files."""
+    return """End one explicit executor-backed execution session. This stops owned work and releases execution capacity but does not finish, cancel, freeze, or delete an attached semantic task. The task remains independently readable and mutable by task_id. This is destructive for running work in that session but does not delete workspace files."""
 
 
 @session_tool(
@@ -64,6 +65,7 @@ async def session_start(
     workdir: SessionWorkdirArg,
     label: SessionLabelArg = None,
     executor_id: SessionExecutorIdArg = None,
+    task_id: SessionTaskIdArg = None,
 ) -> SessionStartOutput:
     """Start an explicit agent/workspace session."""
     raise _unrouted_session_tool("session_start")

@@ -55,6 +55,7 @@ def _final_session_payload(
     return {
         "session_id": str(record.session_id),
         "executor_id": str(record.executor_id),
+        "task_id": str(record.task_id) if record.task_id is not None else None,
         "workdir": record.resolved_workdir_display or record.requested_workdir,
         "requested_workdir": record.requested_workdir,
         "label": record.label,
