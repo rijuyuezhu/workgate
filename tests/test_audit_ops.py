@@ -235,6 +235,51 @@ async def test_migrated_legacy_audit_entry_remains_readable_by_task(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_control_audit_rejects_invalid_identity_and_detail_combinations(
+    tmp_path,
+):
+    task_id, session_id, harness = await _task_session(tmp_path)
+
+    with pytest.raises(ValueError, match="task_id or session_id is required"):
+        await harness.control.audit_service.execute()
+    with pytest.raises(
+        ValueError, match="include_full_payloads requires entry_id"
+    ):
+        await harness.control.audit_service.execute(
+            task_id=task_id, include_full_payloads=True
+        )
+    with pytest.raises(ValueError, match="unknown session_id"):
+        await harness.control.audit_service.execute(
+            session_id="sess_AAAAAAAAAAAAAAAAAAAAAA"
+        )
+
+    other_task = await harness.control.task_service.create_task(label="other")
+    audit("other-task-entry", task=other_task.task_id)
+    other_listing = await harness.control.audit_service.execute(
+        task_id=other_task.task_id, event="other-task-entry"
+    )
+    entry_id = str(other_listing.entries[0]["id"])
+    with pytest.raises(ValueError, match="Unknown audit entry for task"):
+        await harness.control.audit_service.execute(
+            task_id=task_id, entry_id=entry_id
+        )
+
+    audit("other-session-entry", session_id=session_id)
+    listing = await harness.control.audit_service.execute(
+        task_id=task_id, event="other-session-entry"
+    )
+    attached_entry_id = str(listing.entries[0]["id"])
+    other = await harness.control.session_coordinator.start_session(
+        workdir=str(tmp_path), executor_id=harness.executor_id
+    )
+    assert isinstance(other, dict)
+    with pytest.raises(ValueError, match="does not belong to session"):
+        await harness.control.audit_service.execute(
+            session_id=str(other["session_id"]), entry_id=attached_entry_id
+        )
+
+
+@pytest.mark.asyncio
 async def test_task_audit_rejects_unattached_session_filter(tmp_path):
     task_id, _session_id, harness = await _task_session(tmp_path)
     other = await harness.control.session_coordinator.start_session(

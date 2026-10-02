@@ -108,6 +108,26 @@ async def test_session_attachment_cannot_be_rebound(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_control_session_task_attachment_is_idempotent_and_not_lifecycle_mutable(
+    tmp_path, monkeypatch
+):
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    state = harness.control.control_state
+    current = state.snapshot_sessions()[session_id]
+
+    assert state.attach_session_task(session_id, task_id) == current
+
+    other = await harness.control.task_service.create_task(label="other")
+    rebound = current.model_copy(update={"task_id": other.task_id})
+    with pytest.raises(
+        ValueError, match="cannot change through lifecycle updates"
+    ):
+        state.put_session(rebound)
+
+
+@pytest.mark.asyncio
 async def test_task_progress_plan_and_todos_share_one_revisioned_document(
     tmp_path, monkeypatch
 ):

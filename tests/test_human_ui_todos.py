@@ -84,6 +84,24 @@ async def test_todos_require_explicit_task_and_return_metadata(
 
 
 @pytest.mark.asyncio
+async def test_session_snapshot_projects_attached_task(tmp_path, monkeypatch):
+    client, _harness, task_id, session_id = await _client_with_task(
+        monkeypatch, tmp_path
+    )
+
+    response = client.get(
+        "/api/ui/sessions/snapshot", params={"session_id": session_id}
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["session_id"] == session_id
+    assert data["session"]["task_id"] == task_id
+    assert data["task_id"] == task_id
+    assert data["task"]["task_id"] == task_id
+
+
+@pytest.mark.asyncio
 async def test_todos_write_read_and_stale_revision_conflict(
     tmp_path, monkeypatch
 ):

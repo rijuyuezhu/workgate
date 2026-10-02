@@ -551,6 +551,95 @@ async def test_http_task_matches_mcp_and_progress_mutates_it(
     assert http_payload["progress"]["summary"] == "Reported over HTTP"
 
 
+@pytest.mark.asyncio
+async def test_unrouted_todo_registry_stubs_fail_closed():
+    from workgate.tools.registry.todo import read_todos, write_todos
+
+    with pytest.raises(RuntimeError, match="requires control routing"):
+        await read_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA")
+    with pytest.raises(RuntimeError, match="requires control routing"):
+        await write_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA", [], 0)
+
+
+def test_http_task_router_validates_actions_and_covers_lifecycle(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    client = TestClient(_build_paired_surface_http_app())
+
+    invalid_create = client.post(
+        "/tools/task",
+        json={
+            "action": "create",
+            "task_id": "task_AAAAAAAAAAAAAAAAAAAAAA",
+        },
+    )
+    invalid_create_report = client.post(
+        "/tools/task", json={"action": "create", "summary": "not allowed"}
+    )
+    missing_task = client.post("/tools/task", json={"action": "get"})
+    assert invalid_create.status_code == 400
+    assert invalid_create_report.status_code == 400
+    assert missing_task.status_code == 400
+
+    task_id = client.post("/tools/task", json={"action": "create"}).json()[
+        "task_id"
+    ]
+    invalid_get = client.post(
+        "/tools/task",
+        json={"action": "get", "task_id": task_id, "summary": "not allowed"},
+    )
+    missing_revision = client.post(
+        "/tools/task", json={"action": "block", "task_id": task_id}
+    )
+    invalid_block = client.post(
+        "/tools/task",
+        json={
+            "action": "block",
+            "task_id": task_id,
+            "expected_revision": 0,
+            "label": "not allowed",
+        },
+    )
+    assert invalid_get.status_code == 400
+    assert missing_revision.status_code == 400
+    assert invalid_block.status_code == 400
+
+    blocked = client.post(
+        "/tools/task",
+        json={"action": "block", "task_id": task_id, "expected_revision": 0},
+    )
+    resumed = client.post(
+        "/tools/task",
+        json={"action": "resume", "task_id": task_id, "expected_revision": 1},
+    )
+    finished = client.post(
+        "/tools/task",
+        json={"action": "finish", "task_id": task_id, "expected_revision": 2},
+    )
+    assert blocked.status_code == 200
+    assert resumed.status_code == 200
+    assert finished.status_code == 200
+
+    rejected_session = client.post(
+        "/tools/session_start", json={"workdir": ".", "task_id": task_id}
+    )
+    assert rejected_session.status_code == 400
+    assert "completed task" in rejected_session.json()["message"]
+
+    deleted = client.post(
+        "/tools/task",
+        json={"action": "delete", "task_id": task_id, "expected_revision": 3},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+
 def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
