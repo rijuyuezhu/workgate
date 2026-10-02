@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from ..app_paths import app_paths, ensure_private_directory
 from ..persistence import StateLayout
@@ -34,6 +34,7 @@ _PositiveInt = Annotated[int, Field(gt=0)]
 _NonNegativeInt = Annotated[int, Field(ge=0)]
 _PositiveFloat = Annotated[float, Field(gt=0)]
 _Port = Annotated[int, Field(ge=1, le=65535)]
+_StringList = Annotated[list[str], NoDecode]
 
 
 def normalize_ui_path(value: str) -> str:
@@ -156,6 +157,10 @@ class Settings(BaseSettings):
     """Default timeout for bounded shell command calls in seconds."""
     run_shell_max_timeout_s: _PositiveInt = 120
     """Maximum timeout accepted by bounded shell command calls in seconds."""
+    subprocess_env_blocklist: _StringList = Field(default_factory=list)
+    """Additional exact environment variable names withheld from user-launched subprocesses."""
+    subprocess_env_blocked_prefixes: _StringList = Field(default_factory=list)
+    """Additional environment variable prefixes withheld from user-launched subprocesses."""
     max_output_bytes: _PositiveInt = 200_000
     """Command output limit in bytes."""
     max_job_log_bytes: _PositiveInt = 10_000_000
@@ -344,6 +349,34 @@ class Settings(BaseSettings):
     def validate_ui_path(cls, value: str) -> str:
         """Reject root, traversal, and service-reserved Human UI paths."""
         return normalize_ui_path(value)
+
+    @field_validator(
+        "subprocess_env_blocklist",
+        "subprocess_env_blocked_prefixes",
+        mode="before",
+    )
+    @classmethod
+    def normalize_subprocess_env_filters(cls, value: Any) -> list[str]:
+        """Normalize comma-separated or list environment filter entries."""
+        if value is None or value == "":
+            return []
+        entries = value.split(",") if isinstance(value, str) else value
+        if not isinstance(entries, list | tuple):
+            raise ValueError(
+                "subprocess environment filters must be a list or comma-separated string"
+            )
+        normalized: list[str] = []
+        for entry in entries:
+            name = str(entry).strip()
+            if not name:
+                continue
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                raise ValueError(
+                    "subprocess environment filter entries must be environment variable names or prefixes"
+                )
+            if name not in normalized:
+                normalized.append(name)
+        return normalized
 
     @field_validator("log_level", mode="before")
     @classmethod

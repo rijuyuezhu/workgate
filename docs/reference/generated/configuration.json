@@ -1461,6 +1461,46 @@
         ],
         [
           {
+            "code": "subprocess_env_blocklist"
+          },
+          {
+            "lines": [
+              {
+                "code": "--subprocess-env-blocklist"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_SUBPROCESS_ENV_BLOCKLIST"
+          },
+          "CSV or YAML list",
+          {
+            "code": "unset"
+          },
+          "Additional exact environment variable names withheld from user-launched subprocesses."
+        ],
+        [
+          {
+            "code": "subprocess_env_blocked_prefixes"
+          },
+          {
+            "lines": [
+              {
+                "code": "--subprocess-env-blocked-prefixes"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_SUBPROCESS_ENV_BLOCKED_PREFIXES"
+          },
+          "CSV or YAML list",
+          {
+            "code": "unset"
+          },
+          "Additional environment variable prefixes withheld from user-launched subprocesses."
+        ],
+        [
+          {
             "code": "max_tmux_sessions"
           },
           {
@@ -2763,6 +2803,32 @@
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--subprocess-env-blocklist",
+      "default": [],
+      "default_display": "unset",
+      "description": "Additional exact environment variable names withheld from user-launched subprocesses.",
+      "env": "WORKGATE_SUBPROCESS_ENV_BLOCKLIST",
+      "name": "subprocess_env_blocklist",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "CSV or YAML list",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--subprocess-env-blocked-prefixes",
+      "default": [],
+      "default_display": "unset",
+      "description": "Additional environment variable prefixes withheld from user-launched subprocesses.",
+      "env": "WORKGATE_SUBPROCESS_ENV_BLOCKED_PREFIXES",
+      "name": "subprocess_env_blocked_prefixes",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "CSV or YAML list",
       "unset_cli": null
     },
     {

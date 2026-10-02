@@ -328,3 +328,36 @@ async def test_shell_execution_is_exposed_in_mcp(tmp_path, monkeypatch):
     assert payload["mode"] == "command"
     assert payload["cwd"] == str(tmp_path)
     assert payload["result"]["stdout"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_run_python_code_applies_configured_environment_filters(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("PY_SECRET", "hidden")
+    monkeypatch.setenv("KEEP_VISIBLE", "visible")
+    clear_settings_cache()
+    settings = get_settings().model_copy(
+        update={"subprocess_env_blocklist": ["PY_SECRET"]}
+    )
+    config = resolve_executor_config(settings)
+    store = get_test_tool_session_store()
+    store.clear()
+    session_id = "sess_0000000000000000000002"
+    store.create_session(session_id=session_id, workdir=tmp_path.resolve())
+
+    result = await shell_ops.run_python_code_execute(
+        config,
+        store,
+        session_id,
+        (
+            "import os; "
+            "print(os.environ.get('PY_SECRET', '<missing>') + ':' + "
+            "os.environ['KEEP_VISIBLE'], end='')"
+        ),
+    )
+
+    assert result.mode == "command"
+    assert result.result["ok"] is True, result.result
+    assert result.result["stdout"] == "<missing>:visible"

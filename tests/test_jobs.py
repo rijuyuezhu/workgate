@@ -3057,3 +3057,70 @@ async def test_managed_actions_do_not_query_shell_inventory(
         completed = await _test_job_tail_execute(session_id, started.job_id)
     assert completed.job.status == "succeeded"
     assert completed.job.result == {"value": 9}
+
+
+def test_job_runner_applies_configured_environment_filters(
+    tmp_path, monkeypatch
+):
+    _configure_job_state(tmp_path, monkeypatch)
+    monkeypatch.setenv("EXACT_SECRET", "hidden")
+    monkeypatch.setenv("PRIVATE_TOKEN", "hidden")
+    monkeypatch.setenv("KEEP_VISIBLE", "visible")
+    paths = _attempt_paths_untyped("job_env_filter", 1)
+    command = (
+        "if defined EXACT_SECRET (exit /b 21) else if defined PRIVATE_TOKEN "
+        '(exit /b 22) else if not "%KEEP_VISIBLE%"=="visible" '
+        "(exit /b 23) else echo filtered"
+        if os.name == "nt"
+        else python_shell_command(
+            "import os; "
+            "print('|'.join(os.environ.get(name, '<missing>') for name in "
+            "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
+        )
+    )
+    paths["command"].write_text(
+        command,
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(
+        command_file=str(paths["command"]),
+        log_file=str(paths["log"]),
+        status_file=str(paths["status"]),
+        cwd=str(tmp_path),
+        shell=os.environ.get("COMSPEC", "cmd.exe")
+        if os.name == "nt"
+        else "/bin/bash",
+        max_log_bytes=1024,
+        blocked_env_name=["EXACT_SECRET"],
+        blocked_env_prefix=["PRIVATE_"],
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        job_runner.run_job_runner_from_args(args)
+
+    assert exit_info.value.code == 0
+    assert paths["log"].read_text(encoding="utf-8").strip() == (
+        "filtered" if os.name == "nt" else "<missing>|<missing>|visible"
+    )
+
+
+def test_job_runner_argv_carries_executor_environment_policy(tmp_path):
+    config = resolve_executor_config(
+        get_settings().model_copy(
+            update={
+                "workspace_root": tmp_path,
+                "subprocess_env_blocklist": ["EXACT_SECRET"],
+                "subprocess_env_blocked_prefixes": ["PRIVATE_"],
+            }
+        )
+    )
+    paths = _attempt_paths_untyped("job_policy_args", 1)
+
+    argv = job_lifecycle._runner_argv(
+        config,
+        cast(Any, paths),
+        tmp_path,
+    )
+
+    assert argv[argv.index("--blocked-env-name") + 1] == "EXACT_SECRET"
+    assert argv[argv.index("--blocked-env-prefix") + 1] == "PRIVATE_"

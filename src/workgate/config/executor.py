@@ -18,6 +18,8 @@ class ExecutorConfig(SharedRoleConfig):
     max_tmux_sessions: int
     run_shell_default_timeout_s: int
     run_shell_max_timeout_s: int
+    subprocess_env_blocklist: tuple[str, ...]
+    subprocess_env_blocked_prefixes: tuple[str, ...]
     max_output_bytes: int
     max_file_read_bytes: int
     max_session_snapshots: int
@@ -74,6 +76,10 @@ def resolve_executor_config(settings: Settings) -> ExecutorConfig:
         ui_terminal_max_connections=settings.ui_terminal_max_connections,
         run_shell_default_timeout_s=settings.run_shell_default_timeout_s,
         run_shell_max_timeout_s=settings.run_shell_max_timeout_s,
+        subprocess_env_blocklist=tuple(settings.subprocess_env_blocklist),
+        subprocess_env_blocked_prefixes=tuple(
+            settings.subprocess_env_blocked_prefixes
+        ),
         max_output_bytes=settings.max_output_bytes,
         max_job_log_bytes=settings.max_job_log_bytes,
         max_jobs=settings.max_jobs,

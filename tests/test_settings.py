@@ -312,3 +312,63 @@ def test_numeric_validation_applies_to_yaml_and_environment(
     monkeypatch.setenv("WORKGATE_MCP_MAX_SESSIONS", "0")
     with pytest.raises(ValueError, match="mcp_max_sessions"):
         load_settings(default_config_path=tmp_path / "missing.yaml")
+
+
+def test_subprocess_env_filters_load_from_yaml_and_env(monkeypatch, tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "subprocess_env_blocklist:\n"
+        "  - YAML_SECRET\n"
+        "subprocess_env_blocked_prefixes:\n"
+        "  - YAML_PRIVATE_\n",
+        encoding="utf-8",
+    )
+
+    from_yaml = load_settings(config)
+    assert from_yaml.subprocess_env_blocklist == ["YAML_SECRET"]
+    assert from_yaml.subprocess_env_blocked_prefixes == ["YAML_PRIVATE_"]
+
+    monkeypatch.setenv(
+        "WORKGATE_SUBPROCESS_ENV_BLOCKLIST", " ENV_SECRET ,OTHER_SECRET "
+    )
+    monkeypatch.setenv(
+        "WORKGATE_SUBPROCESS_ENV_BLOCKED_PREFIXES", "ENV_PRIVATE_,TOKEN_"
+    )
+    from_env = load_settings(config)
+    assert from_env.subprocess_env_blocklist == ["ENV_SECRET", "OTHER_SECRET"]
+    assert from_env.subprocess_env_blocked_prefixes == [
+        "ENV_PRIVATE_",
+        "TOKEN_",
+    ]
+
+
+def test_subprocess_env_filters_reject_invalid_entries():
+    with pytest.raises(ValueError, match="environment filter entries"):
+        Settings.model_validate({"subprocess_env_blocklist": ["BAD-NAME"]})
+
+
+def test_subprocess_env_filters_accept_empty_values():
+    settings = Settings.model_validate(
+        {
+            "subprocess_env_blocklist": "",
+            "subprocess_env_blocked_prefixes": None,
+        }
+    )
+
+    assert settings.subprocess_env_blocklist == []
+    assert settings.subprocess_env_blocked_prefixes == []
+
+
+def test_subprocess_env_filters_normalize_edge_cases():
+    settings = Settings.model_validate(
+        {
+            "subprocess_env_blocklist": [" SECRET ", "SECRET", ""],
+            "subprocess_env_blocked_prefixes": ["PRIVATE_"],
+        }
+    )
+
+    assert settings.subprocess_env_blocklist == ["SECRET"]
+    assert settings.subprocess_env_blocked_prefixes == ["PRIVATE_"]
+
+    with pytest.raises(ValueError, match="must be a list"):
+        Settings.model_validate({"subprocess_env_blocklist": 123})

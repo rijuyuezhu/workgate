@@ -161,6 +161,10 @@ max_transfer_archive_entries: 100000
 max_transfer_unpacked_bytes: 10000000000
 # Concurrent command limit.
 max_concurrent_commands: 4
+# Additional exact environment variable names withheld from user-launched subprocesses.
+subprocess_env_blocklist: []
+# Additional environment variable prefixes withheld from user-launched subprocesses.
+subprocess_env_blocked_prefixes: []
 # Persistent shell limit.
 max_tmux_sessions: 16
 # Enable download links created by protected tools.

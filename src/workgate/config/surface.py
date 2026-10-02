@@ -374,6 +374,16 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "max_concurrent_commands", "Safety and resource limits", metavar="COUNT"
     ),
     SettingSpec(
+        "subprocess_env_blocklist",
+        "Safety and resource limits",
+        metavar="NAMES",
+    ),
+    SettingSpec(
+        "subprocess_env_blocked_prefixes",
+        "Safety and resource limits",
+        metavar="PREFIXES",
+    ),
+    SettingSpec(
         "max_tmux_sessions", "Safety and resource limits", metavar="COUNT"
     ),
     SettingSpec("file_download_enabled", "Safety and resource limits"),
@@ -468,6 +478,8 @@ def default_to_string(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, PurePath):
         return value.as_posix()
+    if isinstance(value, list):
+        return ",".join(str(item) for item in value)
     return str(value)
 
 
