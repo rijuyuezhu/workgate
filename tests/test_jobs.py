@@ -3067,12 +3067,19 @@ def test_job_runner_applies_configured_environment_filters(
     monkeypatch.setenv("PRIVATE_TOKEN", "hidden")
     monkeypatch.setenv("KEEP_VISIBLE", "visible")
     paths = _attempt_paths_untyped("job_env_filter", 1)
-    paths["command"].write_text(
-        python_shell_command(
+    command = (
+        "if defined EXACT_SECRET (exit /b 21) else if defined PRIVATE_TOKEN "
+        '(exit /b 22) else if not "%KEEP_VISIBLE%"=="visible" '
+        "(exit /b 23) else echo filtered"
+        if os.name == "nt"
+        else python_shell_command(
             "import os; "
             "print('|'.join(os.environ.get(name, '<missing>') for name in "
             "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
-        ),
+        )
+    )
+    paths["command"].write_text(
+        command,
         encoding="utf-8",
     )
     args = SimpleNamespace(
@@ -3093,7 +3100,7 @@ def test_job_runner_applies_configured_environment_filters(
 
     assert exit_info.value.code == 0
     assert paths["log"].read_text(encoding="utf-8").strip() == (
-        "<missing>|<missing>|visible"
+        "filtered" if os.name == "nt" else "<missing>|<missing>|visible"
     )
 
 
