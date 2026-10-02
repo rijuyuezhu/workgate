@@ -38,7 +38,6 @@ from ..schemas.result_models.shell import (
     StartPersistentShellOutput,
 )
 from ..utils.processes import (
-    blocked_user_subprocess_env_names,
     new_process_group_kwargs,
     user_subprocess_env,
     user_subprocess_env_name_blocked,
@@ -796,80 +795,6 @@ def _use_conpty_persistent_shell_backend() -> bool:
     return os.name == "nt"
 
 
-def _tmux_environment_names(output: str) -> set[str]:
-    """Return valid variable names from tmux show-environment output."""
-    names: set[str] = set()
-    for line in output.splitlines():
-        if not line:
-            continue
-        name = line[1:] if line.startswith("-") else line.split("=", 1)[0]
-        if _ENV_NAME_RE.fullmatch(name):
-            names.add(name)
-    return names
-
-
-async def _tmux_blocked_environment_names(
-    config: ExecutorConfig,
-) -> tuple[str, ...]:
-    """Find blocked names retained by the existing tmux server."""
-    result = await tmux(config, ["show-environment", "-g"], timeout_s=5)
-    if not result.ok:
-        if _tmux_server_absent(result):
-            return ()
-        raise RuntimeError(result.stderr or result.stdout)
-    return blocked_user_subprocess_env_names(
-        _tmux_environment_names(result.stdout),
-        blocked_names=config.subprocess_env_blocklist,
-        blocked_prefixes=config.subprocess_env_blocked_prefixes,
-    )
-
-
-async def _tmux_default_shell(config: ExecutorConfig) -> str:
-    """Return the existing tmux server default shell for wrapper parity."""
-    result = await tmux(
-        config, ["show-options", "-gv", "default-shell"], timeout_s=5
-    )
-    if not result.ok:
-        raise RuntimeError(result.stderr or result.stdout)
-    shell = result.stdout.strip()
-    if not shell:
-        raise RuntimeError("tmux default-shell is empty")
-    return shell
-
-
-async def _tmux_default_command(config: ExecutorConfig) -> str:
-    """Return the existing tmux server default command."""
-    result = await tmux(
-        config, ["show-options", "-gv", "default-command"], timeout_s=5
-    )
-    if not result.ok:
-        raise RuntimeError(result.stderr or result.stdout)
-    return result.stdout.rstrip("\n")
-
-
-def _tmux_sanitized_shell_argv(
-    configured_shell: str,
-    command: str | None,
-    blocked_names: tuple[str, ...],
-) -> list[str]:
-    """Wrap one tmux user process only when inherited blocked names exist."""
-    target = (
-        [configured_shell, "-c", command]
-        if command is not None
-        else [configured_shell]
-    )
-    if not blocked_names:
-        return target
-    unset_names = " ".join(shlex.quote(name) for name in blocked_names)
-    return [
-        "/bin/sh",
-        "-c",
-        f'unset {unset_names}; exec "$@"',
-        "workgate-env",
-        *target,
-    ]
-
-
 async def _cleanup_failed_tmux_start(
     config: ExecutorConfig, shell_id: str
 ) -> None:
@@ -973,18 +898,7 @@ async def _start_persistent_shell_locked(
         "-c",
         str(resolved_cwd),
     ]
-    blocked_env_names = await _tmux_blocked_environment_names(config)
-    if blocked_env_names:
-        tmux_default_shell = await _tmux_default_shell(config)
-        tmux_command = command
-        if tmux_command is None:
-            tmux_command = await _tmux_default_command(config) or None
-        cmd.extend(
-            _tmux_sanitized_shell_argv(
-                tmux_default_shell, tmux_command, blocked_env_names
-            )
-        )
-    elif command is not None:
+    if command is not None:
         cmd.append(command)
     if owner_session_id is not None:
         cmd.extend(

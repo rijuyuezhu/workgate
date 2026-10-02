@@ -3,7 +3,6 @@
 import os
 import subprocess
 import sys
-from collections.abc import Iterable
 from typing import Any
 
 
@@ -45,26 +44,6 @@ def _restore_or_remove_loader_var(env: dict[str, str], name: str) -> None:
         env[name] = original_value
     else:
         env.pop(name, None)
-
-
-def blocked_user_subprocess_env_names(
-    names: Iterable[str],
-    *,
-    blocked_names: tuple[str, ...] = (),
-    blocked_prefixes: tuple[str, ...] = (),
-) -> tuple[str, ...]:
-    """Return concrete environment names blocked by the effective policy."""
-    return tuple(
-        sorted(
-            name
-            for name in set(names)
-            if user_subprocess_env_name_blocked(
-                name,
-                blocked_names=blocked_names,
-                blocked_prefixes=blocked_prefixes,
-            )
-        )
-    )
 
 
 def user_subprocess_env(

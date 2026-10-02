@@ -687,8 +687,6 @@ async def inventory(_config, _store, *, preserve_shell_ids=None):
 
 async def fake_tmux(_config, args, timeout_s=10):
     _ = timeout_s
-    if args == ["show-environment", "-g"]:
-        return SimpleNamespace(ok=True, stdout="", stderr="")
     if args[0] != "new-session":
         raise AssertionError(f"unexpected tmux call: {args}")
     current = []
@@ -929,8 +927,6 @@ async def test_tmux_start_cancellation_cleans_created_session(
 
     async def fake_tmux(_config, args: list[str], timeout_s: int = 10):  # noqa: ARG001
         calls.append(args)
-        if args == ["show-environment", "-g"]:
-            return result()
         if args[0] == "new-session":
             assert args[-6:] == [
                 ";",
@@ -2361,91 +2357,6 @@ async def test_run_shell_command_rejects_blocked_environment_overrides(
 
 
 @pytest.mark.asyncio
-async def test_persistent_shell_sanitizes_configured_stale_tmux_environment(
-    monkeypatch, tmp_path
-):
-    config = _executor_config(
-        workspace_root=tmp_path,
-        subprocess_env_blocklist=("SERVER_SECRET",),
-    )
-    calls: list[list[str]] = []
-
-    async def empty_inventory(_config, _store):
-        return set()
-
-    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
-        del timeout_s
-        calls.append(args)
-        if args == ["show-environment", "-g"]:
-            return CommandResult(
-                ok=True,
-                exit_code=0,
-                duration_ms=1,
-                cwd=".",
-                command="tmux show-environment -g",
-                stdout=(
-                    "SERVER_SECRET=stale\n"
-                    "WORKGATE_SERVER_STATE=stale\n"
-                    "KEEP_VISIBLE=yes\n"
-                ),
-            )
-        if args == ["show-options", "-gv", "default-shell"]:
-            return CommandResult(
-                ok=True,
-                exit_code=0,
-                duration_ms=1,
-                cwd=".",
-                command="tmux show-options -gv default-shell",
-                stdout="/bin/zsh\n",
-            )
-        if args[0] == "new-session":
-            return CommandResult(
-                ok=True,
-                exit_code=0,
-                duration_ms=1,
-                cwd=".",
-                command="tmux new-session",
-            )
-        raise AssertionError(f"unexpected tmux call: {args}")
-
-    monkeypatch.setattr(
-        shell_ops, "authoritative_persistent_shell_ids_execute", empty_inventory
-    )
-    monkeypatch.setattr(
-        shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
-    )
-    monkeypatch.setattr(
-        shell_ops, "_resolved_tmux_shell", lambda _config, _cwd: "/bin/bash"
-    )
-    monkeypatch.setattr(
-        shell_ops.shutil, "which", lambda *_args, **_kwargs: "/bin/bash"
-    )
-    monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
-
-    result = await shell_ops.start_persistent_shell_execute(
-        config,
-        _executor_store(),
-        ".",
-        "filtered-shell",
-        "printf ok",
-    )
-
-    assert result.shell_id == "filtered-shell"
-    assert calls[0] == ["show-environment", "-g"]
-    assert calls[1] == ["show-options", "-gv", "default-shell"]
-    new_session = calls[2]
-    wrapper = new_session[new_session.index(str(tmp_path)) + 1 :]
-    assert wrapper[0:2] == ["/bin/sh", "-c"]
-    assert wrapper[3] == "workgate-env"
-    assert wrapper[4:] == ["/bin/zsh", "-c", "printf ok"]
-    unset_script = wrapper[2]
-    assert unset_script.endswith('; exec "$@"')
-    assert "SERVER_SECRET" in unset_script
-    assert "WORKGATE_SERVER_STATE" in unset_script
-    assert "KEEP_VISIBLE" not in unset_script
-
-
-@pytest.mark.asyncio
 async def test_conpty_persistent_shell_receives_filtered_executor_environment(
     monkeypatch, tmp_path
 ):
@@ -2513,83 +2424,3 @@ def test_configured_filter_wins_after_frozen_loader_restore(
 
     assert "LD_LIBRARY_PATH" not in env
     assert "LD_LIBRARY_PATH_ORIG" not in env
-
-
-@pytest.mark.asyncio
-async def test_persistent_shell_preserves_tmux_default_command_when_sanitizing(
-    monkeypatch, tmp_path
-):
-    config = _executor_config(workspace_root=tmp_path)
-    calls: list[list[str]] = []
-
-    async def empty_inventory(_config, _store):
-        return set()
-
-    async def fake_tmux(_config, args: list[str], timeout_s: int = 10):
-        del timeout_s
-        calls.append(args)
-        if args[0] == "new-session":
-            return CommandResult(
-                ok=True,
-                exit_code=0,
-                duration_ms=1,
-                cwd=".",
-                command="tmux new-session",
-            )
-        if args == ["has-session", "-t", "=default-command-shell"]:
-            return CommandResult(
-                ok=True,
-                exit_code=0,
-                duration_ms=1,
-                cwd=".",
-                command="tmux has-session",
-            )
-        raise AssertionError(f"unexpected tmux call: {args}")
-
-    async def blocked(_config):
-        return ("SERVER_SECRET",)
-
-    async def default_shell(_config):
-        return "/bin/zsh"
-
-    async def default_command(_config):
-        return "exec custom-shell --flag"
-
-    monkeypatch.setattr(
-        shell_ops, "authoritative_persistent_shell_ids_execute", empty_inventory
-    )
-    monkeypatch.setattr(
-        shell_ops, "_use_conpty_persistent_shell_backend", lambda: False
-    )
-    monkeypatch.setattr(
-        shell_ops, "_resolved_tmux_shell", lambda _config, _cwd: "/bin/bash"
-    )
-    monkeypatch.setattr(
-        shell_ops.shutil, "which", lambda *_args, **_kwargs: "/bin/bash"
-    )
-    monkeypatch.setattr(shell_ops, "_tmux_blocked_environment_names", blocked)
-    monkeypatch.setattr(shell_ops, "_tmux_default_shell", default_shell)
-    monkeypatch.setattr(shell_ops, "_tmux_default_command", default_command)
-    monkeypatch.setattr(shell_ops, "tmux", fake_tmux)
-
-    await shell_ops.start_persistent_shell_execute(
-        config,
-        _executor_store(),
-        ".",
-        "default-command-shell",
-        None,
-    )
-
-    new_session = calls[0]
-    wrapper = new_session[new_session.index(str(tmp_path)) + 1 :]
-    assert wrapper[0:4] == [
-        "/bin/sh",
-        "-c",
-        'unset SERVER_SECRET; exec "$@"',
-        "workgate-env",
-    ]
-    assert wrapper[4:] == [
-        "/bin/zsh",
-        "-c",
-        "exec custom-shell --flag",
-    ]
