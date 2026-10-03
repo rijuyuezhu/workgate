@@ -171,11 +171,13 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_pending_attempts=config.executor_pairing_max_pending,
         ttl_s=config.executor_pairing_ttl_s,
     )
+    task_service = ControlTaskService(control_state, state_store, config)
     session_coordinator = ControlSessionCoordinator(
         control_state,
         executor_transport,
         max_agent_sessions=config.max_agent_sessions,
         agent_session_retention_s=config.agent_session_retention_s,
+        task_session_admitter=task_service.admit_session_attachment,
     )
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
@@ -207,7 +209,6 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
-    task_service = ControlTaskService(control_state, state_store, config)
     audit_service = ControlAuditService(task_service, control_state)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,

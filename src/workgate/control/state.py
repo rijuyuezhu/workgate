@@ -175,6 +175,35 @@ class ControlState:
             self._write_sessions(candidate)
             self._sessions = candidate
 
+    def update_session(
+        self, session_id: str, **changes: Any
+    ) -> ControlSessionRecord:
+        """Patch lifecycle fields while preserving immutable session bindings."""
+        allowed = {
+            "status",
+            "requested_workdir",
+            "resolved_workdir_display",
+            "updated_at",
+        }
+        unsupported = set(changes) - allowed
+        if unsupported:
+            raise ValueError(
+                "unsupported session lifecycle field(s): "
+                + ", ".join(sorted(unsupported))
+            )
+        with self._lock:
+            self._require_started()
+            current = self._sessions.get(session_id)
+            if current is None:
+                raise KeyError(session_id)
+            updated = ControlSessionRecord.model_validate(
+                current.model_copy(update=changes).model_dump()
+            )
+            candidate = {**self._sessions, session_id: updated}
+            self._write_sessions(candidate)
+            self._sessions = candidate
+            return updated
+
     def attach_session_task(
         self, session_id: str, task_id: str
     ) -> ControlSessionRecord:

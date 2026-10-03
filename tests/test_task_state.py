@@ -6,8 +6,15 @@ import pytest
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.runtime import build_control_runtime
+from workgate.control.state import ExecutorTrustRecord
 from workgate.control.task_state import TaskRevisionConflictError
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
+from workgate.protocol.credentials import (
+    executor_credential_verifier,
+    new_executor_credential,
+)
+from workgate.protocol.executor import SESSION_CREATE_OP
+from workgate.protocol.ids import new_executor_id
 
 
 def _configure(monkeypatch, tmp_path) -> None:
@@ -86,6 +93,79 @@ async def test_multiple_execution_sessions_attach_to_one_task(
 
 
 @pytest.mark.asyncio
+async def test_one_task_can_span_distinct_executors_and_workdirs(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    task = await harness.control.task_service.create_task(
+        label="cross-executor"
+    )
+    second_executor = str(new_executor_id())
+    credential = new_executor_credential()
+    harness.control.control_state.put_executor(
+        ExecutorTrustRecord(
+            executor_id=second_executor,
+            name="second-executor",
+            credential_verifier=executor_credential_verifier(credential),
+            created_at=2.0,
+        )
+    )
+
+    transport = harness.control.executor_transport
+    original_call = harness.call
+    original_inventory = harness.inventory
+
+    async def is_online(executor_id: str) -> bool:
+        return executor_id in {harness.executor_id, second_executor}
+
+    async def inventory(executor_id: str):
+        if executor_id not in {harness.executor_id, second_executor}:
+            return None
+        return await original_inventory(harness.executor_id)
+
+    async def call(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        assert executor_id in {harness.executor_id, second_executor}
+        return await original_call(
+            harness.executor_id,
+            op,
+            args,
+            session_id=session_id,
+            timeout_s=timeout_s,
+        )
+
+    monkeypatch.setattr(transport, "is_online", is_online)
+    monkeypatch.setattr(transport, "inventory", inventory)
+    monkeypatch.setattr(transport, "call", call)
+
+    first = await harness.control.session_coordinator.start_session(
+        workdir="project-a",
+        executor_id=harness.executor_id,
+        task_id=task.task_id,
+    )
+    second = await harness.control.session_coordinator.start_session(
+        workdir="project-b",
+        executor_id=second_executor,
+        task_id=task.task_id,
+    )
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+
+    records = harness.control.control_state.snapshot_sessions()
+    first_record = records[str(first["session_id"])]
+    second_record = records[str(second["session_id"])]
+    assert str(first_record.executor_id) == harness.executor_id
+    assert str(second_record.executor_id) == second_executor
+    assert (
+        first_record.resolved_workdir_display
+        != second_record.resolved_workdir_display
+    )
+    current = await harness.control.task_service.read_task(task.task_id)
+    assert current.session_ids == [first["session_id"], second["session_id"]]
+
+
+@pytest.mark.asyncio
 async def test_session_attachment_cannot_be_rebound(tmp_path, monkeypatch):
     _settings, harness, task_id, session_id = await _task_with_session(
         monkeypatch, tmp_path
@@ -125,6 +205,110 @@ async def test_control_session_task_attachment_is_idempotent_and_not_lifecycle_m
         ValueError, match="cannot change through lifecycle updates"
     ):
         state.put_session(rebound)
+
+
+@pytest.mark.asyncio
+async def test_session_start_does_not_attach_task_deleted_during_executor_selection(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    coordinator = harness.control.session_coordinator
+    task = await service.create_task(label="delete during selection")
+    selected = asyncio.Event()
+    release = asyncio.Event()
+    original_select = coordinator.select_executor
+
+    async def delayed_select(executor_id=None):
+        result = await original_select(executor_id)
+        selected.set()
+        await release.wait()
+        return result
+
+    monkeypatch.setattr(coordinator, "select_executor", delayed_select)
+    starting = asyncio.create_task(
+        coordinator.start_session(
+            workdir="project-a",
+            executor_id=harness.executor_id,
+            task_id=task.task_id,
+        )
+    )
+    await selected.wait()
+    cancelled = await service.cancel_task(task.task_id, expected_revision=0)
+    await service.delete_task(
+        task.task_id, expected_revision=cancelled.revision
+    )
+    release.set()
+
+    with pytest.raises(ValueError, match="unknown task_id"):
+        await starting
+    assert all(
+        str(record.task_id or "") != task.task_id
+        for record in harness.control.control_state.snapshot_sessions().values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_delete_during_session_create_keeps_session_detached(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    coordinator = harness.control.session_coordinator
+    task = await service.create_task(label="delete during create")
+    create_sent = asyncio.Event()
+    release = asyncio.Event()
+    original_call = harness.control.executor_transport.call
+
+    async def delayed_call(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == SESSION_CREATE_OP:
+            create_sent.set()
+            await release.wait()
+        return await original_call(
+            executor_id,
+            op,
+            args,
+            session_id=session_id,
+            timeout_s=timeout_s,
+        )
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", delayed_call
+    )
+    starting = asyncio.create_task(
+        coordinator.start_session(
+            workdir="project-a",
+            executor_id=harness.executor_id,
+            task_id=task.task_id,
+        )
+    )
+    await create_sent.wait()
+    attached = [
+        record
+        for record in harness.control.control_state.snapshot_sessions().values()
+        if str(record.task_id or "") == task.task_id
+    ]
+    assert len(attached) == 1
+    session_id = str(attached[0].session_id)
+
+    cancelled = await service.cancel_task(task.task_id, expected_revision=0)
+    await service.delete_task(
+        task.task_id, expected_revision=cancelled.revision
+    )
+    assert (
+        harness.control.control_state.snapshot_sessions()[session_id].task_id
+        is None
+    )
+
+    release.set()
+    result = await starting
+    current = harness.control.control_state.snapshot_sessions()[session_id]
+    assert current.status == "active"
+    assert current.task_id is None
+    assert isinstance(result, dict)
+    assert result.get("task_id") is None
 
 
 @pytest.mark.asyncio
@@ -297,6 +481,36 @@ async def test_task_principal_ownership_is_enforced(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_attachment_enforces_task_principal_ownership(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    token = bind_oauth_claims({"sub": "alice"})
+    try:
+        task = await harness.control.task_service.create_task(
+            label="alice task"
+        )
+    finally:
+        reset_oauth_claims(token)
+
+    token = bind_oauth_claims({"sub": "bob"})
+    try:
+        with pytest.raises(PermissionError, match="different principal"):
+            await harness.control.session_coordinator.start_session(
+                workdir="project-a",
+                executor_id=harness.executor_id,
+                task_id=task.task_id,
+            )
+    finally:
+        reset_oauth_claims(token)
+
+    assert all(
+        str(record.task_id or "") != task.task_id
+        for record in harness.control.control_state.snapshot_sessions().values()
+    )
+
+
+@pytest.mark.asyncio
 async def test_task_history_prunes_oldest_terminal_task_at_bound(
     tmp_path, monkeypatch
 ):
@@ -463,6 +677,43 @@ async def test_delete_terminal_task_clears_session_attachments(
 
 
 @pytest.mark.asyncio
+async def test_task_delete_storage_failure_never_leaves_dangling_session_reference(
+    tmp_path, monkeypatch
+):
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    service = harness.control.task_service
+    cancelled = await service.cancel_task(task_id, expected_revision=0)
+    store = harness.control.state_store
+    task_path = store.layout.control_task_path(task_id)
+    real_remove = store.remove
+
+    def fail_task_remove(path, *args, **kwargs):
+        if path == task_path:
+            raise OSError("simulated task removal failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(store, "remove", fail_task_remove)
+    with pytest.raises(OSError, match="task removal failure"):
+        await service.delete_task(task_id, expected_revision=cancelled.revision)
+
+    assert (
+        harness.control.control_state.snapshot_sessions()[session_id].task_id
+        is None
+    )
+    retained = await service.read_task(task_id)
+    assert retained.status == "cancelled"
+    assert retained.revision == cancelled.revision
+
+    monkeypatch.setattr(store, "remove", real_remove)
+    deleted = await service.delete_task(
+        task_id, expected_revision=retained.revision
+    )
+    assert deleted.deleted is True
+
+
+@pytest.mark.asyncio
 async def test_legacy_session_task_migrates_to_deterministic_task_id(
     tmp_path, monkeypatch
 ):
@@ -512,6 +763,56 @@ async def test_legacy_session_task_migrates_to_deterministic_task_id(
     restarted.control_state.start()
     restored = await restarted.task_service.read_task(task_id)
     assert restored.plan.steps[0].status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_legacy_migration_cleans_residual_source_after_interrupted_cleanup(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    started = await harness.control.session_coordinator.start_session(
+        workdir="project-a",
+        label="legacy interrupted",
+        executor_id=harness.executor_id,
+    )
+    assert isinstance(started, dict)
+    session_id = str(started["session_id"])
+    store = harness.control.state_store
+    legacy_path = store.layout.control_task_state_path(session_id)
+    store.write_json(legacy_path, {"revision": 0, "todos": []})
+    real_remove = store.remove
+    failed = False
+
+    def fail_legacy_remove(path, *args, **kwargs):
+        nonlocal failed
+        if path == legacy_path and not failed:
+            failed = True
+            raise OSError("simulated migration cleanup interruption")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(store, "remove", fail_legacy_remove)
+    with pytest.raises(OSError, match="cleanup interruption"):
+        await harness.control.task_service.migrate_legacy_sessions()
+
+    record = harness.control.control_state.snapshot_sessions()[session_id]
+    assert record.task_id is not None
+    task_id = str(record.task_id)
+    assert legacy_path.exists()
+    await harness.control.task_service.read_task(task_id)
+
+    monkeypatch.setattr(store, "remove", real_remove)
+    assert await harness.control.task_service.migrate_legacy_sessions() == 0
+    assert not legacy_path.exists()
+
+    cancelled = await harness.control.task_service.cancel_task(
+        task_id, expected_revision=0
+    )
+    await harness.control.task_service.delete_task(
+        task_id, expected_revision=cancelled.revision
+    )
+    assert await harness.control.task_service.migrate_legacy_sessions() == 0
+    with pytest.raises(ValueError, match="unknown task_id"):
+        await harness.control.task_service.read_task(task_id)
 
 
 @pytest.mark.asyncio

@@ -168,6 +168,9 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
         tools["task"].inputSchema.get("required", [])
     )
     assert "task_id" not in set(tools["task"].inputSchema.get("required", []))
+    assert "expected_revision" in set(
+        tools["write_todos"].inputSchema.get("required", [])
+    )
     audit_properties = set(
         tools["audit_tail"].inputSchema.get("properties", {})
     )

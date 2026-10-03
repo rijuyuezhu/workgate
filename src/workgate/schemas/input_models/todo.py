@@ -5,12 +5,11 @@ from typing import Annotated, Any
 from pydantic import Field
 
 ExpectedTodoRevisionArg = Annotated[
-    int | None,
+    int,
     Field(
-        default=None,
         ge=0,
         strict=True,
-        description="Optional task revision that must still match before replacement.",
+        description="Current task revision that must still match before replacement.",
     ),
 ]
 

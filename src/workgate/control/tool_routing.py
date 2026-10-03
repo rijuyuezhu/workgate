@@ -57,17 +57,6 @@ class ControlToolRouter:
     async def invoke(self, tool_name: str, args: dict[str, Any]) -> Any:
         if tool_name == "session_start":
             task_id = args.get("task_id")
-            if task_id is not None:
-                task = await self._tasks.read_task(str(task_id))
-                if task.status == "completed":
-                    raise ValueError(
-                        "cannot attach a new execution session to a completed task; "
-                        "resume the task first"
-                    )
-                if task.status == "cancelled":
-                    raise ValueError(
-                        "cannot attach a new execution session to a cancelled task"
-                    )
             return await self._sessions.start_session(
                 workdir=str(args["workdir"]),
                 label=args.get("label"),
@@ -197,7 +186,7 @@ class ControlToolRouter:
             return await self._tasks.write(
                 str(args["task_id"]),
                 list(args.get("todos") or []),
-                args.get("expected_revision"),
+                args["expected_revision"],
             )
         if tool_name == "audit_tail":
             task_id = args.get("task_id")

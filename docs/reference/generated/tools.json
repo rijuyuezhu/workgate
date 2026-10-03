@@ -1800,11 +1800,11 @@
           {
             "items": [
               {
-                "description": "Optional task revision that must still match before replacement.",
+                "description": "Current task revision that must still match before replacement.",
                 "head": {
                   "code": "expected_revision"
                 },
-                "note": "(integer / null, optional)"
+                "note": "(integer, required)"
               },
               {
                 "description": "Opaque semantic task_id returned by task(action='create').",
@@ -13004,18 +13004,10 @@
       "inputSchema": {
         "properties": {
           "expected_revision": {
-            "anyOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional task revision that must still match before replacement.",
-            "title": "Expected Revision"
+            "description": "Current task revision that must still match before replacement.",
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
           },
           "task_id": {
             "description": "Opaque semantic task_id returned by task(action='create').",
@@ -13037,7 +13029,8 @@
         },
         "required": [
           "task_id",
-          "todos"
+          "todos",
+          "expected_revision"
         ],
         "title": "write_todosArguments",
         "type": "object"

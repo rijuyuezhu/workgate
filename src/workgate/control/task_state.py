@@ -29,7 +29,7 @@ from ..schemas.result_models.todo import (
     TodoItem,
     WriteTodosOutput,
 )
-from .state import ControlState
+from .state import ControlSessionRecord, ControlState
 
 logger = logging.getLogger(__name__)
 
@@ -324,17 +324,8 @@ class ControlTaskService:
 
     @staticmethod
     def _check_expected_revision(
-        current: TaskDocument,
-        expected_revision: int | None,
-        *,
-        required: bool,
+        current: TaskDocument, expected_revision: int
     ) -> None:
-        if expected_revision is None:
-            if required:
-                raise ValueError(
-                    "expected_revision is required for task mutations"
-                )
-            return
         if isinstance(expected_revision, bool) or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         if expected_revision != current.revision:
@@ -392,22 +383,16 @@ class ControlTaskService:
     def _mutate_sync(
         self,
         task_id: str,
-        expected_revision: int | None,
+        expected_revision: int,
         operation: str,
         mutate: Callable[
             [TaskDocument], tuple[list[str], list[dict[str, str]]]
         ],
-        *,
-        revision_required: bool,
     ) -> TaskOutput:
         path = self._path(task_id)
         with self._store.transaction(path):
             current = self._read_stored_unlocked(task_id)
-            self._check_expected_revision(
-                current.document,
-                expected_revision,
-                required=revision_required,
-            )
+            self._check_expected_revision(current.document, expected_revision)
             document = current.document.model_copy(deep=True)
             changed_fields, step_changes = mutate(document)
             document.revision = current.document.revision + 1
@@ -428,13 +413,11 @@ class ControlTaskService:
     async def _mutate(
         self,
         task_id: str,
-        expected_revision: int | None,
+        expected_revision: int,
         operation: str,
         mutate: Callable[
             [TaskDocument], tuple[list[str], list[dict[str, str]]]
         ],
-        *,
-        revision_required: bool = True,
     ) -> TaskOutput:
         return await asyncio.to_thread(
             self._mutate_sync,
@@ -442,7 +425,6 @@ class ControlTaskService:
             expected_revision,
             operation,
             mutate,
-            revision_required=revision_required,
         )
 
     def _iter_subject_tasks(self, subject: str) -> list[_StoredTask]:
@@ -500,8 +482,8 @@ class ControlTaskService:
                 and current.document.updated_at >= stale_before
             ):
                 return False
+            self._state.detach_task(task_id)
             self._store.remove(path)
-        self._state.detach_task(task_id)
         return True
 
     def _prune_for_create(self, subject: str) -> None:
@@ -590,6 +572,23 @@ class ControlTaskService:
         return await asyncio.to_thread(
             lambda: self._task_output(self._read_stored_unlocked(task_id))
         )
+
+    def admit_session_attachment(self, record: ControlSessionRecord) -> None:
+        task_id = str(record.task_id or "")
+        if not task_id:
+            raise ValueError("task-linked session admission requires task_id")
+        with self._store.transaction(self._path(task_id)):
+            task = self._read_stored_unlocked(task_id)
+            if task.document.status == "completed":
+                raise ValueError(
+                    "cannot attach a new execution session to a completed task; "
+                    "resume the task first"
+                )
+            if task.document.status == "cancelled":
+                raise ValueError(
+                    "cannot attach a new execution session to a cancelled task"
+                )
+            self._state.put_session(record)
 
     async def report_progress(
         self,
@@ -710,20 +709,18 @@ class ControlTaskService:
         )
 
     def _delete_sync(
-        self, task_id: str, expected_revision: int | None
+        self, task_id: str, expected_revision: int
     ) -> TaskDeleteOutput:
         path = self._path(task_id)
         with self._store.transaction(path):
             current = self._read_stored_unlocked(task_id)
-            self._check_expected_revision(
-                current.document, expected_revision, required=True
-            )
+            self._check_expected_revision(current.document, expected_revision)
             if current.document.status not in {"completed", "cancelled"}:
                 raise ValueError(
                     "only completed or cancelled tasks may be deleted"
                 )
-            self._store.remove(path)
             self._state.detach_task(task_id)
+            self._store.remove(path)
         try:
             audit("task_deleted", task=task_id)
         except Exception:
@@ -790,7 +787,7 @@ class ControlTaskService:
         self,
         task_id: str,
         todos: list[dict[str, Any]],
-        expected_revision: int | None,
+        expected_revision: int,
     ) -> TaskOutput:
         normalized = self._normalize_legacy_todos(todos)
 
@@ -809,14 +806,13 @@ class ControlTaskService:
             expected_revision,
             "todo_replace",
             mutate,
-            revision_required=False,
         )
 
     async def write(
         self,
         task_id: str,
         todos: list[dict[str, Any]],
-        expected_revision: int | None = None,
+        expected_revision: int,
     ) -> WriteTodosOutput:
         task = await self._write_task_output(task_id, todos, expected_revision)
         return self._todo_output(task, write=True)  # type: ignore[return-value]
@@ -831,7 +827,7 @@ class ControlTaskService:
         self,
         task_id: str,
         todos: list[dict[str, Any]],
-        expected_revision: int | None = None,
+        expected_revision: int,
     ) -> tuple[WriteTodosOutput, TaskOutput]:
         task = await self._write_task_output(task_id, todos, expected_revision)
         return self._todo_output(task, write=True), task  # type: ignore[return-value]
@@ -842,10 +838,20 @@ class ControlTaskService:
             self._state.snapshot_sessions().values(),
             key=lambda item: (item.created_at, str(item.session_id)),
         ):
-            if record.task_id is not None:
-                continue
             session_id = str(record.session_id)
             legacy_path = self._legacy_path(session_id)
+            task_id = self._legacy_task_id(session_id)
+            task_path = self._path(task_id)
+            if record.task_id is not None:
+                if str(record.task_id) == task_id:
+                    with self._store.transaction(task_path):
+                        stored_value = self._store.read_json(
+                            task_path, max_bytes=self._settings.max_todo_bytes
+                        )
+                        if stored_value is not None:
+                            _StoredTask.model_validate(stored_value)
+                            self._store.remove(legacy_path)
+                continue
             value = self._store.read_json(
                 legacy_path, max_bytes=self._settings.max_todo_bytes
             )
@@ -855,8 +861,6 @@ class ControlTaskService:
                 raise RuntimeError(
                     f"invalid legacy task state for session {session_id}"
                 )
-            task_id = self._legacy_task_id(session_id)
-            task_path = self._path(task_id)
             with self._store.transaction(task_path):
                 stored_value = self._store.read_json(
                     task_path, max_bytes=self._settings.max_todo_bytes
