@@ -276,10 +276,9 @@ def _resolve_transfer_path(
     must_exist: bool = False,
     session_id: str | None = None,
     workdir: str | None = None,
-    allow_temp: bool = True,
     context: TransferContext,
 ) -> Path:
-    """Resolve one readable user/session path, allowing internal scratch paths."""
+    """Resolve one readable user/session path."""
     if session_id is not None and workdir is not None:
         raise ValueError("session_id and workdir are mutually exclusive")
     if session_id is not None:
@@ -289,14 +288,7 @@ def _resolve_transfer_path(
     if workdir is not None:
         base = _policy_path(context, workdir, must_exist=True)
         return resolve_path(path, base=base, must_exist=must_exist)
-    try:
-        return _policy_path(context, path, must_exist=must_exist)
-    except ValueError:
-        if allow_temp:
-            return _resolve_temp_path(
-                path, must_exist=must_exist, context=context
-            )
-        raise
+    return _policy_path(context, path, must_exist=must_exist)
 
 
 def _resolve_transfer_destination(
@@ -304,7 +296,6 @@ def _resolve_transfer_destination(
     *,
     session_id: str | None = None,
     workdir: str | None = None,
-    allow_temp: bool = True,
     context: TransferContext,
 ) -> Path:
     """Resolve a destination without following its final directory entry."""
@@ -319,12 +310,7 @@ def _resolve_transfer_destination(
     if workdir is not None:
         base = _policy_path(context, workdir, must_exist=True)
         return resolve_path(path, base=base, follow_final_symlink=False)
-    try:
-        return _policy_path(context, path, follow_final_symlink=False)
-    except ValueError:
-        if allow_temp:
-            return _resolve_temp_path(path, context=context)
-        raise
+    return _policy_path(context, path, follow_final_symlink=False)
 
 
 def transfer_stat(
@@ -762,7 +748,6 @@ def _abandon_unpack_receipt(
         archive = _resolve_transfer_path(
             receipt.archive,
             must_exist=False,
-            allow_temp=True,
             context=context,
         )
     except OSError, ValueError, ValidationError:

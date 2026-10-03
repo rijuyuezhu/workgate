@@ -77,6 +77,21 @@ def test_git_orientation_handles_success_and_command_failure(
     )
 
 
+def test_git_orientation_handles_missing_git(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _settings, config = _config(tmp_path)
+
+    def missing_git(*_args, **_kwargs):
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(subprocess, "run", missing_git)
+
+    assert _git_output(config, ["status"], config.default_workdir) is None
+    assert _git_info(config, config.default_workdir).is_repo is False
+
+
 def test_session_output_and_change_cwd_use_executor_authority(
     tmp_path: Path,
 ) -> None:

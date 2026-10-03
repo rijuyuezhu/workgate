@@ -82,7 +82,7 @@ async def test_executor_image_is_session_bound_and_bounded(tmp_path: Path):
     _, outside_image = await image_ops.read_image_execute(
         config, store, "../outside.png", session_id
     )
-    assert outside_image.path == str(outside)
+    assert outside_image.path == outside.as_posix()
     assert outside_image.data == PNG_BYTES
 
 

@@ -439,7 +439,9 @@ async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
 def test_default_workdir_does_not_confine_absolute_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
-    assert _resolve_ambient_path("/etc/passwd") == Path("/etc/passwd")
+    assert _resolve_ambient_path("/etc/passwd") == Path("/etc/passwd").resolve(
+        strict=False
+    )
 
     outside_default = tmp_path.parent / "outside-default"
     assert _resolve_ambient_path(outside_default) == Path(

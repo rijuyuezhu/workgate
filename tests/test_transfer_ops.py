@@ -843,6 +843,32 @@ def test_explicit_workdir_transfer_resolution_uses_workdir_as_anchor(
     assert Path(outside.path) == root / "outside.txt"
 
 
+def test_session_transfer_display_uses_session_workdir(tmp_path, monkeypatch):
+    root = _workspace(tmp_path, monkeypatch)
+    workdir = root / "session"
+    workdir.mkdir()
+    target = workdir / "file.txt"
+    target.write_text("payload", encoding="utf-8")
+    directory = workdir / "folder"
+    directory.mkdir()
+    session_id = "sess_0000000000000000000099"
+    _context().store.create_session(session_id=session_id, workdir=workdir)
+
+    stat = transfer_stat("file.txt", session_id=session_id)
+    directory_stat = transfer_stat("folder", session_id=session_id)
+
+    assert stat.path == "file.txt"
+    assert directory_stat.path == "folder"
+    assert directory_stat.type == "dir"
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        transfer_ops._display_transfer_path(
+            target,
+            session_id=session_id,
+            workdir=str(workdir),
+            context=_context(),
+        )
+
+
 def test_transfer_read_chunk_rejects_invalid_source_ranges(
     tmp_path, monkeypatch
 ):

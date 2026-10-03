@@ -1,7 +1,9 @@
 import base64
 import errno
 import os
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -105,7 +107,7 @@ def test_file_listing_is_sorted_bounded_and_can_navigate_above_default(
     payload = response.json()["data"]
     assert payload["executor_id"] == client.executor_id
     assert payload["path"] == "."
-    assert payload["parent"] == str(tmp_path)
+    assert payload["parent"] == tmp_path.as_posix()
     assert payload["is_truncated"] is False
 
     assert payload["mutations"] == {
@@ -159,6 +161,37 @@ def test_file_api_can_access_paths_outside_default_workdir(
         assert response.status_code == 200
     assert (outside / "new.txt").read_text(encoding="utf-8") == "escape"
     assert (outside / "linked.txt").read_text(encoding="utf-8") == "escape"
+
+
+def test_file_api_refuses_filesystem_root_mutations(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "source.txt").write_text("source", encoding="utf-8")
+    client = _client(monkeypatch, workspace)
+    filesystem_root = Path(tmp_path.anchor).as_posix()
+
+    mkdir = client.post(
+        "/api/ui/files/mkdir",
+        json={"path": filesystem_root},
+    )
+    copy = client.post(
+        "/api/ui/files/copy",
+        json={"path": filesystem_root, "destination": "root-copy"},
+    )
+    missing_parent = client.post(
+        "/api/ui/files/copy",
+        json={
+            "path": "source.txt",
+            "destination": "missing-parent/copied.txt",
+        },
+    )
+
+    assert mkdir.status_code == 400
+    assert "filesystem root" in mkdir.json()["message"]
+    assert copy.status_code == 400
+    assert "filesystem root" in copy.json()["message"]
+    assert missing_parent.status_code == 400
+    assert missing_parent.json()["error"] == "NotADirectoryError"
 
 
 def test_file_preview_supports_text_binary_directory_and_raster_images(
@@ -636,6 +669,16 @@ def test_file_executor_id_arg_requires_value_and_rejects_oversized() -> None:
         ValueError, match="executor_id exceeds 255 encoded bytes"
     ):
         ui_files_module._executor_id_arg("x" * 256)
+
+
+def test_file_http_helpers_reject_bad_runtime_and_payload() -> None:
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace()),
+    )
+    with pytest.raises(RuntimeError, match="requires the control runtime"):
+        ui_files_module._runtime(cast(Any, request))
+    with pytest.raises(RuntimeError, match="malformed Human UI Files payload"):
+        ui_files_module._payload("not-a-mapping", "exec_test")
 
 
 def test_opentui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):

@@ -101,7 +101,7 @@ async def test_executor_session_create_uses_effective_default_workdir(
             agent_bridge_enabled=False,
         )
     )
-    assert config.default_workdir == Path("/")
+    assert config.default_workdir == Path("/").resolve(strict=False)
     store = build_tool_session_store(
         Settings(
             default_workdir=configured,
