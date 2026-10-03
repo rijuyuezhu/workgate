@@ -93,7 +93,7 @@ def test_executor_control_client_uses_env_proxy_only_for_https(
 
 
 @pytest.mark.asyncio
-async def test_executor_control_client_uses_v1_paths_and_persisted_bearer() -> (
+async def test_executor_control_client_uses_v2_paths_and_persisted_bearer() -> (
     None
 ):
     profile = _profile()
@@ -105,7 +105,6 @@ async def test_executor_control_client_uses_v1_paths_and_persisted_bearer() -> (
             return httpx.Response(
                 200,
                 json={
-                    "protocol_version": 1,
                     "heartbeat_interval_s": 10,
                     "offline_after_s": 30,
                     "poll_timeout_s": 25,

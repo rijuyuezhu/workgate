@@ -1,12 +1,12 @@
-"""Executor-owned shared-session orientation and workdir mutation helpers."""
+"""Executor-owned execution-session orientation and workdir mutation helpers."""
 
 import subprocess
 from pathlib import Path
 
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.session import GitSessionInfo, SessionStartOutput
 from .environment import collect_executor_session_environment
-from .path import display_path
+from .path import display_path, resolve_default_workdir
 from .tool_session.store import AgentSession, ToolSessionStore
 
 _INSTRUCTION_FILE_NAMES = (

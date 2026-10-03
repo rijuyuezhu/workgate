@@ -1,4 +1,4 @@
-"""Pure persistent-resource ownership policy for explicit tool sessions."""
+"""Pure persistent-resource ownership rules for execution sessions."""
 
 from collections.abc import Iterable
 from dataclasses import replace

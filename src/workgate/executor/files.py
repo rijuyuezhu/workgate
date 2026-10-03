@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditContextOutput,
@@ -28,6 +28,7 @@ from ..schemas.result_models.files import (
 from ..utils.path_locks import path_lock, path_locks
 from .path import (
     display_path,
+    resolve_default_workdir,
     resolve_path,
 )
 from .tool_session.bindings import SessionBinding
@@ -52,7 +53,7 @@ class FilesConfig:
 
 
 def files_config_from_executor_config(config: ExecutorConfig) -> FilesConfig:
-    """Project resolved executor policy to the values Files consumes."""
+    """Project executor configuration to the values Files consumes."""
     return FilesConfig(
         default_workdir=config.default_workdir,
         max_directory_entries=config.max_directory_entries,

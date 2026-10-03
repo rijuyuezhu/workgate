@@ -72,7 +72,7 @@ class StateLayout:
 
     @property
     def sessions_dir(self) -> Path:
-        """Directory containing one private folder per explicit agent session."""
+        """Directory containing one private folder per execution session."""
         return self.root / "sessions"
 
     def session_dir(self, session_id: str) -> Path:

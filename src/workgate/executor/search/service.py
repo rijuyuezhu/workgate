@@ -6,7 +6,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...config.executor import resolve_default_workdir
 from ...schemas.result_models.search import (
     GlobSearchOutput,
     GrepDisplayLine,
@@ -17,6 +16,7 @@ from ...schemas.result_models.search import (
 from ..files import read_file_explicit
 from ..path import (
     display_path,
+    resolve_default_workdir,
     resolve_path,
 )
 from ..tool_session.bindings import SessionBinding

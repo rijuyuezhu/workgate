@@ -6,7 +6,7 @@ endpoint; no inbound Workgate port is required on the executor.
 
 ## Pair an executor
 
-Install Workgate on the machine, configure its local machine policy, then run:
+Install Workgate on the machine, configure its local machine settings, then run:
 
 ```bash
 workgate executor connect https://control.example --name gpu1
@@ -17,7 +17,7 @@ approve the request from **Executors**.
 
 The saved executor profile contains a long-lived credential. On Linux the
 default state root is `~/.local/state/workgate/executor-runtime`; keep it
-private. Executor machine policy, including `default_workdir`, process limits,
+private. Executor machine configuration, including `default_workdir`, process limits,
 and local integration credentials, is configured on that machine. Filesystem
 authority comes from the executor OS account.
 

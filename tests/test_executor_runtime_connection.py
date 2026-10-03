@@ -228,7 +228,7 @@ async def test_executor_runtime_hello_includes_resource_inventory(
     session_id = "sess_0000000000000000000001"
     before = SessionInventorySummary(
         session_id=session_id,
-        resolved_workdir=str(workspace),
+        workdir=str(workspace),
         has_persistent_shells=True,
         has_active_jobs=True,
     )
@@ -297,11 +297,11 @@ async def test_reconnect_hello_retries_when_session_ids_change(
     second_id = "sess_0000000000000000000002"
     first = SessionInventorySummary(
         session_id=first_id,
-        resolved_workdir=str(workspace),
+        workdir=str(workspace),
     )
     second = SessionInventorySummary(
         session_id=second_id,
-        resolved_workdir=str(workspace),
+        workdir=str(workspace),
     )
     snapshots = iter(((first,), (second,), (second,), (second,)))
     monkeypatch.setattr(runtime.sessions, "inventory", lambda: next(snapshots))

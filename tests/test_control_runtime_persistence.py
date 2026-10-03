@@ -133,7 +133,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
             sessions=(
                 SessionInventorySummary(
                     session_id=session_id,
-                    resolved_workdir="/home/user/src/workgate",
+                    workdir="/home/user/src/workgate",
                     has_persistent_shells=True,
                     has_active_jobs=True,
                 ),
@@ -247,7 +247,7 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
             sessions=(
                 SessionInventorySummary(
                     session_id=session_id,
-                    resolved_workdir=str(tmp_path),
+                    workdir=str(tmp_path),
                 ),
             ),
             shells=(),

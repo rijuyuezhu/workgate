@@ -1,4 +1,4 @@
-"""Executor-owned structured browser automation for shared sessions."""
+"""Executor-owned structured browser automation for execution sessions."""
 
 import asyncio
 import contextlib

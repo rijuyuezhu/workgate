@@ -1318,7 +1318,7 @@ def test_file_write_binding_comes_from_executor_session_and_survives_cwd_change(
     assert receipt is not None
     assert receipt["destination"] == str(new / "result.bin")
 
-    # Later session cwd changes must not retarget an already-bound transfer.
+    # Later session workdir changes must not retarget an already-bound transfer.
     context.store.change_session_workdir(session_id, old)
     transfer_ops.transfer_write_bytes(
         "result.bin",

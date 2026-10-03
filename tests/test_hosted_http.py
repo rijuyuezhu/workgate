@@ -191,7 +191,6 @@ class _Transport:
         self.calls.append(("hello", (credential, request)))
         return SimpleNamespace(
             model_dump=lambda **_: {
-                "protocol_version": 1,
                 "heartbeat_interval_s": 15,
                 "offline_after_s": 45,
                 "poll_timeout_s": 25,
@@ -1148,7 +1147,6 @@ def test_hosted_pairing_error_status_mapping(
 
 def _hello_payload() -> dict[str, Any]:
     return {
-        "protocol_version": 1,
         "runtime": {"workgate_version": "test"},
         "capabilities": ["sessions.v1"],
         "default_workdir": "/workspace",
@@ -1171,7 +1169,6 @@ async def test_hosted_executor_protocol_success_paths() -> None:
         payload=_hello_payload(),
     )
     assert hello.status == 200
-    assert _json_body(hello)["protocol_version"] == 1
 
     validate = await gateway.dispatch(
         method="POST",

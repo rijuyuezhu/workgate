@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..config.role_config import use_role_config
 from ..persistence import use_state_store
 from ..protocol.executor import (
@@ -21,7 +21,7 @@ from .browser import BrowserService
 from .dispatch import ExecutorDispatcher
 from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
-from .path import resolve_path
+from .path import resolve_default_workdir, resolve_path
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
 from .terminal.runtime import (
@@ -57,7 +57,7 @@ class ExecutorRuntime:
     shell: ShellService
     """Executor-owned public shell and tracked-job resource service."""
     sessions: ExecutorSessionService
-    """Executor-authoritative shared-session resource service."""
+    """Executor-authoritative execution-session resource service."""
     ui_files: UiFilesService
     """Executor-owned internal Human UI file operations."""
     ui_terminals: UiTerminalsService

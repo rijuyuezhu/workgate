@@ -64,7 +64,7 @@ def build_tool_session_store(
 
 @dataclass
 class PairedControlHarness:
-    """Test-only direct executor bridge with final shared-session semantics."""
+    """Test-only direct executor bridge with execution-session semantics."""
 
     control: ControlRuntime
     executor: ExecutorRuntime

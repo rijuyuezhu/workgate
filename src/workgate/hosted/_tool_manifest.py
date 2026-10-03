@@ -2093,7 +2093,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Start an execution session on one executor. Omit workdir to use the executor default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online.",
+    "description": "Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online.",
     "inputSchema": {
       "properties": {
         "executor_id": {
@@ -2640,7 +2640,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Change an execution session's workdir. Relative paths resolve against the executor default workdir, and old grounding snapshots are invalidated.",
+    "description": "Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated.",
     "inputSchema": {
       "properties": {
         "session_id": {
@@ -2652,7 +2652,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "workdir": {
-          "description": "Working directory to bind to the session. Relative paths resolve against the executor default workdir.",
+          "description": "Working directory to bind to the session. Relative paths resolve against the executor's effective default workdir.",
           "maxLength": 4096,
           "minLength": 1,
           "title": "Workdir",

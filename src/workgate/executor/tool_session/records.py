@@ -1,4 +1,4 @@
-"""Durable tool-session record models and JSON codecs."""
+"""Durable execution-session record models and JSON codecs."""
 
 import json
 import re
@@ -39,7 +39,7 @@ class SnapshotRecord:
     snapshot_id: str
     """Opaque identifier returned with the displayed snapshot."""
     path: str
-    """Default-workdir-relative or absolute path represented by the snapshot."""
+    """Session-workdir-relative or absolute path represented by the snapshot."""
     file_sha256: str
     """SHA-256 digest of the complete file at display time."""
     total_lines: int
@@ -53,7 +53,7 @@ class SnapshotRecord:
 
 
 def valid_session_id(value: Any) -> str | None:
-    """Return one final shared session id, or None for invalid input."""
+    """Return one valid execution-session id, or None for invalid input."""
     if not isinstance(value, str):
         return None
     if len(value) <= SESSION_ID_MAX_LENGTH and _SESSION_ID_RE.fullmatch(value):

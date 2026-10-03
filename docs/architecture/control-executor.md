@@ -40,8 +40,8 @@ workgate.executor   machine-facing composition and authority
 
 `workgate.protocol` must not depend on filesystem persistence, HTTP server
 frameworks, systemd/deployment code, Cloudflare/provider SDKs, shell/PTY code,
-or control/executor implementation modules. Protocol v1 models live there; the
-runtime mechanisms that implement them belong to the owning process.
+or control/executor implementation modules. Executor protocol wire models live
+there; the runtime mechanisms that implement them belong to the owning process.
 
 Control and executor have distinct resolved configuration authority. Control
 owns public bind/base URL, auth/OAuth/UI, pairing/presence, command admission,
@@ -51,7 +51,7 @@ Standalone may accept one user-facing config file, but its supervisor resolves
 separate child configurations before launch.
 
 Relative session workdirs are resolved against the executor's effective
-`default_workdir`, never against a session's previous cwd. That default is an
+`default_workdir`, never against a session's previous workdir. That default is an
 anchor, not a confinement boundary.
 
 ## Identity, credentials, and pairing
@@ -69,10 +69,10 @@ or a deliberate incompatible trust migration.
 Pairing uses a Workgate-specific device-code-style flow:
 
 ```text
-executor -> POST /executor/v1/pair/start
+executor -> POST /executor/v2/pair/start
          <- high-entropy device_code + short user_code + verification URI
 owner    -> authenticated approve/deny
-executor -> POST /executor/v1/pair/poll(device_code)
+executor -> POST /executor/v2/pair/poll(device_code)
          <- executor_id + long-lived credential
 ```
 
@@ -103,14 +103,15 @@ are interrupted, and active streams are closed. Already-offered machine effects
 cannot be rolled back, and results submitted under the revoked bearer are
 rejected. No credential generation counter is part of the protocol.
 
-## Executor protocol v1
+## Executor protocol v2
 
-The baseline executor surface is versioned under `/executor/v1`:
+The baseline executor surface is versioned under `/executor/v2`:
 
 ```text
 /pair/start
 /pair/poll
 /hello
+/validate
 /heartbeat
 /poll
 /result
@@ -125,8 +126,8 @@ for authentication.
 Hello carries a **complete** thin inventory by contract:
 
 ```text
-protocol/runtime/capability metadata
-session_id + resolved cwd
+runtime/capability metadata
+session_id + workdir
 shell_id + session_id
 job_id + session_id + status
 ```
@@ -217,7 +218,7 @@ There is one execution `session_id` shared end-to-end:
 
 ```text
 control:  session_id -> executor_id + durable product state
-executor: same id    -> resolved workdir + machine state
+executor: same id    -> workdir + machine state
 ```
 
 There is no second worker/executor session ID and no live migration or silent
@@ -271,14 +272,15 @@ drop an executor-backed binding merely to free a slot.
 `session_change_workdir` is an executor-authoritative resource mutation. Under its
 session/snapshot synchronization, executor:
 
-1. resolves the requested path against `default_workdir` when relative and
+1. resolves the requested path against the effective `default_workdir` when relative and
    validates that the result is an existing directory;
 2. invalidates/removes old durable and cached grounding/snapshots;
-3. atomically replaces the durable session cwd;
+3. atomically replaces the durable session workdir;
 4. reports refreshed orientation.
 
-This ordering is crash-safe: a crash before cwd replacement leaves old cwd with
-no snapshots; a crash after replacement leaves new cwd with no old snapshots.
+This ordering is crash-safe: a crash before workdir replacement leaves the old
+workdir with no snapshots; a crash after replacement leaves the new workdir with
+no old snapshots.
 If the response is lost after commit, control does not replay the mutation; hello
 inventory or explicit lookup repairs its display projection.
 
@@ -288,7 +290,7 @@ Cross-executor copy may use a feature-specific transfer checkpoint; this is not 
 reason to build a generic workflow engine.
 
 For a relative destination, the first executor-side file write begin resolves
-against the executor-authoritative destination session cwd and durably records
+against the executor-authoritative destination session workdir and durably records
 the canonical destination under the transfer ID before creating transfer-owned
 temp state. Resumable directory unpack does the same before creating its staging
 tree. Later write/unpack/abandon recovery follows those executor-issued bindings;
@@ -351,7 +353,7 @@ executor never opens an inbound Workgate terminal port.
 browser -> control: request attach(session, shell)
 control: validate owner/session; allocate random live stream_id + browser token
 control -> executor: terminal.attach(stream_id, shell)
-executor -> control: outbound WSS /executor/v1/streams/<stream_id>
+executor -> control: outbound WSS /executor/v2/streams/<stream_id>
                      authenticated by normal executor credential
 control: require stream_id live and bearer executor == expected executor
 control -> executor: stream-accepted handshake; only then may relay start

@@ -61,7 +61,7 @@ async def test_shared_session_change_workdir_updates_control_and_executor_bindin
     assert record.resolved_workdir == str(tmp_path / "second")
     executor_session = harness.executor.sessions.lookup(session_id)
     assert executor_session is not None
-    assert executor_session.resolved_workdir == str(tmp_path / "second")
+    assert executor_session.workdir == str(tmp_path / "second")
 
 
 @pytest.mark.asyncio

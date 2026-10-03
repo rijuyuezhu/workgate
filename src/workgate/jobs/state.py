@@ -236,7 +236,7 @@ def public_job(job: Mapping[str, Any]) -> JobInfo:
 
 
 def session_jobs(jobs: list[JobRow], session_id: str) -> list[JobRow]:
-    """Return rows owned by one public agent session."""
+    """Return rows owned by one execution session."""
     return [row for row in jobs if job_agent_session_id(row) == session_id]
 
 

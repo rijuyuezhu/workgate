@@ -26,7 +26,7 @@ SessionWorkdirArg = Annotated[
     Field(
         min_length=1,
         max_length=4096,
-        description="Working directory to bind to the session. Relative paths resolve against the executor default workdir.",
+        description="Working directory to bind to the session. Relative paths resolve against the executor's effective default workdir.",
     ),
 ]
 SessionStartWorkdirArg = Annotated[

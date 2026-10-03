@@ -86,7 +86,7 @@ class ControlSessionCoordinator:
         auto_cleanup_blocked: Callable[[str], Awaitable[bool]],
         before_terminate: Callable[[str], Awaitable[list[str]]],
     ) -> None:
-        """Attach control-owned resource protection to the shared-session lifecycle."""
+        """Attach control-owned resource protection to the execution-session lifecycle."""
         self._auto_cleanup_blocked = auto_cleanup_blocked
         self._before_terminate = before_terminate
 
@@ -500,12 +500,12 @@ class ControlSessionCoordinator:
                     session_id, item.last_active_at
                 )
                 if record.status == "creating" or (
-                    record.resolved_workdir != item.resolved_workdir
+                    record.resolved_workdir != item.workdir
                 ):
                     self._state.update_session(
                         session_id,
                         status="active",
-                        resolved_workdir=item.resolved_workdir,
+                        resolved_workdir=item.workdir,
                         updated_at=self._clock(),
                     )
                 continue
@@ -681,7 +681,7 @@ class ControlSessionCoordinator:
         self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir=item.resolved_workdir,
+            resolved_workdir=item.workdir,
             updated_at=self._clock(),
         )
         self._replace_session_activity(

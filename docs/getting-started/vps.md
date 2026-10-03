@@ -176,8 +176,8 @@ WantedBy=multi-user.target
 
 The executor discovers `~/.config/workgate/executor/config.yaml` and uses its
 private default state root under `~/.local/state/workgate/executor-runtime`.
-`default_workdir` only chooses the initial cwd for relative paths. Filesystem
-access is governed by the executor OS account.
+`default_workdir` is the fallback anchor for relative session workdirs and
+sessionless executor paths. Filesystem access is governed by the executor OS account.
 
 Temporary network or control outages reconnect with the saved executor profile;
 ordinary downtime does not require pairing again.

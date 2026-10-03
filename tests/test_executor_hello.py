@@ -23,7 +23,6 @@ def test_executor_hello_reports_complete_current_v1_namespace(
 
     hello = hello_ops.build_executor_hello(config)
 
-    assert hello.protocol_version == 1
     assert hello.runtime.workgate_version
     assert hello.default_workdir == str(tmp_path.resolve(strict=False))
     assert hello.capabilities == (EXECUTOR_CAPABILITY_SESSIONS,)
@@ -43,7 +42,7 @@ def test_executor_hello_carries_supplied_resource_inventory(
     sessions = (
         SessionInventorySummary(
             session_id=session_id,
-            resolved_workdir=str(tmp_path),
+            workdir=str(tmp_path),
             has_persistent_shells=True,
             has_active_jobs=True,
         ),

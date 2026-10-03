@@ -26,7 +26,7 @@ workgate executor --help
 | `http` | Start the REST/debug and Human UI HTTP service. |
 | `both` | Reserved and exits with an error. Run separate processes if both transports are needed. |
 
-The control CLI intentionally does **not** expose executor machine-policy
+The control CLI intentionally does **not** expose executor machine
 settings such as `--default-workdir`, shell executables, or executor tool binary
 paths. Those settings belong to the executor process.
 

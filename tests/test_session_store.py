@@ -83,6 +83,28 @@ def test_create_session_requires_control_allocated_shared_id(
         _create(store, tmp_path, index=1)
 
 
+def test_default_path_resolver_tracks_live_default_workdir(
+    tmp_path: Path,
+) -> None:
+    default = tmp_path / "default"
+    default.mkdir()
+    active = tmp_path / "active"
+    active.mkdir()
+    settings = Settings(
+        default_workdir=default,
+        state_dir=tmp_path / ".state",
+        agent_bridge_enabled=False,
+    )
+    store = _new_store(settings)
+    store.clear()
+    session = _create(store, active)
+
+    default.rmdir()
+    updated = store.change_session_workdir(session.session_id, ".")
+
+    assert updated.workdir == str(Path("/").resolve(strict=False))
+
+
 def test_session_workdirs_must_be_directories(tmp_path: Path) -> None:
     store, _settings = _store(tmp_path)
     not_a_directory = tmp_path / "file.txt"
@@ -181,7 +203,7 @@ def test_change_workdir_failure_before_snapshot_invalidation_keeps_old_state(
     )
 
 
-def test_change_workdir_failure_after_snapshot_invalidation_keeps_old_cwd(
+def test_change_workdir_failure_after_snapshot_invalidation_keeps_old_workdir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     first = tmp_path / "first"

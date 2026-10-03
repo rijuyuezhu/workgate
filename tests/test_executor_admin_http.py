@@ -80,7 +80,7 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             owner_headers = {UI_LOCAL_TOKEN_HEADER: token}
 
             started = client.post(
-                "/executor/v1/pair/start",
+                "/executor/v2/pair/start",
                 json={
                     "requested_name": "request-name",
                     "metadata": {
@@ -123,13 +123,13 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             assert pair["device_code"] not in approved.text
 
             delivered = client.post(
-                "/executor/v1/pair/poll",
+                "/executor/v2/pair/poll",
                 json={"device_code": pair["device_code"]},
             )
             assert delivered.status_code == 200
             credential = delivered.json()["credential"]
             repeated = client.post(
-                "/executor/v1/pair/poll",
+                "/executor/v2/pair/poll",
                 json={"device_code": pair["device_code"]},
             )
             assert repeated.status_code == 202
@@ -152,14 +152,14 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             assert "credential_verifier" not in listing.text
 
             hello = client.post(
-                "/executor/v1/hello",
+                "/executor/v2/hello",
                 headers={"Authorization": f"Bearer {credential}"},
                 json=_hello_payload(),
             )
             assert hello.status_code == 200
 
             delivery_cleared = client.post(
-                "/executor/v1/pair/poll",
+                "/executor/v2/pair/poll",
                 json={"device_code": pair["device_code"]},
             )
             assert delivery_cleared.status_code == 410
@@ -193,7 +193,7 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             assert revoked_data["online"] is False
 
             rejected = client.post(
-                "/executor/v1/heartbeat",
+                "/executor/v2/heartbeat",
                 headers={"Authorization": f"Bearer {credential}"},
             )
             assert rejected.status_code == 403

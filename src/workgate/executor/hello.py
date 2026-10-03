@@ -3,7 +3,7 @@
 import platform
 
 from .. import __version__
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
@@ -14,6 +14,7 @@ from ..protocol.executor import (
     ShellInventorySummary,
 )
 from .browser import browser_capability_available
+from .path import resolve_default_workdir
 
 
 def build_executor_hello(

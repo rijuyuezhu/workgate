@@ -156,6 +156,21 @@ async def test_shared_session_copy_preserves_destination_when_overwrite_is_false
     ) == "old"
 
 
+def test_copy_binding_requires_resolved_workdir() -> None:
+    record = ControlSessionRecord(
+        session_id=new_session_id(),
+        executor_id=new_executor_id(),
+        requested_workdir="project",
+        resolved_workdir=None,
+        status="active",
+        created_at=1,
+        updated_at=1,
+    )
+
+    with pytest.raises(RuntimeError, match="no resolved workdir"):
+        ControlSessionCopyService._binding_snapshot(record)
+
+
 @pytest.mark.asyncio
 async def test_managed_copy_rejects_changed_session_binding(
     tmp_path, monkeypatch

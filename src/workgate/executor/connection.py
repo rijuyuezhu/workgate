@@ -132,7 +132,7 @@ def operation_error_from_exception(exc: Exception) -> OperationError:
 
 
 class ExecutorConnection:
-    """Run one bounded executor v1 delivery loop using a persisted profile."""
+    """Run one bounded executor v2 delivery loop using a persisted profile."""
 
     def __init__(
         self,

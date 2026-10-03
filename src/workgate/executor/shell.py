@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..audit import audit
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..errors import (
     ShellExecutableNotFoundError,
     process_start_not_found_error,
@@ -45,6 +45,7 @@ from ..utils.processes import (
 from .bounded_runner import bounded_runner_argv
 from .path import (
     display_path,
+    resolve_default_workdir,
     resolve_path,
 )
 from .terminal import conpty

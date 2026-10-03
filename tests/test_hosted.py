@@ -95,7 +95,7 @@ def _hello(session_id: str | None = None) -> ExecutorHelloRequest:
         else (
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
             ),
         )
     )

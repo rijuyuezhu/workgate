@@ -10,7 +10,7 @@ from .settings import Settings
 
 @dataclass(frozen=True, slots=True)
 class ExecutorConfig(SharedRoleConfig):
-    """Executor-owned machine policy."""
+    """Executor-owned machine configuration."""
 
     default_workdir: Path
     max_concurrent_commands: int
@@ -51,12 +51,6 @@ EXECUTOR_SETTING_NAMES = frozenset(
 ) & frozenset(Settings.model_fields)
 
 
-def resolve_default_workdir(path: Path) -> Path:
-    """Return the live default directory, falling back to the filesystem root."""
-    resolved = path.resolve(strict=False)
-    return resolved if resolved.is_dir() else Path("/").resolve(strict=False)
-
-
 def get_executor_config() -> ExecutorConfig:
     """Return the executor config bound to the current execution context."""
     config = current_role_config()
@@ -70,7 +64,7 @@ def get_executor_config() -> ExecutorConfig:
 
 
 def resolve_executor_config(settings: Settings) -> ExecutorConfig:
-    """Snapshot executor-owned authority from user-facing settings."""
+    """Snapshot executor-owned settings from user-facing configuration."""
     return ExecutorConfig(
         state_dir=settings.state_dir.resolve(strict=False),
         default_workdir=settings.default_workdir.resolve(strict=False),

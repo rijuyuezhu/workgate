@@ -1,4 +1,4 @@
-"""Small authenticated HTTP client for executor protocol v1."""
+"""Small authenticated HTTP client for executor protocol v2."""
 
 import contextlib
 from dataclasses import dataclass
@@ -28,7 +28,6 @@ _RETRYABLE_STATUS_CODES = {408, 425, 429}
 _OWNER_ACTION_CODES = {
     ProtocolErrorCode.UNAUTHORIZED_EXECUTOR,
     ProtocolErrorCode.EXECUTOR_REVOKED,
-    ProtocolErrorCode.UNSUPPORTED_PROTOCOL,
 }
 
 
@@ -62,7 +61,7 @@ class ExecutorControlError(RuntimeError):
 
 
 class ExecutorControlClient:
-    """Typed executor v1 HTTP calls using one persisted bearer profile."""
+    """Typed executor v2 HTTP calls using one persisted bearer profile."""
 
     def __init__(
         self,

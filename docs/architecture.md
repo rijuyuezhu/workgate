@@ -57,7 +57,7 @@ General rules:
 - Control delivery adapters may compose public tools, OAuth, executor trust and
   routing, shared HTTP infrastructure, control-owned integrations, and UI route
   contributions. They must not import executor implementation modules or read
-  executor filesystem/command/machine policy.
+  executor filesystem state or machine-local command/configuration details.
 - `http` must not import control delivery adapters or Human UI implementations.
 - UI core must not import control delivery adapters. `ui/http` may depend on UI
   core and explicit control-side adapter seams.
@@ -66,7 +66,8 @@ General rules:
   belongs under `executor`; public declarations stay fail-closed until role
   composition binds them to their owner.
 - `schemas`, `protocol`, and small `utils` modules remain dependency-light shared
-  contracts/primitives and must not become alternate homes for machine policy.
+  contracts/primitives and must not become alternate homes for executor
+  configuration or policy.
 - `utils` is for small dependency-leaf technical primitives, not a holding area
   for domain algorithms or large workflows.
 
@@ -86,7 +87,7 @@ commands are not compatibility aliases.
 
 Global `--version` remains an argparse version action. Settings flags follow
 the role that owns them: `workgate control --mode mcp` exposes control
-settings, while working-directory and machine-policy flags belong to
+settings, while working-directory and executor-setting flags belong to
 `workgate executor ...`.
 
 `workgate standalone` accepts one user-facing configuration for convenience,
@@ -247,7 +248,7 @@ Rejected ownership alternatives:
 
 ## `jobs`: shared mechanisms and executor shell-job ownership
 
-The top-level `jobs` package retains process-neutral durable job records, recovery helpers, and control-managed job machinery. Shell-backed execution, subprocess runner lifecycle, and machine-session coupling live under `executor/jobs/`.
+The top-level `jobs` package retains process-neutral durable job records, recovery helpers, and control-managed job machinery. Shell-backed execution, subprocess runner lifecycle, and execution-session coupling live under `executor/jobs/`.
 
 This split lets control-managed work such as background session copy retain durable job semantics without gaining executor shell authority. Executor shell jobs can consume shared job records/mechanisms, but shared `jobs` modules must not import executor implementations.
 
@@ -259,7 +260,7 @@ Machine implementations do not live under `tools`: filesystem/search/shell/job/P
 
 ## `executor/tool_session`: machine execution-session state
 
-`executor/tool_session` owns durable executor-side session metadata, grounding snapshots, machine-session admission, persistent-shell resource ownership, and retention helpers. Control separately owns the public session identity/binding/lifecycle projection; both sides use the same opaque `session_id` but do not share one physical session store.
+`executor/tool_session` owns durable executor-side session metadata, grounding snapshots, execution-session admission, persistent-shell resource ownership, and retention helpers. Control separately owns the public session identity/binding/lifecycle projection; both sides use the same opaque `session_id` but do not share one physical session store.
 
 Filesystem layout and atomic storage mechanics remain below these owners in `persistence`.
 
@@ -411,7 +412,7 @@ audit events. Every session-owned event is appended to both the global log and
 that session's colocated log; events without a session remain global-only. The
 global log remains authoritative for payload-object retention, while local logs
 provide direct per-session reads without re-scanning unrelated records. Audit may
-consume configuration, persistence primitives, tool-session identity, redaction,
+consume configuration, persistence primitives, execution-session identity, redaction,
 and the current payload store, but it must not depend on control delivery adapters, HTTP
 route adapters, Human UI presentation, or terminal implementations.
 

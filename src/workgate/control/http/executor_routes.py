@@ -1,4 +1,4 @@
-"""Authenticated executor protocol v1 HTTP routes owned by control."""
+"""Authenticated executor protocol v2 HTTP routes owned by control."""
 
 import json
 

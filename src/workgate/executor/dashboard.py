@@ -4,9 +4,10 @@ import math
 import time
 from typing import Any
 
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..telemetry.system import local_system_snapshot
 from ..version import version_info
+from .path import resolve_default_workdir
 
 _MAX_ALERTS = 12
 

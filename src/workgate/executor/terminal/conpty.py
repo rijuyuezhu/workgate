@@ -946,7 +946,7 @@ async def list_shells() -> ListPersistentShellsOutput:
 
 
 async def list_owned_shell_ids(owner_session_id: str) -> list[str]:
-    """Return live ConPTY shell ids owned by one explicit agent session."""
+    """Return live ConPTY shell ids owned by one execution session."""
     registry = _conpty_registry()
     operation = registry.begin_operation()
     try:

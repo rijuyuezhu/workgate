@@ -64,9 +64,7 @@ def _hello(
         capabilities=capabilities,
         default_workdir="/workspace",
         sessions=tuple(
-            SessionInventorySummary(
-                session_id=session_id, resolved_workdir=workdir
-            )
+            SessionInventorySummary(session_id=session_id, workdir=workdir)
             for session_id, workdir in sessions
         ),
         shells=(),
@@ -227,9 +225,7 @@ async def test_offered_create_timeout_uses_positive_lookup_without_replay(
             raise exc
         assert op == "session.lookup"
         assert session_id == create_session_id
-        return _ok(
-            {"session_id": session_id, "resolved_workdir": "/workspace/project"}
-        )
+        return _ok({"session_id": session_id, "workdir": "/workspace/project"})
 
     transport.call_impl = offered_then_lookup
     with pytest.raises(TimeoutError):
@@ -359,7 +355,7 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
                 last_active_at=123.0,
             ),
         ),
@@ -390,7 +386,7 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
             "sessions": (
                 SessionInventorySummary(
                     session_id=session_id,
-                    resolved_workdir="/workspace/project",
+                    workdir="/workspace/project",
                     last_active_at=30_000.0,
                 ),
             )
@@ -433,7 +429,7 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
                 last_active_at=1_000.0,
             ),
         ),
@@ -474,7 +470,7 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
                     "sessions": (
                         SessionInventorySummary(
                             session_id=session_id,
-                            resolved_workdir="/workspace/project",
+                            workdir="/workspace/project",
                             last_active_at=20_000.0,
                         ),
                     )
@@ -729,7 +725,7 @@ async def test_start_reaps_expired_session_through_confirmed_absence(
             return _ok(
                 {
                     "session_id": existing,
-                    "resolved_workdir": "/workspace/project",
+                    "workdir": "/workspace/project",
                     "last_active_at": 1.0,
                     "has_persistent_shells": False,
                     "has_active_jobs": False,
@@ -881,7 +877,7 @@ async def test_overflow_does_not_reap_session_with_owned_resources(
         return _ok(
             {
                 "session_id": existing,
-                "resolved_workdir": "/workspace/project",
+                "workdir": "/workspace/project",
                 "last_active_at": 1.0,
                 "has_persistent_shells": True,
                 "has_active_jobs": False,
@@ -925,7 +921,7 @@ async def test_overflow_revalidates_activity_before_termination(
         return _ok(
             {
                 "session_id": existing,
-                "resolved_workdir": "/workspace/project",
+                "workdir": "/workspace/project",
                 "last_active_at": 1.0 if lookups == 1 else 19_999.0,
                 "has_persistent_shells": False,
                 "has_active_jobs": False,
@@ -967,7 +963,7 @@ async def test_overflow_respects_control_managed_resource_hook(
         return _ok(
             {
                 "session_id": existing,
-                "resolved_workdir": "/workspace/project",
+                "workdir": "/workspace/project",
                 "last_active_at": 1.0,
                 "has_persistent_shells": False,
                 "has_active_jobs": False,

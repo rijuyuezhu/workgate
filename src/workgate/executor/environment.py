@@ -1,4 +1,4 @@
-"""Executor-owned runtime and capability orientation for shared sessions."""
+"""Executor-owned runtime and capability orientation for execution sessions."""
 
 import os
 import platform

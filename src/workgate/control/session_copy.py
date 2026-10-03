@@ -258,7 +258,7 @@ class ControlSessionCopyService:
         overwrite: bool = True,
         chunk_size: int | None = None,
     ) -> JobStartOutput:
-        """Start one durable control-managed copy under shared-session admission."""
+        """Start one durable control-managed copy under execution-session admission."""
         normalized_chunk_size = normalize_chunk_size(chunk_size)
         async with self._sessions.session_admission(
             (src_session_id, dst_session_id)
@@ -296,7 +296,7 @@ class ControlSessionCopyService:
             )
 
     def managed_job_registration(self) -> tuple[str, ManagedJobHandler]:
-        """Return this runtime's shared-session-aware managed-copy handler."""
+        """Return this runtime's execution-session-aware managed-copy handler."""
         return SESSION_COPY_MANAGED_KIND, self._run_managed_job
 
     async def reconcile_abandonments(
@@ -1227,7 +1227,7 @@ class ControlSessionCopyService:
 
     @staticmethod
     def _workdir(record: ControlSessionRecord) -> str:
-        workdir = record.resolved_workdir or record.requested_workdir
+        workdir = record.resolved_workdir
         if workdir is None:
             raise RuntimeError(
                 f"session {record.session_id} has no resolved workdir"

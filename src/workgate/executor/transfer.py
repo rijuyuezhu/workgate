@@ -27,7 +27,7 @@ from pydantic import (
     model_validator,
 )
 
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..protocol.transfer import (
     DEFAULT_TRANSFER_CHUNK_BYTES,
     normalize_chunk_size,
@@ -47,7 +47,13 @@ from ..schemas.result_models.transfer import (
 )
 from ..utils.path_locks import path_lock, path_locks
 from ..utils.private_files import atomic_write_private_text
-from .path import display_path, prune_temp_dir, resolve_path, temp_dir
+from .path import (
+    display_path,
+    prune_temp_dir,
+    resolve_default_workdir,
+    resolve_path,
+    temp_dir,
+)
 from .tool_session.store import ToolSessionStore
 
 _TRANSFER_TMP_MARKER = "workgate-transfer"

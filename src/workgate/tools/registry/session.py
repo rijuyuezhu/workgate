@@ -41,11 +41,11 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start an execution session on one executor. Omit workdir to use the executor default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."""
+    return """Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."""
 
 
 def _session_change_workdir_description(_context: McpToolContext) -> str:
-    return """Change an execution session's workdir. Relative paths resolve against the executor default workdir, and old grounding snapshots are invalidated."""
+    return """Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated."""
 
 
 def _session_copy_description(_context: McpToolContext) -> str:

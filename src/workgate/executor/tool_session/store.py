@@ -12,7 +12,7 @@ from ...errors import (
     SessionTerminationRequestedError,
 )
 from ...persistence import StateStore
-from ..path import resolve_path
+from ..path import resolve_default_workdir, resolve_path
 from .records import (
     AgentSession,
     SnapshotRecord,
@@ -70,11 +70,11 @@ class SessionPathResolver(Protocol):
 
 
 class UnknownAgentSessionError(ValueError):
-    """Raised when a tool call references a missing agent session."""
+    """Raised when a tool call references a missing execution session."""
 
 
 class ToolSessionStore:
-    """Persist explicit agent sessions and their grounding snapshots."""
+    """Persist execution sessions and their grounding snapshots."""
 
     def __init__(
         self,
@@ -102,7 +102,7 @@ class ToolSessionStore:
             ) -> Path:
                 return resolve_path(
                     path,
-                    base=default_workdir,
+                    base=resolve_default_workdir(default_workdir),
                     must_exist=must_exist,
                     allow_missing_parent=allow_missing_parent,
                     follow_final_symlink=follow_final_symlink,
@@ -187,7 +187,7 @@ class ToolSessionStore:
         workdir: str | Path,
         label: str | None = None,
     ) -> AgentSession:
-        """Create one control-allocated shared session on this executor."""
+        """Create one control-allocated execution session on this executor."""
         if valid_session_id(session_id) != session_id:
             raise ValueError("session_id is invalid")
         resolved_workdir = self._path_resolver(workdir, must_exist=True)
@@ -518,9 +518,9 @@ class ToolSessionStore:
                     workdir=str(resolved_workdir),
                     updated_at=time.time(),
                 )
-                # Grounding for the old cwd must be gone before the durable cwd
+                # Grounding for the old workdir must be gone before the durable workdir
                 # can point anywhere else. A crash between these two mutations
-                # therefore leaves either old cwd + no snapshots, or new cwd +
+                # therefore leaves either old workdir + no snapshots, or new workdir +
                 # no old snapshots.
                 self._snapshot_repository.remove_session(session_id)
                 self._write_session_locked(updated)

@@ -8,6 +8,12 @@ from ..app_paths import ensure_private_directory
 from ..errors import PathNotFoundError
 
 
+def resolve_default_workdir(path: Path) -> Path:
+    """Return the live default directory, falling back to the filesystem root."""
+    resolved = path.resolve(strict=False)
+    return resolved if resolved.is_dir() else Path("/").resolve(strict=False)
+
+
 def resolve_path(
     path: str | Path,
     *,

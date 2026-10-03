@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from workgate.config.settings import clear_settings_cache
+from workgate.executor.path import resolve_default_workdir
 
 _SYSTEM_TMP_ROOT = Path(tempfile.mkdtemp(prefix="workgate-tests-"))
 _SYSTEM_TMP_SEQUENCE = itertools.count()
@@ -63,7 +64,7 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
         settings = get_settings()
         return resolve_path(
             path,
-            base=settings.default_workdir,
+            base=resolve_default_workdir(settings.default_workdir),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,

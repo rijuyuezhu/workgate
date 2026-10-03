@@ -104,7 +104,7 @@ def _json_value(value: Any) -> Any:
 
 
 def _executor_service_settings(config: ExecutorConfig) -> dict[str, Any]:
-    """Snapshot only user-configurable executor-owned policy fields.
+    """Snapshot only user-configurable executor settings.
 
     Control-plane auth settings and executor bearer credentials are never
     copied into the managed-service configuration.

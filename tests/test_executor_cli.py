@@ -495,18 +495,9 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("code", "status_code"),
-    [
-        (None, None),
-        (ProtocolErrorCode.UNSUPPORTED_PROTOCOL, 400),
-    ],
-)
-async def test_connect_does_not_repair_transient_or_protocol_incompatible_profile(
+async def test_connect_does_not_repair_non_pairing_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    code: ProtocolErrorCode | None,
-    status_code: int | None,
 ) -> None:
     settings = _settings(tmp_path)
     store = _store(tmp_path)
@@ -518,16 +509,7 @@ async def test_connect_does_not_repair_transient_or_protocol_incompatible_profil
             return None
 
         async def validate(self) -> None:
-            error = (
-                None
-                if code is None
-                else ProtocolError(code=code, message="owner action")
-            )
-            raise ExecutorControlError(
-                "control unavailable or incompatible",
-                status_code=status_code,
-                protocol_error=error,
-            )
+            raise ExecutorControlError("control unavailable")
 
         async def aclose(self) -> None:
             return None

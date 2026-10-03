@@ -1,14 +1,14 @@
-"""Executor-authoritative shared session resources for protocol v1."""
+"""Executor-authoritative execution-session resources for protocol v2."""
 
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config.executor import ExecutorConfig, resolve_default_workdir
+from ..config.executor import ExecutorConfig
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
 from .errors import ExecutorOperationFailure
-from .path import resolve_path
+from .path import resolve_default_workdir, resolve_path
 from .session_orientation import change_session_workdir, session_output
 from .shell_service import ShellService
 from .tool_session.lifecycle import session_lifecycle_lock
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class ExecutorSessionService:
-    """Own final shared session IDs and their executor-side durable state."""
+    """Own execution-session IDs and their executor-side durable state."""
 
     def __init__(
         self,
@@ -42,7 +42,7 @@ class ExecutorSessionService:
         )
 
     def lookup(self, session_id: str) -> SessionInventorySummary | None:
-        """Return one positive read-only shared-session observation, if present."""
+        """Return one positive read-only execution-session observation, if present."""
         try:
             session = self._store.require_session(session_id)
         except UnknownAgentSessionError:
@@ -56,7 +56,7 @@ class ExecutorSessionService:
         workdir: str | None,
         label: str | None,
     ) -> Any:
-        """Create one executor session under the control-allocated shared ID."""
+        """Create one executor session under the control-allocated session ID."""
         resolved = self._resolve_workdir(workdir)
         try:
             session = self._store.create_session(
@@ -78,7 +78,7 @@ class ExecutorSessionService:
             ) from exc
 
     async def terminate(self, session_id: str) -> dict[str, Any]:
-        """Converge one shared session to desired absence idempotently."""
+        """Converge one execution session to desired absence idempotently."""
         try:
             async with session_lifecycle_lock(session_id):
                 self._store.prepare_session_termination(session_id)
@@ -181,7 +181,7 @@ class ExecutorSessionService:
             )
         return SessionInventorySummary(
             session_id=session_id,
-            resolved_workdir=workdir,
+            workdir=workdir,
             last_active_at=last_active_at,
             has_persistent_shells=has_shells,
             has_active_jobs=has_jobs,
