@@ -78,8 +78,8 @@ PlanStepsArg = Annotated[
     Field(
         description=(
             "Complete replacement plan. Every step requires an explicit stable id "
-            "and may include content, status, and priority; unsupported fields "
-            "are rejected."
+            "and may include content, status, and priority. Status is pending, "
+            "in_progress, completed, skipped, or blocked; unsupported fields are rejected."
         ),
     ),
 ]

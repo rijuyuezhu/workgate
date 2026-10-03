@@ -7,6 +7,9 @@ from pydantic import Field
 TodosArg = Annotated[
     list[dict[str, Any]],
     Field(
-        description="Replacement Todo projection. Each item may include id, content, status, and priority."
+        description=(
+            "Replacement Todo projection. Items support id, content, status, and "
+            "priority; status is pending, in_progress, completed, skipped, or blocked."
+        )
     ),
 ]

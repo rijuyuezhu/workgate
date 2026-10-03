@@ -39,9 +39,9 @@ class ControlRuntime:
     executor_pairing: ExecutorPairingService
     """Process-local device-code pairing attempts and transient credential delivery."""
     session_coordinator: ControlSessionCoordinator
-    """Control authority for final shared session lifecycle and executor routing."""
+    """Control authority for execution-session lifecycle and executor routing."""
     session_copy_service: ControlSessionCopyService
-    """Control orchestration for copies between existing shared sessions."""
+    """Control orchestration for copies between existing execution sessions."""
     download_service: ControlDownloadService
     """Control-owned public file-link snapshots sourced through executor RPC."""
     job_service: ControlJobService

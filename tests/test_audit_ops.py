@@ -12,7 +12,6 @@ from workgate.audit import (
     audit_call_context,
     audit_tool_call_end,
     audit_tool_call_start,
-    audit_tool_input_task_ids,
 )
 from workgate.config.settings import clear_settings_cache, get_settings
 
@@ -47,13 +46,12 @@ async def _task_session(tmp_path):
 async def test_control_audit_query_excludes_only_current_call(tmp_path):
     task_id, session_id, harness = await _task_session(tmp_path)
     older_input = {"task_id": task_id}
-    older_sessions = audit_tool_call_start(
+    older_sessions, older_tasks = audit_tool_call_start(
         call_id="older-audit-tail",
         transport="mcp",
         tool="audit_tail",
         input=older_input,
     )
-    older_tasks = audit_tool_input_task_ids(older_input, older_sessions)
     audit_tool_call_end(
         call_id="older-audit-tail",
         transport="mcp",
@@ -64,13 +62,12 @@ async def test_control_audit_query_excludes_only_current_call(tmp_path):
         task_ids=older_tasks,
     )
     current_input = {"task_id": task_id}
-    current_sessions = audit_tool_call_start(
+    current_sessions, current_tasks = audit_tool_call_start(
         call_id="current-audit-tail",
         transport="mcp",
         tool="audit_tail",
         input=current_input,
     )
-    current_tasks = audit_tool_input_task_ids(current_input, current_sessions)
 
     with audit_call_context(
         "current-audit-tail", current_sessions, current_tasks
@@ -155,13 +152,12 @@ async def test_cross_task_tool_call_is_visible_from_both_tasks_and_sessions(
         "src_session_id": first_session,
         "dst_session_id": second_session,
     }
-    session_ids = audit_tool_call_start(
+    session_ids, task_ids = audit_tool_call_start(
         call_id="cross-task-copy",
         transport="mcp",
         tool="session_copy",
         input=payload,
     )
-    task_ids = audit_tool_input_task_ids(payload, session_ids)
     audit_tool_call_end(
         call_id="cross-task-copy",
         transport="mcp",

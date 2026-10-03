@@ -7,7 +7,6 @@ from ...audit import (
     audit_call_context,
     audit_tool_call_end,
     audit_tool_call_start,
-    audit_tool_input_task_ids,
     new_audit_call_id,
 )
 from ...tools.contracts import ToolHandler
@@ -24,13 +23,12 @@ async def call_http_tool(
     payload = args or {}
     call_id = new_audit_call_id()
     start = time.time()
-    session_ids = audit_tool_call_start(
+    session_ids, task_ids = audit_tool_call_start(
         call_id=call_id,
         transport="http",
         tool=tool_name,
         input=payload,
     )
-    task_ids = audit_tool_input_task_ids(payload, session_ids)
     try:
         with audit_call_context(call_id, session_ids, task_ids):
             result = await handler(payload)

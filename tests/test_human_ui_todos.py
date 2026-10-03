@@ -190,11 +190,35 @@ async def test_todo_http_validates_shape_count_ids_and_encoded_lengths(
                 **base,
                 "todos": [_todo("same"), _todo("same")],
             },
-            "duplicate todo id",
+            "duplicate plan step id",
         ),
         (
             {**base, "todos": [_todo("one", "界" * 6000)]},
             "content exceeds",
+        ),
+        (
+            {
+                **base,
+                "todos": [
+                    {
+                        **_todo("one"),
+                        "status": "unknown",
+                    }
+                ],
+            },
+            "unsupported plan step status",
+        ),
+        (
+            {
+                **base,
+                "todos": [
+                    {
+                        **_todo("one"),
+                        "extra": "not canonical",
+                    }
+                ],
+            },
+            "unsupported fields",
         ),
     ]
     for payload, message in cases:

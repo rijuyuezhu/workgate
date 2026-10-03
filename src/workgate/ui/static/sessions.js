@@ -537,7 +537,7 @@ export function createSessionsController({
     if (!visible.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this session.";
+      empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this task.";
       elements.todoList.append(empty);
       setTodoControls();
       return;
@@ -626,7 +626,7 @@ export function createSessionsController({
     return "/todos?" + new URLSearchParams({ task_id: selectedTaskId() }).toString();
   }
 
-  function applyTodoPayload(payload, requestedSession) {
+  function applyTodoPayload(payload, requestedTask) {
     controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : null;
     controllerState.todoItems = Array.isArray(payload.todos)
       ? payload.todos.map((item) => ({
@@ -642,7 +642,7 @@ export function createSessionsController({
     controllerState.todoDirty = false;
     renderTaskState();
     renderTodos();
-    elements.todoState.textContent = `${requestedSession} · loaded ${controllerState.todoItems.length} plan steps`;
+    elements.todoState.textContent = `${requestedTask} · loaded ${controllerState.todoItems.length} plan steps`;
   }
 
   async function refreshTodos({ force = false } = {}) {

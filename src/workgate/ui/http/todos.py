@@ -54,73 +54,6 @@ def _runtime(request: Request) -> Any:
     return runtime
 
 
-def _bounded_text(
-    value: Any,
-    *,
-    field: str,
-    max_bytes: int,
-    default: str,
-    allow_empty: bool = True,
-) -> str:
-    normalized = str(value if value is not None else default)
-    if not normalized and not allow_empty:
-        raise ValueError(f"{field} must not be empty")
-    if len(normalized.encode("utf-8")) > max_bytes:
-        raise ValueError(f"{field} exceeds {max_bytes} encoded bytes")
-    return normalized
-
-
-def _todo_items(value: Any) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        raise ValueError("todos must be a JSON array")
-    settings = get_control_config()
-    if len(value) > settings.max_todos:
-        raise ValueError(
-            f"Refusing to write {len(value)} todos; max is {settings.max_todos}"
-        )
-    normalized: list[dict[str, str]] = []
-    identifiers: set[str] = set()
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise ValueError(f"todos[{index}] must be a JSON object")
-        identifier = _bounded_text(
-            item.get("id"),
-            field=f"todos[{index}].id",
-            max_bytes=UI_TODO_ID_MAX_BYTES,
-            default=str(index + 1),
-            allow_empty=False,
-        )
-        if identifier in identifiers:
-            raise ValueError(f"duplicate todo id: {identifier}")
-        identifiers.add(identifier)
-        normalized.append(
-            {
-                "id": identifier,
-                "content": _bounded_text(
-                    item.get("content"),
-                    field=f"todos[{index}].content",
-                    max_bytes=UI_TODO_CONTENT_MAX_BYTES,
-                    default="",
-                ),
-                "status": _bounded_text(
-                    item.get("status"),
-                    field=f"todos[{index}].status",
-                    max_bytes=UI_TODO_LABEL_MAX_BYTES,
-                    default="pending",
-                    allow_empty=False,
-                ),
-                "priority": _bounded_text(
-                    item.get("priority"),
-                    field=f"todos[{index}].priority",
-                    max_bytes=UI_TODO_LABEL_MAX_BYTES,
-                    default="medium",
-                    allow_empty=False,
-                ),
-            }
-        )
-    return normalized
-
-
 def _final_payload(
     task_id: str,
     result: ReadTodosOutput | WriteTodosOutput,
@@ -157,7 +90,9 @@ async def api_todos(request: Request) -> Response:
             raise ValueError("request body must be a JSON object")
         task_id = _task_id_arg(body.get("task_id"))
         _require_todo_scopes(write=True)
-        todos = _todo_items(body.get("todos"))
+        todos = body.get("todos")
+        if not isinstance(todos, list):
+            raise ValueError("todos must be a JSON array")
         result, task = await runtime.task_service.write_with_task(
             task_id, todos
         )

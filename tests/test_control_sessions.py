@@ -769,7 +769,7 @@ async def test_explicit_cleanup_lookup_confirms_missing_availability(
         clock=lambda: 100.0,
     )
 
-    with pytest.raises(RuntimeError, match="agent session limit reached"):
+    with pytest.raises(RuntimeError, match="execution session limit reached"):
         await coordinator.start_session(workdir="new")
 
     assert [call[1] for call in transport.calls] == ["session.lookup"]
@@ -821,7 +821,7 @@ async def test_missing_observation_reaps_after_retention_without_durable_state(
     clock["now"] = 105.0
     await coordinator.reconcile_hello(executor_id)
     clock["now"] = 109.0
-    with pytest.raises(RuntimeError, match="agent session limit reached"):
+    with pytest.raises(RuntimeError, match="execution session limit reached"):
         await coordinator.start_session(workdir="new")
     assert transport.calls == []
     assert state.snapshot_sessions()[existing].status == "active"
@@ -874,7 +874,7 @@ async def test_overflow_does_not_reap_session_with_owned_resources(
         clock=lambda: 20_000.0,
     )
 
-    with pytest.raises(RuntimeError, match="agent session limit reached"):
+    with pytest.raises(RuntimeError, match="execution session limit reached"):
         await coordinator.start_session(workdir="new")
 
     assert state.snapshot_sessions()[existing].status == "active"
@@ -918,7 +918,7 @@ async def test_overflow_revalidates_activity_before_termination(
         clock=lambda: 20_000.0,
     )
 
-    with pytest.raises(RuntimeError, match="agent session limit reached"):
+    with pytest.raises(RuntimeError, match="execution session limit reached"):
         await coordinator.start_session(workdir="new")
 
     assert lookups == 2
@@ -971,7 +971,7 @@ async def test_overflow_respects_control_managed_resource_hook(
         before_terminate=no_cleanup,
     )
 
-    with pytest.raises(RuntimeError, match="agent session limit reached"):
+    with pytest.raises(RuntimeError, match="execution session limit reached"):
         await coordinator.start_session(workdir="new")
 
     assert state.snapshot_sessions()[existing].status == "active"

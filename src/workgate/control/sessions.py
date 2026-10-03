@@ -464,7 +464,7 @@ class ControlSessionCoordinator:
         maximum = self._max_agent_sessions
         if maximum is not None and self._nonended_session_count() >= maximum:
             raise RuntimeError(
-                "agent session limit reached: "
+                "execution session limit reached: "
                 f"{maximum}; end an active session or wait for retention cleanup"
             )
 

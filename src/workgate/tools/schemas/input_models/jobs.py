@@ -14,7 +14,7 @@ JobCommandArg = Annotated[
 JobCwdArg = Annotated[
     str,
     Field(
-        description="Working directory for the tracked job. Relative paths resolve inside the agent session workdir."
+        description="Working directory for the tracked job. Relative paths resolve inside the execution session workdir."
     ),
 ]
 JobNameArg = Annotated[
@@ -29,7 +29,7 @@ JobIdArg = Annotated[
     str,
     StringConstraints(min_length=1),
     Field(
-        description="Tracked job identifier returned by `bash(async_=true)`, `session_copy(background=true)`, or `job` in the same agent session."
+        description="Tracked job identifier returned by `bash(async_=true)`, `session_copy(background=true)`, or `job` in the same execution session."
     ),
 ]
 IncludeFinishedArg = Annotated[

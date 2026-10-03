@@ -418,9 +418,7 @@ async def api_audit(request: Request) -> Response:
             if not log_session_id:
                 raise ValueError("session is required when scope=session")
             if _final_session_record(request, log_session_id) is None:
-                raise LookupError(
-                    f"unknown shared session_id {log_session_id!r}"
-                )
+                raise LookupError(f"unknown session_id {log_session_id!r}")
         include_selected = _bool_arg(
             request.query_params.get("include_selected")
         )
@@ -482,9 +480,7 @@ async def api_audit_detail(request: Request) -> Response:
             if not log_session_id:
                 raise ValueError("session is required when scope=session")
             if _final_session_record(request, log_session_id) is None:
-                raise LookupError(
-                    f"unknown shared session_id {log_session_id!r}"
-                )
+                raise LookupError(f"unknown session_id {log_session_id!r}")
         scoped_session_id = log_session_id if scope == "session" else None
         entry = await _detail(
             "control",

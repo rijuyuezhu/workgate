@@ -198,24 +198,16 @@ class ControlTaskService:
             )
         return normalized
 
-    def _normalize_legacy_todos(
-        self, todos: list[dict[str, Any]]
-    ) -> list[TaskPlanStep]:
-        """Normalize Todo compatibility input."""
-        if len(todos) > self._settings.max_todos:
-            raise ValueError(
-                f"Refusing to write {len(todos)} todos; "
-                f"max is {self._settings.max_todos}"
-            )
-        return [
-            TaskPlanStep(
-                id=str(item.get("id") or index + 1),
-                content=str(item.get("content") or ""),
-                status=str(item.get("status") or "pending"),
-                priority=str(item.get("priority") or "medium"),
-            )
-            for index, item in enumerate(todos)
-        ]
+    def _normalize_todos(self, todos: list[Any]) -> list[TaskPlanStep]:
+        """Normalize Todo input through the canonical plan validator."""
+        steps: list[dict[str, Any]] = []
+        for index, item in enumerate(todos):
+            if not isinstance(item, dict):
+                raise ValueError(f"todos[{index}] must be a JSON object")
+            step = dict(item)
+            step["id"] = str(item.get("id") or index + 1)
+            steps.append(step)
+        return self._normalize_steps(steps)
 
     @staticmethod
     def _legacy_document(
@@ -730,9 +722,9 @@ class ControlTaskService:
     async def _write_task_output(
         self,
         task_id: str,
-        todos: list[dict[str, Any]],
+        todos: list[Any],
     ) -> TaskOutput:
-        normalized = self._normalize_legacy_todos(todos)
+        normalized = self._normalize_todos(todos)
 
         def mutate(
             document: TaskDocument,
@@ -753,7 +745,7 @@ class ControlTaskService:
     async def write(
         self,
         task_id: str,
-        todos: list[dict[str, Any]],
+        todos: list[Any],
     ) -> WriteTodosOutput:
         task = await self._write_task_output(task_id, todos)
         return self._todo_output(task, write=True)  # type: ignore[return-value]
@@ -767,7 +759,7 @@ class ControlTaskService:
     async def write_with_task(
         self,
         task_id: str,
-        todos: list[dict[str, Any]],
+        todos: list[Any],
     ) -> tuple[WriteTodosOutput, TaskOutput]:
         task = await self._write_task_output(task_id, todos)
         return self._todo_output(task, write=True), task  # type: ignore[return-value]

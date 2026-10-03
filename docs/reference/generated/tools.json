@@ -1733,7 +1733,7 @@
           {
             "items": [
               {
-                "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
+                "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority. Status is pending, in_progress, completed, skipped, or blocked; unsupported fields are rejected.",
                 "head": {
                   "code": "steps"
                 },
@@ -1793,7 +1793,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Replacement Todo projection. Each item may include id, content, status, and priority.",
+                "description": "Replacement Todo projection. Items support id, content, status, and priority; status is pending, in_progress, completed, skipped, or blocked.",
                 "head": {
                   "code": "todos"
                 },
@@ -10004,7 +10004,7 @@
       "inputSchema": {
         "properties": {
           "steps": {
-            "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
+            "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority. Status is pending, in_progress, completed, skipped, or blocked; unsupported fields are rejected.",
             "items": {
               "additionalProperties": true,
               "type": "object"
@@ -12914,7 +12914,7 @@
             "type": "string"
           },
           "todos": {
-            "description": "Replacement Todo projection. Each item may include id, content, status, and priority.",
+            "description": "Replacement Todo projection. Items support id, content, status, and priority; status is pending, in_progress, completed, skipped, or blocked.",
             "items": {
               "additionalProperties": true,
               "type": "object"

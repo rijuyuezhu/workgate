@@ -14,7 +14,6 @@ from ...audit import (
     audit_call_context,
     audit_tool_call_end,
     audit_tool_call_start,
-    audit_tool_input_task_ids,
     new_audit_call_id,
 )
 from ...config.control import ControlConfig
@@ -80,13 +79,12 @@ def _mcp_tool_audit_watchdog_wrapper(
         call_id = new_audit_call_id()
         start = time.time()
         tool_input = _mcp_tool_input(args, kwargs)
-        session_ids = audit_tool_call_start(
+        session_ids, task_ids = audit_tool_call_start(
             call_id=call_id,
             transport="mcp",
             tool=tool_name,
             input=tool_input,
         )
-        task_ids = audit_tool_input_task_ids(tool_input, session_ids)
         timeout_s = tool_timeout_s(tool_name)
         try:
             with audit_call_context(call_id, session_ids, task_ids):

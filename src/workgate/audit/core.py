@@ -1375,7 +1375,7 @@ def _session_ids_for_task_id(task_id: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(session_ids))
 
 
-def audit_tool_input_task_ids(
+def _audit_tool_input_task_ids(
     value: Any, session_ids: tuple[str, ...] = ()
 ) -> tuple[str, ...]:
     """Extract explicit task identity plus task attachments of session arguments."""
@@ -1447,7 +1447,7 @@ def _audit_record_task_ids(
     if not task_ids:
         nested = fields.get("input")
         if isinstance(nested, Mapping):
-            task_ids.extend(audit_tool_input_task_ids(nested, session_ids))
+            task_ids.extend(_audit_tool_input_task_ids(nested, session_ids))
     if not task_ids:
         task_ids.extend(_CURRENT_AUDIT_TASK_IDS.get())
     if not task_ids:
@@ -1554,8 +1554,8 @@ def audit_tool_call_start(
     transport: str,
     tool: str,
     input: Any,
-) -> tuple[str, ...]:
-    """Record the bounded input and caller context for one tool call."""
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Record one tool-call start and return its execution/task identities."""
     audit_input = _redact_browser_tool_input(tool, input)
     fields: dict[str, Any] = {
         "call_id": call_id,
@@ -1564,7 +1564,7 @@ def audit_tool_call_start(
         "input": _tool_audit_projection(tool, audit_input),
     }
     session_ids = tool_input_session_ids(input)
-    task_ids = audit_tool_input_task_ids(input, session_ids)
+    task_ids = _audit_tool_input_task_ids(input, session_ids)
     if session_ids:
         fields["session"] = session_ids[0]
         fields["session_ids"] = list(session_ids)
@@ -1572,7 +1572,7 @@ def audit_tool_call_start(
         fields["task"] = task_ids[0]
         fields["task_ids"] = list(task_ids)
     audit("tool_call_start", **fields)
-    return session_ids
+    return session_ids, task_ids
 
 
 def audit_tool_call_end(
