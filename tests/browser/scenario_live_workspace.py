@@ -17,7 +17,7 @@ _LIVE_WORKSPACE_HTML = (
 )
 
 
-def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
+def _snapshot(*, status: str = "active") -> dict:
     actions = {
         "active": ["block", "cancel", "next_instruction"],
         "blocked": ["resume", "cancel", "next_instruction"],
@@ -42,7 +42,6 @@ def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
             "version": 2,
             "task_id": "task_browser_live",
             "session_ids": ["sess_browser_live"],
-            "revision": revision,
             "created_at": 1.0,
             "updated_at": 2.0,
             "label": "Browser handoff",
@@ -119,8 +118,8 @@ def _snapshot(*, status: str = "active", revision: int = 7) -> dict:
 def _mock_host_html(path: Path) -> str:
     html = path.read_text(encoding="utf-8")
     initial = _snapshot()
-    blocked = _snapshot(status="blocked", revision=8)
-    refreshed = _snapshot(status="blocked", revision=8)
+    blocked = _snapshot(status="blocked")
+    refreshed = _snapshot(status="blocked")
     mock = f"""
 <script>
 window.__liveCalls = [];
@@ -304,7 +303,6 @@ def run_live_workspace(harness: BrowserHarness) -> None:
                         "task_id": "task_browser_live",
                         "session_id": "sess_browser_live",
                         "action": "block",
-                        "expected_revision": 7,
                     },
                 },
             }

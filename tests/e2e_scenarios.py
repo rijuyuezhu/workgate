@@ -648,7 +648,7 @@ async def exercise_todo_tools(client: ToolClient) -> None:
     ]
     write_result = await client.call_tool(
         "write_todos",
-        {"task_id": task_id, "todos": todos, "expected_revision": 0},
+        {"task_id": task_id, "todos": todos},
     )
     assert write_result["todos"] == todos
 

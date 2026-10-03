@@ -52,14 +52,9 @@ class TaskPlan(BaseModel):
 
 
 class TaskDocument(BaseModel):
-    """Canonical revisioned semantic task document."""
+    """Canonical semantic task document."""
 
     version: Literal[2] = 2
-    revision: int = Field(
-        default=0,
-        ge=0,
-        description="Monotonic document revision used for optimistic concurrency.",
-    )
     created_at: float = Field(
         description="Unix timestamp when the task was created."
     )

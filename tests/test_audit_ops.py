@@ -208,7 +208,6 @@ async def test_migrated_legacy_audit_entry_remains_readable_by_task(tmp_path):
     harness.control.state_store.write_json(
         legacy,
         {
-            "revision": 0,
             "updated_at": 1.0,
             "todos": [],
         },

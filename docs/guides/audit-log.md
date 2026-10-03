@@ -2,7 +2,7 @@
 
 `workgate` records server and tool activity so users can review what happened. Audit data may include project text, command input, command output, errors, and remote activity after best-effort credential redaction.
 
-Durable task-state tools redact their generic tool-call input/output payloads entirely. Separate mutation events retain only structural details such as revision, changed fields, and step IDs/statuses. The task document itself still contains the full progress and plan text, so its control-state storage remains sensitive.
+Durable task-state tools redact their generic tool-call input/output payloads entirely. Separate mutation events retain only structural details such as changed fields and step IDs/statuses. The task document itself still contains the full progress and plan text, so its control-state storage remains sensitive.
 Treat the entire audit directory as sensitive.
 
 ## Review activity

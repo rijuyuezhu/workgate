@@ -4,7 +4,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ...errors import SessionTerminationRequestedError, public_error_type
-from ..task_state import TaskRevisionConflictError
 
 
 def install_error_handlers(app: FastAPI) -> None:
@@ -20,18 +19,6 @@ def install_error_handlers(app: FastAPI) -> None:
                 "error": "session_termination_requested",
                 "message": str(exc),
                 "session_id": exc.session_id,
-            },
-        )
-
-    @app.exception_handler(TaskRevisionConflictError)
-    async def task_revision_conflict_handler(
-        request: Request, exc: TaskRevisionConflictError
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "error": "revision_conflict",
-                "message": str(exc),
             },
         )
 

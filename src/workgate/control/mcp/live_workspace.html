@@ -252,11 +252,6 @@
     return item;
   }
 
-  function taskRevision() {
-    const revision = snapshot && snapshot.task && snapshot.task.revision;
-    return Number.isInteger(revision) ? revision : null;
-  }
-
   function render(data) {
     const candidate = payload(data);
     if (!candidate || !candidate.task || !candidate.task.task_id) {
@@ -325,8 +320,7 @@
       ? snapshot.task_control_actions
       : [];
     for (const button of document.querySelectorAll("[data-task-action]")) {
-      button.disabled = taskRevision() === null
-        || !allowedActions.includes(button.dataset.taskAction);
+      button.disabled = !allowedActions.includes(button.dataset.taskAction);
     }
 
     clear($("jobs"));
@@ -409,13 +403,10 @@
   for (const button of document.querySelectorAll("[data-task-action]")) {
     button.addEventListener("click", async () => {
       if (!snapshot || !snapshot.task) return;
-      const revision = taskRevision();
-      if (revision === null) return;
       const action = button.dataset.taskAction;
       const args = {
         task_id: snapshot.task.task_id,
         action,
-        expected_revision: revision,
       };
       if (snapshot.session) args.session_id = snapshot.session.session_id;
       if (action === "next_instruction") args.instruction = $("instruction").value;

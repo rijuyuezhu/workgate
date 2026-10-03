@@ -67,7 +67,7 @@ Some executor file operations may be unavailable when the bound executor is offl
 
 ### Task progress and plan
 
-The Sessions view reads the same control-owned durable task document used by MCP clients. It shows semantic task status, objective, progress summary, findings, next action, blockers, and the structured plan. Plan steps keep stable IDs and share one monotonic revision with the progress report, so stale updates can be rejected instead of silently replacing newer state.
+The Sessions view reads the same control-owned durable task document used by MCP clients. It shows semantic task status, objective, progress summary, findings, next action, blockers, and the structured plan. Plan steps keep stable IDs, and the browser edits that same canonical task plan rather than maintaining a second Todo store.
 
 The Plan editor remains compatible with the older Todo surface: `read_todos` and `write_todos` project the same plan steps rather than storing a second checklist. Ending an executor-backed session makes task state read-only but does not erase it, so the Human UI can still explain what the agent was doing after executor resources are released.
 

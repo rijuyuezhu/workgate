@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from tests.helpers import build_paired_http_app
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.task_state import TaskRevisionConflictError
 from workgate.oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from workgate.oauth.protocol.token_codec import issue_access_token
 
@@ -78,7 +77,6 @@ async def test_todos_require_explicit_task_and_return_metadata(
     assert data["task"]["task_id"] == task_id
     assert data["task"]["session_ids"] == [session_id]
     assert data["task"]["label"] == "todos"
-    assert data["revision"] == 0
     assert data["todos"] == []
     assert data["limits"]["todos"] == get_settings().max_todos
 
@@ -102,30 +100,26 @@ async def test_session_snapshot_projects_attached_task(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_todos_write_read_and_stale_revision_conflict(
-    tmp_path, monkeypatch
-):
+async def test_todos_write_read_and_replace(tmp_path, monkeypatch):
     client, _harness, task_id, _session_id = await _client_with_task(
         monkeypatch, tmp_path
     )
     body = {
         "task_id": task_id,
-        "expected_revision": 0,
         "todos": [_todo("one", "first")],
     }
 
     saved = client.put("/api/ui/todos", json=body)
-    stale = client.put("/api/ui/todos", json=body)
+    replaced = client.put(
+        "/api/ui/todos",
+        json={"task_id": task_id, "todos": [_todo("one", "second")]},
+    )
     current = client.get("/api/ui/todos", params={"task_id": task_id})
 
     assert saved.status_code == 200
-    assert saved.json()["data"]["revision"] == 1
-    assert saved.json()["data"]["task"]["revision"] == 1
-    assert stale.status_code == 409
-    assert stale.json()["error"] == "revision_conflict"
+    assert replaced.status_code == 200
     assert current.status_code == 200
-    assert current.json()["data"]["revision"] == 1
-    assert current.json()["data"]["todos"][0]["content"] == "first"
+    assert current.json()["data"]["todos"][0]["content"] == "second"
 
 
 @pytest.mark.asyncio
@@ -139,7 +133,6 @@ async def test_todos_are_isolated_by_semantic_task(tmp_path, monkeypatch):
         "/api/ui/todos",
         json={
             "task_id": first_task_id,
-            "expected_revision": 0,
             "todos": [_todo("first")],
         },
     )
@@ -149,7 +142,6 @@ async def test_todos_are_isolated_by_semantic_task(tmp_path, monkeypatch):
 
     assert saved.status_code == 200
     assert second_state.status_code == 200
-    assert second_state.json()["data"]["revision"] == 0
     assert second_state.json()["data"]["todos"] == []
 
 
@@ -160,7 +152,7 @@ async def test_todo_http_validates_shape_count_ids_and_encoded_lengths(
     client, _harness, task_id, _session_id = await _client_with_task(
         monkeypatch, tmp_path
     )
-    base = {"task_id": task_id, "expected_revision": 0}
+    base = {"task_id": task_id}
 
     cases = [
         ({**base, "todos": {}}, "todos must be a JSON array"),
@@ -174,10 +166,6 @@ async def test_todo_http_validates_shape_count_ids_and_encoded_lengths(
         (
             {**base, "todos": [_todo("one", "界" * 6000)]},
             "content exceeds",
-        ),
-        (
-            {"task_id": task_id, "expected_revision": True, "todos": []},
-            "non-negative integer",
         ),
     ]
     for payload, message in cases:
@@ -200,7 +188,7 @@ async def test_todo_http_validates_shape_count_ids_and_encoded_lengths(
 
 
 @pytest.mark.asyncio
-async def test_task_service_revision_guard_serializes_concurrent_replacements(
+async def test_task_service_serializes_concurrent_replacements(
     tmp_path, monkeypatch
 ):
     _client, harness, task_id, _session_id = await _client_with_task(
@@ -209,21 +197,12 @@ async def test_task_service_revision_guard_serializes_concurrent_replacements(
     service = harness.control.task_service
 
     results = await asyncio.gather(
-        service.write(task_id, [_todo("a")], 0),
-        service.write(task_id, [_todo("b")], 0),
-        return_exceptions=True,
+        service.write(task_id, [_todo("a")]),
+        service.write(task_id, [_todo("b")]),
     )
 
-    successes = [
-        item for item in results if not isinstance(item, BaseException)
-    ]
-    conflicts = [
-        item for item in results if isinstance(item, TaskRevisionConflictError)
-    ]
-    assert len(successes) == 1
-    assert len(conflicts) == 1
+    assert len(results) == 2
     current = await service.read(task_id)
-    assert current.revision == 1
     assert current.todos[0].id in {"a", "b"}
 
 
@@ -238,7 +217,6 @@ async def test_todos_remain_mutable_after_attached_session_ends(
         "/api/ui/todos",
         json={
             "task_id": task_id,
-            "expected_revision": 0,
             "todos": [_todo("one")],
         },
     )
@@ -250,7 +228,6 @@ async def test_todos_remain_mutable_after_attached_session_ends(
         "/api/ui/todos",
         json={
             "task_id": task_id,
-            "expected_revision": 1,
             "todos": [_todo("two")],
         },
     )
@@ -276,12 +253,12 @@ async def test_todo_oauth_scopes_are_task_scopes_only(tmp_path, monkeypatch):
     )
     denied_write = client.put(
         "/api/ui/todos",
-        json={"task_id": task_id, "expected_revision": 0, "todos": []},
+        json={"task_id": task_id, "todos": []},
         headers=read,
     )
     writable = client.put(
         "/api/ui/todos",
-        json={"task_id": task_id, "expected_revision": 0, "todos": []},
+        json={"task_id": task_id, "todos": []},
         headers=write,
     )
 

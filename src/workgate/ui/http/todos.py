@@ -8,7 +8,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ...config.control import get_control_config
-from ...control.task_state import TaskRevisionConflictError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from ...protocol.ids import TaskId
@@ -122,12 +121,6 @@ def _todo_items(value: Any) -> list[dict[str, str]]:
     return normalized
 
 
-def _expected_revision(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("expected_revision must be a non-negative integer")
-    return value
-
-
 def _final_payload(
     task_id: str,
     result: ReadTodosOutput | WriteTodosOutput,
@@ -159,17 +152,12 @@ async def _write_final(
     runtime: Any,
     task_id: str,
     todos: list[dict[str, str]],
-    expected_revision: int,
 ) -> tuple[WriteTodosOutput, TaskOutput]:
-    return await runtime.task_service.write_with_task(
-        task_id,
-        todos,
-        expected_revision,
-    )
+    return await runtime.task_service.write_with_task(task_id, todos)
 
 
 async def api_todos(request: Request) -> Response:
-    """Read or revision-guardedly replace one explicit task's Todo projection."""
+    """Read or replace one explicit task's Todo projection."""
     try:
         runtime = _runtime(request)
         if request.method == "GET":
@@ -183,26 +171,11 @@ async def api_todos(request: Request) -> Response:
             raise ValueError("request body must be a JSON object")
         task_id = _task_id_arg(body.get("task_id"))
         _require_todo_scopes(write=True)
-        expected_revision = _expected_revision(body.get("expected_revision"))
         todos = _todo_items(body.get("todos"))
-        result, task = await _write_final(
-            runtime,
-            task_id,
-            todos,
-            expected_revision,
-        )
+        result, task = await _write_final(runtime, task_id, todos)
         return _json_ok(_final_payload(task_id, result, task=task))
     except HTTPException:
         raise
-    except TaskRevisionConflictError as exc:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "revision_conflict",
-                "message": str(exc),
-            },
-            status_code=409,
-        )
     except LookupError as exc:
         return _json_error(exc, status_code=404)
     except PermissionError as exc:

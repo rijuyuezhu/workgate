@@ -7,7 +7,6 @@ from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import ExecutorTrustRecord
-from workgate.control.task_state import TaskRevisionConflictError
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.credentials import (
     executor_credential_verifier,
@@ -59,7 +58,6 @@ async def test_task_can_exist_without_execution_session(tmp_path, monkeypatch):
     assert created.task_id.startswith("task_")
     assert created.session_ids == []
     assert created.status == "active"
-    assert created.revision == 0
     assert created.label == "semantic work"
     assert created.objective == "Plan before choosing a machine"
 
@@ -234,10 +232,8 @@ async def test_session_start_does_not_attach_task_deleted_during_executor_select
         )
     )
     await selected.wait()
-    cancelled = await service.cancel_task(task.task_id, expected_revision=0)
-    await service.delete_task(
-        task.task_id, expected_revision=cancelled.revision
-    )
+    await service.cancel_task(task.task_id)
+    await service.delete_task(task.task_id)
     release.set()
 
     with pytest.raises(ValueError, match="unknown task_id"):
@@ -293,10 +289,8 @@ async def test_task_delete_during_session_create_keeps_session_detached(
     assert len(attached) == 1
     session_id = str(attached[0].session_id)
 
-    cancelled = await service.cancel_task(task.task_id, expected_revision=0)
-    await service.delete_task(
-        task.task_id, expected_revision=cancelled.revision
-    )
+    await service.cancel_task(task.task_id)
+    await service.delete_task(task.task_id)
     assert (
         harness.control.control_state.snapshot_sessions()[session_id].task_id
         is None
@@ -312,7 +306,7 @@ async def test_task_delete_during_session_create_keeps_session_detached(
 
 
 @pytest.mark.asyncio
-async def test_task_progress_plan_and_todos_share_one_revisioned_document(
+async def test_task_progress_plan_and_todos_share_one_document(
     tmp_path, monkeypatch
 ):
     _settings, harness, task_id, _session_id = await _task_with_session(
@@ -321,23 +315,19 @@ async def test_task_progress_plan_and_todos_share_one_revisioned_document(
     service = harness.control.task_service
 
     initial = await service.read_task(task_id)
-    assert initial.revision == 0
     assert initial.plan.steps == []
 
     reported = await service.report_progress(
         task_id,
-        expected_revision=0,
         summary="Mapped the execution boundary",
         findings=["Task state is control-owned"],
         next_action="Add a structured plan",
         blockers=[],
     )
-    assert reported.revision == 1
     assert reported.progress.summary == "Mapped the execution boundary"
 
     planned = await service.update_plan(
         task_id,
-        expected_revision=1,
         steps=[
             {
                 "id": "model",
@@ -353,10 +343,9 @@ async def test_task_progress_plan_and_todos_share_one_revisioned_document(
             },
         ],
     )
-    assert planned.revision == 2
+    assert planned.progress.summary == "Mapped the execution boundary"
 
     todos = await service.read(task_id)
-    assert todos.revision == 2
     assert [(item.id, item.status) for item in todos.todos] == [
         ("model", "completed"),
         ("ui", "in_progress"),
@@ -378,11 +367,9 @@ async def test_task_progress_plan_and_todos_share_one_revisioned_document(
                 "priority": "medium",
             },
         ],
-        expected_revision=2,
     )
-    assert written.revision == 3
+    assert [item.status for item in written.todos] == ["completed", "completed"]
     current = await service.read_task(task_id)
-    assert current.revision == 3
     assert [step.status for step in current.plan.steps] == [
         "completed",
         "completed",
@@ -397,9 +384,8 @@ async def test_ending_execution_session_does_not_freeze_task(
         monkeypatch, tmp_path
     )
     service = harness.control.task_service
-    before = await service.report_progress(
+    await service.report_progress(
         task_id,
-        expected_revision=0,
         summary="Session will end",
     )
 
@@ -407,7 +393,6 @@ async def test_ending_execution_session_does_not_freeze_task(
 
     after = await service.report_progress(
         task_id,
-        expected_revision=before.revision,
         summary="Task continues without an active session",
     )
     assert after.progress.summary == "Task continues without an active session"
@@ -427,7 +412,6 @@ async def test_task_survives_control_restart_and_executor_unavailability(
     service = harness.control.task_service
     await service.report_progress(
         task_id,
-        expected_revision=0,
         summary="Durable before restart",
         next_action="Resume from task state",
     )
@@ -436,12 +420,10 @@ async def test_task_survives_control_restart_and_executor_unavailability(
         return False
 
     harness.control.executor_transport.is_online = offline  # type: ignore[method-assign]
-    offline_update = await service.report_progress(
+    await service.report_progress(
         task_id,
-        expected_revision=1,
         findings=["Executor availability is not task authority"],
     )
-    assert offline_update.revision == 2
 
     harness.control.control_state.close()
     restarted = build_control_runtime(settings)
@@ -524,7 +506,7 @@ async def test_task_history_prunes_oldest_terminal_task_at_bound(
     service = harness.control.task_service
 
     first = await service.create_task(label="first")
-    await service.cancel_task(first.task_id, expected_revision=0)
+    await service.cancel_task(first.task_id)
     second = await service.create_task(label="second")
     third = await service.create_task(label="third")
 
@@ -554,7 +536,7 @@ async def test_task_retention_never_prunes_terminal_task_with_live_session(
     )
     assert isinstance(started, dict)
     session_id = str(started["session_id"])
-    await service.cancel_task(task.task_id, expected_revision=0)
+    await service.cancel_task(task.task_id)
 
     with pytest.raises(RuntimeError, match="task history limit reached"):
         await service.create_task(label="must not evict live task")
@@ -568,7 +550,7 @@ async def test_task_retention_never_prunes_terminal_task_with_live_session(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_task_mutations_reject_stale_revision(
+async def test_concurrent_task_mutations_serialize_against_latest_state(
     tmp_path, monkeypatch
 ):
     _settings, harness = _harness(monkeypatch, tmp_path)
@@ -576,80 +558,58 @@ async def test_concurrent_task_mutations_reject_stale_revision(
     service = harness.control.task_service
 
     results = await asyncio.gather(
-        service.report_progress(
-            task.task_id, expected_revision=0, summary="writer a"
-        ),
-        service.report_progress(
-            task.task_id, expected_revision=0, summary="writer b"
-        ),
-        return_exceptions=True,
+        service.report_progress(task.task_id, summary="writer a"),
+        service.report_progress(task.task_id, findings=["writer b"]),
     )
 
-    assert (
-        len([item for item in results if not isinstance(item, BaseException)])
-        == 1
-    )
-    assert (
-        len(
-            [
-                item
-                for item in results
-                if isinstance(item, TaskRevisionConflictError)
-            ]
-        )
-        == 1
-    )
-    assert (await service.read_task(task.task_id)).revision == 1
+    assert len(results) == 2
+    current = await service.read_task(task.task_id)
+    assert current.progress.summary == "writer a"
+    assert current.progress.findings == ["writer b"]
 
 
 @pytest.mark.asyncio
-async def test_task_lifecycle_is_independent_and_revision_guarded(
-    tmp_path, monkeypatch
-):
+async def test_task_lifecycle_is_independent(tmp_path, monkeypatch):
     _settings, harness = _harness(monkeypatch, tmp_path)
     service = harness.control.task_service
     task = await service.create_task()
 
     await service.update_plan(
         task.task_id,
-        expected_revision=0,
         steps=[
             {"id": "one", "content": "First"},
             {"id": "two", "content": "Second"},
         ],
     )
     with pytest.raises(ValueError, match="unfinished plan steps"):
-        await service.finish_task(task.task_id, expected_revision=1)
+        await service.finish_task(task.task_id)
 
     await service.update_plan(
         task.task_id,
-        expected_revision=1,
         steps=[
             {"id": "one", "content": "First", "status": "completed"},
             {"id": "two", "content": "Second", "status": "skipped"},
         ],
     )
-    completed = await service.finish_task(task.task_id, expected_revision=2)
+    completed = await service.finish_task(task.task_id)
     assert completed.status == "completed"
-    assert completed.revision == 3
 
     with pytest.raises(ValueError, match="resumed"):
         await service.report_progress(
             task.task_id,
-            expected_revision=3,
             summary="not yet",
         )
 
-    resumed = await service.resume_task(task.task_id, expected_revision=3)
+    resumed = await service.resume_task(task.task_id)
     assert resumed.status == "active"
-    blocked = await service.block_task(task.task_id, expected_revision=4)
+    blocked = await service.block_task(task.task_id)
     assert blocked.status == "blocked"
-    resumed_again = await service.resume_task(task.task_id, expected_revision=5)
+    resumed_again = await service.resume_task(task.task_id)
     assert resumed_again.status == "active"
-    cancelled = await service.cancel_task(task.task_id, expected_revision=6)
+    cancelled = await service.cancel_task(task.task_id)
     assert cancelled.status == "cancelled"
     with pytest.raises(ValueError, match="cancelled"):
-        await service.resume_task(task.task_id, expected_revision=7)
+        await service.resume_task(task.task_id)
 
 
 @pytest.mark.asyncio
@@ -660,11 +620,9 @@ async def test_delete_terminal_task_clears_session_attachments(
         monkeypatch, tmp_path
     )
     service = harness.control.task_service
-    cancelled = await service.cancel_task(task_id, expected_revision=0)
+    await service.cancel_task(task_id)
 
-    deleted = await service.delete_task(
-        task_id, expected_revision=cancelled.revision
-    )
+    deleted = await service.delete_task(task_id)
 
     assert deleted.deleted is True
     assert deleted.task_id == task_id
@@ -684,7 +642,7 @@ async def test_task_delete_storage_failure_never_leaves_dangling_session_referen
         monkeypatch, tmp_path
     )
     service = harness.control.task_service
-    cancelled = await service.cancel_task(task_id, expected_revision=0)
+    await service.cancel_task(task_id)
     store = harness.control.state_store
     task_path = store.layout.control_task_path(task_id)
     real_remove = store.remove
@@ -696,7 +654,7 @@ async def test_task_delete_storage_failure_never_leaves_dangling_session_referen
 
     monkeypatch.setattr(store, "remove", fail_task_remove)
     with pytest.raises(OSError, match="task removal failure"):
-        await service.delete_task(task_id, expected_revision=cancelled.revision)
+        await service.delete_task(task_id)
 
     assert (
         harness.control.control_state.snapshot_sessions()[session_id].task_id
@@ -704,12 +662,9 @@ async def test_task_delete_storage_failure_never_leaves_dangling_session_referen
     )
     retained = await service.read_task(task_id)
     assert retained.status == "cancelled"
-    assert retained.revision == cancelled.revision
 
     monkeypatch.setattr(store, "remove", real_remove)
-    deleted = await service.delete_task(
-        task_id, expected_revision=retained.revision
-    )
+    deleted = await service.delete_task(task_id)
     assert deleted.deleted is True
 
 
@@ -731,7 +686,6 @@ async def test_legacy_session_task_migrates_to_deterministic_task_id(
     harness.control.state_store.write_json(
         legacy_path,
         {
-            "revision": 4,
             "updated_at": 123.0,
             "todos": [
                 {
@@ -753,7 +707,6 @@ async def test_legacy_session_task_migrates_to_deterministic_task_id(
     assert not legacy_path.exists()
 
     task = await harness.control.task_service.read_task(task_id)
-    assert task.revision == 4
     assert task.label == "legacy task"
     assert task.plan.steps[0].id == "legacy"
     assert task.session_ids == [session_id]
@@ -779,7 +732,7 @@ async def test_legacy_migration_cleans_residual_source_after_interrupted_cleanup
     session_id = str(started["session_id"])
     store = harness.control.state_store
     legacy_path = store.layout.control_task_state_path(session_id)
-    store.write_json(legacy_path, {"revision": 0, "todos": []})
+    store.write_json(legacy_path, {"todos": []})
     real_remove = store.remove
     failed = False
 
@@ -804,12 +757,8 @@ async def test_legacy_migration_cleans_residual_source_after_interrupted_cleanup
     assert await harness.control.task_service.migrate_legacy_sessions() == 0
     assert not legacy_path.exists()
 
-    cancelled = await harness.control.task_service.cancel_task(
-        task_id, expected_revision=0
-    )
-    await harness.control.task_service.delete_task(
-        task_id, expected_revision=cancelled.revision
-    )
+    await harness.control.task_service.cancel_task(task_id)
+    await harness.control.task_service.delete_task(task_id)
     assert await harness.control.task_service.migrate_legacy_sessions() == 0
     with pytest.raises(ValueError, match="unknown task_id"):
         await harness.control.task_service.read_task(task_id)
@@ -824,7 +773,6 @@ async def test_task_mutation_audit_records_identity_not_report_contents(
     secret_text = "sensitive-progress-body"
     await harness.control.task_service.report_progress(
         task.task_id,
-        expected_revision=0,
         summary=secret_text,
         blockers=["private blocker detail"],
     )
@@ -857,21 +805,18 @@ async def test_task_service_rejects_invalid_inputs(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="id is required"):
         await service.update_plan(
             task.task_id,
-            expected_revision=0,
             steps=[{"id": "", "content": "content"}],
         )
     with pytest.raises(ValueError, match="at most 50 items"):
         await service.report_progress(
             task.task_id,
-            expected_revision=0,
             findings=[str(index) for index in range(51)],
         )
     with pytest.raises(ValueError, match="at least one field"):
-        await service.report_progress(task.task_id, expected_revision=0)
+        await service.report_progress(task.task_id)
     with pytest.raises(ValueError, match="max is"):
         await service.update_plan(
             task.task_id,
-            expected_revision=0,
             steps=[
                 {"id": str(index), "content": "step"}
                 for index in range(settings.max_todos + 1)
@@ -888,7 +833,6 @@ async def test_task_state_enforces_document_byte_limit(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="task bytes"):
         await harness.control.task_service.report_progress(
             task.task_id,
-            expected_revision=0,
             objective="x" * 1_000,
         )
 
@@ -906,9 +850,8 @@ async def test_task_mutation_survives_audit_append_failure(
     monkeypatch.setattr("workgate.control.task_state.audit", fail_audit)
     updated = await harness.control.task_service.report_progress(
         task.task_id,
-        expected_revision=0,
         summary="canonical write still succeeds",
     )
-    assert updated.revision == 1
+    assert updated.progress.summary == "canonical write still succeeds"
     restored = await harness.control.task_service.read_task(task.task_id)
     assert restored.progress.summary == "canonical write still succeeds"

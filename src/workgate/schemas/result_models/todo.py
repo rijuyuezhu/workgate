@@ -19,11 +19,6 @@ class TodoItem(BaseModel):
 class ReadTodosOutput(BaseModel):
     """Current persisted agent todo list."""
 
-    revision: int = Field(
-        default=0,
-        ge=0,
-        description="Monotonic list revision used for optimistic concurrency.",
-    )
     updated_at: float | None = Field(
         default=None,
         description="Unix timestamp when the todo list was last written, when known.",

@@ -101,7 +101,6 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
         json={
             "action": "report",
             "task_id": task_id,
-            "expected_revision": 0,
             "objective": f"{marker}-objective",
             "summary": f"{marker}-summary",
             "findings": [f"{marker}-finding"],
@@ -114,7 +113,6 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
         "/tools/task-plan",
         json={
             "task_id": task_id,
-            "expected_revision": 1,
             "steps": [
                 {
                     "id": "step-1",
@@ -130,7 +128,6 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
         "/tools/task-plan",
         json={
             "task_id": task_id,
-            "expected_revision": 2,
             "steps": [
                 {
                     "id": "step-1",
@@ -155,7 +152,6 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
         "/tools/todo",
         json={
             "task_id": task_id,
-            "expected_revision": 2,
             "todos": [
                 {
                     "id": "step-1",

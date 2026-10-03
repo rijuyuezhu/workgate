@@ -168,9 +168,10 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
         tools["task"].inputSchema.get("required", [])
     )
     assert "task_id" not in set(tools["task"].inputSchema.get("required", []))
-    assert "expected_revision" in set(
-        tools["write_todos"].inputSchema.get("required", [])
-    )
+    for name in ("task", "task_plan", "write_todos"):
+        assert "expected_revision" not in set(
+            tools[name].inputSchema.get("properties", {})
+        )
     audit_properties = set(
         tools["audit_tail"].inputSchema.get("properties", {})
     )
@@ -534,12 +535,10 @@ async def test_http_task_matches_mcp_and_progress_mutates_it(
         json={
             "action": "report",
             "task_id": task_id,
-            "expected_revision": 0,
             "summary": "Reported over HTTP",
         },
     )
     assert reported.status_code == 200
-    assert reported.json()["revision"] == 1
 
     args = {"action": "get", "task_id": task_id}
     http_payload = client.post("/tools/task", json=args).json()
@@ -561,7 +560,7 @@ async def test_unrouted_todo_registry_stubs_fail_closed():
     with pytest.raises(RuntimeError, match="requires control routing"):
         await read_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA")
     with pytest.raises(RuntimeError, match="requires control routing"):
-        await write_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA", [], 0)
+        await write_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA", [])
 
 
 def test_http_task_router_validates_actions_and_covers_lifecycle(
@@ -597,33 +596,28 @@ def test_http_task_router_validates_actions_and_covers_lifecycle(
         "/tools/task",
         json={"action": "get", "task_id": task_id, "summary": "not allowed"},
     )
-    missing_revision = client.post(
-        "/tools/task", json={"action": "block", "task_id": task_id}
-    )
     invalid_block = client.post(
         "/tools/task",
         json={
             "action": "block",
             "task_id": task_id,
-            "expected_revision": 0,
             "label": "not allowed",
         },
     )
     assert invalid_get.status_code == 400
-    assert missing_revision.status_code == 400
     assert invalid_block.status_code == 400
 
     blocked = client.post(
         "/tools/task",
-        json={"action": "block", "task_id": task_id, "expected_revision": 0},
+        json={"action": "block", "task_id": task_id},
     )
     resumed = client.post(
         "/tools/task",
-        json={"action": "resume", "task_id": task_id, "expected_revision": 1},
+        json={"action": "resume", "task_id": task_id},
     )
     finished = client.post(
         "/tools/task",
-        json={"action": "finish", "task_id": task_id, "expected_revision": 2},
+        json={"action": "finish", "task_id": task_id},
     )
     assert blocked.status_code == 200
     assert resumed.status_code == 200
@@ -637,7 +631,7 @@ def test_http_task_router_validates_actions_and_covers_lifecycle(
 
     deleted = client.post(
         "/tools/task",
-        json={"action": "delete", "task_id": task_id, "expected_revision": 3},
+        json={"action": "delete", "task_id": task_id},
     )
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
@@ -659,7 +653,6 @@ def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
         json={
             "action": "cancel",
             "task_id": task_id,
-            "expected_revision": 0,
         },
     )
     assert cancelled.status_code == 200
@@ -672,45 +665,7 @@ def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
     assert "cancelled task" in start.json()["message"]
 
 
-def test_http_task_mutations_reject_boolean_expected_revision(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    clear_settings_cache()
-
-    client = TestClient(_build_paired_surface_http_app())
-    task_id = client.post("/tools/task", json={"action": "create"}).json()[
-        "task_id"
-    ]
-
-    progress = client.post(
-        "/tools/task",
-        json={
-            "action": "report",
-            "task_id": task_id,
-            "expected_revision": True,
-            "summary": "reject boolean revisions",
-        },
-    )
-    plan = client.post(
-        "/tools/task-plan",
-        json={
-            "task_id": task_id,
-            "expected_revision": True,
-            "steps": [{"id": "one", "content": "reject boolean revisions"}],
-        },
-    )
-
-    assert progress.status_code == 400
-    assert plan.status_code == 400
-
-
-def test_http_task_stale_revision_is_conflict_and_plan_typos_are_rejected(
-    tmp_path, monkeypatch
-):
+def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
@@ -724,33 +679,27 @@ def test_http_task_stale_revision_is_conflict_and_plan_typos_are_rejected(
         "task_id"
     ]
     first = client.post(
-        "/tools/task",
-        json={
-            "action": "report",
-            "task_id": task_id,
-            "expected_revision": 0,
-            "summary": "advance revision",
-        },
-    )
-    assert first.status_code == 200
-
-    stale = client.post(
         "/tools/task-plan",
         json={
             "task_id": task_id,
-            "expected_revision": 0,
-            "steps": [{"id": "one", "content": "stale"}],
+            "steps": [{"id": "one", "content": "first"}],
         },
     )
-    assert stale.status_code == 409
-    assert stale.json()["error"] == "revision_conflict"
-    assert "revision 0 to 1" in stale.json()["message"]
+    replacement = client.post(
+        "/tools/task-plan",
+        json={
+            "task_id": task_id,
+            "steps": [{"id": "one", "content": "replacement"}],
+        },
+    )
+    assert first.status_code == 200
+    assert replacement.status_code == 200
+    assert replacement.json()["plan"]["steps"][0]["content"] == "replacement"
 
     typo = client.post(
         "/tools/task-plan",
         json={
             "task_id": task_id,
-            "expected_revision": 1,
             "steps": [
                 {
                     "id": "one",
@@ -912,7 +861,6 @@ def test_todos_are_task_scoped(tmp_path, monkeypatch):
             "/tools/todo",
             json={
                 "task_id": first,
-                "expected_revision": 0,
                 "todos": first_items,
             },
         ).status_code
@@ -923,7 +871,6 @@ def test_todos_are_task_scoped(tmp_path, monkeypatch):
             "/tools/todo",
             json={
                 "task_id": second,
-                "expected_revision": 0,
                 "todos": second_items,
             },
         ).status_code

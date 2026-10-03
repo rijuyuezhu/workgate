@@ -1681,13 +1681,6 @@
                 "note": "(array / null, optional)"
               },
               {
-                "description": "Current task revision. Required for block/resume/report/finish/cancel/delete.",
-                "head": {
-                  "code": "expected_revision"
-                },
-                "note": "(integer / null, optional)"
-              },
-              {
                 "description": "Optional replacement findings list; [] clears findings.",
                 "head": {
                   "code": "findings"
@@ -1731,7 +1724,7 @@
               }
             ]
           },
-          "Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity. Mutating an existing task requires its latest expected_revision."
+          "Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity."
         ],
         [
           {
@@ -1739,13 +1732,6 @@
           },
           {
             "items": [
-              {
-                "description": "Current task revision that must still match before mutation.",
-                "head": {
-                  "code": "expected_revision"
-                },
-                "note": "(integer, required)"
-              },
               {
                 "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
                 "head": {
@@ -1762,7 +1748,7 @@
               }
             ]
           },
-          "Replace one semantic task's complete plan using the latest expected_revision. This never chooses or changes an execution session."
+          "Replace one semantic task's complete plan. This never chooses or changes an execution session."
         ]
       ]
     },
@@ -1799,13 +1785,6 @@
           },
           {
             "items": [
-              {
-                "description": "Current task revision that must still match before replacement.",
-                "head": {
-                  "code": "expected_revision"
-                },
-                "note": "(integer, required)"
-              },
               {
                 "description": "Opaque semantic task_id returned by task(action='create').",
                 "head": {
@@ -2006,13 +1985,6 @@
                   "code": "action"
                 },
                 "note": "(block / resume / cancel / next_instruction, required)"
-              },
-              {
-                "description": "Current task revision that must still match before mutation.",
-                "head": {
-                  "code": "expected_revision"
-                },
-                "note": "(integer, required)"
               },
               {
                 "description": null,
@@ -6886,13 +6858,6 @@
         },
         "description": "Current persisted agent todo list.",
         "properties": {
-          "revision": {
-            "default": 0,
-            "description": "Monotonic list revision used for optimistic concurrency.",
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
-          },
           "todos": {
             "description": "Persisted todo items.",
             "items": {
@@ -9665,7 +9630,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity. Mutating an existing task requires its latest expected_revision.",
+      "description": "Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -9698,20 +9663,6 @@
             "default": null,
             "description": "Optional replacement blockers list; [] clears blockers.",
             "title": "Blockers"
-          },
-          "expected_revision": {
-            "anyOf": [
-              {
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Current task revision. Required for block/resume/report/finish/cancel/delete.",
-            "title": "Expected Revision"
           },
           "findings": {
             "anyOf": [
@@ -9878,13 +9829,6 @@
               },
               "progress": {
                 "$ref": "#/$defs/TaskProgress"
-              },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
               },
               "session_ids": {
                 "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
@@ -10056,15 +10000,9 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Replace one semantic task's complete plan using the latest expected_revision. This never chooses or changes an execution session.",
+      "description": "Replace one semantic task's complete plan. This never chooses or changes an execution session.",
       "inputSchema": {
         "properties": {
-          "expected_revision": {
-            "description": "Current task revision that must still match before mutation.",
-            "minimum": 0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
           "steps": {
             "description": "Complete replacement plan. Every step requires an explicit stable id and may include content, status, and priority; unsupported fields are rejected.",
             "items": {
@@ -10085,7 +10023,6 @@
         },
         "required": [
           "task_id",
-          "expected_revision",
           "steps"
         ],
         "title": "task_planArguments",
@@ -10241,13 +10178,6 @@
           },
           "progress": {
             "$ref": "#/$defs/TaskProgress"
-          },
-          "revision": {
-            "default": 0,
-            "description": "Monotonic document revision used for optimistic concurrency.",
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
           },
           "session_ids": {
             "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
@@ -10749,7 +10679,7 @@
         "type": "object"
       },
       "meta": {
-        "openai/outputTemplate": "ui://workgate/live-workspace-f541b25b881be44f.html",
+        "openai/outputTemplate": "ui://workgate/live-workspace-3052fbae988c2b05.html",
         "openai/toolInvocation/invoked": "Live Workspace ready",
         "openai/toolInvocation/invoking": "Opening Live Workspace",
         "openai/widgetAccessible": true,
@@ -10763,9 +10693,9 @@
           }
         ],
         "ui": {
-          "resourceUri": "ui://workgate/live-workspace-f541b25b881be44f.html"
+          "resourceUri": "ui://workgate/live-workspace-3052fbae988c2b05.html"
         },
-        "ui/resourceUri": "ui://workgate/live-workspace-f541b25b881be44f.html"
+        "ui/resourceUri": "ui://workgate/live-workspace-3052fbae988c2b05.html"
       },
       "name": "workspace_open",
       "outputSchema": {
@@ -11132,13 +11062,6 @@
               },
               "progress": {
                 "$ref": "#/$defs/TaskProgress"
-              },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
               },
               "session_ids": {
                 "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
@@ -11918,13 +11841,6 @@
               "progress": {
                 "$ref": "#/$defs/TaskProgress"
               },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
-              },
               "session_ids": {
                 "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
                 "items": {
@@ -12207,12 +12123,6 @@
             "title": "Action",
             "type": "string"
           },
-          "expected_revision": {
-            "description": "Current task revision that must still match before mutation.",
-            "minimum": 0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
           "instruction": {
             "anyOf": [
               {
@@ -12252,8 +12162,7 @@
         },
         "required": [
           "task_id",
-          "action",
-          "expected_revision"
+          "action"
         ],
         "title": "workspace_task_controlArguments",
         "type": "object"
@@ -12641,13 +12550,6 @@
               "progress": {
                 "$ref": "#/$defs/TaskProgress"
               },
-              "revision": {
-                "default": 0,
-                "description": "Monotonic document revision used for optimistic concurrency.",
-                "minimum": 0,
-                "title": "Revision",
-                "type": "integer"
-              },
               "session_ids": {
                 "description": "Execution sessions explicitly attached to this task, including retained ended-session history while those session records exist.",
                 "items": {
@@ -13003,12 +12905,6 @@
       "description": "Replace canonical task plan steps through the Todo compatibility surface. Use the explicit task_id; execution sessions are unrelated to this write.",
       "inputSchema": {
         "properties": {
-          "expected_revision": {
-            "description": "Current task revision that must still match before replacement.",
-            "minimum": 0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
           "task_id": {
             "description": "Opaque semantic task_id returned by task(action='create').",
             "maxLength": 128,
@@ -13029,8 +12925,7 @@
         },
         "required": [
           "task_id",
-          "todos",
-          "expected_revision"
+          "todos"
         ],
         "title": "write_todosArguments",
         "type": "object"
@@ -13085,13 +12980,6 @@
         },
         "description": "Todo list replacement result.",
         "properties": {
-          "revision": {
-            "default": 0,
-            "description": "Monotonic list revision used for optimistic concurrency.",
-            "minimum": 0,
-            "title": "Revision",
-            "type": "integer"
-          },
           "todos": {
             "description": "Persisted todo items.",
             "items": {

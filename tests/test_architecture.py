@@ -46,7 +46,6 @@ _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
         ("workgate.ui.http.dashboard", "workgate.control.ui_executor"),
         ("workgate.ui.http.files", "workgate.control.ui_executor"),
         ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
-        ("workgate.ui.http.todos", "workgate.control.task_state"),
     }
 )
 _ALLOWED_HTTP_TO_CONTROL_IMPORTS = frozenset(
@@ -60,7 +59,6 @@ _ALLOWED_UI_HTTP_TO_CONTROL_IMPORTS = frozenset(
         ("workgate.ui.http.dashboard", "workgate.control.ui_executor"),
         ("workgate.ui.http.files", "workgate.control.ui_executor"),
         ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
-        ("workgate.ui.http.todos", "workgate.control.task_state"),
     }
 )
 _ALLOWED_RELEASE_IMPORTS = frozenset(

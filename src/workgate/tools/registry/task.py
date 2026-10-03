@@ -1,8 +1,6 @@
 """Durable semantic task MCP tool registry."""
 
 from ...schemas.input_models.task import (
-    ExpectedTaskRevisionArg,
-    OptionalExpectedTaskRevisionArg,
     OptionalTaskIdArg,
     PlanStepsArg,
     ProgressBlockersArg,
@@ -36,7 +34,6 @@ task_tool = TaskToolRegistry.get_tool_decorator()
 async def task(
     action: TaskActionArg,
     task_id: OptionalTaskIdArg = None,
-    expected_revision: OptionalExpectedTaskRevisionArg = None,
     label: TaskLabelArg = None,
     objective: TaskObjectiveArg = None,
     summary: ProgressSummaryArg = None,
@@ -44,11 +41,10 @@ async def task(
     next_action: ProgressNextActionArg = None,
     blockers: ProgressBlockersArg = None,
 ) -> TaskOutput | TaskDeleteOutput:
-    """Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity. Mutating an existing task requires its latest expected_revision."""
+    """Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity."""
     del (
         action,
         task_id,
-        expected_revision,
         label,
         objective,
         summary,
@@ -67,9 +63,8 @@ async def task(
 )
 async def task_plan(
     task_id: TaskIdArg,
-    expected_revision: ExpectedTaskRevisionArg,
     steps: PlanStepsArg,
 ) -> TaskOutput:
-    """Replace one semantic task's complete plan using the latest expected_revision. This never chooses or changes an execution session."""
-    del task_id, expected_revision, steps
+    """Replace one semantic task's complete plan. This never chooses or changes an execution session."""
+    del task_id, steps
     raise RuntimeError("task_plan requires control routing")

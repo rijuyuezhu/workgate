@@ -46,10 +46,6 @@ _TASK_HISTORY_LIMIT_PER_PRINCIPAL = 256
 _TASK_TERMINAL_RETENTION_S = 30 * 24 * 60 * 60
 
 
-class TaskRevisionConflictError(RuntimeError):
-    """Raised when a revision-guarded task mutation targets stale state."""
-
-
 class _StoredTask(BaseModel):
     """Private persistence envelope for one semantic task."""
 
@@ -242,13 +238,11 @@ class ControlTaskService:
                     for item in legacy.todos
                 ]
             )
-            revision = legacy.revision
             updated_at = float(legacy.updated_at or created_at)
             objective = None
             status = "active"
             progress = TaskProgress()
         else:
-            revision = int(value.get("revision") or 0)
             objective = (
                 str(value["objective"])
                 if value.get("objective") is not None
@@ -259,7 +253,6 @@ class ControlTaskService:
             plan = TaskPlan.model_validate(value.get("plan") or {})
         return TaskDocument.model_validate(
             {
-                "revision": revision,
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "label": label,
@@ -323,18 +316,6 @@ class ControlTaskService:
         self._store.write_json(path, data)
 
     @staticmethod
-    def _check_expected_revision(
-        current: TaskDocument, expected_revision: int
-    ) -> None:
-        if isinstance(expected_revision, bool) or expected_revision < 0:
-            raise ValueError("expected_revision must be a non-negative integer")
-        if expected_revision != current.revision:
-            raise TaskRevisionConflictError(
-                "Task changed from revision "
-                f"{expected_revision} to {current.revision}; reload before saving"
-            )
-
-    @staticmethod
     def _require_mutable(document: TaskDocument) -> None:
         if document.status == "cancelled":
             raise ValueError("cancelled task is terminal")
@@ -359,7 +340,6 @@ class ControlTaskService:
         task_id: str,
         *,
         operation: str,
-        revision: int,
         changed_fields: list[str],
         session_ids: list[str],
         step_changes: list[dict[str, str]] | None = None,
@@ -367,7 +347,6 @@ class ControlTaskService:
         fields: dict[str, Any] = {
             "task": task_id,
             "operation": operation,
-            "revision": revision,
             "changed_fields": changed_fields,
         }
         if session_ids:
@@ -383,7 +362,6 @@ class ControlTaskService:
     def _mutate_sync(
         self,
         task_id: str,
-        expected_revision: int,
         operation: str,
         mutate: Callable[
             [TaskDocument], tuple[list[str], list[dict[str, str]]]
@@ -392,10 +370,8 @@ class ControlTaskService:
         path = self._path(task_id)
         with self._store.transaction(path):
             current = self._read_stored_unlocked(task_id)
-            self._check_expected_revision(current.document, expected_revision)
             document = current.document.model_copy(deep=True)
             changed_fields, step_changes = mutate(document)
-            document.revision = current.document.revision + 1
             document.updated_at = time.time()
             stored = current.model_copy(update={"document": document})
             self._persist_stored(path, stored)
@@ -403,7 +379,6 @@ class ControlTaskService:
         self._audit_mutation(
             task_id,
             operation=operation,
-            revision=document.revision,
             changed_fields=changed_fields,
             session_ids=session_ids,
             step_changes=step_changes,
@@ -413,7 +388,6 @@ class ControlTaskService:
     async def _mutate(
         self,
         task_id: str,
-        expected_revision: int,
         operation: str,
         mutate: Callable[
             [TaskDocument], tuple[list[str], list[dict[str, str]]]
@@ -422,7 +396,6 @@ class ControlTaskService:
         return await asyncio.to_thread(
             self._mutate_sync,
             task_id,
-            expected_revision,
             operation,
             mutate,
         )
@@ -555,7 +528,6 @@ class ControlTaskService:
         self._audit_mutation(
             task_id,
             operation="create",
-            revision=0,
             changed_fields=["label", "objective"],
             session_ids=[],
         )
@@ -594,7 +566,6 @@ class ControlTaskService:
         self,
         task_id: str,
         *,
-        expected_revision: int,
         label: str | None = None,
         objective: str | None = None,
         summary: str | None = None,
@@ -646,13 +617,12 @@ class ControlTaskService:
                 )
             return changed, []
 
-        return await self._mutate(task_id, expected_revision, "report", mutate)
+        return await self._mutate(task_id, "report", mutate)
 
     async def _set_status(
         self,
         task_id: str,
         *,
-        expected_revision: int,
         action: Literal["block", "resume", "finish", "cancel"],
     ) -> TaskOutput:
         def mutate(
@@ -678,43 +648,24 @@ class ControlTaskService:
                 document.status = "cancelled"
             return ["status"], []
 
-        return await self._mutate(task_id, expected_revision, action, mutate)
+        return await self._mutate(task_id, action, mutate)
 
-    async def block_task(
-        self, task_id: str, *, expected_revision: int
-    ) -> TaskOutput:
-        return await self._set_status(
-            task_id, expected_revision=expected_revision, action="block"
-        )
+    async def block_task(self, task_id: str) -> TaskOutput:
+        return await self._set_status(task_id, action="block")
 
-    async def resume_task(
-        self, task_id: str, *, expected_revision: int
-    ) -> TaskOutput:
-        return await self._set_status(
-            task_id, expected_revision=expected_revision, action="resume"
-        )
+    async def resume_task(self, task_id: str) -> TaskOutput:
+        return await self._set_status(task_id, action="resume")
 
-    async def finish_task(
-        self, task_id: str, *, expected_revision: int
-    ) -> TaskOutput:
-        return await self._set_status(
-            task_id, expected_revision=expected_revision, action="finish"
-        )
+    async def finish_task(self, task_id: str) -> TaskOutput:
+        return await self._set_status(task_id, action="finish")
 
-    async def cancel_task(
-        self, task_id: str, *, expected_revision: int
-    ) -> TaskOutput:
-        return await self._set_status(
-            task_id, expected_revision=expected_revision, action="cancel"
-        )
+    async def cancel_task(self, task_id: str) -> TaskOutput:
+        return await self._set_status(task_id, action="cancel")
 
-    def _delete_sync(
-        self, task_id: str, expected_revision: int
-    ) -> TaskDeleteOutput:
+    def _delete_sync(self, task_id: str) -> TaskDeleteOutput:
         path = self._path(task_id)
         with self._store.transaction(path):
             current = self._read_stored_unlocked(task_id)
-            self._check_expected_revision(current.document, expected_revision)
             if current.document.status not in {"completed", "cancelled"}:
                 raise ValueError(
                     "only completed or cancelled tasks may be deleted"
@@ -727,18 +678,13 @@ class ControlTaskService:
             logger.exception("Failed to append task deletion audit event")
         return TaskDeleteOutput(task_id=task_id)
 
-    async def delete_task(
-        self, task_id: str, *, expected_revision: int
-    ) -> TaskDeleteOutput:
-        return await asyncio.to_thread(
-            self._delete_sync, task_id, expected_revision
-        )
+    async def delete_task(self, task_id: str) -> TaskDeleteOutput:
+        return await asyncio.to_thread(self._delete_sync, task_id)
 
     async def update_plan(
         self,
         task_id: str,
         *,
-        expected_revision: int,
         steps: list[dict[str, Any]],
     ) -> TaskOutput:
         replacement = self._normalize_steps(steps)
@@ -756,9 +702,7 @@ class ControlTaskService:
                 ],
             )
 
-        return await self._mutate(
-            task_id, expected_revision, "plan_replace", mutate
-        )
+        return await self._mutate(task_id, "plan_replace", mutate)
 
     @staticmethod
     def _todo_output(
@@ -766,7 +710,6 @@ class ControlTaskService:
     ) -> ReadTodosOutput | WriteTodosOutput:
         model = WriteTodosOutput if write else ReadTodosOutput
         return model(
-            revision=document.revision,
             updated_at=document.updated_at,
             todos=[
                 TodoItem(
@@ -787,7 +730,6 @@ class ControlTaskService:
         self,
         task_id: str,
         todos: list[dict[str, Any]],
-        expected_revision: int,
     ) -> TaskOutput:
         normalized = self._normalize_legacy_todos(todos)
 
@@ -803,7 +745,6 @@ class ControlTaskService:
 
         return await self._mutate(
             task_id,
-            expected_revision,
             "todo_replace",
             mutate,
         )
@@ -812,9 +753,8 @@ class ControlTaskService:
         self,
         task_id: str,
         todos: list[dict[str, Any]],
-        expected_revision: int,
     ) -> WriteTodosOutput:
-        task = await self._write_task_output(task_id, todos, expected_revision)
+        task = await self._write_task_output(task_id, todos)
         return self._todo_output(task, write=True)  # type: ignore[return-value]
 
     async def read_with_task(
@@ -827,9 +767,8 @@ class ControlTaskService:
         self,
         task_id: str,
         todos: list[dict[str, Any]],
-        expected_revision: int,
     ) -> tuple[WriteTodosOutput, TaskOutput]:
-        task = await self._write_task_output(task_id, todos, expected_revision)
+        task = await self._write_task_output(task_id, todos)
         return self._todo_output(task, write=True), task  # type: ignore[return-value]
 
     def _migrate_legacy_sync(self) -> int:

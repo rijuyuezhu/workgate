@@ -18,7 +18,7 @@ from ...oauth.core.scopes import (
     SCOPE_SHELL_WRITE,
 )
 from ...schemas.input_models.session import OptionalSessionIdArg, SessionIdArg
-from ...schemas.input_models.task import ExpectedTaskRevisionArg, TaskIdArg
+from ...schemas.input_models.task import TaskIdArg
 from ...schemas.result_models.live_workspace import (
     LiveWorkspaceActivity,
     LiveWorkspaceJob,
@@ -389,7 +389,6 @@ async def live_workspace_task_control(
     task_id: str,
     session_id: str | None,
     action: TaskAction,
-    expected_revision: ExpectedTaskRevisionArg,
     instruction: str | None = None,
 ) -> LiveWorkspaceSnapshot:
     """Apply one semantic task mutation without selecting execution implicitly."""
@@ -405,24 +404,17 @@ async def live_workspace_task_control(
         raise ValueError(f"task action {action!r} is not available: {detail}")
 
     if action == "block":
-        await runtime.task_service.block_task(
-            task_id, expected_revision=expected_revision
-        )
+        await runtime.task_service.block_task(task_id)
     elif action == "resume":
-        await runtime.task_service.resume_task(
-            task_id, expected_revision=expected_revision
-        )
+        await runtime.task_service.resume_task(task_id)
     elif action == "cancel":
-        await runtime.task_service.cancel_task(
-            task_id, expected_revision=expected_revision
-        )
+        await runtime.task_service.cancel_task(task_id)
     elif action == "next_instruction":
         note = str(instruction or "").strip()
         if not note:
             raise ValueError("instruction is required for next_instruction")
         await runtime.task_service.report_progress(
             task_id,
-            expected_revision=expected_revision,
             next_action=note,
         )
     else:
@@ -531,7 +523,6 @@ def register_live_workspace(
     async def workspace_task_control(
         task_id: TaskIdArg,
         action: TaskAction,
-        expected_revision: ExpectedTaskRevisionArg,
         session_id: OptionalSessionIdArg = None,
         instruction: str | None = None,
     ) -> LiveWorkspaceSnapshot:
@@ -541,7 +532,6 @@ def register_live_workspace(
             task_id=str(task_id),
             session_id=str(session_id) if session_id is not None else None,
             action=action,
-            expected_revision=expected_revision,
             instruction=instruction,
         )
 

@@ -35,25 +35,6 @@ TaskActionArg = Annotated[
     ],
     Field(description="Semantic task lifecycle action."),
 ]
-ExpectedTaskRevisionArg = Annotated[
-    int,
-    Field(
-        ge=0,
-        strict=True,
-        description="Current task revision that must still match before mutation.",
-    ),
-]
-OptionalExpectedTaskRevisionArg = Annotated[
-    int | None,
-    Field(
-        default=None,
-        ge=0,
-        strict=True,
-        description=(
-            "Current task revision. Required for block/resume/report/finish/cancel/delete."
-        ),
-    ),
-]
 TaskLabelArg = Annotated[
     str | None,
     Field(

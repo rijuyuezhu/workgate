@@ -97,7 +97,6 @@ class ControlToolRouter:
         if tool_name == "task":
             action = str(args["action"])
             task_id = args.get("task_id")
-            expected_revision = args.get("expected_revision")
             report_fields = {
                 "label": args.get("label"),
                 "objective": args.get("objective"),
@@ -107,10 +106,8 @@ class ControlToolRouter:
                 "blockers": args.get("blockers"),
             }
             if action == "create":
-                if task_id is not None or expected_revision is not None:
-                    raise ValueError(
-                        "task_id and expected_revision are not valid for action=create"
-                    )
+                if task_id is not None:
+                    raise ValueError("task_id is not valid for action=create")
                 if any(
                     report_fields[name] is not None
                     for name in (
@@ -131,22 +128,14 @@ class ControlToolRouter:
                 raise ValueError(f"task_id is required for action={action}")
             task_id = str(task_id)
             if action == "get":
-                if expected_revision is not None or any(
-                    value is not None for value in report_fields.values()
-                ):
+                if any(value is not None for value in report_fields.values()):
                     raise ValueError(
                         "action=get does not accept mutation fields"
                     )
                 return await self._tasks.read_task(task_id)
-            if expected_revision is None:
-                raise ValueError(
-                    f"expected_revision is required for action={action}"
-                )
-            revision = int(expected_revision)
             if action == "report":
                 return await self._tasks.report_progress(
                     task_id,
-                    expected_revision=revision,
                     **report_fields,
                 )
             if any(value is not None for value in report_fields.values()):
@@ -154,30 +143,19 @@ class ControlToolRouter:
                     f"action={action} does not accept report fields"
                 )
             if action == "block":
-                return await self._tasks.block_task(
-                    task_id, expected_revision=revision
-                )
+                return await self._tasks.block_task(task_id)
             if action == "resume":
-                return await self._tasks.resume_task(
-                    task_id, expected_revision=revision
-                )
+                return await self._tasks.resume_task(task_id)
             if action == "finish":
-                return await self._tasks.finish_task(
-                    task_id, expected_revision=revision
-                )
+                return await self._tasks.finish_task(task_id)
             if action == "cancel":
-                return await self._tasks.cancel_task(
-                    task_id, expected_revision=revision
-                )
+                return await self._tasks.cancel_task(task_id)
             if action == "delete":
-                return await self._tasks.delete_task(
-                    task_id, expected_revision=revision
-                )
+                return await self._tasks.delete_task(task_id)
             raise ValueError(f"unsupported task action: {action}")
         if tool_name == "task_plan":
             return await self._tasks.update_plan(
                 str(args["task_id"]),
-                expected_revision=args["expected_revision"],
                 steps=args["steps"],
             )
         if tool_name == "read_todos":
@@ -186,7 +164,6 @@ class ControlToolRouter:
             return await self._tasks.write(
                 str(args["task_id"]),
                 list(args.get("todos") or []),
-                args["expected_revision"],
             )
         if tool_name == "audit_tail":
             task_id = args.get("task_id")

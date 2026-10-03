@@ -1,7 +1,7 @@
 """Todo compatibility MCP tool registry."""
 
 from ...schemas.input_models.task import TaskIdArg
-from ...schemas.input_models.todo import ExpectedTodoRevisionArg, TodosArg
+from ...schemas.input_models.todo import TodosArg
 from ...schemas.result_models.todo import ReadTodosOutput, WriteTodosOutput
 from ..declarative import DeclarativeToolRegistry
 
@@ -36,8 +36,7 @@ async def read_todos(task_id: TaskIdArg) -> ReadTodosOutput:
 async def write_todos(
     task_id: TaskIdArg,
     todos: TodosArg,
-    expected_revision: ExpectedTodoRevisionArg,
 ) -> WriteTodosOutput:
     """Replace canonical task plan steps through the Todo compatibility surface. Use the explicit task_id; execution sessions are unrelated to this write."""
-    del task_id, todos, expected_revision
+    del task_id, todos
     raise RuntimeError("write_todos requires control routing")

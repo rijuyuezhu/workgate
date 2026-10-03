@@ -21,7 +21,6 @@ export function createSessionsController({
     sessionTerminating: false,
     task: null,
     todoItems: [],
-    todoRevision: 0,
     todoGeneration: 0,
     todoMutationBusy: false,
     todoDirty: false,
@@ -136,14 +135,13 @@ export function createSessionsController({
     elements.taskFindings.textContent = taskListText(progress.findings);
     elements.taskBlockers.textContent = taskListText(progress.blockers);
     elements.taskState.textContent = task
-      ? text(task.task_id, "task") + " · revision " + (Number.isInteger(task.revision) ? task.revision : 0)
+      ? text(task.task_id, "task")
       : "No semantic task attached to this execution session";
   }
 
   function clearSelectedSessionResources(message = "Select a session") {
     controllerState.task = null;
     controllerState.todoItems = [];
-    controllerState.todoRevision = 0;
     controllerState.todoDirty = false;
     controllerState.todoGeneration += 1;
     renderTaskState();
@@ -522,7 +520,6 @@ export function createSessionsController({
       `${open} open`,
       `${completed} completed`,
       `${skipped} skipped`,
-      `revision ${controllerState.todoRevision}`,
     ];
     elements.todoSummary.replaceChildren(
       ...labels.map((label) => {
@@ -639,7 +636,6 @@ export function createSessionsController({
           priority: text(item.priority, "medium"),
         }))
       : [];
-    controllerState.todoRevision = Number.isInteger(payload.revision) && payload.revision >= 0 ? payload.revision : 0;
     if (payload.limits && typeof payload.limits === "object") {
       controllerState.todoLimits = { ...controllerState.todoLimits, ...payload.limits };
     }
@@ -673,41 +669,28 @@ export function createSessionsController({
     const requestedTask = selectedTaskId();
     if (!controllerState.todoDirty || controllerState.todoMutationBusy || !requestedTask) return;
     const generation = ++controllerState.todoGeneration;
-    const expectedRevision = controllerState.todoRevision;
     const todos = controllerState.todoItems.map((item) => ({ ...item }));
     setTodoMutationBusy(true);
-    elements.todoState.textContent = "Saving " + requestedTask + " revision " + expectedRevision;
+    elements.todoState.textContent = "Saving " + requestedTask;
     try {
       const payload = await request("/todos", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_id: requestedTask,
-          expected_revision: expectedRevision,
           todos,
         }),
       });
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return;
       controllerState.todoItems = Array.isArray(payload.todos) ? payload.todos.map((item) => ({ ...item })) : [];
-      controllerState.todoRevision = Number(payload.revision) || expectedRevision + 1;
       controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : controllerState.task;
       controllerState.todoDirty = false;
       renderTaskState();
       renderTodos();
-      elements.todoState.textContent = "Saved " + requestedTask + " · revision " + controllerState.todoRevision;
+      elements.todoState.textContent = "Saved " + requestedTask;
     } catch (error) {
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return;
-      if (error && error.status === 409) {
-        controllerState.todoDirty = false;
-        try {
-          await refreshTodos({ force: true });
-          elements.todoState.textContent = "Todo list changed elsewhere; reloaded the latest revision";
-        } catch (reloadError) {
-          elements.todoState.textContent = reloadError instanceof Error ? reloadError.message : String(reloadError);
-        }
-      } else {
-        elements.todoState.textContent = error instanceof Error ? error.message : String(error);
-      }
+      elements.todoState.textContent = error instanceof Error ? error.message : String(error);
     } finally {
       if (requestedTask === selectedTaskId()) setTodoMutationBusy(false);
     }

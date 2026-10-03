@@ -95,7 +95,6 @@ async def test_live_workspace_is_task_first_and_never_selects_session_implicitly
     task_id, session_id = await _task_session(harness)
     await harness.control.task_service.update_plan(
         task_id,
-        expected_revision=0,
         steps=[{"id": "one", "content": "inspect", "status": "in_progress"}],
     )
 
@@ -244,7 +243,6 @@ async def test_live_workspace_controls_mutate_task_independently_of_session(
         task_id=task_id,
         session_id=session_id,
         action="block",
-        expected_revision=0,
     )
     assert blocked.task.status == "blocked"
     assert blocked.task_control_actions == [
@@ -258,7 +256,6 @@ async def test_live_workspace_controls_mutate_task_independently_of_session(
         task_id=task_id,
         session_id=None,
         action="next_instruction",
-        expected_revision=1,
         instruction="Please inspect the failing browser test.",
     )
     assert instructed.session is None
@@ -271,7 +268,6 @@ async def test_live_workspace_controls_mutate_task_independently_of_session(
             task_id=task_id,
             session_id=None,
             action="next_instruction",
-            expected_revision=2,
             instruction=" ",
         )
 
@@ -309,7 +305,6 @@ async def test_live_workspace_end_requires_task_attachment_and_confirmation(
     assert ended.ended is True
     task = await harness.control.task_service.report_progress(
         task_id,
-        expected_revision=0,
         summary="Still mutable after execution ended",
     )
     assert task.progress.summary == "Still mutable after execution ended"

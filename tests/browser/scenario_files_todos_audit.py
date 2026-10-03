@@ -133,7 +133,6 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         body={
             "action": "report",
             "task_id": task_id,
-            "expected_revision": 0,
             "objective": "Browser durable task",
             "summary": "Visible in the Human UI",
         },
@@ -151,7 +150,6 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         body={
             "action": "finish",
             "task_id": task_id,
-            "expected_revision": 1,
         },
     )
     assert completed["status"] == 200
@@ -166,7 +164,6 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         body={
             "action": "resume",
             "task_id": task_id,
-            "expected_revision": 2,
         },
     )
     assert resumed["status"] == 200
@@ -255,7 +252,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     page.locator("#todo-save").click()
     expect(page.locator("#todo-state")).to_contain_text(f"Saved {task_id}")
-    expect(page.locator("#task-state")).to_contain_text("revision 4")
+    expect(page.locator("#task-state")).to_contain_text(task_id)
     todos = harness.api("GET", f"/api/ui/todos?task_id={task_id}")
     assert todos["status"] == 200
     assert todos["payload"]["data"]["todos"][0]["content"] == (

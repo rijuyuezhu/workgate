@@ -79,7 +79,7 @@ File, search, shell, job, browser, transfer, and other machine-facing tools rout
 
 ## Keep durable task progress
 
-For substantial multi-step work, create or resume a semantic task with `task`, use `task(action="get", task_id=...)` for durable handoff, `task(action="report", ...)` for progress, and `task_plan` for stable plan steps. Mutations require the latest `expected_revision`; reload after a conflict instead of overwriting another client. `read_todos` and `write_todos` are compatibility projections over that same task plan.
+For substantial multi-step work, create or resume a semantic task with `task`, use `task(action="get", task_id=...)` for durable handoff, `task(action="report", ...)` for progress, and `task_plan` for stable plan steps. `read_todos` and `write_todos` are compatibility projections over that same task plan.
 
 `session_end` releases only one execution context. The semantic task remains independently readable and mutable by `task_id`, including when it has zero active sessions.
 
