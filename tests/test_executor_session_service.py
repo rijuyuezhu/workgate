@@ -117,7 +117,7 @@ async def test_executor_session_create_uses_effective_default_workdir(
         label=None,
     )
 
-    assert result.workdir == "/"
+    assert result.workdir == str(config.default_workdir)
 
 
 @pytest.mark.asyncio
