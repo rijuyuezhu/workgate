@@ -138,7 +138,7 @@ async def test_start_persists_creating_before_executor_call(
     record = state.snapshot_sessions()[session_id]
     assert record.executor_id == executor_id
     assert record.status == "active"
-    assert record.resolved_workdir == "/workspace/project"
+    assert record.workdir == "/workspace/project"
 
 
 @pytest.mark.asyncio
@@ -158,8 +158,7 @@ async def test_start_allows_executor_default_workdir(
     assert isinstance(result, dict)
     session_id = str(result["session_id"])
     record = state.snapshot_sessions()[session_id]
-    assert record.requested_workdir is None
-    assert record.resolved_workdir == "/workspace/project"
+    assert record.workdir == "/workspace/project"
     assert transport.calls[-1][2]["workdir"] is None
 
 
@@ -308,10 +307,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
             ControlSessionRecord(
                 session_id=session_id,
                 executor_id=executor_id,
-                requested_workdir="project",
-                resolved_workdir=(
-                    "/workspace/old" if status == "active" else None
-                ),
+                workdir=("/workspace/old" if status == "active" else None),
                 label=None,
                 status=status,  # type: ignore[arg-type]
                 created_at=1,
@@ -327,7 +323,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
 
     sessions = state.snapshot_sessions()
     assert sessions[creating].status == "active"
-    assert sessions[creating].resolved_workdir == "/workspace/project"
+    assert sessions[creating].workdir == "/workspace/project"
     assert sessions[active].status == "active"
     assert (
         await coordinator.session_availability(active) == "missing_on_executor"
@@ -607,8 +603,7 @@ async def test_end_persists_terminating_before_command(tmp_path: Path) -> None:
         ControlSessionRecord(
             session_id=session_id,
             executor_id=executor_id,
-            requested_workdir="project",
-            resolved_workdir="/workspace/project",
+            workdir="/workspace/project",
             label=None,
             status="active",
             created_at=1,
@@ -637,8 +632,7 @@ def _active_record(executor_id: str, session_id: str) -> ControlSessionRecord:
     return ControlSessionRecord(
         session_id=session_id,
         executor_id=executor_id,
-        requested_workdir="project",
-        resolved_workdir="/workspace/project",
+        workdir="/workspace/project",
         label=None,
         status="active",
         created_at=1,
@@ -664,8 +658,7 @@ async def test_start_reaps_stale_creating_session_through_desired_absence(
         ControlSessionRecord(
             session_id=existing,
             executor_id=executor_id,
-            requested_workdir="project",
-            resolved_workdir=None,
+            workdir=None,
             label=None,
             status="creating",
             created_at=1,

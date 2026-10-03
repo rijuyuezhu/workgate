@@ -1226,19 +1226,14 @@ class ControlSessionCopyService:
             await progress(values)
 
     @staticmethod
-    def _workdir(record: ControlSessionRecord) -> str:
-        workdir = record.resolved_workdir
-        if workdir is None:
+    def _binding_snapshot(record: ControlSessionRecord) -> dict[str, str]:
+        if record.workdir is None:
             raise RuntimeError(
-                f"session {record.session_id} has no resolved workdir"
+                f"session {record.session_id} has no confirmed workdir"
             )
-        return workdir
-
-    @classmethod
-    def _binding_snapshot(cls, record: ControlSessionRecord) -> dict[str, str]:
         return {
             "executor_id": str(record.executor_id),
-            "workdir": cls._workdir(record),
+            "workdir": record.workdir,
         }
 
     @classmethod
@@ -1281,20 +1276,22 @@ class ControlSessionCopyService:
         metrics: dict[str, Any],
     ) -> SessionCopyOutput:
         same_executor = src.executor_id == dst.executor_id
+        source_binding = ControlSessionCopyService._binding_snapshot(src)
+        destination_binding = ControlSessionCopyService._binding_snapshot(dst)
         return SessionCopyOutput(
             kind=kind,
             transport="same_executor" if same_executor else "control_payload",
             resumed_bytes=int(metrics.get("resumed_bytes", 0)),
             source=SessionCopyEndpoint(
                 session_id=str(src.session_id),
-                executor_id=str(src.executor_id),
-                workdir=ControlSessionCopyService._workdir(src),
+                executor_id=source_binding["executor_id"],
+                workdir=source_binding["workdir"],
                 path=src_path,
             ),
             destination=SessionCopyEndpoint(
                 session_id=str(dst.session_id),
-                executor_id=str(dst.executor_id),
-                workdir=ControlSessionCopyService._workdir(dst),
+                executor_id=destination_binding["executor_id"],
+                workdir=destination_binding["workdir"],
                 path=dst_path,
             ),
             relation=SessionCopyRelation(

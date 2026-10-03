@@ -104,7 +104,7 @@ async def api_session_snapshot(request: Request) -> Response:
             "session_id": session_id,
             "task_id": task_id,
             "executor_id": str(record.executor_id),
-            "workdir": record.resolved_workdir or record.requested_workdir,
+            "workdir": record.workdir,
             "label": record.label,
             "status": str(record.status),
             "created_at": float(record.created_at),

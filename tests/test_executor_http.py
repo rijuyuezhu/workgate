@@ -66,7 +66,7 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
     transport, _, credential = _transport(tmp_path)
     client = TestClient(Starlette(routes=executor_routes(transport)))
 
-    missing = client.post("/executor/v2/hello", json=_hello_payload())
+    missing = client.post("/executor/v1/hello", json=_hello_payload())
     assert missing.status_code == 401
     assert (
         missing.json()["error"]["code"]
@@ -75,7 +75,7 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
 
     headers = {"Authorization": f"Bearer {credential}"}
     hello = client.post(
-        "/executor/v2/hello", json=_hello_payload(), headers=headers
+        "/executor/v1/hello", json=_hello_payload(), headers=headers
     )
     assert hello.status_code == 200
     assert hello.json() == {
@@ -84,12 +84,12 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
         "poll_timeout_s": 1,
     }
     assert (
-        client.post("/executor/v2/heartbeat", headers=headers).status_code
+        client.post("/executor/v1/heartbeat", headers=headers).status_code
         == 204
     )
 
     unknown = client.post(
-        "/executor/v2/result",
+        "/executor/v1/result",
         headers=headers,
         json=ExecutorResult(
             id=new_command_id(), ok=True, result="late"
@@ -99,7 +99,7 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
     assert unknown.json()["error"]["code"] == ProtocolErrorCode.UNKNOWN_COMMAND
 
     malformed = client.post(
-        "/executor/v2/result", headers=headers, content=b"not-json"
+        "/executor/v1/result", headers=headers, content=b"not-json"
     )
     assert malformed.status_code == 422
     assert "not-json" not in malformed.text
@@ -134,7 +134,7 @@ async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
             base_url="https://control.test",
         ) as client:
             response = await client.post(
-                "/executor/v2/heartbeat",
+                "/executor/v1/heartbeat",
                 headers={"Authorization": f"Bearer {credential}"},
             )
         assert response.status_code == 204
@@ -165,7 +165,7 @@ async def test_pairing_routes_are_public_and_validation_clears_delivery(
             base_url="https://control.test",
         ) as client:
             started = await client.post(
-                "/executor/v2/pair/start",
+                "/executor/v1/pair/start",
                 json={
                     "requested_name": "laptop",
                     "metadata": {"hostname": "host-a", "platform": "linux"},
@@ -176,14 +176,14 @@ async def test_pairing_routes_are_public_and_validation_clears_delivery(
             assert payload["verification_uri"] == "https://control.test/pair"
 
             pending = await client.post(
-                "/executor/v2/pair/poll",
+                "/executor/v1/pair/poll",
                 json={"device_code": payload["device_code"]},
             )
             assert pending.status_code == 202
             assert pending.json()["error"]["code"] == "pairing_pending"
 
             second = await client.post(
-                "/executor/v2/pair/start",
+                "/executor/v1/pair/start",
                 json={"requested_name": "approved-laptop", "metadata": {}},
             )
             assert second.status_code == 200
@@ -198,14 +198,14 @@ async def test_pairing_routes_are_public_and_validation_clears_delivery(
             assert approved.executor_id is not None
 
             delivered = await client.post(
-                "/executor/v2/pair/poll",
+                "/executor/v1/pair/poll",
                 json={"device_code": approved_payload["device_code"]},
             )
             assert delivered.status_code == 200
             credential = delivered.json()["credential"]
 
             validated = await client.post(
-                "/executor/v2/validate",
+                "/executor/v1/validate",
                 json={},
                 headers={"Authorization": f"Bearer {credential}"},
             )
@@ -221,7 +221,7 @@ async def test_pairing_routes_are_public_and_validation_clears_delivery(
             )
 
             gone = await client.post(
-                "/executor/v2/pair/poll",
+                "/executor/v1/pair/poll",
                 json={"device_code": approved_payload["device_code"]},
             )
             assert gone.status_code == 410

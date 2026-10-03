@@ -1,4 +1,4 @@
-"""Small authenticated HTTP client for executor protocol v2."""
+"""Small authenticated HTTP client for executor protocol v1."""
 
 import contextlib
 from dataclasses import dataclass
@@ -61,7 +61,7 @@ class ExecutorControlError(RuntimeError):
 
 
 class ExecutorControlClient:
-    """Typed executor v2 HTTP calls using one persisted bearer profile."""
+    """Typed executor v1 HTTP calls using one persisted bearer profile."""
 
     def __init__(
         self,

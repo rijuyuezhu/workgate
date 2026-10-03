@@ -5,7 +5,7 @@ Workgate. It runs one logical Workgate control actor in one SQLite-backed
 Durable Object and keeps all machine execution on paired executors.
 
 The hosted adapter is intentionally narrower than the VPS product. It supports
-executor pairing, executor v2 transport, explicit sessions, and the machine MCP
+executor pairing, executor v1 transport, explicit sessions, and the machine MCP
 tools listed by the hosted tool manifest. Features that still depend on
 control-local files or provider-specific streaming are not advertised.
 
@@ -119,7 +119,7 @@ inside the control actor.
 - `GET /pair` — pairing page. Review, approval/denial, and explicit existing
   credential replacement require the owner bearer.
 - `GET /status` — owner-authenticated executor/session summary.
-- `POST /executor/v2/...` — normal Workgate executor protocol.
+- `POST /executor/v1/...` — normal Workgate executor protocol.
 
 ## Explicitly unavailable
 

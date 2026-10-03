@@ -8,7 +8,7 @@ def run_executor_admin(harness: BrowserHarness) -> None:
     page = harness.page
 
     started = httpx.post(
-        f"{harness.base_url}/executor/v2/pair/start",
+        f"{harness.base_url}/executor/v1/pair/start",
         json={
             "requested_name": "browser-executor",
             "metadata": {

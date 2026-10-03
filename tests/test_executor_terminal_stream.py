@@ -159,7 +159,7 @@ async def test_executor_terminal_stream_connects_outbound_and_relays_raw_bridge(
     url, kwargs = connect_calls[0]
     assert (
         url
-        == "wss://control.example/executor/v2/streams/stream_abcdefghijklmnopqrstuvwxyz"
+        == "wss://control.example/executor/v1/streams/stream_abcdefghijklmnopqrstuvwxyz"
     )
     assert kwargs["additional_headers"] == {
         "Authorization": f"Bearer {profile.credential}"
@@ -388,7 +388,7 @@ async def test_executor_terminal_stream_rejects_invalid_stream_id_before_bridge(
 
 def test_executor_terminal_stream_refuses_websocket_redirects() -> None:
     connector = stream_module._NoRedirectConnect(
-        "wss://control.example/executor/v2/streams/stream_abcdefghijklmnopqrstuvwxyz"
+        "wss://control.example/executor/v1/streams/stream_abcdefghijklmnopqrstuvwxyz"
     )
     redirect = InvalidStatus(
         Response(

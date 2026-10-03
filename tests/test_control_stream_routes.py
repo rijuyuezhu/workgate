@@ -48,7 +48,7 @@ def test_terminal_stream_routes_pair_and_relay_bidirectionally() -> None:
         ]
 
         with client.websocket_connect(
-            f"/executor/v2/streams/{grant.stream_id}",
+            f"/executor/v1/streams/{grant.stream_id}",
             headers={"Authorization": "Bearer exec-secret"},
         ) as executor:
             assert executor.receive_json() == {
@@ -95,7 +95,7 @@ def test_terminal_stream_routes_reject_wrong_executor_and_reused_browser_token()
         with (
             pytest.raises(WebSocketDisconnect) as wrong_executor,
             client.websocket_connect(
-                f"/executor/v2/streams/{grant.stream_id}",
+                f"/executor/v1/streams/{grant.stream_id}",
                 headers={"Authorization": "Bearer exec-two-secret"},
             ),
         ):

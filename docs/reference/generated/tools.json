@@ -8653,17 +8653,9 @@
             "description": "One endpoint in a session-to-session copy.",
             "properties": {
               "executor_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Stable final executor identity for this endpoint, when applicable.",
-                "title": "Executor Id"
+                "description": "Executor identity for this endpoint.",
+                "title": "Executor Id",
+                "type": "string"
               },
               "path": {
                 "description": "Caller-provided path; relative values resolve from the session workdir.",
@@ -8683,6 +8675,7 @@
             },
             "required": [
               "session_id",
+              "executor_id",
               "workdir",
               "path"
             ],
@@ -8837,7 +8830,6 @@
                 "type": "string"
               },
               "same_executor": {
-                "default": false,
                 "description": "Whether both execution sessions are bound to the same executor.",
                 "title": "Same Executor",
                 "type": "boolean"
@@ -8850,7 +8842,8 @@
             },
             "required": [
               "route",
-              "same_session"
+              "same_session",
+              "same_executor"
             ],
             "title": "SessionCopyRelation",
             "type": "object"

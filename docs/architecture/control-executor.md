@@ -50,9 +50,8 @@ local integrations, and executor state/data/runtime.
 Standalone may accept one user-facing config file, but its supervisor resolves
 separate child configurations before launch.
 
-Relative session workdirs are resolved against the executor's effective
-`default_workdir`, never against a session's previous workdir. That default is an
-anchor, not a confinement boundary.
+Relative session workdirs resolve against the executor's effective
+`default_workdir`; ordinary session-relative operations then use the session workdir.
 
 ## Identity, credentials, and pairing
 
@@ -69,10 +68,10 @@ or a deliberate incompatible trust migration.
 Pairing uses a Workgate-specific device-code-style flow:
 
 ```text
-executor -> POST /executor/v2/pair/start
+executor -> POST /executor/v1/pair/start
          <- high-entropy device_code + short user_code + verification URI
 owner    -> authenticated approve/deny
-executor -> POST /executor/v2/pair/poll(device_code)
+executor -> POST /executor/v1/pair/poll(device_code)
          <- executor_id + long-lived credential
 ```
 
@@ -103,9 +102,9 @@ are interrupted, and active streams are closed. Already-offered machine effects
 cannot be rolled back, and results submitted under the revoked bearer are
 rejected. No credential generation counter is part of the protocol.
 
-## Executor protocol v2
+## Executor protocol v1
 
-The baseline executor surface is versioned under `/executor/v2`:
+The baseline executor surface is versioned under `/executor/v1`:
 
 ```text
 /pair/start
@@ -294,7 +293,7 @@ against the executor-authoritative destination session workdir and durably recor
 the canonical destination under the transfer ID before creating transfer-owned
 temp state. Resumable directory unpack does the same before creating its staging
 tree. Later write/unpack/abandon recovery follows those executor-issued bindings;
-control's `resolved_workdir` projection is display/reconciliation state and is
+control's `workdir` projection is display/reconciliation state and is
 never durable filesystem authority for the transfer. If completed directory
 unpack has already consumed its internal scratch archive, the completed unpack
 receipt is the durable proof that lets retry/abandon reconcile the linked write
@@ -353,7 +352,7 @@ executor never opens an inbound Workgate terminal port.
 browser -> control: request attach(session, shell)
 control: validate owner/session; allocate random live stream_id + browser token
 control -> executor: terminal.attach(stream_id, shell)
-executor -> control: outbound WSS /executor/v2/streams/<stream_id>
+executor -> control: outbound WSS /executor/v1/streams/<stream_id>
                      authenticated by normal executor credential
 control: require stream_id live and bearer executor == expected executor
 control -> executor: stream-accepted handshake; only then may relay start

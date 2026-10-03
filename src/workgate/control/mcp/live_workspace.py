@@ -202,7 +202,7 @@ async def _session_projection(
         label=record.label,
         executor_id=str(record.executor_id),
         executor_name=executor.name if executor is not None else None,
-        workdir=record.resolved_workdir or record.requested_workdir,
+        workdir=record.workdir,
         status=str(record.status),
         availability=availability,
         created_at=float(record.created_at),

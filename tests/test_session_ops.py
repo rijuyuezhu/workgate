@@ -30,7 +30,7 @@ async def test_shared_session_start_binds_control_record_to_executor(
     assert record.status == "active"
     assert record.executor_id == harness.executor_id
     assert record.label == "test"
-    assert record.resolved_workdir == str(tmp_path / "project")
+    assert record.workdir == str(tmp_path / "project")
     assert harness.executor.sessions.lookup(session_id) is not None
 
 
@@ -57,8 +57,7 @@ async def test_shared_session_change_workdir_updates_control_and_executor_bindin
     assert changed["executor_id"] == harness.executor_id
     assert changed["workdir"] == str(tmp_path / "second")
     record = harness.control.control_state.snapshot_sessions()[session_id]
-    assert record.requested_workdir == "second"
-    assert record.resolved_workdir == str(tmp_path / "second")
+    assert record.workdir == str(tmp_path / "second")
     executor_session = harness.executor.sessions.lookup(session_id)
     assert executor_session is not None
     assert executor_session.workdir == str(tmp_path / "second")

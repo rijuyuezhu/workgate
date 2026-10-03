@@ -54,8 +54,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
     session = ControlSessionRecord(
         session_id=session_id,
         executor_id=executor_id,
-        requested_workdir="~/src/workgate",
-        resolved_workdir="/home/user/src/workgate",
+        workdir="/home/user/src/workgate",
         label="workgate",
         status="active",
         created_at=20,
@@ -186,8 +185,7 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
     session = ControlSessionRecord(
         session_id=session_id,
         executor_id=executor_id,
-        requested_workdir=".",
-        resolved_workdir=str(tmp_path),
+        workdir=str(tmp_path),
         status="active",
         created_at=20,
         updated_at=20,

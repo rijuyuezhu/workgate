@@ -268,10 +268,16 @@ class UiFilesService:
             "file_sha256": file_sha256(resolved),
         }
 
-    def _ensure_mutable(self, path: str, *, follow_final_symlink: bool) -> Path:
+    def _ensure_mutable(
+        self,
+        path: str,
+        *,
+        must_exist: bool = False,
+        follow_final_symlink: bool,
+    ) -> Path:
         resolved = self._resolve(
             path,
-            must_exist=False,
+            must_exist=must_exist,
             follow_final_symlink=follow_final_symlink,
         )
         if resolved.parent == resolved:
@@ -279,12 +285,9 @@ class UiFilesService:
         return resolved
 
     def _source_entry(self, path: str) -> Path:
-        resolved = self._resolve(
+        return self._ensure_mutable(
             path, must_exist=True, follow_final_symlink=False
         )
-        if resolved.parent == resolved:
-            raise ValueError("Refusing to mutate the filesystem root")
-        return resolved
 
     def _destination_entry(self, path: str) -> Path:
         resolved = self._ensure_mutable(path, follow_final_symlink=False)

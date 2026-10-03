@@ -88,10 +88,10 @@ async def test_pairing_client_uses_public_pair_routes_and_parses_pending() -> (
     finally:
         await http.aclose()
 
-    assert calls[0][0] == "/executor/v2/pair/start"
+    assert calls[0][0] == "/executor/v1/pair/start"
     assert calls[0][1]["requested_name"] == "laptop"
     assert calls[1] == (
-        "/executor/v2/pair/poll",
+        "/executor/v1/pair/poll",
         {"device_code": device_code},
     )
 

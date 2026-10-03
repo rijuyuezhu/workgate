@@ -1013,7 +1013,7 @@ async def test_hosted_misc_routes_and_status_projection() -> None:
         session_id=session_id,
         executor_id=executor_id,
         status="active",
-        resolved_workdir="/workspace/project",
+        workdir="/workspace/project",
     )
     actor.executor_transport.online = True
     gateway = HostedHttpGateway(actor, owner_token="x" * 32)

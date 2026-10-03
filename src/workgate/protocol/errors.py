@@ -1,4 +1,4 @@
-"""Small shared error vocabulary for executor protocol v2."""
+"""Small shared error vocabulary for executor protocol v1."""
 
 from enum import StrEnum
 

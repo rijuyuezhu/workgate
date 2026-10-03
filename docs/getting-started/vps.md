@@ -126,7 +126,7 @@ The MCP endpoint is `https://control.example.com/mcp`; the Human UI is
 
 ## 4. Pair an executor
 
-Run the executor as the OS user that owns the workspace. For user `alice`,
+Run the executor as the OS user that should own its files and processes. For user `alice`,
 create `~/.config/workgate/executor/config.yaml`:
 
 ```yaml

@@ -59,7 +59,7 @@ def _decoded_token_bytes(value: str, prefix: str) -> bytes:
     return base64.urlsafe_b64decode(encoded + padding)
 
 
-def test_executor_protocol_v2_paths_are_frozen_under_executor_namespace() -> (
+def test_executor_protocol_v1_paths_are_frozen_under_executor_namespace() -> (
     None
 ):
     assert {
@@ -71,13 +71,13 @@ def test_executor_protocol_v2_paths_are_frozen_under_executor_namespace() -> (
         EXECUTOR_POLL_PATH,
         EXECUTOR_RESULT_PATH,
     } == {
-        "/executor/v2/pair/start",
-        "/executor/v2/pair/poll",
-        "/executor/v2/hello",
-        "/executor/v2/validate",
-        "/executor/v2/heartbeat",
-        "/executor/v2/poll",
-        "/executor/v2/result",
+        "/executor/v1/pair/start",
+        "/executor/v1/pair/poll",
+        "/executor/v1/hello",
+        "/executor/v1/validate",
+        "/executor/v1/heartbeat",
+        "/executor/v1/poll",
+        "/executor/v1/result",
     }
 
 

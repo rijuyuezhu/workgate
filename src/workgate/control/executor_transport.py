@@ -1,4 +1,4 @@
-"""Ephemeral ordinary-RPC coordination for executor protocol v2."""
+"""Ephemeral ordinary-RPC coordination for executor protocol v1."""
 
 import asyncio
 import contextlib

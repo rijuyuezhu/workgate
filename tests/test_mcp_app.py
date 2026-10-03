@@ -195,9 +195,9 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
     assert "/join" not in paths
     assert "/remote/register" not in paths
     assert "/remote/poll" not in paths
-    assert "/executor/v2/pair/start" in paths
-    assert "/executor/v2/pair/poll" in paths
-    assert "/executor/v2/hello" in paths
+    assert "/executor/v1/pair/start" in paths
+    assert "/executor/v1/pair/poll" in paths
+    assert "/executor/v1/hello" in paths
     assert "/api/ui/pair" in paths
     assert "/api/ui/executors" in paths
     assert "/api/ui/executors/{action}" in paths
@@ -218,8 +218,8 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
         getattr(route, "path", "")
         for route in cast(Any, auth.kwargs["public_routes"])
     }
-    assert "/executor/v2/pair/start" in public_paths
-    assert "/executor/v2/pair/poll" in public_paths
+    assert "/executor/v1/pair/start" in public_paths
+    assert "/executor/v1/pair/poll" in public_paths
     assert "/api/ui/pair" not in public_paths
     assert "/api/ui/executors" not in public_paths
     assert "/api/ui/executors/{action}" not in public_paths

@@ -234,10 +234,7 @@ class SessionCopyEndpoint(BaseModel):
     session_id: str = Field(
         description="Execution session id for this endpoint."
     )
-    executor_id: str | None = Field(
-        default=None,
-        description="Stable final executor identity for this endpoint, when applicable.",
-    )
+    executor_id: str = Field(description="Executor identity for this endpoint.")
     workdir: str = Field(
         description="Session workdir used for path resolution."
     )
@@ -256,8 +253,7 @@ class SessionCopyRelation(BaseModel):
         description="Whether source and destination are the same execution session."
     )
     same_executor: bool = Field(
-        default=False,
-        description="Whether both execution sessions are bound to the same executor.",
+        description="Whether both execution sessions are bound to the same executor."
     )
 
 

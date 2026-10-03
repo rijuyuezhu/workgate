@@ -149,8 +149,7 @@ class ControlSessionCoordinator:
                 session_id=session_id,
                 executor_id=selected,
                 task_id=task_id,
-                requested_workdir=workdir,
-                resolved_workdir=None,
+                workdir=None,
                 label=label,
                 status="creating",
                 created_at=now,
@@ -234,12 +233,11 @@ class ControlSessionCoordinator:
             if not result.ok:
                 await self.reconcile_session_activity_after_error(record)
             payload = self._unwrap(result)
-            resolved = self._resolved_workdir(payload)
+            resolved = self._executor_workdir(payload)
             now = self._clock()
             record = self._state.update_session(
                 session_id,
-                requested_workdir=workdir,
-                resolved_workdir=resolved,
+                workdir=resolved,
                 updated_at=now,
             )
             self.observe_session_activity(session_id, observed_at=now)
@@ -500,12 +498,12 @@ class ControlSessionCoordinator:
                     session_id, item.last_active_at
                 )
                 if record.status == "creating" or (
-                    record.resolved_workdir != item.workdir
+                    record.workdir != item.workdir
                 ):
                     self._state.update_session(
                         session_id,
                         status="active",
-                        resolved_workdir=item.workdir,
+                        workdir=item.workdir,
                         updated_at=self._clock(),
                     )
                 continue
@@ -645,12 +643,12 @@ class ControlSessionCoordinator:
                 f"executor session.create failed: {result.error.code}: {result.error.message}"
             )
         payload = self._unwrap(result)
-        resolved = self._resolved_workdir(payload)
+        resolved = self._executor_workdir(payload)
         now = self._clock()
         record = self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir=resolved,
+            workdir=resolved,
             updated_at=now,
         )
         self.observe_session_activity(str(record.session_id), observed_at=now)
@@ -681,7 +679,7 @@ class ControlSessionCoordinator:
         self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir=item.workdir,
+            workdir=item.workdir,
             updated_at=self._clock(),
         )
         self._replace_session_activity(
@@ -770,7 +768,7 @@ class ControlSessionCoordinator:
         return result.result
 
     @staticmethod
-    def _resolved_workdir(payload: JsonValue) -> str:
+    def _executor_workdir(payload: JsonValue) -> str:
         if not isinstance(payload, dict):
             raise RuntimeError("executor session result is not an object")
         value = payload.get("workdir")

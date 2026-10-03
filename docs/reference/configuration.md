@@ -35,9 +35,9 @@ Persistent filesystem paths in YAML must resolve to absolute paths. Relative
 environment or CLI path overrides are invocation-oriented and resolve from the
 directory Workgate was started in.
 
-`default_workdir` is the executor's fallback relative-path anchor, not a
-filesystem boundary. Long-running executors should set it explicitly when they
-want a stable default independent of the service manager's working directory.
+`default_workdir` anchors relative executor paths. Long-running executors
+should set it explicitly when they want a stable default independent of the
+service manager's working directory.
 
 ## Application-owned paths
 

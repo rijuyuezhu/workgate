@@ -1,16 +1,16 @@
-"""Executor protocol v2 wire models."""
+"""Executor protocol v1 wire models."""
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .ids import CommandId, SessionId
 
-EXECUTOR_PAIR_START_PATH = "/executor/v2/pair/start"
-EXECUTOR_PAIR_POLL_PATH = "/executor/v2/pair/poll"
-EXECUTOR_HELLO_PATH = "/executor/v2/hello"
-EXECUTOR_VALIDATE_PATH = "/executor/v2/validate"
-EXECUTOR_HEARTBEAT_PATH = "/executor/v2/heartbeat"
-EXECUTOR_POLL_PATH = "/executor/v2/poll"
-EXECUTOR_RESULT_PATH = "/executor/v2/result"
+EXECUTOR_PAIR_START_PATH = "/executor/v1/pair/start"
+EXECUTOR_PAIR_POLL_PATH = "/executor/v1/pair/poll"
+EXECUTOR_HELLO_PATH = "/executor/v1/hello"
+EXECUTOR_VALIDATE_PATH = "/executor/v1/validate"
+EXECUTOR_HEARTBEAT_PATH = "/executor/v1/heartbeat"
+EXECUTOR_POLL_PATH = "/executor/v1/poll"
+EXECUTOR_RESULT_PATH = "/executor/v1/result"
 EXECUTOR_CAPABILITY_SESSIONS = "sessions.v1"
 EXECUTOR_CAPABILITY_BROWSER = "browser.v1"
 
