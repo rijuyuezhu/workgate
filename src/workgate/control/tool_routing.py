@@ -58,7 +58,11 @@ class ControlToolRouter:
         if tool_name == "session_start":
             task_id = args.get("task_id")
             return await self._sessions.start_session(
-                workdir=str(args["workdir"]),
+                workdir=(
+                    str(args["workdir"])
+                    if args.get("workdir") is not None
+                    else None
+                ),
                 label=args.get("label"),
                 executor_id=args.get("executor_id"),
                 task_id=str(task_id) if task_id is not None else None,

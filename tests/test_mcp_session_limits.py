@@ -91,7 +91,7 @@ async def test_session_limit_prunes_terminated_bookkeeping_and_rejects_new_sessi
 def test_stateful_mcp_sessions_have_idle_timeout_and_capacity_limit(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -153,7 +153,7 @@ def test_stateful_mcp_sessions_have_idle_timeout_and_capacity_limit(
 def test_idle_session_expiry_releases_capacity_without_delete(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")

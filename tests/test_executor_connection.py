@@ -26,6 +26,7 @@ from workgate.protocol.ids import new_command_id
 def _hello() -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),
@@ -206,7 +207,7 @@ async def test_same_transfer_abandonment_waits_for_earlier_offered_begin(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=workspace,
+                default_workdir=workspace,
                 state_dir=tmp_path / "state",
                 agent_bridge_enabled=False,
             )

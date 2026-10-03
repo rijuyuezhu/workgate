@@ -45,7 +45,7 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
     tmp_path, monkeypatch
 ):
     (tmp_path / "alpha.txt").write_text("hello", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -78,7 +78,7 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
 def test_task_tool_audit_redacts_durable_report_and_plan_prose(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -208,7 +208,7 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
 @pytest.mark.asyncio
 async def test_mcp_tool_calls_audit_full_input_output(tmp_path, monkeypatch):
     (tmp_path / "beta.txt").write_text("world", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -241,7 +241,7 @@ async def test_mcp_tool_calls_audit_full_input_output(tmp_path, monkeypatch):
 async def test_mcp_tool_structured_errors_are_audited_with_input_and_output(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()

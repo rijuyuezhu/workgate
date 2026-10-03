@@ -40,7 +40,7 @@ async def test_managed_jobs_runtime_close_drains_tasks_and_stops_admission(
     managed_jobs_runtime_owner: ManagedJobsRuntime,
 ) -> None:
     runtime = managed_jobs_runtime_owner
-    get_settings().workspace_root.mkdir(parents=True, exist_ok=True)
+    get_settings().default_workdir.mkdir(parents=True, exist_ok=True)
     store = get_tool_session_store()
     store.clear()
     session_id = store.create_session(

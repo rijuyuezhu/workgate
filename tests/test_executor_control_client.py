@@ -34,6 +34,7 @@ def _profile() -> ExecutorProfile:
 def _hello() -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),

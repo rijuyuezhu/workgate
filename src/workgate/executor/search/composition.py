@@ -17,8 +17,7 @@ def build_local_search_runner(
 ) -> LocalSearchRunner:
     """Compose a local Search runner from resolved executor policy."""
     paths = SearchPathAccess(
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        default_workdir=config.default_workdir,
     )
     grounding = SearchGrounding(
         store=store,

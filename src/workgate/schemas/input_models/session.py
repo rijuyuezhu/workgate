@@ -24,7 +24,18 @@ SessionExecutorIdArg = Annotated[
 SessionWorkdirArg = Annotated[
     str,
     Field(
-        description="Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root."
+        min_length=1,
+        max_length=4096,
+        description="Working directory to bind to the session. Relative paths resolve against the executor default workdir.",
+    ),
+]
+SessionStartWorkdirArg = Annotated[
+    str | None,
+    Field(
+        default=None,
+        min_length=1,
+        max_length=4096,
+        description="Optional initial workdir. Omit to use the executor's effective default workdir.",
     ),
 ]
 SessionLabelArg = Annotated[
@@ -58,7 +69,7 @@ SessionEndForceArg = Annotated[
 SessionCopyPathArg = Annotated[
     str,
     Field(
-        description="Path to copy, resolved inside the corresponding source or destination session workdir."
+        description="Path to copy. Relative values resolve from the corresponding source or destination session workdir."
     ),
 ]
 SessionCopyKindArg = Annotated[

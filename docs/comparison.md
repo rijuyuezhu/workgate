@@ -51,7 +51,7 @@ The projects still share the same broad purpose and many operational outcomes:
 
 - controlled shell and Python execution;
 - persistent terminals and tracked background work;
-- workspace-confined file inspection and mutation;
+- session-workdir-anchored file inspection and mutation, with machine-wide executor filesystem authority;
 - executors that connect outbound to a control service;
 - OAuth-protected MCP and HTTP operation;
 - file links, Audit, Todos, Skills, and human interfaces;

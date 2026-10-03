@@ -87,7 +87,7 @@ def _percent(used: int | float, total: int | float) -> float | None:
     return round(max(0.0, min(100.0, float(used) * 100.0 / float(total))), 1)
 
 
-def local_system_snapshot(workspace_root: Path) -> dict[str, Any]:
+def local_system_snapshot(default_workdir: Path) -> dict[str, Any]:
     """Collect a portable, best-effort process and host resource snapshot."""
     global _CPU_SAMPLE, _NETWORK_SAMPLE
 
@@ -143,7 +143,7 @@ def local_system_snapshot(workspace_root: Path) -> dict[str, Any]:
     memory_total = memory[0] if memory else None
     memory_used = memory[1] if memory else None
     try:
-        disk = shutil.disk_usage(workspace_root)
+        disk = shutil.disk_usage(default_workdir)
     except OSError:
         disk = None
 

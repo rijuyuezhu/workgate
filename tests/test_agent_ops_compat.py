@@ -29,7 +29,7 @@ def _runtime_with_project_skill(
     )
     (skill_dir / "guide.md").write_text("Reproduce first.\n", encoding="utf-8")
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -79,7 +79,7 @@ async def test_composed_skill_handlers_use_frozen_executor_policy(
     other_workspace = tmp_path / "other-workspace"
     other_workspace.mkdir()
 
-    settings.workspace_root = other_workspace
+    settings.default_workdir = other_workspace
     settings.max_file_read_bytes = 1
     settings.max_skills = 0
 

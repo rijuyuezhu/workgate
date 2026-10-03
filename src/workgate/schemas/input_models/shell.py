@@ -13,7 +13,7 @@ ShellCommandArg = Annotated[
 ShellCwdArg = Annotated[
     str,
     Field(
-        description="Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir."
+        description="Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it."
     ),
 ]
 ShellTimeoutArg = Annotated[

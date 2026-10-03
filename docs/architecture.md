@@ -463,7 +463,7 @@ shell-backed job lifecycle and the durable subprocess runner. The top-level
 
 Control keeps only logical session identity/binding and orchestration state. Its
 runtime carries a resolved `ControlConfig` that intentionally has no
-`workspace_root`, shell executable, or executor file/search limits. Public
+`default_workdir`, shell executable, or executor file/search limits. Public
 machine-tool descriptions therefore state that the bound executor enforces its
 own policy instead of advertising the control host's values.
 

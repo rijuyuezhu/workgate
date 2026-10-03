@@ -161,10 +161,10 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec("ui_wallpaper", "Human interface", metavar="MODE"),
     SettingSpec(
-        "workspace_root",
+        "default_workdir",
         "Paths and state",
         metavar="PATH",
-        example_default="/absolute/path/to/workspace",
+        example_default="/absolute/path/to/default-workdir",
         dynamic_default_label="invocation CWD",
     ),
     SettingSpec(
@@ -246,7 +246,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "Authentication and OAuth",
         metavar="CHARS",
     ),
-    SettingSpec("allow_full_control", "Safety and resource limits"),
     SettingSpec(
         "tool_timeout_s", "Safety and resource limits", metavar="SECONDS"
     ),

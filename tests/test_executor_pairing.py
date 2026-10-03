@@ -92,7 +92,7 @@ def _hello() -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=("shell",),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),

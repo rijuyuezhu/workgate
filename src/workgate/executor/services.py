@@ -25,8 +25,7 @@ def build_runtime_services(
     tool_session_store = ToolSessionStore(
         state_store=state_store,
         path_resolver=path_resolver,
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        default_workdir=config.default_workdir,
         max_session_snapshots=config.max_session_snapshots,
         max_session_snapshot_bytes=config.max_session_snapshot_bytes,
     )

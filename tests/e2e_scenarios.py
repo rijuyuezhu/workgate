@@ -56,7 +56,7 @@ async def exercise_environment_tool(
     assert isinstance(payload["executor_id"], str)
     assert payload["executor_id"]
     assert payload["workdir"] == str(workspace)
-    assert payload["workspace_root"] == str(workspace)
+    assert payload["default_workdir"] == str(workspace)
     assert payload["session_id"].startswith("sess_")
     assert len(payload["session_id"]) >= 27
 

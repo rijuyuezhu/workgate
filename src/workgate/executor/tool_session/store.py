@@ -12,7 +12,7 @@ from ...errors import (
     SessionTerminationRequestedError,
 )
 from ...persistence import StateStore
-from ...utils.path_policy import resolve_path_with_policy
+from ...utils.path_policy import resolve_path
 from .records import (
     AgentSession,
     SnapshotRecord,
@@ -81,17 +81,16 @@ class ToolSessionStore:
         state_store: StateStore,
         *,
         path_resolver: SessionPathResolver | None = None,
-        workspace_root: Path | None = None,
-        allow_full_control: bool = False,
+        default_workdir: Path | None = None,
         max_session_snapshots: int,
         max_session_snapshot_bytes: int,
     ) -> None:
         self._lock = threading.RLock()
         self._state_store = state_store
         if path_resolver is None:
-            if workspace_root is None:
+            if default_workdir is None:
                 raise ValueError(
-                    "workspace_root is required when path_resolver is omitted"
+                    "default_workdir is required when path_resolver is omitted"
                 )
 
             def configured_path_resolver(
@@ -101,10 +100,9 @@ class ToolSessionStore:
                 allow_missing_parent: bool = True,
                 follow_final_symlink: bool = True,
             ) -> Path:
-                return resolve_path_with_policy(
+                return resolve_path(
                     path,
-                    workspace_root=workspace_root,
-                    allow_full_control=allow_full_control,
+                    base=default_workdir,
                     must_exist=must_exist,
                     allow_missing_parent=allow_missing_parent,
                     follow_final_symlink=follow_final_symlink,
@@ -616,7 +614,7 @@ class ToolSessionStore:
         allow_missing_parent: bool = True,
         follow_final_symlink: bool = True,
     ) -> Path:
-        """Resolve one session path using this store's owned workspace policy."""
+        """Resolve one path relative to an execution session's workdir."""
         return _resolve_session_path(
             session,
             path,
@@ -636,21 +634,14 @@ def _resolve_session_path(
     allow_missing_parent: bool = True,
     follow_final_symlink: bool = True,
 ) -> Path:
-    workdir = Path(session.workdir).resolve()
-    raw = Path(path)
-    candidate = raw if raw.is_absolute() else workdir / raw
-    resolved = resolver(
-        candidate,
+    return resolver(
+        Path(path)
+        if Path(path).is_absolute()
+        else Path(session.workdir) / path,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
         follow_final_symlink=follow_final_symlink,
     )
-    boundary = resolved if follow_final_symlink else resolved.parent
-    try:
-        boundary.relative_to(workdir)
-    except ValueError as exc:
-        raise ValueError(f"Path escapes session workdir: {path}") from exc
-    return resolved
 
 
 def file_sha256(path: Path) -> str:

@@ -38,7 +38,7 @@ def _refresh_context() -> None:
 
 def _workspace(tmp_path, monkeypatch):
     global _TRANSFER_CONTEXT
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".workgate"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -816,7 +816,9 @@ def test_unpack_commit_failure_restores_previous_destination(
     assert not list(root.glob(".dst.backup-*"))
 
 
-def test_explicit_workdir_transfer_resolution_is_bounded(tmp_path, monkeypatch):
+def test_explicit_workdir_transfer_resolution_uses_workdir_as_anchor(
+    tmp_path, monkeypatch
+):
     root = _workspace(tmp_path, monkeypatch)
     workdir = root / "session"
     workdir.mkdir()
@@ -826,7 +828,7 @@ def test_explicit_workdir_transfer_resolution_is_bounded(tmp_path, monkeypatch):
     stat = transfer_ops.transfer_stat(
         "file.txt", workdir=str(workdir), context=_context()
     )
-    assert Path(stat.path) == Path("session") / "file.txt"
+    assert Path(stat.path) == Path("file.txt")
 
     with pytest.raises(ValueError, match="mutually exclusive"):
         transfer_ops.transfer_stat(
@@ -835,10 +837,10 @@ def test_explicit_workdir_transfer_resolution_is_bounded(tmp_path, monkeypatch):
             workdir=str(workdir),
             context=_context(),
         )
-    with pytest.raises(ValueError, match="escapes session workdir"):
-        transfer_ops.transfer_stat(
-            "../outside.txt", workdir=str(workdir), context=_context()
-        )
+    outside = transfer_ops.transfer_stat(
+        "../outside.txt", workdir=str(workdir), context=_context()
+    )
+    assert Path(outside.path) == root / "outside.txt"
 
 
 def test_transfer_read_chunk_rejects_invalid_source_ranges(

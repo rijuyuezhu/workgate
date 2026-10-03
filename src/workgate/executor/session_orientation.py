@@ -52,29 +52,25 @@ def _git_info(config: ExecutorConfig, cwd: Path) -> GitSessionInfo:
     return GitSessionInfo(is_repo=True, root=root, branch=branch, dirty=dirty)
 
 
-def _relative_display(path: Path, workspace_root: Path) -> str:
+def _relative_display(path: Path, default_workdir: Path) -> str:
     resolved = path.resolve(strict=False)
     try:
-        return str(resolved.relative_to(workspace_root))
+        return str(resolved.relative_to(default_workdir))
     except ValueError:
         return str(resolved)
 
 
 def _instruction_files(config: ExecutorConfig, workdir: Path) -> list[str]:
-    """Discover nearby project instructions within executor workspace authority."""
-    root = config.workspace_root
+    """Discover project instructions from the workdir through filesystem ancestors."""
+    display_base = config.default_workdir
     found: list[str] = []
     current = workdir.resolve(strict=False)
     while True:
-        try:
-            current.relative_to(root)
-        except ValueError:
-            break
         for name in _INSTRUCTION_FILE_NAMES:
             candidate = current / name
             if candidate.is_file():
-                found.append(_relative_display(candidate, root))
-        if current == root or current.parent == current:
+                found.append(_relative_display(candidate, display_base))
+        if current.parent == current:
             break
         current = current.parent
     return found
@@ -91,7 +87,7 @@ def session_output(
         created_at=session.created_at,
         updated_at=session.updated_at,
         label=session.label,
-        workspace_root=str(config.workspace_root),
+        default_workdir=str(config.default_workdir),
         git=_git_info(config, workdir),
         instruction_files=_instruction_files(config, workdir),
         environment=collect_executor_session_environment(

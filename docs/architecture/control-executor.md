@@ -45,13 +45,14 @@ runtime mechanisms that implement them belong to the owning process.
 
 Control and executor have distinct resolved configuration authority. Control
 owns public bind/base URL, auth/OAuth/UI, pairing/presence, command admission,
-and control persistence policy. Executor owns `workspace_root`, path/command
-policy, machine limits, local integrations, and executor state/data/runtime.
+and control persistence policy. Executor owns `default_workdir`, machine limits,
+local integrations, and executor state/data/runtime.
 Standalone may accept one user-facing config file, but its supervisor resolves
 separate child configurations before launch.
 
-Relative session workdirs are always resolved against the executor's fixed
-configured `workspace_root`, never against a session's previous cwd.
+Relative session workdirs are resolved against the executor's effective
+`default_workdir`, never against a session's previous cwd. That default is an
+anchor, not a confinement boundary.
 
 ## Identity, credentials, and pairing
 
@@ -270,7 +271,8 @@ drop an executor-backed binding merely to free a slot.
 `session_change_cwd` is an executor-authoritative resource mutation. Under its
 session/snapshot synchronization, executor:
 
-1. resolves and validates the requested path against fixed `workspace_root`;
+1. resolves the requested path against `default_workdir` when relative and
+   validates that the result is an existing directory;
 2. invalidates/removes old durable and cached grounding/snapshots;
 3. atomically replaces the durable session cwd;
 4. reports refreshed orientation.

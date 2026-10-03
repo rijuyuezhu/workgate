@@ -17,7 +17,7 @@ from workgate.protocol.ids import new_executor_id
 
 
 def _configure(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")

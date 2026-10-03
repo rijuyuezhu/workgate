@@ -18,7 +18,7 @@ BASE_URL = "https://workgate.example"
 
 
 def _configure(monkeypatch, tmp_path, *, auth_mode: str = "none") -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)

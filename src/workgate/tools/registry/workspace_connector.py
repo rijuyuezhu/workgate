@@ -50,7 +50,7 @@ workspace_connector_tool = WorkspaceConnectorToolRegistry.get_tool_decorator()
 async def workspace_search(
     session_id: SessionIdArg, query: ConnectorSearchQueryArg
 ) -> SearchOutput:
-    """Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id."""
+    """Search text files from the session workdir and return connector-compatible result cards. Call fetch with the same session_id for a returned result id."""
     del session_id, query
     raise RuntimeError("workspace_search requires control routing")
 

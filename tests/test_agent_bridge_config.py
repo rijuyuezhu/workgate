@@ -21,17 +21,17 @@ from workgate.config.settings import (
 )
 
 
-def test_workspace_root_does_not_rewrite_default_state_paths(
+def test_default_workdir_does_not_rewrite_default_state_paths(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.delenv("WORKGATE_STATE_DIR", raising=False)
     clear_settings_cache()
 
     settings = load_settings()
     default_state_dir = app_paths().state_dir
 
-    assert settings.workspace_root == tmp_path.resolve()
+    assert settings.default_workdir == tmp_path.resolve()
     assert settings.state_dir == default_state_dir.resolve()
     assert (
         settings.audit_log_path
@@ -52,7 +52,7 @@ def test_dependent_state_paths_are_derived_from_custom_state_dir(
     monkeypatch, tmp_path
 ):
     state_dir = tmp_path / "custom-state"
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(state_dir))
     clear_settings_cache()
 

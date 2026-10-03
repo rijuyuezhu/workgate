@@ -85,7 +85,7 @@ async def write_file(
     content: FileContentArg,
     overwrite: OverwriteArg = True,
 ) -> WriteFileOutput:
-    """Write a UTF-8 text file inside a session workdir."""
+    """Write a UTF-8 text file through an execution session."""
     del session_id, path, content, overwrite
     raise RuntimeError("write_file requires control routing")
 
@@ -129,13 +129,13 @@ async def hashline_edit(
 @file_tool(
     http_method="POST",
     http_path="/tools/delete",
-    description="Delete a file or directory inside a session workdir.",
+    description="Delete a file or directory through an execution session.",
     oauth_scopes=("shell:read", "shell:write"),
     timeout_cancellable=False,
 )
 async def delete_file_or_dir(
     session_id: SessionIdArg, path: FilePathArg, recursive: RecursiveArg = False
 ) -> DeleteFileOrDirOutput:
-    """Delete a file or directory inside a session workdir."""
+    """Delete a file or directory through an execution session."""
     del session_id, path, recursive
     raise RuntimeError("delete_file_or_dir requires control routing")

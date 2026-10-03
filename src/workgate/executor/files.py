@@ -27,8 +27,8 @@ from ..schemas.result_models.files import (
 )
 from ..utils.path_locks import path_lock, path_locks
 from .path import (
-    relative_display_from_root,
-    resolve_path_with_policy,
+    relative_display_from_base,
+    resolve_path,
 )
 from .tool_session.bindings import SessionBinding
 from .tool_session.store import (
@@ -41,10 +41,8 @@ from .tool_session.store import (
 class FilesConfig:
     """Configuration values consumed by the Files domain."""
 
-    workspace_root: Path
-    """Workspace root used for sessionless paths and display normalization."""
-    allow_full_control: bool
-    """Whether filesystem access may escape the configured workspace root."""
+    default_workdir: Path
+    """Default base for sessionless relative paths and display normalization."""
     max_directory_entries: int
     """Maximum directory entries returned by one list operation."""
     max_file_read_bytes: int
@@ -56,8 +54,7 @@ class FilesConfig:
 def files_config_from_executor_config(config: ExecutorConfig) -> FilesConfig:
     """Project resolved executor policy to the values Files consumes."""
     return FilesConfig(
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        default_workdir=config.default_workdir,
         max_directory_entries=config.max_directory_entries,
         max_file_read_bytes=config.max_file_read_bytes,
         max_file_write_bytes=config.max_file_write_bytes,
@@ -73,39 +70,33 @@ def _resolve_file_path(
     allow_missing_parent: bool = True,
     follow_final_symlink: bool = True,
 ) -> Path:
-    """Resolve a workspace or local-session path from explicit Files policy."""
-    if binding is None:
-        return resolve_path_with_policy(
-            path,
-            workspace_root=config.workspace_root,
-            allow_full_control=config.allow_full_control,
-            must_exist=must_exist,
-            allow_missing_parent=allow_missing_parent,
-            follow_final_symlink=follow_final_symlink,
-        )
-
-    workdir = Path(binding.workdir).resolve()
-    raw = Path(path)
-    candidate = raw if raw.is_absolute() else workdir / raw
-    resolved = resolve_path_with_policy(
-        candidate,
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+    """Resolve a path relative to the session workdir or executor default."""
+    base = (
+        config.default_workdir
+        if binding is None
+        else Path(binding.workdir).resolve(strict=False)
+    )
+    return resolve_path(
+        path,
+        base=base,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
         follow_final_symlink=follow_final_symlink,
     )
-    boundary = resolved if follow_final_symlink else resolved.parent
-    try:
-        boundary.relative_to(workdir)
-    except ValueError as exc:
-        raise ValueError(f"Path escapes session workdir: {path}") from exc
-    return resolved
 
 
-def _display_file(config: FilesConfig, path: Path) -> str:
-    """Render a file path relative to the explicit workspace root."""
-    return relative_display_from_root(path, config.workspace_root)
+def _display_file(
+    config: FilesConfig,
+    binding: SessionBinding | None,
+    path: Path,
+) -> str:
+    """Render a path relative to its operation workdir when possible."""
+    base = (
+        config.default_workdir
+        if binding is None
+        else Path(binding.workdir).resolve(strict=False)
+    )
+    return relative_display_from_base(path, base)
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -174,7 +165,7 @@ def _list_files_local(
                 target = os.readlink(item)
         filelist.append(
             EntryInfo(
-                path=_display_file(config, item),
+                path=_display_file(config, binding, item),
                 type=entry_type,
                 size=stat.st_size if entry_type in {"file", "link"} else None,
                 modified=stat.st_mtime,
@@ -342,7 +333,7 @@ def _read_file_local(
         resolve_file=lambda value: _resolve_file_path(
             config, binding, value, must_exist=True
         ),
-        display_file=lambda value: _display_file(config, value),
+        display_file=lambda value: _display_file(config, binding, value),
         snapshot_store=store if binding is not None else None,
         snapshot_session_id=binding.session_id if binding is not None else None,
     )
@@ -378,7 +369,7 @@ def _write_file_local(
         created = not exists
         _atomic_write_text(p, content)
     return WriteFileOutput(
-        path=_display_file(config, p), bytes=len(data), created=created
+        path=_display_file(config, binding, p), bytes=len(data), created=created
     )
 
 
@@ -638,7 +629,7 @@ def _path_for_hashline_operation(
     record = store.get_snapshot(binding.session_id, snapshot_id)
     if record is None or record.path != path:
         return path
-    candidate = config.workspace_root / record.path
+    candidate = Path(binding.workdir) / record.path
     if candidate.exists():
         return str(candidate)
     return path
@@ -693,7 +684,7 @@ def _hashline_file_snapshot(
     original = p.read_text(encoding="utf-8")
     return _HashlineFileSnapshot(
         path_obj=p,
-        relative_path=_display_file(config, p),
+        relative_path=_display_file(config, binding, p),
         original=original,
         original_lines=tuple(original.splitlines(keepends=True)),
         current_sha256=file_sha256(p),
@@ -1014,7 +1005,7 @@ def _edit_lines_local(
                 f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
             )
 
-        relative_path = _display_file(config, p)
+        relative_path = _display_file(config, binding, p)
         current_sha256 = file_sha256(p)
         _validate_snapshot_for_edit(
             store=store,
@@ -1117,4 +1108,7 @@ def _delete_file_or_dir_local(
         else:
             p.unlink()
             deleted = "file"
-    return DeleteFileOrDirOutput(path=_display_file(config, p), deleted=deleted)
+    return DeleteFileOrDirOutput(
+        path=_display_file(config, binding, p),
+        deleted=deleted,
+    )

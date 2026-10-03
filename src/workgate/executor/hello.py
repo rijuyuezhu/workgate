@@ -37,7 +37,7 @@ def build_executor_hello(
                 else ()
             ),
         ),
-        workspace_root=str(config.workspace_root),
+        default_workdir=str(config.default_workdir),
         sessions=sessions,
         shells=shells,
         jobs=jobs,

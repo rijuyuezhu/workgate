@@ -262,7 +262,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "path": {
           "default": ".",
-          "description": "Directory path to list. Relative paths resolve inside the execution session workdir.",
+          "description": "Directory path to list. Relative paths resolve from the execution session workdir.",
           "title": "Path",
           "type": "string"
         },
@@ -299,7 +299,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "number"
             },
             "path": {
-              "description": "Workspace-relative entry path.",
+              "description": "Entry path, relative to the operation workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -402,7 +402,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "path": {
-          "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+          "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
           "title": "Path",
           "type": "string"
         },
@@ -438,7 +438,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "path": {
-          "description": "Workspace-relative file path that was written.",
+          "description": "File path that was written, relative to the operation workdir when possible.",
           "title": "Path",
           "type": "string"
         }
@@ -468,7 +468,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "path": {
-          "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+          "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
           "title": "Path",
           "type": "string"
         },
@@ -539,7 +539,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "string"
             },
             "path": {
-              "description": "Workspace-relative file path for this context.",
+              "description": "File path for this context, relative to the operation workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -601,7 +601,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "path": {
-          "description": "Workspace-relative file path that was edited.",
+          "description": "File path that was edited, relative to the operation workdir when possible.",
           "title": "Path",
           "type": "string"
         },
@@ -684,7 +684,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "string"
             },
             "path": {
-              "description": "Workspace-relative file path for this context.",
+              "description": "File path for this context, relative to the operation workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -741,7 +741,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "integer"
             },
             "path": {
-              "description": "Workspace-relative file path edited by this hunk.",
+              "description": "File path edited by this hunk, relative to the operation workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -793,7 +793,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "array"
         },
         "path": {
-          "description": "Workspace-relative path of the first edited hunk.",
+          "description": "Path of the first edited hunk, relative to the operation workdir when possible.",
           "title": "Path",
           "type": "string"
         },
@@ -828,11 +828,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Delete a file or directory inside a session workdir.",
+    "description": "Delete a file or directory through an execution session.",
     "inputSchema": {
       "properties": {
         "path": {
-          "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+          "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
           "title": "Path",
           "type": "string"
         },
@@ -868,7 +868,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "path": {
-          "description": "Workspace-relative path that was deleted.",
+          "description": "Path that was deleted, relative to the operation workdir when possible.",
           "title": "Path",
           "type": "string"
         }
@@ -893,12 +893,12 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory inside the explicit session workdir against which patch paths are resolved. Defaults to the session workdir.",
+          "description": "Directory against which patch paths are resolved. Relative values resolve from the session workdir.",
           "title": "Cwd",
           "type": "string"
         },
         "patch": {
-          "description": "A standard unified diff or an apply_patch envelope beginning with '*** Begin Patch'. Paths resolve inside cwd and the explicit session workdir.",
+          "description": "A standard unified diff or an apply_patch envelope beginning with '*** Begin Patch'. Patch paths must stay within cwd.",
           "title": "Patch",
           "type": "string"
         },
@@ -1051,7 +1051,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "number"
             },
             "path": {
-              "description": "Workspace-relative entry path.",
+              "description": "Entry path, relative to the operation workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -1206,7 +1206,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "integer"
             },
             "path": {
-              "description": "Workspace-relative file path that was read.",
+              "description": "File path that was read, relative to the operation workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -1339,7 +1339,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "path": {
-          "description": "Workspace-relative target path.",
+          "description": "Target path, relative to the operation workdir when possible.",
           "title": "Path",
           "type": "string"
         },
@@ -1371,7 +1371,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory path to render as a compact tree. Relative paths resolve inside the execution session workdir.",
+          "description": "Directory path to render as a compact tree. Relative paths resolve from the execution session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -1519,7 +1519,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory path that narrows the search root. Relative paths resolve inside the execution session workdir.",
+          "description": "Directory path that narrows the search root. Relative paths resolve from the execution session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -1530,7 +1530,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "pattern": {
-          "description": "Glob expression matched against workspace-relative paths and file names.",
+          "description": "Glob expression matched against paths relative to the search root and against file names.",
           "title": "Pattern",
           "type": "string"
         },
@@ -1555,7 +1555,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "description": "Glob file search result.",
       "properties": {
         "paths": {
-          "description": "Workspace-relative paths matching the glob pattern.",
+          "description": "Matching paths, relative to the execution session workdir when possible.",
           "items": {
             "type": "string"
           },
@@ -1621,7 +1621,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           ],
           "default": null,
-          "description": "Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the workspace root.",
+          "description": "Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the session workdir.",
           "title": "Paths"
         },
         "pattern": {
@@ -1987,7 +1987,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory to scan. Relative paths resolve inside the execution session workdir.",
+          "description": "Directory to scan. Relative paths resolve from the execution session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -2037,7 +2037,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "type": "integer"
             },
             "path": {
-              "description": "Workspace-relative file path containing the finding.",
+              "description": "File path containing the finding, relative to the execution session workdir when possible.",
               "title": "Path",
               "type": "string"
             },
@@ -2093,7 +2093,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools.",
+    "description": "Start an execution session on one executor. Omit workdir to use the executor default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online.",
     "inputSchema": {
       "properties": {
         "executor_id": {
@@ -2127,14 +2127,21 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "title": "Label"
         },
         "workdir": {
-          "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
-          "title": "Workdir",
-          "type": "string"
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional initial workdir. Omit to use the executor's effective default workdir.",
+          "title": "Workdir"
         }
       },
-      "required": [
-        "workdir"
-      ],
       "title": "session_startArguments",
       "type": "object"
     },
@@ -2259,11 +2266,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "SessionPolicyEnvironment": {
           "description": "Safe executor-owned limits and modes that influence tool selection.",
           "properties": {
-            "full_control": {
-              "description": "Whether executor full-control path policy is active.",
-              "title": "Full Control",
-              "type": "boolean"
-            },
             "max_concurrent_commands": {
               "description": "Concurrent executor command limit.",
               "title": "Max Concurrent Commands",
@@ -2356,7 +2358,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           },
           "required": [
-            "full_control",
             "shell_default_timeout_s",
             "shell_max_timeout_s",
             "max_output_bytes",
@@ -2534,21 +2535,21 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "object"
         },
         "SessionWorkspaceEnvironment": {
-          "description": "Workspace orientation reported by the executor that owns the session.",
+          "description": "Workdir orientation reported by the executor that owns the session.",
           "properties": {
+            "default_workdir": {
+              "description": "Effective default workdir on the execution target.",
+              "title": "Default Workdir",
+              "type": "string"
+            },
             "workdir": {
               "description": "Canonical workdir on the execution target.",
               "title": "Workdir",
               "type": "string"
-            },
-            "workspace_root": {
-              "description": "Canonical workspace root on the execution target.",
-              "title": "Workspace Root",
-              "type": "string"
             }
           },
           "required": [
-            "workspace_root",
+            "default_workdir",
             "workdir"
           ],
           "title": "SessionWorkspaceEnvironment",
@@ -2561,6 +2562,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Unix timestamp when the session was created.",
           "title": "Created At",
           "type": "number"
+        },
+        "default_workdir": {
+          "description": "Effective default workdir reported by the executor that owns this session.",
+          "title": "Default Workdir",
+          "type": "string"
         },
         "environment": {
           "$ref": "#/$defs/SessionEnvironment",
@@ -2584,7 +2590,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Lightweight git orientation for the session workdir."
         },
         "instruction_files": {
-          "description": "Workspace-relative project instruction files discovered near the session workdir.",
+          "description": "Project instruction files discovered from the session workdir through its ancestors.",
           "items": {
             "type": "string"
           },
@@ -2636,11 +2642,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Canonical workdir bound to this session.",
           "title": "Workdir",
           "type": "string"
-        },
-        "workspace_root": {
-          "description": "Configured workspace root reported by the executor that owns this session.",
-          "title": "Workspace Root",
-          "type": "string"
         }
       },
       "required": [
@@ -2648,7 +2649,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "workdir",
         "created_at",
         "updated_at",
-        "workspace_root",
+        "default_workdir",
         "git",
         "instruction_files",
         "environment",
@@ -2665,7 +2666,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated.",
+    "description": "Change an execution session's workdir. Relative paths resolve against the executor default workdir, and old grounding snapshots are invalidated.",
     "inputSchema": {
       "properties": {
         "session_id": {
@@ -2677,7 +2678,9 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "workdir": {
-          "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
+          "description": "Working directory to bind to the session. Relative paths resolve against the executor default workdir.",
+          "maxLength": 4096,
+          "minLength": 1,
           "title": "Workdir",
           "type": "string"
         }
@@ -2810,11 +2813,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "SessionPolicyEnvironment": {
           "description": "Safe executor-owned limits and modes that influence tool selection.",
           "properties": {
-            "full_control": {
-              "description": "Whether executor full-control path policy is active.",
-              "title": "Full Control",
-              "type": "boolean"
-            },
             "max_concurrent_commands": {
               "description": "Concurrent executor command limit.",
               "title": "Max Concurrent Commands",
@@ -2907,7 +2905,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           },
           "required": [
-            "full_control",
             "shell_default_timeout_s",
             "shell_max_timeout_s",
             "max_output_bytes",
@@ -3085,21 +3082,21 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "object"
         },
         "SessionWorkspaceEnvironment": {
-          "description": "Workspace orientation reported by the executor that owns the session.",
+          "description": "Workdir orientation reported by the executor that owns the session.",
           "properties": {
+            "default_workdir": {
+              "description": "Effective default workdir on the execution target.",
+              "title": "Default Workdir",
+              "type": "string"
+            },
             "workdir": {
               "description": "Canonical workdir on the execution target.",
               "title": "Workdir",
               "type": "string"
-            },
-            "workspace_root": {
-              "description": "Canonical workspace root on the execution target.",
-              "title": "Workspace Root",
-              "type": "string"
             }
           },
           "required": [
-            "workspace_root",
+            "default_workdir",
             "workdir"
           ],
           "title": "SessionWorkspaceEnvironment",
@@ -3112,6 +3109,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Unix timestamp when the session was created.",
           "title": "Created At",
           "type": "number"
+        },
+        "default_workdir": {
+          "description": "Effective default workdir reported by the executor that owns this session.",
+          "title": "Default Workdir",
+          "type": "string"
         },
         "environment": {
           "$ref": "#/$defs/SessionEnvironment",
@@ -3135,7 +3137,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Lightweight git orientation for the session workdir."
         },
         "instruction_files": {
-          "description": "Workspace-relative project instruction files discovered near the session workdir.",
+          "description": "Project instruction files discovered from the session workdir through its ancestors.",
           "items": {
             "type": "string"
           },
@@ -3187,11 +3189,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "description": "Canonical workdir bound to this session.",
           "title": "Workdir",
           "type": "string"
-        },
-        "workspace_root": {
-          "description": "Configured workspace root reported by the executor that owns this session.",
-          "title": "Workspace Root",
-          "type": "string"
         }
       },
       "required": [
@@ -3199,7 +3196,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "workdir",
         "created_at",
         "updated_at",
-        "workspace_root",
+        "default_workdir",
         "git",
         "instruction_files",
         "environment",
@@ -3313,7 +3310,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+    "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; relative cwd overrides resolve from it. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
     "inputSchema": {
       "properties": {
         "async_": {
@@ -3329,7 +3326,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "cwd": {
           "default": ".",
-          "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
+          "description": "Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it.",
           "title": "Cwd",
           "type": "string"
         },
@@ -3471,7 +3468,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+    "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; relative cwd overrides resolve from it. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
     "inputSchema": {
       "properties": {
         "async_": {
@@ -3487,7 +3484,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "cwd": {
           "default": ".",
-          "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
+          "description": "Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it.",
           "title": "Cwd",
           "type": "string"
         },
@@ -4086,7 +4083,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id.",
+    "description": "Search text files from the session workdir and return connector-compatible result cards. Call fetch with the same session_id for a returned result id.",
     "inputSchema": {
       "properties": {
         "query": {

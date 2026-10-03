@@ -3,13 +3,14 @@
 import asyncio
 import base64
 from dataclasses import dataclass
+from pathlib import Path
 
 from mcp.types import CallToolResult, ImageContent, TextContent
 
 from ..config.executor import ExecutorConfig
 from ..schemas.result_models.image import ViewImageOutput
 from ..utils.image_types import detect_image_type
-from .path import relative_display_from_root
+from .path import relative_display_from_base
 from .tool_session.store import AgentSession, ToolSessionStore
 
 
@@ -37,7 +38,7 @@ def _local_image(
     path: str,
     session: AgentSession,
 ) -> _ImageFile:
-    """Read one bounded image from an executor-owned session workdir."""
+    """Read one bounded image through executor-owned session authority."""
     resolved = store.resolve_session_path(session, path, must_exist=True)
     if not resolved.is_file():
         raise IsADirectoryError(str(resolved))
@@ -50,7 +51,7 @@ def _local_image(
     _assert_image_size(len(data), config.max_view_image_bytes)
     image_format, mime_type = detect_image_type(data[:16])
     return _ImageFile(
-        path=relative_display_from_root(resolved, config.workspace_root),
+        path=relative_display_from_base(resolved, Path(session.workdir)),
         data=data,
         format=image_format,
         mime_type=mime_type,

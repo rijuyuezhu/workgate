@@ -89,7 +89,7 @@ BrowserScreenshotPathArg = Annotated[
     str | None,
     Field(
         max_length=4096,
-        description="Optional new .png path inside the owning Workgate session workdir. Existing files are never overwritten.",
+        description="Optional new .png path. Relative values resolve from the owning session workdir; existing files are never overwritten.",
     ),
 ]
 BrowserFullPageArg = Annotated[

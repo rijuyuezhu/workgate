@@ -28,7 +28,7 @@ from workgate.protocol.pairing import PairPollSuccess, PairStartResponse
 
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -91,7 +91,7 @@ async def test_run_requires_paired_executor(
     with pytest.raises(RuntimeError, match="executor is not paired"):
         await executor_cli._run(argparse.Namespace())
 
-    assert settings.workspace_root.is_dir()
+    assert not settings.default_workdir.exists()
     assert settings.state_dir.is_dir()
 
 

@@ -21,7 +21,7 @@ def _real_service(tmp_path: Path) -> ExecutorSessionService:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -35,14 +35,14 @@ def _config(tmp_path: Path):
     workspace.mkdir(exist_ok=True)
     return resolve_executor_config(
         Settings(
-            workspace_root=workspace,
+            default_workdir=workspace,
             state_dir=tmp_path / "state",
             agent_bridge_enabled=False,
         )
     )
 
 
-def test_executor_runtime_freezes_session_workspace_authority(
+def test_executor_runtime_freezes_default_anchor_but_allows_external_workdirs(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "executor-workspace"
@@ -52,7 +52,7 @@ def test_executor_runtime_freezes_session_workspace_authority(
     other_workspace = tmp_path / "mutated-legacy-workspace"
     other_workspace.mkdir()
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -65,15 +65,15 @@ def test_executor_runtime_freezes_session_workspace_authority(
     created = store.create_session(session_id=first_id, workdir=workspace)
     assert Path(created.workdir) == workspace
 
-    settings.workspace_root = other_workspace
+    settings.default_workdir = other_workspace
     changed = store.change_session_workdir(first_id, next_workdir)
     assert Path(changed.workdir) == next_workdir
 
-    with pytest.raises(ValueError, match="escapes workspace"):
-        store.create_session(
-            session_id="sess_0000000000000000000002",
-            workdir=other_workspace,
-        )
+    second = store.create_session(
+        session_id="sess_0000000000000000000002",
+        workdir=other_workspace,
+    )
+    assert Path(second.workdir) == other_workspace
 
 
 def test_executor_session_lookup_absence_and_non_directory_workdir(
@@ -83,10 +83,41 @@ def test_executor_session_lookup_absence_and_non_directory_workdir(
 
     assert service.lookup("sess_missing") is None
 
-    file_path = service._config.workspace_root / "not-a-directory"
+    file_path = service._config.default_workdir / "not-a-directory"
     file_path.write_text("x", encoding="utf-8")
     with pytest.raises(NotADirectoryError, match="not-a-directory"):
         service._resolve_workdir("not-a-directory")
+
+
+@pytest.mark.asyncio
+async def test_executor_session_create_uses_effective_default_workdir(
+    tmp_path: Path,
+) -> None:
+    configured = tmp_path / "missing-default"
+    config = resolve_executor_config(
+        Settings(
+            default_workdir=configured,
+            state_dir=tmp_path / "state",
+            agent_bridge_enabled=False,
+        )
+    )
+    assert config.default_workdir == Path("/")
+    store = build_tool_session_store(
+        Settings(
+            default_workdir=configured,
+            state_dir=tmp_path / "state",
+            agent_bridge_enabled=False,
+        )
+    )
+    service = ExecutorSessionService(config, store, ShellService(config, store))
+
+    result = await service.create(
+        "sess_0000000000000000000003",
+        workdir=None,
+        label=None,
+    )
+
+    assert result.workdir == "/"
 
 
 @pytest.mark.asyncio

@@ -351,7 +351,7 @@ for line in sys.stdin:
 
 def test_network_registry_reuses_service_mcp_manager(tmp_path):
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
     )
 
@@ -392,12 +392,12 @@ def test_shared_manager_generation_retires_before_new_manager_is_visible(
 
     monkeypatch.setattr(agent_service, "AgentMcpClientManager", FakeManager)
     first_settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_mcp_call_timeout_s=1,
     )
     second_settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_mcp_call_timeout_s=2,
     )

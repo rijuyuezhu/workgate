@@ -23,9 +23,7 @@ class CommandResult(BaseModel):
     duration_ms: int = Field(
         description="Elapsed command runtime in milliseconds."
     )
-    cwd: str = Field(
-        description="Working directory used to run the command, displayed relative to the workspace when possible."
-    )
+    cwd: str = Field(description="Working directory used to run the command.")
     command: str = Field(description="Shell command string that was executed.")
     stdout: str = Field(
         default="",

@@ -17,7 +17,11 @@ AUDIT_LOG_STATE_DIR_NAME = "audit_log"
 AUDIT_PAYLOAD_STATE_DIR_NAME = "payloads"
 AGENT_AUTH_STATE_DIR_NAME = "agent_auth"
 ENV_PREFIX = "WORKGATE_"
-_CONFIG_PATH_FIELDS = frozenset({"workspace_root", "state_dir", "data_dir"})
+_REMOVED_EXECUTOR_ENV_VARS = (
+    "WORKGATE_WORKSPACE_ROOT",
+    "WORKGATE_ALLOW_FULL_CONTROL",
+)
+_CONFIG_PATH_FIELDS = frozenset({"default_workdir", "state_dir", "data_dir"})
 _RESERVED_UI_PATHS = (
     "/api",
     "/downloads",
@@ -104,8 +108,8 @@ class Settings(BaseSettings):
     """Browser Human UI background treatment; no external network image is fetched."""
 
     # Paths and state.
-    workspace_root: Path = Field(default_factory=Path.cwd)
-    """Workspace filesystem boundary; defaults to the directory Workgate was started from."""
+    default_workdir: Path = Field(default_factory=Path.cwd)
+    """Default executor working directory; missing defaults fall back to the filesystem root."""
     state_dir: Path = Field(default_factory=lambda: app_paths().state_dir)
     """Directory for durable Workgate runtime state."""
     data_dir: Path = Field(default_factory=lambda: app_paths().data_dir)
@@ -148,9 +152,6 @@ class Settings(BaseSettings):
     """Maximum length of a dynamic OAuth client display name."""
 
     # Safety and resource limits.
-    allow_full_control: bool = False
-    """Allow executor filesystem operations to escape workspace_root; use only where unrestricted filesystem access is intended. MCP safety annotations remain conservative in this mode."""
-    """Allow network-capable operations."""
     tool_timeout_s: _PositiveFloat = 60
     """Base control-owned MCP/HTTP tool watchdog timeout in seconds."""
     run_shell_default_timeout_s: _PositiveInt = 10
@@ -333,7 +334,7 @@ class Settings(BaseSettings):
         return f"http://{host}:{self.port}"
 
     @field_validator(
-        "workspace_root",
+        "default_workdir",
         "state_dir",
         "data_dir",
         mode="before",
@@ -472,6 +473,16 @@ def env_overrides(
 ) -> dict[str, Any]:
     """Return explicitly present environment values for one role-owned field set."""
     selected = _selected_setting_names(setting_names)
+    if "default_workdir" in selected:
+        removed = [
+            name for name in _REMOVED_EXECUTOR_ENV_VARS if name in os.environ
+        ]
+        if removed:
+            raise ValueError(
+                "Removed executor environment settings are still set: "
+                f"{removed}. Use WORKGATE_DEFAULT_WORKDIR for the default cwd "
+                "and remove WORKGATE_ALLOW_FULL_CONTROL."
+            )
     present = {
         name: field_name
         for field_name in selected
@@ -491,7 +502,6 @@ def env_overrides(
 
 def initialize_runtime_directories(settings: Settings) -> None:
     """Create the filesystem roots required by a configured runtime."""
-    settings.workspace_root.mkdir(parents=True, exist_ok=True)
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.audit_log_path.parent)
 

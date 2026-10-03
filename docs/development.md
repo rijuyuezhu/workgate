@@ -18,7 +18,7 @@ uv run pre-commit install
 For most manual testing, use the same two-process path users run:
 
 ```bash
-uv run workgate standalone --workspace-root /absolute/path/to/project
+uv run workgate standalone --default-workdir /absolute/path/to/project
 ```
 
 When debugging a control transport in isolation:

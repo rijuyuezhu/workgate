@@ -8,7 +8,7 @@ from ..config.executor import ExecutorConfig
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
 from .errors import ExecutorOperationFailure
-from .path import resolve_path_with_policy
+from .path import resolve_path
 from .session_orientation import change_session_cwd, session_output
 from .shell_service import ShellService
 from .tool_session.lifecycle import session_lifecycle_lock
@@ -53,7 +53,7 @@ class ExecutorSessionService:
         self,
         session_id: str,
         *,
-        workdir: str,
+        workdir: str | None,
         label: str | None,
     ) -> Any:
         """Create one executor session under the control-allocated shared ID."""
@@ -125,7 +125,7 @@ class ExecutorSessionService:
         return stopped
 
     async def change_cwd(self, session_id: str, workdir: str) -> Any:
-        """Resolve against fixed executor root, then mutate cwd crash-safely."""
+        """Resolve against the executor default, then mutate cwd crash-safely."""
         resolved = self._resolve_workdir(workdir)
         async with session_lifecycle_lock(session_id):
             return await asyncio.to_thread(
@@ -136,11 +136,13 @@ class ExecutorSessionService:
                 str(resolved),
             )
 
-    def _resolve_workdir(self, workdir: str) -> Path:
-        resolved = resolve_path_with_policy(
+    def _resolve_workdir(self, workdir: str | None) -> Path:
+        base = self._config.default_workdir
+        if workdir is None:
+            return base
+        resolved = resolve_path(
             workdir,
-            workspace_root=self._config.workspace_root,
-            allow_full_control=self._config.allow_full_control,
+            base=base,
             must_exist=True,
         )
         if not resolved.is_dir():

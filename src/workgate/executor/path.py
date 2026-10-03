@@ -5,10 +5,10 @@ from pathlib import Path
 
 from ..app_paths import ensure_private_directory
 from ..utils.path_policy import (
-    relative_display_from_root as relative_display_from_root,
+    relative_display_from_base as relative_display_from_base,
 )
 from ..utils.path_policy import (
-    resolve_path_with_policy as resolve_path_with_policy,
+    resolve_path as resolve_path,
 )
 
 

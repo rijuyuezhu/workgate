@@ -46,7 +46,7 @@ def _executor_session(
     state_dir: Path,
 ) -> tuple[Settings, ExecutorConfig, ToolSessionStore, str]:
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=state_dir,
         agent_bridge_enabled=False,
     )
@@ -158,23 +158,35 @@ async def test_apply_patch_failed_preflight_does_not_modify_files(
 
 
 @pytest.mark.asyncio
-async def test_apply_patch_rejects_cwd_outside_session(tmp_path: Path) -> None:
+async def test_apply_patch_allows_explicit_cwd_outside_session(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
+    target = outside / "a.txt"
+    target.write_text("old\n", encoding="utf-8")
     _, config, store, session_id = _executor_session(
         workspace, tmp_path / "state"
     )
 
-    with pytest.raises(ValueError, match="escapes (session workdir|workspace)"):
-        await apply_patch_execute(
-            config,
-            store,
-            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n",
-            str(outside),
-            session_id,
-        )
+    result = await apply_patch_execute(
+        config,
+        store,
+        """*** Begin Patch
+*** Update File: a.txt
+@@
+-old
++new
+*** End Patch
+""",
+        str(outside),
+        session_id,
+    )
+
+    assert result.applied is True
+    assert target.read_text(encoding="utf-8") == "new\n"
 
 
 @pytest.mark.asyncio
@@ -191,7 +203,7 @@ async def test_apply_patch_uses_frozen_executor_authority(
     other_workspace = tmp_path / "other"
     other_workspace.mkdir()
 
-    settings.workspace_root = other_workspace
+    settings.default_workdir = other_workspace
     settings.git_bin = "definitely-not-the-configured-git"
     settings.max_file_write_bytes = 1
 

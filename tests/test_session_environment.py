@@ -14,7 +14,7 @@ from workgate.schemas.result_models.session import SessionToolProbe
 
 def _config(tmp_path: Path, **updates) -> ExecutorConfig:
     values = {
-        "workspace_root": tmp_path,
+        "default_workdir": tmp_path,
         "state_dir": tmp_path / "state",
         "shell_executable": "sh",
         "git_bin": "git",
@@ -196,7 +196,7 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
     )
     payload = environment.model_dump(mode="json")
 
-    assert environment.workspace.workspace_root == str(tmp_path)
+    assert environment.workspace.default_workdir == str(tmp_path)
     assert environment.capabilities.raw_pty is True
     assert environment.capabilities.browser is False
     assert environment.policy.max_jobs == 17

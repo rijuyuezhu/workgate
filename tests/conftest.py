@@ -29,7 +29,7 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
     system_tmp = _SYSTEM_TMP_ROOT / str(next(_SYSTEM_TMP_SEQUENCE))
     runtime_dir.mkdir()
     system_tmp.mkdir()
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(state_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
@@ -48,7 +48,7 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
     from workgate.config.settings import get_settings
     from workgate.executor.tool_session.store import ToolSessionStore
     from workgate.persistence import FileStateStore, use_state_store
-    from workgate.utils.path_policy import resolve_path_with_policy
+    from workgate.utils.path_policy import resolve_path
 
     initial_settings = get_settings()
     state_store = FileStateStore(lambda: get_settings().state_dir)
@@ -61,10 +61,9 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
         follow_final_symlink=True,
     ):
         settings = get_settings()
-        return resolve_path_with_policy(
+        return resolve_path(
             path,
-            workspace_root=settings.workspace_root,
-            allow_full_control=settings.allow_full_control,
+            base=settings.default_workdir,
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -73,8 +72,7 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
     test_store = ToolSessionStore(
         state_store=state_store,
         path_resolver=test_path_resolver,
-        workspace_root=initial_settings.workspace_root,
-        allow_full_control=initial_settings.allow_full_control,
+        default_workdir=initial_settings.default_workdir,
         max_session_snapshots=initial_settings.max_session_snapshots,
         max_session_snapshot_bytes=initial_settings.max_session_snapshot_bytes,
     )

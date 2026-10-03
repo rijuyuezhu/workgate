@@ -7,13 +7,13 @@ from pydantic import Field
 TreeCwdArg = Annotated[
     str,
     Field(
-        description="Directory path to render as a compact tree. Relative paths resolve inside the execution session workdir."
+        description="Directory path to render as a compact tree. Relative paths resolve from the execution session workdir."
     ),
 ]
 SearchCwdArg = Annotated[
     str,
     Field(
-        description="Directory path that narrows the search root. Relative paths resolve inside the execution session workdir."
+        description="Directory path that narrows the search root. Relative paths resolve from the execution session workdir."
     ),
 ]
 TreeDepthArg = Annotated[
@@ -31,7 +31,7 @@ TreeMaxEntriesArg = Annotated[
 GlobPatternArg = Annotated[
     str,
     Field(
-        description="Glob expression matched against workspace-relative paths and file names."
+        description="Glob expression matched against paths relative to the search root and against file names."
     ),
 ]
 GlobMaxResultsArg = Annotated[
@@ -76,6 +76,6 @@ GrepGitignoreArg = Annotated[
 SearchPathsArg = Annotated[
     str | list[str] | None,
     Field(
-        description="Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the workspace root."
+        description="Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the session workdir."
     ),
 ]

@@ -60,7 +60,7 @@ def test_generated_yaml_example_loads_without_losing_defaults(monkeypatch):
     settings = load_settings("config.example.yaml")
     defaults = Settings()
 
-    assert settings.allow_full_control == defaults.allow_full_control
+    assert settings.default_workdir == defaults.default_workdir
 
 
 def test_setting_spec_properties_cover_current_setting_shapes():
@@ -148,9 +148,9 @@ def test_config_file_errors(tmp_path):
     assert settings_module.read_config_file(empty) == {}
 
     nullable_path = tmp_path / "nullable-path.yaml"
-    nullable_path.write_text("workspace_root: null\n", encoding="utf-8")
+    nullable_path.write_text("default_workdir: null\n", encoding="utf-8")
     assert settings_module.read_config_file(nullable_path) == {
-        "workspace_root": None
+        "default_workdir": None
     }
 
 
@@ -213,11 +213,11 @@ def test_workspace_defaults_to_invocation_cwd(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
     monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config-home"))
 
-    assert load_settings().workspace_root == tmp_path.resolve()
+    assert load_settings().default_workdir == tmp_path.resolve()
 
 
 def test_default_config_is_discovered_from_platform_config_dir(
@@ -227,35 +227,35 @@ def test_default_config_is_discovered_from_platform_config_dir(
     config_dir.mkdir(parents=True)
     workspace = tmp_path / "configured-workspace"
     (config_dir / "config.yaml").write_text(
-        yaml.safe_dump({"workspace_root": str(workspace), "port": 8123}),
+        yaml.safe_dump({"default_workdir": str(workspace), "port": 8123}),
         encoding="utf-8",
     )
     monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
 
     settings = load_settings()
 
-    assert settings.workspace_root == workspace
+    assert settings.default_workdir == workspace
     assert settings.port == 8123
 
 
 def test_yaml_paths_must_be_absolute_after_expansion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
     config = tmp_path / "config.yaml"
-    config.write_text('workspace_root: "./relative"\n', encoding="utf-8")
+    config.write_text('default_workdir: "./relative"\n', encoding="utf-8")
 
     with pytest.raises(
-        ValueError, match="workspace_root must be an absolute path"
+        ValueError, match="default_workdir must be an absolute path"
     ):
         load_settings(config)
 
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    config.write_text('workspace_root: "~/project"\n', encoding="utf-8")
-    assert load_settings(config).workspace_root == home / "project"
+    config.write_text('default_workdir: "~/project"\n', encoding="utf-8")
+    assert load_settings(config).default_workdir == home / "project"
 
 
 def test_relative_env_and_cli_paths_remain_invocation_relative(
@@ -263,12 +263,28 @@ def test_relative_env_and_cli_paths_remain_invocation_relative(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config-home"))
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", "env-workspace")
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", "env-workspace")
 
-    assert load_settings().workspace_root == tmp_path / "env-workspace"
+    assert load_settings().default_workdir == tmp_path / "env-workspace"
     assert load_settings(
-        overrides={"workspace_root": "cli-workspace"}
-    ).workspace_root == (tmp_path / "cli-workspace")
+        overrides={"default_workdir": "cli-workspace"}
+    ).default_workdir == (tmp_path / "cli-workspace")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["WORKGATE_WORKSPACE_ROOT", "WORKGATE_ALLOW_FULL_CONTROL"],
+)
+def test_removed_executor_environment_settings_fail_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    monkeypatch.setenv(name, "/legacy" if name.endswith("ROOT") else "true")
+
+    with pytest.raises(
+        ValueError, match="Removed executor environment settings"
+    ):
+        load_settings()
 
 
 def test_role_scoped_load_ignores_foreign_yaml_and_environment(
@@ -287,7 +303,7 @@ def test_role_scoped_load_ignores_foreign_yaml_and_environment(
         yaml.safe_dump(
             {
                 "state_dir": str(control_state),
-                "workspace_root": str(workspace),
+                "default_workdir": str(workspace),
                 "oauth_admin_pin": "control-secret-pin",
                 "shell_executable": "/bin/executor-yaml-shell",
             }
@@ -300,14 +316,14 @@ def test_role_scoped_load_ignores_foreign_yaml_and_environment(
 
     executor = load_settings(config, setting_names=EXECUTOR_SETTING_NAMES)
     assert executor.state_dir == executor_state
-    assert executor.workspace_root == workspace
+    assert executor.default_workdir == workspace
     assert executor.shell_executable == "/bin/executor-env-shell"
     assert executor.oauth_admin_pin is None
 
     control = load_settings(config, setting_names=CONTROL_SETTING_NAMES)
     assert control.state_dir == executor_state
     assert control.oauth_admin_pin == "env-control-secret"
-    assert control.workspace_root != workspace
+    assert control.default_workdir != workspace
     assert (
         control.shell_executable
         == Settings.model_fields["shell_executable"].get_default()
@@ -321,7 +337,7 @@ def test_role_scoped_load_ignores_foreign_invalid_yaml_path(
 
     config = tmp_path / "config.yaml"
     config.write_text(
-        'workspace_root: "./executor-relative"\nport: 9123\n',
+        'default_workdir: "./executor-relative"\nport: 9123\n',
         encoding="utf-8",
     )
 
@@ -336,7 +352,7 @@ def test_role_scoped_load_rejects_foreign_explicit_override(
 
     with pytest.raises(ValueError, match="not owned by this role"):
         load_settings(
-            overrides={"workspace_root": str(tmp_path)},
+            overrides={"default_workdir": str(tmp_path)},
             setting_names=CONTROL_SETTING_NAMES,
         )
 

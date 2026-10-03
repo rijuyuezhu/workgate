@@ -16,7 +16,7 @@ from ..protocol.executor import (
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
 )
-from ..utils.path_policy import resolve_path_with_policy
+from ..utils.path_policy import resolve_path
 from .agent import ExecutorAgentBridgeService
 from .browser import BrowserService
 from .dispatch import ExecutorDispatcher
@@ -260,8 +260,12 @@ class ExecutorRuntime:
             if command.op == SESSION_CREATE_OP:
                 workdir = command.args.get("workdir")
                 label = command.args.get("label")
-                if not isinstance(workdir, str) or not workdir:
-                    raise ValueError("session.create requires workdir")
+                if workdir is not None and (
+                    not isinstance(workdir, str) or not workdir
+                ):
+                    raise ValueError(
+                        "session.create workdir must be a non-empty string or null"
+                    )
                 if label is not None and not isinstance(label, str):
                     raise ValueError(
                         "session.create label must be a string or null"
@@ -347,10 +351,9 @@ def build_executor_runtime(
         allow_missing_parent: bool = True,
         follow_final_symlink: bool = True,
     ) -> Path:
-        return resolve_path_with_policy(
+        return resolve_path(
             path,
-            workspace_root=config.workspace_root,
-            allow_full_control=config.allow_full_control,
+            base=config.default_workdir,
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -376,7 +379,6 @@ def build_executor_runtime(
         shell=shell_service,
         terminal_runtime=build_terminal_runtime(
             services.state_store,
-            workspace_root=config.workspace_root,
             idle_timeout_s=config.ui_terminal_idle_timeout_s,
             max_connections=config.ui_terminal_max_connections,
         ),

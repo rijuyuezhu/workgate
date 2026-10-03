@@ -17,8 +17,9 @@ approve the request from **Executors**.
 
 The saved executor profile contains a long-lived credential. On Linux the
 default state root is `~/.local/state/workgate/executor-runtime`; keep it
-private. Executor machine policy, including `workspace_root`, command/path
-restrictions, and local integration credentials, is configured on that machine.
+private. Executor machine policy, including `default_workdir`, process limits,
+and local integration credentials, is configured on that machine. Filesystem
+authority comes from the executor OS account.
 
 ## Run and reconnect
 

@@ -85,7 +85,7 @@ def test_normalize_description_cleans_docstring_text():
 @pytest.mark.asyncio
 async def test_mcp_tool_surface_is_stable(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -100,7 +100,7 @@ async def test_browser_actions_are_structured_and_bounded(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -116,7 +116,7 @@ async def test_browser_actions_are_structured_and_bounded(
 @pytest.mark.asyncio
 async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "stdio")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -137,7 +137,7 @@ async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
 async def test_model_facing_tools_require_explicit_semantic_identity(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -181,7 +181,7 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
 
 @pytest.mark.asyncio
 async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -235,7 +235,7 @@ def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):
 
 
 def test_http_openapi_version_matches_package_version(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -249,7 +249,7 @@ def test_http_openapi_version_matches_package_version(tmp_path, monkeypatch):
 def test_http_public_version_endpoint_reports_package_version(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -263,7 +263,7 @@ def test_http_public_version_endpoint_reports_package_version(
 
 @pytest.mark.asyncio
 async def test_http_version_matches_mcp_tool_payload(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -295,14 +295,15 @@ def _build_paired_surface_http_app():
 @pytest.mark.asyncio
 async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
     (tmp_path / "alpha.txt").write_text("hello", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={}).json()
+    assert session["workdir"] == str(tmp_path)
     args = {"session_id": session["session_id"], "path": "."}
     http_payload = client.post("/tools/list_files", json=args).json()
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
@@ -315,7 +316,7 @@ async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
 async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
     target = tmp_path / "context.txt"
     target.write_text("alpha\nneedle\nomega\n", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -324,12 +325,13 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
     app = _build_paired_surface_http_app()
     mcp = build_mcp(runtime=app.state.control_runtime)
 
-    started = await mcp.call_tool("session_start", {"workdir": "."})
+    started = await mcp.call_tool("session_start", {})
     assert isinstance(started, CallToolResult)
     assert isinstance(started.structuredContent, dict)
     assert isinstance(started.content[0], TextContent)
     assert started.structuredContent["session_id"] in started.content[0].text
     assert started.structuredContent["workdir"] in started.content[0].text
+    assert started.structuredContent["workdir"] == str(tmp_path)
     assert not started.content[0].text.lstrip().startswith("{")
     session_id = started.structuredContent["session_id"]
 
@@ -397,7 +399,7 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
 ):
     target = tmp_path / "edit.txt"
     target.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -494,7 +496,7 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
 
 @pytest.mark.asyncio
 async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -516,7 +518,7 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
 async def test_http_task_matches_mcp_and_progress_mutates_it(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -566,7 +568,7 @@ async def test_unrouted_todo_registry_stubs_fail_closed():
 def test_http_task_router_validates_actions_and_covers_lifecycle(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -638,7 +640,7 @@ def test_http_task_router_validates_actions_and_covers_lifecycle(
 
 
 def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -666,7 +668,7 @@ def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
 
 
 def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -716,7 +718,7 @@ def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_http_secret_scan_matches_mcp_tool_payload(tmp_path, monkeypatch):
     (tmp_path / "safe.txt").write_text("hello\n", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -734,7 +736,7 @@ async def test_http_secret_scan_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
 
 def test_http_tool_name_is_not_request_overridable(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -754,7 +756,7 @@ def test_http_tool_name_is_not_request_overridable(tmp_path, monkeypatch):
 
 
 def test_get_http_tools_disable_response_caching(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -771,7 +773,7 @@ def test_get_http_tools_disable_response_caching(tmp_path, monkeypatch):
 def test_http_tool_missing_required_arg_returns_validation_error(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -793,7 +795,7 @@ def test_http_tool_missing_required_arg_returns_validation_error(
 
 def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
     (tmp_path / "artifact.txt").write_text("hello", encoding="utf-8")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_MODE", "http")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
@@ -840,7 +842,7 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
 
 
 def test_todos_are_task_scoped(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -888,7 +890,7 @@ def test_todos_are_task_scoped(tmp_path, monkeypatch):
 
 
 def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -908,7 +910,7 @@ def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
 
 
 def test_http_tool_unexpected_error_returns_json_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -933,7 +935,7 @@ def test_http_tool_unexpected_error_returns_json_error(tmp_path, monkeypatch):
 
 def test_http_mode_hides_remote_worker_routes(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_MODE", "http")
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -950,7 +952,7 @@ def test_http_mode_hides_remote_worker_routes(tmp_path, monkeypatch):
 async def test_mcp_tool_missing_required_arg_uses_fastmcp_tool_error(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -960,7 +962,7 @@ async def test_mcp_tool_missing_required_arg_uses_fastmcp_tool_error(
 
 @pytest.mark.asyncio
 async def test_mcp_remote_facade_is_absent(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -980,7 +982,7 @@ async def test_mcp_remote_facade_is_absent(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_unknown_tool_uses_fastmcp_tool_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -1008,7 +1010,7 @@ def test_http_tool_routes_reject_unsupported_methods():
 async def test_mcp_tools_have_matching_http_routes_and_handlers(
     tmp_path, monkeypatch, agent_bridge_enabled
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / "agents"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", agent_bridge_enabled)
     clear_settings_cache()
@@ -1032,7 +1034,7 @@ async def test_mcp_tools_have_matching_http_routes_and_handlers(
 
 @pytest.mark.asyncio
 async def test_run_python_code_creates_temp_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")

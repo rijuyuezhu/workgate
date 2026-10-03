@@ -15,7 +15,7 @@ from workgate.tools.registry.workspace_connector import (
 
 
 def _settings(tmp_path, monkeypatch) -> Settings:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     return Settings()
@@ -112,8 +112,8 @@ async def test_composed_search_resolves_each_operation_from_session_workdir(
         {"session_id": session.session_id, "query": "needle"},
     )
 
-    assert [item.id for item in first_result.results] == ["first/one.txt"]
-    assert [item.id for item in second_result.results] == ["second/two.txt"]
+    assert [item.id for item in first_result.results] == ["one.txt"]
+    assert [item.id for item in second_result.results] == ["two.txt"]
 
 
 @pytest.mark.asyncio

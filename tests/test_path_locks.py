@@ -6,7 +6,7 @@ from workgate.utils.path_locks import path_lock, path_locks
 
 
 def _configure(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
 

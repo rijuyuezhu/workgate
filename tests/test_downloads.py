@@ -35,7 +35,7 @@ from workgate.http.downloads import _token_fingerprint, download_routes
 
 
 def _reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_DATA_DIR", str(tmp_path / ".data"))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://files.example.test")

@@ -21,7 +21,7 @@ from workgate.schemas.result_models.search import (
 
 
 def _store_and_settings(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     settings = get_settings()
@@ -99,8 +99,8 @@ async def test_search_service_resolves_fresh_workdir_per_operation(
         gitignore=False,
     )
 
-    assert [match.path for match in first_result.matches] == ["first/one.txt"]
-    assert [match.path for match in second_result.matches] == ["second/two.txt"]
+    assert [match.path for match in first_result.matches] == ["one.txt"]
+    assert [match.path for match in second_result.matches] == ["two.txt"]
 
 
 def test_search_path_access_and_scope_parsing_are_explicit(
@@ -123,10 +123,12 @@ def test_search_path_access_and_scope_parsing_are_explicit(
         == target
     )
     assert runner.paths.display(target) == "work/demo.txt"
-    with pytest.raises(ValueError, match="Path escapes session workdir"):
+    assert (
         runner.paths.resolve_in_workdir(
             str(workdir), "../outside.txt", must_exist=True
         )
+        == outside
+    )
 
     path_args, glob_args, line_scopes = runner._split_scopes(
         workdir,
@@ -211,13 +213,13 @@ def test_search_grounding_projects_snapshots_and_display_windows(
     assert plain.session_id is None
 
     grounded = runner.grounding.read(str(target), 2, 2, binding=binding)
-    assert grounded.path == "work/demo.txt"
+    assert grounded.path == "demo.txt"
     assert grounded.session_id == session.session_id
     assert grounded.snapshot_id is not None
 
     match = GrepMatch(path="demo.txt", line=2, column=1, text="needle here")
     projected = runner._ground_match(match, workdir, binding)
-    assert projected.path == "work/demo.txt"
+    assert projected.path == "demo.txt"
     assert projected.numbered_line is not None
     assert projected.numbered_line.endswith("]\n2:needle here")
     assert projected.session_id == session.session_id

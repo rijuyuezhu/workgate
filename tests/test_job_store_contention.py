@@ -21,7 +21,7 @@ pytestmark = pytest.mark.usefixtures("managed_jobs_runtime_owner")
 
 
 def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()

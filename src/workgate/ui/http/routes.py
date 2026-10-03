@@ -225,8 +225,8 @@ async def _executor_targets(request: Request) -> dict[str, Any]:
                 "executor_id": record.executor_id,
                 "name": record.name,
                 "status": "online" if online else "offline",
-                "workspace_root": (
-                    "" if inventory is None else inventory.workspace_root
+                "default_workdir": (
+                    "" if inventory is None else inventory.default_workdir
                 ),
                 "last_seen_at": last_seen,
                 "last_seen_age_s": (

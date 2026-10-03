@@ -130,8 +130,7 @@ Run the executor as the OS user that owns the workspace. For user `alice`,
 create `~/.config/workgate/executor/config.yaml`:
 
 ```yaml
-workspace_root: /srv/workspaces/alice
-allow_full_control: false
+default_workdir: /srv/workspaces/alice
 ```
 
 Prepare the workspace and config directory:
@@ -177,7 +176,8 @@ WantedBy=multi-user.target
 
 The executor discovers `~/.config/workgate/executor/config.yaml` and uses its
 private default state root under `~/.local/state/workgate/executor-runtime`.
-`workspace_root`, not the service working directory, defines machine access.
+`default_workdir` only chooses the initial cwd for relative paths. Filesystem
+access is governed by the executor OS account.
 
 Temporary network or control outages reconnect with the saved executor profile;
 ordinary downtime does not require pairing again.

@@ -1226,11 +1226,19 @@ class ControlSessionCopyService:
             await progress(values)
 
     @staticmethod
-    def _binding_snapshot(record: ControlSessionRecord) -> dict[str, str]:
+    def _workdir(record: ControlSessionRecord) -> str:
+        workdir = record.resolved_workdir_display or record.requested_workdir
+        if workdir is None:
+            raise RuntimeError(
+                f"session {record.session_id} has no resolved workdir"
+            )
+        return workdir
+
+    @classmethod
+    def _binding_snapshot(cls, record: ControlSessionRecord) -> dict[str, str]:
         return {
             "executor_id": str(record.executor_id),
-            "workdir": record.resolved_workdir_display
-            or record.requested_workdir,
+            "workdir": cls._workdir(record),
         }
 
     @classmethod
@@ -1280,16 +1288,14 @@ class ControlSessionCopyService:
             source=SessionCopyEndpoint(
                 session_id=str(src.session_id),
                 executor_id=str(src.executor_id),
-                workdir=src.resolved_workdir_display or src.requested_workdir,
+                workdir=ControlSessionCopyService._workdir(src),
                 path=src_path,
-                resolved_path=metrics.get("source_path"),
             ),
             destination=SessionCopyEndpoint(
                 session_id=str(dst.session_id),
                 executor_id=str(dst.executor_id),
-                workdir=dst.resolved_workdir_display or dst.requested_workdir,
+                workdir=ControlSessionCopyService._workdir(dst),
                 path=dst_path,
-                resolved_path=metrics.get("destination_path"),
             ),
             relation=SessionCopyRelation(
                 route="same_executor"

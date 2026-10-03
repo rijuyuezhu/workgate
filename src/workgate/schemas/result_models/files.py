@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 class EntryInfo(BaseModel):
     """One file-system entry in a directory listing."""
 
-    path: str = Field(description="Workspace-relative entry path.")
+    path: str = Field(
+        description="Entry path, relative to the operation workdir when possible."
+    )
     type: str = Field(description="Entry type: file, dir, or other.")
     size: int | None = Field(
         default=None,
@@ -52,7 +54,9 @@ class ReadLine(BaseModel):
 class ReadFileOutput(BaseModel):
     """UTF-8 text file content plus edit-grounding metadata."""
 
-    path: str = Field(description="Workspace-relative file path that was read.")
+    path: str = Field(
+        description="File path that was read, relative to the operation workdir when possible."
+    )
     bytes: int = Field(description="Total file size in bytes.")
     bytes_read: int | None = Field(
         default=None,
@@ -114,7 +118,9 @@ class ReadFileOutput(BaseModel):
 class ReadFileMetadata(BaseModel):
     """File read metadata without duplicate file text."""
 
-    path: str = Field(description="Workspace-relative file path that was read.")
+    path: str = Field(
+        description="File path that was read, relative to the operation workdir when possible."
+    )
     bytes: int = Field(description="Total file size in bytes.")
     bytes_read: int | None = Field(
         default=None,
@@ -185,7 +191,7 @@ class WriteFileOutput(BaseModel):
     """File write result."""
 
     path: str = Field(
-        description="Workspace-relative file path that was written."
+        description="File path that was written, relative to the operation workdir when possible."
     )
     bytes: int = Field(description="Number of UTF-8 bytes written.")
     created: bool = Field(
@@ -197,7 +203,7 @@ class EditContextOutput(BaseModel):
     """Compact fresh grounding returned after an edit."""
 
     path: str = Field(
-        description="Workspace-relative file path for this context."
+        description="File path for this context, relative to the operation workdir when possible."
     )
     snapshot_id: str | None = Field(
         default=None,
@@ -236,7 +242,7 @@ class EditLinesOutput(BaseModel):
     """Grounded whole-line edit result."""
 
     path: str = Field(
-        description="Workspace-relative file path that was edited."
+        description="File path that was edited, relative to the operation workdir when possible."
     )
     start_line: int = Field(
         description="Original 1-based first line replaced by this edit."
@@ -257,7 +263,7 @@ class HashlineEditHunkOutput(BaseModel):
     """One applied hashline edit hunk."""
 
     path: str = Field(
-        description="Workspace-relative file path edited by this hunk."
+        description="File path edited by this hunk, relative to the operation workdir when possible."
     )
     start_line: int = Field(
         description="Original 1-based first line touched by this hunk."
@@ -277,7 +283,7 @@ class HashlineEditOutput(BaseModel):
     """Grounded hashline edit result for one or more applied hunks."""
 
     path: str = Field(
-        description="Workspace-relative path of the first edited hunk."
+        description="Path of the first edited hunk, relative to the operation workdir when possible."
     )
     start_line: int = Field(
         description="Original first edited line, aggregated for one-file edits."
@@ -300,7 +306,9 @@ class HashlineEditOutput(BaseModel):
 class DeleteFileOrDirOutput(BaseModel):
     """File or directory deletion result."""
 
-    path: str = Field(description="Workspace-relative path that was deleted.")
+    path: str = Field(
+        description="Path that was deleted, relative to the operation workdir when possible."
+    )
     deleted: str = Field(
         description="Deleted item type, usually file or directory."
     )

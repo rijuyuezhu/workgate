@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 class TransferStatOutput(BaseModel):
     """File, directory, or other path metadata for transfer planning."""
 
-    path: str = Field(description="Workspace-relative path that was inspected.")
+    path: str = Field(
+        description="Inspected path, relative to the caller's path-resolution base when possible."
+    )
     type: str = Field(description="Path type: file, dir, or other.")
     size: int | None = Field(
         description="Size in bytes for files and other path types, or null for directories."
@@ -40,7 +42,9 @@ class TransferCopyFileOutput(BaseModel):
 class TransferReadChunkOutput(BaseModel):
     """Base64-encoded chunk read from a file."""
 
-    path: str = Field(description="Workspace-relative file path that was read.")
+    path: str = Field(
+        description="File path that was read, relative to the caller's path-resolution base when possible."
+    )
     offset: int = Field(description="Byte offset where this chunk starts.")
     bytes: int = Field(
         description="Number of raw bytes included in this chunk."
@@ -56,7 +60,9 @@ class TransferReadChunkOutput(BaseModel):
 class TransferBeginWriteOutput(BaseModel):
     """State for a newly started chunked file write."""
 
-    path: str = Field(description="Workspace-relative destination path.")
+    path: str = Field(
+        description="Destination path, relative to the caller's path-resolution base when possible."
+    )
     temp_path: str = Field(
         description="Temporary file path used during the write."
     )
@@ -90,7 +96,9 @@ class TransferBeginWriteOutput(BaseModel):
 class TransferWriteChunkOutput(BaseModel):
     """Result of writing one chunk to a temporary transfer file."""
 
-    path: str = Field(description="Workspace-relative destination path.")
+    path: str = Field(
+        description="Destination path, relative to the caller's path-resolution base when possible."
+    )
     temp_path: str = Field(description="Temporary file path receiving chunks.")
     offset: int = Field(description="Byte offset where the chunk was written.")
     bytes: int = Field(
@@ -102,7 +110,9 @@ class TransferWriteChunkOutput(BaseModel):
 class TransferFinishWriteOutput(BaseModel):
     """Result of atomically completing a chunked file write."""
 
-    path: str = Field(description="Workspace-relative destination path.")
+    path: str = Field(
+        description="Destination path, relative to the caller's path-resolution base when possible."
+    )
     bytes: int = Field(description="Final file size in bytes.")
     sha256: str | None = Field(
         default=None,
@@ -116,7 +126,9 @@ class TransferFinishWriteOutput(BaseModel):
 class TransferAbortWriteOutput(BaseModel):
     """Result of removing an in-progress temporary transfer file."""
 
-    path: str = Field(description="Workspace-relative destination path.")
+    path: str = Field(
+        description="Destination path, relative to the caller's path-resolution base when possible."
+    )
     temp_path: str = Field(
         description="Temporary file path targeted for cleanup."
     )
@@ -124,11 +136,9 @@ class TransferAbortWriteOutput(BaseModel):
 
 
 class TransferAllocTempPathOutput(BaseModel):
-    """Allocated workspace-relative temporary transfer path."""
+    """Allocated temporary transfer scratch path."""
 
-    path: str = Field(
-        description="Allocated workspace-relative temporary path."
-    )
+    path: str = Field(description="Allocated transfer scratch path.")
 
 
 class TransferDeleteTempPathOutput(BaseModel):
@@ -142,10 +152,10 @@ class TransferPackDirOutput(BaseModel):
     """Archive created from a directory for transfer."""
 
     path: str = Field(
-        description="Workspace-relative directory path that was packed."
+        description="Directory path that was packed, relative to the caller's path-resolution base when possible."
     )
     archive_path: str = Field(
-        description="Workspace-relative archive path that was created."
+        description="Transfer scratch archive path that was created."
     )
     bytes: int = Field(description="Archive size in bytes.")
     sha256: str = Field(description="SHA-256 digest of the archive file.")
@@ -156,10 +166,10 @@ class TransferUnpackArchiveOutput(BaseModel):
     """Archive unpack result."""
 
     path: str = Field(
-        description="Workspace-relative destination directory path."
+        description="Destination directory path, relative to the caller's path-resolution base when possible."
     )
     archive_path: str = Field(
-        description="Workspace-relative archive path that was unpacked."
+        description="Transfer scratch archive path that was unpacked."
     )
     entries: int = Field(description="Number of archive entries unpacked.")
     completed: bool = Field(

@@ -10,6 +10,7 @@ from ...schemas.input_models.session import (
     SessionExecutorIdArg,
     SessionIdArg,
     SessionLabelArg,
+    SessionStartWorkdirArg,
     SessionTaskIdArg,
     SessionWorkdirArg,
 )
@@ -40,15 +41,15 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools."""
+    return """Start an execution session on one executor. Omit workdir to use the executor default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."""
 
 
 def _session_change_cwd_description(_context: McpToolContext) -> str:
-    return """Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated."""
+    return """Change an execution session's workdir. Relative paths resolve against the executor default workdir, and old grounding snapshots are invalidated."""
 
 
 def _session_copy_description(_context: McpToolContext) -> str:
-    return """Copy one file or directory between two existing execution sessions. Paths resolve inside their session workdirs. Set background=true to return a managed job owned by src_session_id."""
+    return """Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Set background=true to return a managed job owned by src_session_id."""
 
 
 def _session_end_description(_context: McpToolContext) -> str:
@@ -62,7 +63,7 @@ def _session_end_description(_context: McpToolContext) -> str:
     oauth_scopes=("shell:read",),
 )
 async def session_start(
-    workdir: SessionWorkdirArg,
+    workdir: SessionStartWorkdirArg = None,
     label: SessionLabelArg = None,
     executor_id: SessionExecutorIdArg = None,
     task_id: SessionTaskIdArg = None,

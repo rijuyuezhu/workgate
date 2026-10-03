@@ -962,7 +962,7 @@ async def test_hosted_mcp_allows_pty_when_async_flag_is_also_true() -> None:
 @pytest.mark.parametrize(
     ("name", "arguments", "expected"),
     [
-        ("session_start", {"workdir": 7}, "expected string"),
+        ("session_start", {"workdir": 7}, "no allowed schema matched"),
         (
             "bash",
             {"session_id": "ABCDEFGH", "command": "pwd", "timeout_s": "10"},
@@ -1149,7 +1149,7 @@ def _hello_payload() -> dict[str, Any]:
         "protocol_version": 1,
         "runtime": {"workgate_version": "test"},
         "capabilities": ["sessions.v1"],
-        "workspace_root": "/workspace",
+        "default_workdir": "/workspace",
         "sessions": [],
         "shells": [],
         "jobs": [],

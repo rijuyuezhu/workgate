@@ -49,10 +49,10 @@ class SessionRuntimeEnvironment(BaseModel):
 
 
 class SessionWorkspaceEnvironment(BaseModel):
-    """Workspace orientation reported by the executor that owns the session."""
+    """Workdir orientation reported by the executor that owns the session."""
 
-    workspace_root: str = Field(
-        description="Canonical workspace root on the execution target."
+    default_workdir: str = Field(
+        description="Effective default workdir on the execution target."
     )
     workdir: str = Field(
         description="Canonical workdir on the execution target."
@@ -100,9 +100,6 @@ class SessionCapabilitiesEnvironment(BaseModel):
 class SessionPolicyEnvironment(BaseModel):
     """Safe executor-owned limits and modes that influence tool selection."""
 
-    full_control: bool = Field(
-        description="Whether executor full-control path policy is active."
-    )
     shell_default_timeout_s: int = Field(
         description="Default bounded shell timeout in seconds."
     )
@@ -201,14 +198,14 @@ class SessionStartOutput(BaseModel):
     label: str | None = Field(
         default=None, description="Optional human-readable session label."
     )
-    workspace_root: str = Field(
-        description="Configured workspace root reported by the executor that owns this session."
+    default_workdir: str = Field(
+        description="Effective default workdir reported by the executor that owns this session."
     )
     git: GitSessionInfo = Field(
         description="Lightweight git orientation for the session workdir."
     )
     instruction_files: list[str] = Field(
-        description="Workspace-relative project instruction files discovered near the session workdir."
+        description="Project instruction files discovered from the session workdir through its ancestors."
     )
     environment: SessionEnvironment = Field(
         description="Bounded runtime, workspace, tool, capability, and policy orientation."
@@ -261,11 +258,7 @@ class SessionCopyEndpoint(BaseModel):
         description="Session workdir used for path resolution."
     )
     path: str = Field(
-        description="Caller-provided path inside the session workdir."
-    )
-    resolved_path: str | None = Field(
-        default=None,
-        description="Resolved path reported by the underlying transfer primitive.",
+        description="Caller-provided path; relative values resolve from the session workdir."
     )
 
 

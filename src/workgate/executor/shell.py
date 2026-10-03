@@ -44,8 +44,8 @@ from ..utils.processes import (
 )
 from .bounded_runner import bounded_runner_argv
 from .path import (
-    relative_display_from_root,
-    resolve_path_with_policy,
+    relative_display_from_base,
+    resolve_path,
 )
 from .terminal import conpty
 from .terminal.tmux import require_tmux, resolve_tmux, tmux_env_overrides
@@ -462,10 +462,9 @@ async def run_shell(
     env: dict[str, str] | None = None,
 ) -> CommandResult:
     """Execute a shell command under explicit executor-owned policy."""
-    resolved_cwd = resolve_path_with_policy(
+    resolved_cwd = resolve_path(
         cwd,
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        base=config.default_workdir,
         must_exist=True,
     )
     start = time.time()
@@ -538,7 +537,7 @@ async def run_shell(
         exit_code=proc.returncode if proc is not None else None,
         timed_out=timed_out,
         duration_ms=duration_ms,
-        cwd=relative_display_from_root(resolved_cwd, config.workspace_root),
+        cwd=relative_display_from_base(resolved_cwd, config.default_workdir),
         command=command,
         stdout=stdout,
         stderr=stderr,
@@ -618,10 +617,9 @@ async def _run_exec(
     if not argv:
         raise ValueError("argv must not be empty")
     command = _shell_join_argv(argv)
-    resolved_cwd = resolve_path_with_policy(
+    resolved_cwd = resolve_path(
         cwd,
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        base=config.default_workdir,
         must_exist=True,
     )
     start = time.time()
@@ -688,7 +686,7 @@ async def _run_exec(
         exit_code=proc.returncode if proc is not None else None,
         timed_out=timed_out,
         duration_ms=duration_ms,
-        cwd=relative_display_from_root(resolved_cwd, config.workspace_root),
+        cwd=relative_display_from_base(resolved_cwd, config.default_workdir),
         command=command,
         stdout=stdout_b.decode(errors="replace"),
         stderr=stderr_b.decode(errors="replace"),
@@ -833,10 +831,9 @@ async def _start_persistent_shell_locked(
         raise ValueError(
             f"persistent shell id {shell_id!r} is reserved by a tracked job"
         )
-    resolved_cwd = resolve_path_with_policy(
+    resolved_cwd = resolve_path(
         cwd,
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        base=config.default_workdir,
         must_exist=True,
     )
     active_shell_ids = await authoritative_persistent_shell_ids_execute(
@@ -934,7 +931,7 @@ async def _start_persistent_shell_locked(
         )
         return StartPersistentShellOutput(
             shell_id=shell_id,
-            cwd=relative_display_from_root(resolved_cwd, config.workspace_root),
+            cwd=str(resolved_cwd),
             command=initial,
             backend="tmux",
         )

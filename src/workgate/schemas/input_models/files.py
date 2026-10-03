@@ -7,13 +7,13 @@ from pydantic import Field
 FilePathArg = Annotated[
     str,
     Field(
-        description="Workspace-relative path, or an allowed absolute path, for the file or directory operation."
+        description="Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed."
     ),
 ]
 ListPathArg = Annotated[
     str,
     Field(
-        description="Directory path to list. Relative paths resolve inside the execution session workdir."
+        description="Directory path to list. Relative paths resolve from the execution session workdir."
     ),
 ]
 RecursiveArg = Annotated[

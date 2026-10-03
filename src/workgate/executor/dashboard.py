@@ -19,7 +19,7 @@ def _finite_number(value: Any) -> float | None:
 
 
 def _machine_alerts(
-    system: dict[str, Any], workspace_root: str
+    system: dict[str, Any], default_workdir: str
 ) -> list[dict[str, Any]]:
     alerts: list[dict[str, Any]] = []
     for field, label, warning, critical in (
@@ -34,7 +34,7 @@ def _machine_alerts(
                 "severity": "critical" if percent >= critical else "warning",
                 "title": f"{label} is {percent:.0f}% full",
                 "detail": (
-                    workspace_root
+                    default_workdir
                     if field == "disk_percent"
                     else "Host memory pressure is elevated"
                 ),
@@ -45,8 +45,8 @@ def _machine_alerts(
 
 def dashboard_snapshot(config: ExecutorConfig) -> dict[str, Any]:
     """Return machine-local dashboard data without control-owned Audit state."""
-    system = local_system_snapshot(config.workspace_root)
-    alerts = _machine_alerts(system, str(config.workspace_root))
+    system = local_system_snapshot(config.default_workdir)
+    alerts = _machine_alerts(system, str(config.default_workdir))
     highest = str(alerts[0].get("severity") or "") if alerts else ""
     health = (
         "critical"

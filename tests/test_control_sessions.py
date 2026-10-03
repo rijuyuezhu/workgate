@@ -62,7 +62,7 @@ def _hello(
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=capabilities,
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=tuple(
             SessionInventorySummary(
                 session_id=session_id, resolved_workdir=workdir
@@ -141,6 +141,28 @@ async def test_start_persists_creating_before_executor_call(
     assert record.executor_id == executor_id
     assert record.status == "active"
     assert record.resolved_workdir_display == "/workspace/project"
+
+
+@pytest.mark.asyncio
+async def test_start_allows_executor_default_workdir(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    _trust(state, executor_id)
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello()
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+
+    result = await coordinator.start_session()
+
+    assert isinstance(result, dict)
+    session_id = str(result["session_id"])
+    record = state.snapshot_sessions()[session_id]
+    assert record.requested_workdir is None
+    assert record.resolved_workdir_display == "/workspace/project"
+    assert transport.calls[-1][2]["workdir"] is None
 
 
 @pytest.mark.asyncio
@@ -333,7 +355,7 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
     transport.hellos[executor_id] = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
@@ -407,7 +429,7 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
     initial_hello = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,

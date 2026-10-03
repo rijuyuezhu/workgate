@@ -30,11 +30,10 @@ mkdir -p ~/.config/workgate
 Then create `~/.config/workgate/config.yaml`:
 
 ```yaml
-workspace_root: /absolute/path/to/your/project
-allow_full_control: false
+default_workdir: /absolute/path/to/your/project
 ```
 
-Use an absolute workspace path.
+Use an absolute default working directory.
 
 The generated [Configuration reference](../reference/configuration.md) lists all
 settings. Environment variables and CLI flags remain available as overrides,

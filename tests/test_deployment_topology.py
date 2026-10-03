@@ -58,7 +58,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
     wrong_workspace = tmp_path / "wrong-workspace"
     monkeypatch.setenv("WORKGATE_PORT", "1")
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(wrong_state))
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(wrong_workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(wrong_workspace))
 
     executor_id = provision_executor_pair(
         control_state_dir=control_state,
@@ -83,7 +83,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
     executor_config = write_yaml_config(
         config_dir / "executor.yaml",
         {
-            "workspace_root": str(workspace),
+            "default_workdir": str(workspace),
             "state_dir": str(executor_state),
             "run_shell_default_timeout_s": 5,
             "run_shell_max_timeout_s": 10,
@@ -149,7 +149,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
 
         initial_target = await _executor_target(base_url, executor_id)
         assert initial_target["status"] == "online"
-        assert initial_target["workspace_root"] == str(workspace)
+        assert initial_target["default_workdir"] == str(workspace)
         seen_before_restart = initial_target["last_seen_at"]
         assert isinstance(seen_before_restart, int | float)
         stop_process(executor)
@@ -182,7 +182,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
         assert profile_path.read_bytes() == profile_before
         reconnected_target = await _executor_target(base_url, executor_id)
         assert reconnected_target["status"] == "online"
-        assert reconnected_target["workspace_root"] == str(workspace)
+        assert reconnected_target["default_workdir"] == str(workspace)
 
         after_executor_restart = await client.call_tool(
             "read", {"session_id": session_id, "path": "marker.txt"}
@@ -213,7 +213,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
         assert profile_path.read_bytes() == profile_before
         rehydrated_target = await _executor_target(base_url, executor_id)
         assert rehydrated_target["status"] == "online"
-        assert rehydrated_target["workspace_root"] == str(workspace)
+        assert rehydrated_target["default_workdir"] == str(workspace)
 
         after_control_restart = await client.call_tool(
             "read", {"session_id": session_id, "path": "marker.txt"}

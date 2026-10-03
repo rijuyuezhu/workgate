@@ -22,7 +22,7 @@ def _store(
     **settings_overrides,
 ) -> tuple[ToolSessionStore, Settings]:
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / ".state",
         agent_bridge_enabled=False,
         **settings_overrides,
@@ -36,8 +36,7 @@ def _new_store(settings: Settings) -> ToolSessionStore:
     config = resolve_executor_config(settings)
     return ToolSessionStore(
         state_store=FileStateStore(lambda: config.state_dir),
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        default_workdir=config.default_workdir,
         max_session_snapshots=config.max_session_snapshots,
         max_session_snapshot_bytes=config.max_session_snapshot_bytes,
     )
@@ -477,7 +476,7 @@ def test_cleanup_metadata_reports_activity_and_resource_ownership(
     assert has_jobs is False
 
 
-def test_resolve_session_path_uses_store_owned_workspace_policy(
+def test_resolve_session_path_uses_workdir_as_relative_anchor_only(
     tmp_path: Path,
 ) -> None:
     workdir = tmp_path / "project"
@@ -491,5 +490,6 @@ def test_resolve_session_path_uses_store_owned_workspace_policy(
         store.resolve_session_path(session, "file.txt", must_exist=True)
         == target
     )
-    with pytest.raises(ValueError, match="escapes session workdir"):
-        store.resolve_session_path(session, "../outside.txt")
+    assert store.resolve_session_path(session, "../outside.txt") == (
+        tmp_path / "outside.txt"
+    )

@@ -56,7 +56,7 @@ from workgate.ui.security import UI_LOCAL_TOKEN_HEADER
 
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
-        "workspace_root": tmp_path / "workspace",
+        "default_workdir": tmp_path / "workspace",
         "state_dir": tmp_path / "state",
         "data_dir": tmp_path / "data",
         "port": 18765,
@@ -125,14 +125,13 @@ def test_standalone_resolves_distinct_role_authority(tmp_path: Path) -> None:
         / resolved.instance_namespace
         / "control"
     )
-    assert "workspace_root" not in resolved.control
+    assert "default_workdir" not in resolved.control
     assert "allow_full_control" not in resolved.control
     assert "shell_executable" not in resolved.control
 
-    assert resolved.executor["workspace_root"] == str(
+    assert resolved.executor["default_workdir"] == str(
         (tmp_path / "workspace").resolve()
     )
-    assert resolved.executor["allow_full_control"] is False
     assert resolved.executor["shell_executable"] == "/bin/custom-shell"
     assert resolved.executor["state_dir"] == str(
         tmp_path / "state" / "standalone" / "executor"
@@ -473,8 +472,10 @@ def test_prepare_standalone_writes_private_role_configs(
     assert control["oauth_admin_pin"] is None
     assert not prepared.oauth_admin_pin_path.exists()
     assert prepared.generated_oauth_admin_pin is True
-    assert "workspace_root" not in control
-    assert executor["workspace_root"] == str(settings.workspace_root.resolve())
+    assert "default_workdir" not in control
+    assert executor["default_workdir"] == str(
+        settings.default_workdir.resolve()
+    )
     assert "auth_mode" not in executor
     assert not prepared.bootstrap_path.exists()
     assert prepared.executor_profile_path.parent != (
@@ -651,7 +652,7 @@ def test_standalone_child_env_removes_ambient_workgate_settings(
         {
             "PATH": "/bin",
             "WORKGATE_HOST": "0.0.0.0",
-            "WORKGATE_ALLOW_FULL_CONTROL": "true",
+            "WORKGATE_DEFAULT_WORKDIR": "/ambient/default",
         },
         bootstrap_path=bootstrap,
         standalone_control=True,
@@ -679,7 +680,7 @@ def test_standalone_child_env_removes_ambient_workgate_settings(
     )
     assert STANDALONE_CONTROL_URL_ENV not in env
     assert "WORKGATE_HOST" not in env
-    assert "WORKGATE_ALLOW_FULL_CONTROL" not in env
+    assert "WORKGATE_DEFAULT_WORKDIR" not in env
 
 
 def test_runtime_cleanup_preserves_unconsumed_bootstrap(
@@ -900,7 +901,7 @@ def test_standalone_executor_paths_namespace_temp_and_integration_config(
     assert adjusted.agent_config_dir == config_root / "agent"
     assert adjusted.agent_auth_dir == base.agent_auth_dir
     assert adjusted.state_dir == base.state_dir
-    assert adjusted.workspace_root == base.workspace_root
+    assert adjusted.default_workdir == base.default_workdir
 
 
 def test_supervisor_rejects_unknown_role_and_duplicate_start(
@@ -1228,7 +1229,7 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
 ) -> None:
     monkeypatch.setenv("WORKGATE_PORT", "1")
     monkeypatch.setenv(
-        "WORKGATE_WORKSPACE_ROOT", str(tmp_path / "wrong-workspace")
+        "WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "wrong-workspace")
     )
     port = _free_tcp_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -1242,7 +1243,7 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
     config_path.write_text(
         yaml.safe_dump(
             {
-                "workspace_root": str(workspace),
+                "default_workdir": str(workspace),
                 "state_dir": str(state_dir),
                 "data_dir": str(data_dir),
                 "port": port,

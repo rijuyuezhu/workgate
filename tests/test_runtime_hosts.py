@@ -24,7 +24,7 @@ def _outer_state_store(settings: Settings) -> FileStateStore:
 
 def test_rest_http_host_owns_control_runtime_lifespan(tmp_path):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "runtime-state",
         mode="http",
         auth_mode="none",
@@ -44,7 +44,7 @@ def test_rest_http_host_owns_control_runtime_lifespan(tmp_path):
 @pytest.mark.parametrize("with_catalog", [False, True])
 def test_run_http_uses_explicit_runtime(tmp_path, monkeypatch, with_catalog):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "runtime-state",
         mode="http",
         auth_mode="none",
@@ -82,7 +82,7 @@ async def test_stdio_fastmcp_server_run_lifespan_owns_control_runtime(
     tmp_path,
 ):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "runtime-state",
         mode="stdio",
         auth_mode="none",
@@ -101,7 +101,7 @@ async def test_stdio_fastmcp_server_run_lifespan_owns_control_runtime(
 @pytest.mark.asyncio
 async def test_mcp_http_sessions_do_not_own_process_runtime(tmp_path):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "runtime-state",
         mode="mcp",
         auth_mode="none",
@@ -117,7 +117,7 @@ async def test_mcp_http_sessions_do_not_own_process_runtime(tmp_path):
 
 def test_mcp_http_host_owns_control_runtime_once(tmp_path):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "runtime-state",
         mode="mcp",
         auth_mode="none",
@@ -137,7 +137,7 @@ def test_mcp_http_host_owns_control_runtime_once(tmp_path):
 
 def test_mcp_http_inner_startup_failure_closes_control_runtime(tmp_path):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "runtime-state",
         mode="mcp",
         auth_mode="none",

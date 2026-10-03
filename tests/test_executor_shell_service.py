@@ -36,7 +36,7 @@ def _service(tmp_path: Path) -> tuple[ShellService, _Store]:
     workspace.mkdir()
     config = resolve_executor_config(
         Settings(
-            workspace_root=workspace,
+            default_workdir=workspace,
             state_dir=tmp_path / "state",
             agent_bridge_enabled=False,
         )

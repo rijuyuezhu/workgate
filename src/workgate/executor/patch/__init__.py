@@ -9,7 +9,7 @@ from typing import Any
 
 from ...config.executor import ExecutorConfig
 from ...schemas.result_models.patch import ApplyPatchOutput
-from ...utils.path_policy import relative_display_from_root
+from ...utils.path_policy import relative_display_from_base
 from ..path import assert_text_input_size
 from ..temp_file import write_temp_text_file
 from ..tool_session.store import ToolSessionStore
@@ -129,11 +129,11 @@ async def apply_patch_execute(
     )
     check_args = _git_apply_args(config.git_bin, patch_path, prefix, check=True)
     check = await asyncio.to_thread(_run_git_apply, check_args, resolved_cwd)
-    display_cwd = relative_display_from_root(
-        resolved_cwd, config.workspace_root
+    display_cwd = relative_display_from_base(
+        resolved_cwd, Path(session.workdir)
     )
-    display_patch = relative_display_from_root(
-        patch_path, config.workspace_root
+    display_patch = relative_display_from_base(
+        patch_path, Path(session.workdir)
     )
     if not check["ok"]:
         return ApplyPatchOutput(

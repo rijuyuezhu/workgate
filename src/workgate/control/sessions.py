@@ -134,7 +134,7 @@ class ControlSessionCoordinator:
     async def start_session(
         self,
         *,
-        workdir: str,
+        workdir: str | None = None,
         label: str | None = None,
         executor_id: str | None = None,
         task_id: str | None = None,

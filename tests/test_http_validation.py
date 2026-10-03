@@ -39,7 +39,7 @@ def _auth_request(
 def test_http_missing_required_argument_returns_validation_error(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -56,7 +56,7 @@ def test_http_missing_required_argument_returns_validation_error(
 def test_http_argument_validation_uses_consistent_error_envelope(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -74,7 +74,7 @@ def test_http_argument_validation_uses_consistent_error_envelope(
 
 
 def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -92,7 +92,7 @@ def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):
 
 
 def test_http_app_exposes_oauth_public_routes(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MODE", "http")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://example.com")
@@ -114,7 +114,7 @@ def test_http_app_exposes_oauth_public_routes(tmp_path, monkeypatch):
 
 
 def test_http_localhost_bypass_is_opt_in(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MODE", "http")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://example.com")
@@ -153,7 +153,7 @@ def test_http_localhost_bypass_is_opt_in(tmp_path, monkeypatch):
 def test_http_localhost_bypass_accepts_direct_loopback(
     tmp_path, monkeypatch, base_url, peer, headers
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MODE", "http")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_AUTH_BYPASS_LOCALHOST", "true")
@@ -203,7 +203,7 @@ def test_http_localhost_bypass_accepts_direct_loopback(
 def test_http_localhost_bypass_rejects_proxy_or_ambiguous_requests(
     tmp_path, monkeypatch, base_url, peer, headers
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MODE", "http")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_AUTH_BYPASS_LOCALHOST", "true")

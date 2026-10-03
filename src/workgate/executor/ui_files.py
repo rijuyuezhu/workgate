@@ -8,7 +8,6 @@ import mimetypes
 import os
 import shutil
 import stat
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -41,11 +40,10 @@ UI_FILE_INLINE_IMAGE_TYPES = frozenset(
 
 
 class UiFilesService:
-    """Serve Human UI file operations strictly inside this executor workspace."""
+    """Serve Human UI file operations on the executor filesystem."""
 
     def __init__(self, config: FilesConfig, store: ToolSessionStore) -> None:
-        # Human UI browsing is workspace-confined even when public tools allow full control.
-        self.config = replace(config, allow_full_control=False)
+        self.config = config
         self.store = store
 
     def _resolve(
@@ -64,7 +62,7 @@ class UiFilesService:
         )
 
     def _display(self, path: Path) -> str:
-        return _display_file(self.config, path)
+        return _display_file(self.config, None, path)
 
     @staticmethod
     def _entry_payload(entry: Any) -> dict[str, Any]:
@@ -99,8 +97,7 @@ class UiFilesService:
             False,
             min(max_entries, self.config.max_directory_entries),
         )
-        root = self.config.workspace_root.resolve()
-        parent = root if resolved == root else resolved.parent
+        parent = resolved.parent
         return {
             "path": self._display(resolved),
             "parent": self._display(parent),
@@ -272,25 +269,22 @@ class UiFilesService:
         }
 
     def _ensure_mutable(self, path: str, *, follow_final_symlink: bool) -> Path:
-        root = self.config.workspace_root.resolve()
-        raw = Path(path)
-        candidate = raw if raw.is_absolute() else root / raw
-        if Path(os.path.abspath(candidate)) == root:
-            raise ValueError("Refusing to mutate the workspace root")
         resolved = self._resolve(
             path,
             must_exist=False,
             follow_final_symlink=follow_final_symlink,
         )
+        if resolved.parent == resolved:
+            raise ValueError("Refusing to mutate the filesystem root")
         return resolved
 
     def _source_entry(self, path: str) -> Path:
-        root = self.config.workspace_root.resolve()
-        raw = Path(path)
-        candidate = raw if raw.is_absolute() else root / raw
-        if Path(os.path.abspath(candidate)) == root:
-            raise ValueError("Refusing to mutate the workspace root")
-        return self._resolve(path, must_exist=True, follow_final_symlink=False)
+        resolved = self._resolve(
+            path, must_exist=True, follow_final_symlink=False
+        )
+        if resolved.parent == resolved:
+            raise ValueError("Refusing to mutate the filesystem root")
+        return resolved
 
     def _destination_entry(self, path: str) -> Path:
         resolved = self._ensure_mutable(path, follow_final_symlink=False)

@@ -101,9 +101,7 @@ async def _terminal_runtime(monkeypatch):
     monkeypatch.setattr(
         conpty, "_shell_executable", lambda _configured=None: "cmd.exe"
     )
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
     await runtime.start()
     try:
         with use_terminal_runtime(runtime):
@@ -128,7 +126,7 @@ async def _listed_shell_ids() -> set[str]:
 
 
 def test_conpty_shell_lease_reports_live_then_dead(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     lease = conpty._ConPtyShellLease(get_state_store(), "leased-shell")
@@ -144,7 +142,7 @@ def test_conpty_shell_lease_reports_live_then_dead(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_conpty_spawn_failure_releases_shell_lease(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
 
@@ -165,7 +163,7 @@ async def test_conpty_spawn_failure_releases_shell_lease(tmp_path, monkeypatch):
 async def test_conpty_spawn_cancellation_waits_and_closes_process(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     spawn_started = threading.Event()
@@ -204,7 +202,7 @@ async def test_conpty_spawn_cancellation_waits_and_closes_process(
 async def test_conpty_spawn_cancellation_keeps_uncertain_cleanup_visible(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     spawn_started = threading.Event()
@@ -545,7 +543,7 @@ def test_conpty_shell_argument_rendering(monkeypatch):
 async def test_shell_ops_delegate_persistent_shells_to_conpty(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     monkeypatch.setattr(
@@ -627,7 +625,7 @@ async def test_shell_ops_delegate_persistent_shells_to_conpty(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=tmp_path,
+                default_workdir=tmp_path,
                 state_dir=tmp_path / ".state",
             )
         ),

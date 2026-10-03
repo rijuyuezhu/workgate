@@ -174,7 +174,7 @@ def test_hello_uses_complete_thin_resource_inventory() -> None:
             workgate_version="5.0.0a1", platform="linux-x86_64"
         ),
         capabilities=("session", "shell"),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
@@ -222,6 +222,7 @@ def test_hello_requires_all_authoritative_inventory_fields() -> None:
     payload = {
         "protocol_version": EXECUTOR_PROTOCOL_VERSION,
         "runtime": {"workgate_version": "5.0.0a1"},
+        "default_workdir": "/workspace",
         "sessions": [],
         "shells": [],
         "jobs": [],
@@ -232,7 +233,7 @@ def test_hello_requires_all_authoritative_inventory_fields() -> None:
     assert hello.shells == ()
     assert hello.jobs == ()
 
-    for missing in ("sessions", "shells", "jobs"):
+    for missing in ("default_workdir", "sessions", "shells", "jobs"):
         with pytest.raises(ValidationError):
             ExecutorHelloRequest.model_validate(
                 {key: value for key, value in payload.items() if key != missing}

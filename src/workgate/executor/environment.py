@@ -222,7 +222,6 @@ def _runtime_environment() -> SessionRuntimeEnvironment:
 
 def _policy_environment(config: ExecutorConfig) -> SessionPolicyEnvironment:
     return SessionPolicyEnvironment(
-        full_control=config.allow_full_control,
         shell_default_timeout_s=config.run_shell_default_timeout_s,
         shell_max_timeout_s=config.run_shell_max_timeout_s,
         max_output_bytes=config.max_output_bytes,
@@ -264,7 +263,7 @@ def collect_executor_session_environment(
     return SessionEnvironment(
         runtime=_runtime_environment(),
         workspace=SessionWorkspaceEnvironment(
-            workspace_root=str(config.workspace_root),
+            default_workdir=str(config.default_workdir),
             workdir=workdir,
         ),
         tools=tools,

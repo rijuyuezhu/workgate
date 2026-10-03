@@ -73,12 +73,10 @@ def process_start_not_found_error(
     )
 
 
-def workspace_path_not_found_error(
+def syscall_path_not_found_error(
     exc: FileNotFoundError,
-    workspace_root: str | Path,
 ) -> PathNotFoundError | None:
-    """Select an actually missing absolute syscall endpoint inside the workspace."""
-    root = Path(os.path.abspath(workspace_root))
+    """Select an actually missing absolute syscall endpoint."""
     candidates: list[Path] = []
     for value in (exc.filename, exc.filename2):
         if not value:
@@ -87,10 +85,6 @@ def workspace_path_not_found_error(
         if not candidate.is_absolute():
             continue
         lexical = Path(os.path.abspath(candidate))
-        try:
-            lexical.relative_to(root)
-        except ValueError:
-            continue
         candidates.append(lexical)
     for candidate in candidates:
         if not candidate.exists():
@@ -110,8 +104,6 @@ def public_error_type(exc: BaseException) -> str:
 
 def tool_error_payload(
     exc: Exception,
-    *,
-    workspace_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Serialize one tool exception without relying on platform-specific text."""
     if isinstance(exc, ShellExecutableNotFoundError):
@@ -126,12 +118,8 @@ def tool_error_payload(
         }
 
     path_error = exc if isinstance(exc, PathNotFoundError) else None
-    if (
-        isinstance(exc, FileNotFoundError)
-        and path_error is None
-        and workspace_root is not None
-    ):
-        path_error = workspace_path_not_found_error(exc, workspace_root)
+    if isinstance(exc, FileNotFoundError) and path_error is None:
+        path_error = syscall_path_not_found_error(exc)
     if path_error is not None:
         return {
             "status": "not_found",

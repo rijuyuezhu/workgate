@@ -51,7 +51,7 @@ def _configure(
     config_dir: Path,
     xdg_config_home: Path,
 ) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(state_dir))
     monkeypatch.setenv("WORKGATE_AGENT_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")

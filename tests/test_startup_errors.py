@@ -17,19 +17,19 @@ from workgate.errors import (
     ShellExecutableNotFoundError,
     exception_from_tool_error,
     process_start_not_found_error,
+    syscall_path_not_found_error,
     tool_error_payload,
-    workspace_path_not_found_error,
 )
 from workgate.executor.terminal.runtime import (
     build_terminal_runtime,
     use_terminal_runtime,
 )
 from workgate.persistence import get_state_store
-from workgate.utils.path_policy import resolve_path_with_policy
+from workgate.utils.path_policy import resolve_path
 
 
 def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -41,10 +41,9 @@ def _resolve_ambient_path(
     path: str | Path, *, must_exist: bool = False
 ) -> Path:
     settings = get_settings()
-    return resolve_path_with_policy(
+    return resolve_path(
         path,
-        workspace_root=settings.workspace_root,
-        allow_full_control=settings.allow_full_control,
+        base=settings.default_workdir,
         must_exist=must_exist,
     )
 
@@ -66,7 +65,7 @@ def test_process_start_classifies_missing_cwd_before_executable(
     assert result.path == missing_cwd
 
 
-def test_workspace_path_detection_uses_missing_second_endpoint(
+def test_syscall_path_detection_uses_missing_second_endpoint(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.txt"
@@ -75,22 +74,29 @@ def test_workspace_path_detection_uses_missing_second_endpoint(
     exc = FileNotFoundError(2, "No such file or directory", str(source))
     exc.filename2 = str(missing_destination)
 
-    result = workspace_path_not_found_error(exc, tmp_path)
+    result = syscall_path_not_found_error(exc)
 
     assert isinstance(result, PathNotFoundError)
     assert result.path == missing_destination
 
 
-def test_workspace_path_detection_ignores_untrusted_endpoints(
+def test_syscall_path_detection_ignores_relative_endpoint(
     tmp_path: Path,
 ) -> None:
     relative = FileNotFoundError(2, "missing", "relative.txt")
+    assert syscall_path_not_found_error(relative) is None
+
+
+def test_syscall_path_detection_accepts_absolute_endpoint_outside_default(
+    tmp_path: Path,
+) -> None:
     outside = FileNotFoundError(
-        2, "missing", str(tmp_path.parent / "outside-workspace")
+        2, "missing", str(tmp_path.parent / "outside-default")
     )
 
-    assert workspace_path_not_found_error(relative, tmp_path) is None
-    assert workspace_path_not_found_error(outside, tmp_path) is None
+    result = syscall_path_not_found_error(outside)
+    assert isinstance(result, PathNotFoundError)
+    assert result.path == tmp_path.parent / "outside-default"
 
 
 def test_explicit_path_policy_raises_typed_missing_path_error(
@@ -108,7 +114,7 @@ def test_tool_error_payload_round_trips_typed_failures(tmp_path: Path) -> None:
     shell_error = ShellExecutableNotFoundError(
         "missing-shell", "echo ok", tmp_path, "[WinError 2]"
     )
-    encoded = tool_error_payload(shell_error, workspace_root=tmp_path)
+    encoded = tool_error_payload(shell_error)
 
     assert encoded["status"] == "executable_not_found"
     reconstructed = exception_from_tool_error(encoded)
@@ -117,7 +123,7 @@ def test_tool_error_payload_round_trips_typed_failures(tmp_path: Path) -> None:
     assert reconstructed.command == "echo ok"
 
     path_error = PathNotFoundError(tmp_path / "missing.txt")
-    encoded_path = tool_error_payload(path_error, workspace_root=tmp_path)
+    encoded_path = tool_error_payload(path_error)
     reconstructed_path = exception_from_tool_error(encoded_path)
     assert isinstance(reconstructed_path, PathNotFoundError)
     assert reconstructed_path.path == tmp_path / "missing.txt"
@@ -135,9 +141,7 @@ async def test_conpty_reports_explicit_missing_shell_executable(
         raise FileNotFoundError(2, "missing", executable)
 
     monkeypatch.setattr(conpty, "_spawn_pty", fail_spawn)
-    terminal_runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=tmp_path
-    )
+    terminal_runtime = build_terminal_runtime(get_state_store())
     await terminal_runtime.start()
     try:
         with (

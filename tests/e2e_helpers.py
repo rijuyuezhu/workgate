@@ -131,7 +131,7 @@ def control_env(
 
 
 def executor_env(
-    workspace_root: Path,
+    default_workdir: Path,
     *,
     mode: str,
     state_dir: Path,
@@ -144,7 +144,7 @@ def executor_env(
     )
     env.update(
         {
-            "WORKGATE_WORKSPACE_ROOT": str(workspace_root),
+            "WORKGATE_DEFAULT_WORKDIR": str(default_workdir),
             "WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S": "5",
             "WORKGATE_RUN_SHELL_MAX_TIMEOUT_S": "10",
         }
@@ -446,7 +446,7 @@ async def run_http_process_with_executors(
         executor_config = write_yaml_config(
             config_dir / f"executor-{index}.yaml",
             {
-                "workspace_root": str(workspace),
+                "default_workdir": str(workspace),
                 "state_dir": str(state_dir),
                 "run_shell_default_timeout_s": 5,
                 "run_shell_max_timeout_s": 10,

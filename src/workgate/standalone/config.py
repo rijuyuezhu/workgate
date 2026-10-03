@@ -76,8 +76,8 @@ def resolve_standalone_child_config(
         if name in payload
     }
     executor["state_dir"] = str(executor_state)
-    executor["workspace_root"] = str(
-        settings.workspace_root.resolve(strict=False)
+    executor["default_workdir"] = str(
+        settings.default_workdir.resolve(strict=False)
     )
 
     return StandaloneChildConfig(

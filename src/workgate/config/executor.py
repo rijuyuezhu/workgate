@@ -12,8 +12,7 @@ from .settings import Settings
 class ExecutorConfig(SharedRoleConfig):
     """Executor-owned machine policy."""
 
-    workspace_root: Path
-    allow_full_control: bool
+    default_workdir: Path
     max_concurrent_commands: int
     max_tmux_sessions: int
     run_shell_default_timeout_s: int
@@ -66,10 +65,15 @@ def get_executor_config() -> ExecutorConfig:
 
 def resolve_executor_config(settings: Settings) -> ExecutorConfig:
     """Snapshot executor-owned authority from user-facing settings."""
+    configured_default = settings.default_workdir.resolve(strict=False)
+    default_workdir = (
+        configured_default
+        if configured_default.is_dir()
+        else Path("/").resolve(strict=False)
+    )
     return ExecutorConfig(
         state_dir=settings.state_dir.resolve(strict=False),
-        workspace_root=settings.workspace_root.resolve(strict=False),
-        allow_full_control=settings.allow_full_control,
+        default_workdir=default_workdir,
         max_concurrent_commands=settings.max_concurrent_commands,
         max_tmux_sessions=settings.max_tmux_sessions,
         ui_terminal_idle_timeout_s=settings.ui_terminal_idle_timeout_s,

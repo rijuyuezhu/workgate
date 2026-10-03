@@ -20,7 +20,7 @@ def _started_session_id(value: Any) -> str:
 def _http_settings(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_MODE", "http")
     monkeypatch.setenv("WORKGATE_UI_ENABLED", "true")
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.test")

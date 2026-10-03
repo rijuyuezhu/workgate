@@ -52,7 +52,7 @@ class ControlSessionRecord(BaseModel):
     session_id: SessionId
     executor_id: ExecutorId
     task_id: TaskId | None = None
-    requested_workdir: str = Field(min_length=1, max_length=4096)
+    requested_workdir: str | None = Field(default=None, max_length=4096)
     resolved_workdir_display: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
     status: Literal["creating", "active", "terminating", "ended"]

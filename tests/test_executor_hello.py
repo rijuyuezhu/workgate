@@ -19,13 +19,13 @@ def test_executor_hello_reports_complete_current_v1_namespace(
     monkeypatch.setattr(
         hello_ops, "browser_capability_available", lambda: False
     )
-    config = resolve_executor_config(Settings(workspace_root=tmp_path))
+    config = resolve_executor_config(Settings(default_workdir=tmp_path))
 
     hello = hello_ops.build_executor_hello(config)
 
     assert hello.protocol_version == 1
     assert hello.runtime.workgate_version
-    assert hello.workspace_root == str(tmp_path.resolve(strict=False))
+    assert hello.default_workdir == str(tmp_path.resolve(strict=False))
     assert hello.capabilities == (EXECUTOR_CAPABILITY_SESSIONS,)
     assert hello.sessions == ()
     assert hello.shells == ()
@@ -38,7 +38,7 @@ def test_executor_hello_carries_supplied_resource_inventory(
     monkeypatch.setattr(
         hello_ops, "browser_capability_available", lambda: False
     )
-    config = resolve_executor_config(Settings(workspace_root=tmp_path))
+    config = resolve_executor_config(Settings(default_workdir=tmp_path))
     session_id = "sess_0000000000000000000001"
     sessions = (
         SessionInventorySummary(
@@ -68,7 +68,7 @@ def test_executor_hello_advertises_browser_only_when_usable(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(hello_ops, "browser_capability_available", lambda: True)
-    config = resolve_executor_config(Settings(workspace_root=tmp_path))
+    config = resolve_executor_config(Settings(default_workdir=tmp_path))
 
     hello = hello_ops.build_executor_hello(config)
 

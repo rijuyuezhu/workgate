@@ -142,7 +142,7 @@ def test_executor_dashboard_snapshot_health_and_machine_alerts(
 ) -> None:
     config = resolve_executor_config(
         Settings(
-            workspace_root=tmp_path / "workspace", state_dir=tmp_path / "state"
+            default_workdir=tmp_path / "workspace", state_dir=tmp_path / "state"
         )
     )
     system = {"disk_percent": 90.0, "memory_percent": 20.0}
@@ -169,7 +169,7 @@ def test_executor_dashboard_snapshot_health_and_machine_alerts(
             {
                 "severity": "warning",
                 "title": "Workspace disk is 90% full",
-                "detail": str(config.workspace_root),
+                "detail": str(config.default_workdir),
             }
         ],
         "sources": {"system": "ok"},

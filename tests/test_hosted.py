@@ -102,7 +102,7 @@ def _hello(session_id: str | None = None) -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=sessions,
         shells=(),
         jobs=(),

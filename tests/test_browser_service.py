@@ -150,7 +150,7 @@ def _service(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -810,7 +810,7 @@ async def test_browser_routes_through_control_to_bound_executor(
     workspace = tmp_path / "routed-workspace"
     workspace.mkdir()
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=tmp_path / "control-state",
         agent_bridge_enabled=False,
     )
@@ -904,12 +904,12 @@ async def test_browser_routes_over_executor_http_protocol(
     executor_workspace = tmp_path / "protocol-executor-workspace"
     control_workspace.mkdir()
     executor_workspace.mkdir()
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(executor_workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(executor_workspace))
     clear_settings_cache()
 
     control = build_control_runtime(
         Settings(
-            workspace_root=control_workspace,
+            default_workdir=control_workspace,
             state_dir=tmp_path / "protocol-control-state",
             auth_mode="none",
             agent_bridge_enabled=False,
@@ -918,7 +918,7 @@ async def test_browser_routes_over_executor_http_protocol(
     executor = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=executor_workspace,
+                default_workdir=executor_workspace,
                 state_dir=tmp_path / "protocol-executor-state",
                 agent_bridge_enabled=False,
             )

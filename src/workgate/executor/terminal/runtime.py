@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from ...persistence import StateStore
 from .bridge import TerminalBridgeRegistry, use_terminal_bridge_registry
@@ -97,13 +96,12 @@ def use_terminal_runtime(runtime: TerminalRuntime) -> Generator[None]:
 def build_terminal_runtime(
     state_store: StateStore,
     *,
-    workspace_root: Path,
     idle_timeout_s: int = 300,
     max_connections: int = 8,
 ) -> TerminalRuntime:
     """Construct fresh executor-owned terminal live-state registries."""
     return TerminalRuntime(
-        conpty=ConPtyRegistry(state_store, workspace_root),
+        conpty=ConPtyRegistry(state_store),
         bridges=TerminalBridgeRegistry(
             idle_timeout_s=idle_timeout_s,
             max_connections=max_connections,

@@ -15,8 +15,8 @@ from ...schemas.result_models.search import (
 )
 from ..files import read_file_explicit
 from ..path import (
-    relative_display_from_root,
-    resolve_path_with_policy,
+    relative_display_from_base,
+    resolve_path,
 )
 from ..tool_session.bindings import SessionBinding
 from ..tool_session.resolver import SessionResolver
@@ -63,12 +63,10 @@ class SearchRequest:
 
 @dataclass(frozen=True)
 class SearchPathAccess:
-    """Explicit workspace path-safety capability used by Search."""
+    """Path-resolution capability used by Search."""
 
-    workspace_root: Path
-    """Configured workspace boundary used for ordinary path resolution."""
-    allow_full_control: bool
-    """Whether absolute paths may escape the workspace boundary."""
+    default_workdir: Path
+    """Configured base used for sessionless relative path resolution."""
 
     def resolve(
         self,
@@ -78,11 +76,10 @@ class SearchPathAccess:
         allow_missing_parent: bool = True,
         follow_final_symlink: bool = True,
     ) -> Path:
-        """Resolve one path using this Search composition's explicit policy."""
-        return resolve_path_with_policy(
+        """Resolve one path relative to the executor default."""
+        return resolve_path(
             path,
-            workspace_root=self.workspace_root,
-            allow_full_control=self.allow_full_control,
+            base=self.default_workdir,
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -97,26 +94,19 @@ class SearchPathAccess:
         allow_missing_parent: bool = True,
         follow_final_symlink: bool = True,
     ) -> Path:
-        """Resolve a path and enforce containment inside one local session workdir."""
-        root = Path(workdir).resolve()
-        raw = Path(path)
-        candidate = raw if raw.is_absolute() else root / raw
-        resolved = self.resolve(
-            candidate,
+        """Resolve a path relative to one execution-session workdir."""
+        return resolve_path(
+            path,
+            base=Path(workdir),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
         )
-        boundary = resolved if follow_final_symlink else resolved.parent
-        try:
-            boundary.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"Path escapes session workdir: {path}") from exc
-        return resolved
 
-    def display(self, path: Path) -> str:
-        """Render one resolved path relative to the explicit workspace root."""
-        return relative_display_from_root(path, self.workspace_root)
+    def display(self, path: Path, *, workdir: str | None = None) -> str:
+        """Render one resolved path relative to its operation workdir."""
+        base = self.default_workdir if workdir is None else Path(workdir)
+        return relative_display_from_base(path, base)
 
 
 @dataclass(frozen=True)
@@ -153,7 +143,10 @@ class SearchGrounding:
             end_line,
             max_file_read_bytes=self.max_file_read_bytes,
             resolve_file=resolve_file,
-            display_file=self.paths.display,
+            display_file=lambda value: self.paths.display(
+                value,
+                workdir=(binding.workdir if binding is not None else None),
+            ),
             snapshot_store=self.store if binding is not None else None,
             snapshot_session_id=(
                 binding.session_id if binding is not None else None
@@ -514,7 +507,9 @@ class SearchService:
             if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(
                 item.name, pattern
             ):
-                results.append(self.local.paths.display(item))
+                results.append(
+                    self.local.paths.display(item, workdir=binding.workdir)
+                )
                 if len(results) >= limit:
                     break
         return GlobSearchOutput(paths=results)
@@ -528,18 +523,12 @@ class SearchService:
     ) -> TreeViewOutput:
         """Render a bounded tree rooted inside one admitted session."""
         binding = self.sessions.resolve_active_binding(session_id)
-        root = Path(binding.workdir).resolve()
         base = self.local.paths.resolve_in_workdir(
             binding.workdir, cwd, must_exist=False
         )
         if not base.exists():
             nearest = next(
-                (
-                    parent
-                    for parent in (base, *base.parents)
-                    if parent.exists()
-                    and (parent == root or root in parent.parents)
-                ),
+                (parent for parent in (base, *base.parents) if parent.exists()),
                 None,
             )
             entries: list[str] = []
