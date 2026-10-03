@@ -24,7 +24,7 @@ job_tool = JobToolRegistry.get_tool_decorator()
 
 
 def _job_description(_context: object) -> str:
-    return """Inspect durable output, structured progress/results, stop, or retry tracked work owned by an explicit agent session.
+    return """Inspect durable output, progress/results, stop, or retry tracked work owned by an execution session.
 
 `bash(async_=true)` creates tracked shell jobs. `session_copy(background=true)` creates control-managed transfer jobs owned by the source session. Both return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a control-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.
 

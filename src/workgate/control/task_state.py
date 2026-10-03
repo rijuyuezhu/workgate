@@ -1,4 +1,4 @@
-"""Control-owned durable semantic task state with Todo compatibility."""
+"""Durable control-owned task state with Todo compatibility."""
 
 import asyncio
 import base64
@@ -47,7 +47,7 @@ _TASK_TERMINAL_RETENTION_S = 30 * 24 * 60 * 60
 
 
 class _StoredTask(BaseModel):
-    """Private persistence envelope for one semantic task."""
+    """Private persistence envelope for one task."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -58,7 +58,7 @@ class _StoredTask(BaseModel):
 
 
 class ControlTaskService:
-    """Own semantic task lifecycle independently of execution sessions."""
+    """Own task state independently of execution sessions."""
 
     def __init__(
         self,
@@ -201,7 +201,7 @@ class ControlTaskService:
     def _normalize_legacy_todos(
         self, todos: list[dict[str, Any]]
     ) -> list[TaskPlanStep]:
-        """Preserve the established write_todos compatibility semantics."""
+        """Normalize Todo compatibility input."""
         if len(todos) > self._settings.max_todos:
             raise ValueError(
                 f"Refusing to write {len(todos)} todos; "
@@ -432,7 +432,7 @@ class ControlTaskService:
         *,
         stale_before: float | None = None,
     ) -> bool:
-        """Remove one still-terminal task under its own mutation lock."""
+        """Prune a terminal task if it is still eligible."""
         path = self._path(task_id)
         with self._store.transaction(path):
             value = self._store.read_json(
@@ -546,6 +546,7 @@ class ControlTaskService:
         )
 
     def admit_session_attachment(self, record: ControlSessionRecord) -> None:
+        """Validate the task and publish the session under the task lock."""
         task_id = str(record.task_id or "")
         if not task_id:
             raise ValueError("task-linked session admission requires task_id")
@@ -833,5 +834,5 @@ class ControlTaskService:
         return migrated
 
     async def migrate_legacy_sessions(self) -> int:
-        """Move legacy session-keyed task documents to deterministic task ids."""
+        """Migrate legacy session-keyed task files."""
         return await asyncio.to_thread(self._migrate_legacy_sync)

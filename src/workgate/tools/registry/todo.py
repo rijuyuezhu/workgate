@@ -22,7 +22,7 @@ todo_tool = TodoToolRegistry.get_tool_decorator()
     oauth_scopes=("shell:read",),
 )
 async def read_todos(task_id: TaskIdArg) -> ReadTodosOutput:
-    """Read the Todo compatibility projection of one explicit semantic task plan. This is not a second checklist or session-owned store."""
+    """Read the Todo projection of one task's canonical plan."""
     del task_id
     raise RuntimeError("read_todos requires control routing")
 
@@ -37,6 +37,6 @@ async def write_todos(
     task_id: TaskIdArg,
     todos: TodosArg,
 ) -> WriteTodosOutput:
-    """Replace canonical task plan steps through the Todo compatibility surface. Use the explicit task_id; execution sessions are unrelated to this write."""
+    """Replace one task's canonical plan through the Todo compatibility surface."""
     del task_id, todos
     raise RuntimeError("write_todos requires control routing")

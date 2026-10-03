@@ -31,7 +31,7 @@ The fork is neither a strict subset nor a strict superset of upstream.
 
 - Most shell, filesystem, job, remote-worker, transfer, terminal, Human UI, and
   OpenTUI outcomes from upstream exist in the fork, but are exposed through
-  explicit agent/workspace sessions and a different module layout.
+  explicit execution sessions and a different module layout.
 - The fork is materially ahead in session isolation, Agent Bridge integration,
   durable managed jobs, transactional cross-session copies, Windows support,
   worker-upgrade safety, browser-native operations UI, terminal streaming, and
@@ -57,7 +57,7 @@ The important mappings and actual gaps are:
 | `job_start`, `job_list`, `job_tail`, `job_stop`, `job_retry` | `bash(async_=true)` plus unified `job` | Fork also manages durable non-shell jobs such as background `session_copy`. |
 | `read_file`, `grep_search`, `edit_file` | `read`, `search`, `hashline_edit`/`edit_lines` | Adapted to snapshot-grounded edits, selectors, pagination, and explicit workspace-session ownership. |
 | `session_manage`, `plan_manage` | `task`, `task_plan` plus `read_todos`/`write_todos` compatibility | Ports the durable objective/progress/plan lifecycle onto an explicit Workgate `task_id` that is independent of executor/workdir sessions. Todo compatibility projects the same canonical plan steps. |
-| Optional `machine` on many tools | `session_start(target="remote", machine=...)` followed by ordinary tools | Fork avoids duplicating local and remote schemas and gives every remote operation an explicit workspace session. |
+| Optional `machine` on many tools | `session_start(executor_id=..., workdir=...)` followed by ordinary tools | Fork avoids duplicating local and remote schemas and gives every executor operation an explicit session. |
 | `transfer_path` | `session_copy` | Functional transfer support exists; fork preserves synchronous compatibility, managed background copy jobs, and now an internal resumable HTTP transport for capable large copies without exposing upstream ticket tools. |
 | Separate remote invite/list/revoke/rename tools | `remote_admin` | Same control-plane outcomes through one compact tool. |
 | `skills_list`, `skill_load`, `skill_read_file` | `list_agent_skills`, `activate_agent_skill`, `read_agent_skill_file` | Similar static Skill outcome; fork additionally bridges configured MCP servers and dynamically installed capabilities. |
@@ -95,7 +95,7 @@ The important mappings and actual gaps are:
 
 | Area | Fork advantage |
 |---|---|
-| Explicit workspace sessions | Every local or remote operation is owned by a stable `session_id`. Remote machine, worker session, workdir, lifecycle, and transfer routing are separated from persistent terminal `shell_id` and async `job_id`. |
+| Explicit execution sessions | Every machine-facing operation is owned by a stable `session_id`. Executor, workdir, lifecycle, and transfer routing are separate from persistent terminal `shell_id` and async `job_id`. |
 | Agent Bridge, credentials, OAuth, and installed Skills | The fork discovers Skills, loads their instructions/files, lists configured MCP servers, invokes bridged MCP tools, resolves owner-private secret references, and acts as an OAuth client for HTTP/SSE upstreams with persisted refresh and local administration. It retains dynamic capabilities that upstream removed. |
 | Unified durable jobs | One `job` surface manages shell and controller-managed jobs, persists output/payload/progress/result, detects lost processes, supports retry/cancel, and remains useful when a worker is offline. |
 | Transactional cross-session copies | `session_copy` supports local/local, local/remote, remote/local, and remote/remote files and directories, same-worker fast paths, measured large-copy HTTP streaming, capability/RPC fallback, durable cursor/spool resume, transactional commit/abort, background managed jobs, and cancellation cleanup. |

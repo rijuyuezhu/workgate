@@ -1,4 +1,4 @@
-"""Typed structured outputs for explicit agent sessions."""
+"""Typed structured outputs for execution sessions."""
 
 from typing import Literal
 
@@ -176,17 +176,16 @@ class SessionEnvironment(BaseModel):
 
 
 class SessionStartOutput(BaseModel):
-    """Explicit agent/workspace session orientation."""
+    """Execution-session orientation."""
 
     session_id: str = Field(
         description=(
-            "Opaque shared control/executor session id with at least 128 bits of "
-            "randomness."
+            "Opaque execution session id with at least 128 bits of randomness."
         )
     )
     executor_id: str | None = Field(
         default=None,
-        description="Stable executor id bound to this shared session.",
+        description="Stable executor id bound to this execution session.",
     )
     task_id: str | None = Field(
         default=None,
@@ -220,12 +219,12 @@ class SessionStartOutput(BaseModel):
 
 
 class SessionEndOutput(BaseModel):
-    """Result of ending one explicit agent/workspace session."""
+    """Result of ending one execution session."""
 
-    session_id: str = Field(description="Ended agent/workspace session id.")
+    session_id: str = Field(description="Ended execution session id.")
     executor_id: str | None = Field(
         default=None,
-        description="Stable executor id formerly bound to this shared session, when available.",
+        description="Stable executor id formerly bound to this execution session, when available.",
     )
     ended: bool = Field(
         description="Whether durable session state was removed."
@@ -252,7 +251,7 @@ class SessionCopyEndpoint(BaseModel):
     """One endpoint in a session-to-session copy."""
 
     session_id: str = Field(
-        description="Agent/workspace session id for this endpoint."
+        description="Execution session id for this endpoint."
     )
     executor_id: str | None = Field(
         default=None,
@@ -277,11 +276,11 @@ class SessionCopyRelation(BaseModel):
         description="Relationship between the source and destination executors."
     )
     same_session: bool = Field(
-        description="Whether source and destination are the same agent session."
+        description="Whether source and destination are the same execution session."
     )
     same_executor: bool = Field(
         default=False,
-        description="Whether both final shared sessions are bound to the same executor.",
+        description="Whether both execution sessions are bound to the same executor.",
     )
 
 

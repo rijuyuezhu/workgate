@@ -37,7 +37,7 @@ Listing audit summaries requires `audit:read`. Full retained payloads require `a
 
 ## Troubleshooting
 
-- **No entries appear:** confirm auditing is enabled, select the correct local or remote machine, and widen the time or event filters.
+- **No entries appear:** confirm auditing is enabled, select the correct task or session, and widen the time or event filters.
 - **A detail is unavailable:** the payload may not have been retained, may have expired, or the current OAuth session may lack permission.
 - **The audit directory is growing too large:** lower retention and payload limits in configuration.
 - **You need to report a bug:** export only the smallest relevant entries and review them manually for secrets and project content.

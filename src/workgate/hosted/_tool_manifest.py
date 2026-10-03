@@ -20,7 +20,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
     "inputSchema": {
       "properties": {
         "session_id": {
-          "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+          "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
           "title": "Session Id",
           "type": "string"
         }
@@ -89,7 +89,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+          "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
           "title": "Session Id",
           "type": "string"
         }
@@ -184,7 +184,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Required shared session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+          "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
           "title": "Session Id",
           "type": "string"
         }
@@ -251,7 +251,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "List files and directories under a session workdir path for quick inspection. Relative paths resolve inside the explicit agent/workspace session. The result reports whether entries were truncated by the requested limit or server cap. The bound executor applies its configured directory-entry limit.",
+    "description": "List files and directories under an execution session workdir. The result reports whether entries were truncated by the requested limit or server cap.",
     "inputSchema": {
       "properties": {
         "max_entries": {
@@ -262,7 +262,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "path": {
           "default": ".",
-          "description": "Directory path to list. Relative paths resolve inside the agent/workspace session workdir.",
+          "description": "Directory path to list. Relative paths resolve inside the execution session workdir.",
           "title": "Path",
           "type": "string"
         },
@@ -273,7 +273,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -387,7 +387,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Write a complete UTF-8 file inside an explicit agent/workspace session. Use only for new files or intentional whole-file replacement; do not use it for partial edits. For ordinary edits to existing files, use hashline_edit from copied read/search rows instead of rewriting the file. Use edit_lines only when you already have exact structured path/start/end/replacement data. Use bash only when a command-driven transformation is clearer. The bound executor applies its configured write limit.",
+    "description": "Write a complete UTF-8 file inside an execution session. Use it for new files or intentional whole-file replacement; prefer hashline_edit for ordinary edits to existing files.",
     "inputSchema": {
       "properties": {
         "content": {
@@ -407,7 +407,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -478,7 +478,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -644,7 +644,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -843,7 +843,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -888,7 +888,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Check and apply a standard unified diff or an apply_patch envelope inside an explicit agent/workspace session. Paths resolve relative to cwd within the session workdir; absolute envelope paths are accepted only when they stay inside cwd. The tool validates the entire envelope, runs `git apply --check`, and applies only after preflight succeeds. Prefer hashline_edit for ordinary grounded edits copied from read/search; use apply_patch for portable multi-file patches or compatibility with apply_patch envelopes. The bound executor applies its configured patch/write limit.",
+    "description": "Check and apply a unified diff or apply_patch envelope inside an execution session. Paths must stay inside cwd. The tool validates the envelope and runs `git apply --check` before applying it; prefer hashline_edit for ordinary grounded edits.",
     "inputSchema": {
       "properties": {
         "cwd": {
@@ -903,7 +903,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -1015,7 +1015,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Read one file or list one directory inside an explicit agent/workspace session with optional selector suffixes in the path. Use this for normal code context when you know one path, especially before hashline_edit. Use search for content discovery across files, tree_view/list_files/glob_search for path discovery, and connector fetch only when consuming an id from workspace_search. Put ranges in the path selector and preserve the hashline output for edits: `[path#snapshot_id]` plus `line:text` rows can be copied directly into hashline_edit. Use edit_lines only when you already have exact structured path/start/end/replacement data. Supported selectors: path:50, path:50-80, path:50+20, path:5-16,960-973, path:raw, path:50-80:raw, and path:5-16,960-973:raw. Comma-separated ranges apply only within the same file, not across multiple files; ranges must be ordered and non-overlapping; call read separately for each file. The executor enforces its configured per-file read limit.",
+    "description": "Read one file or list one directory inside an execution session. Path selectors support line ranges and raw mode; returned `[path#snapshot_id]` plus `line:text` rows can be copied into hashline_edit. Use search for content discovery and tree_view/list_files/glob_search for path discovery.",
     "inputSchema": {
       "properties": {
         "path": {
@@ -1024,7 +1024,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -1228,7 +1228,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
                 }
               ],
               "default": null,
-              "description": "Explicit agent/workspace session that recorded this read, or null when no grounding snapshot was recorded.",
+              "description": "Execution session that recorded this read, or null when no grounding snapshot was recorded.",
               "title": "Session Id"
             },
             "snapshot_id": {
@@ -1366,12 +1366,12 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured tree-entry limit.",
+    "description": "Return a compact directory tree inside an execution session. Use it for broad project structure; use glob_search for filename patterns and search for content matches.",
     "inputSchema": {
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory path to render as a compact tree. Relative paths resolve inside the agent/workspace session workdir.",
+          "description": "Directory path to render as a compact tree. Relative paths resolve inside the execution session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -1388,7 +1388,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -1514,12 +1514,12 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured glob-result limit.",
+    "description": "Find paths by glob pattern inside an execution session. Use tree_view for directory structure and search for content matches.",
     "inputSchema": {
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory path that narrows the search root. Relative paths resolve inside the agent/workspace session workdir.",
+          "description": "Directory path that narrows the search root. Relative paths resolve inside the execution session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -1535,7 +1535,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -1577,7 +1577,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. The bound executor applies its configured search-result limit.",
+    "description": "Search file content on the execution session's bound executor. gitignore is respected by default, and displayed rows carry grounding for hashline_edit. Use read for known files/ranges and glob_search when only matching paths are needed.",
     "inputSchema": {
       "properties": {
         "case_sensitive": {
@@ -1636,7 +1636,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -1982,12 +1982,12 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Scan text files under an explicit agent/workspace session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit.",
+    "description": "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit.",
     "inputSchema": {
       "properties": {
         "cwd": {
           "default": ".",
-          "description": "Directory to scan. Relative paths resolve inside the agent/workspace session workdir.",
+          "description": "Directory to scan. Relative paths resolve inside the execution session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -2011,7 +2011,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -2123,7 +2123,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           ],
           "default": null,
-          "description": "Optional human-readable label for this agent session.",
+          "description": "Optional human-readable label for this execution session.",
           "title": "Label"
         },
         "workdir": {
@@ -2555,7 +2555,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "object"
         }
       },
-      "description": "Explicit agent/workspace session orientation.",
+      "description": "Execution-session orientation.",
       "properties": {
         "created_at": {
           "description": "Unix timestamp when the session was created.",
@@ -2576,7 +2576,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           ],
           "default": null,
-          "description": "Stable executor id bound to this shared session.",
+          "description": "Stable executor id bound to this execution session.",
           "title": "Executor Id"
         },
         "git": {
@@ -2610,7 +2610,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
+          "description": "Opaque execution session id with at least 128 bits of randomness.",
           "title": "Session Id",
           "type": "string"
         },
@@ -2665,11 +2665,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Change an existing executor-backed agent/workspace session to a new required workdir. Relative workdirs resolve against the executor's fixed workspace_root; old grounding snapshots are invalidated before the durable cwd changes. Use this when the user redirects you to a different project/subdirectory.",
+    "description": "Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated.",
     "inputSchema": {
       "properties": {
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3106,7 +3106,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "object"
         }
       },
-      "description": "Explicit agent/workspace session orientation.",
+      "description": "Execution-session orientation.",
       "properties": {
         "created_at": {
           "description": "Unix timestamp when the session was created.",
@@ -3127,7 +3127,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           ],
           "default": null,
-          "description": "Stable executor id bound to this shared session.",
+          "description": "Stable executor id bound to this execution session.",
           "title": "Executor Id"
         },
         "git": {
@@ -3161,7 +3161,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared control/executor session id with at least 128 bits of randomness.",
+          "description": "Opaque execution session id with at least 128 bits of randomness.",
           "title": "Session Id",
           "type": "string"
         },
@@ -3216,7 +3216,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "End one explicit executor-backed execution session. This stops owned work and releases execution capacity but does not finish, cancel, freeze, or delete an attached semantic task. The task remains independently readable and mutable by task_id. This is destructive for running work in that session but does not delete workspace files.",
+    "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted.",
     "inputSchema": {
       "properties": {
         "force": {
@@ -3226,7 +3226,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3242,7 +3242,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
     },
     "name": "session_end",
     "outputSchema": {
-      "description": "Result of ending one explicit agent/workspace session.",
+      "description": "Result of ending one execution session.",
       "properties": {
         "ended": {
           "description": "Whether durable session state was removed.",
@@ -3259,7 +3259,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             }
           ],
           "default": null,
-          "description": "Stable executor id formerly bound to this shared session, when available.",
+          "description": "Stable executor id formerly bound to this execution session, when available.",
           "title": "Executor Id"
         },
         "force_released": {
@@ -3269,7 +3269,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "boolean"
         },
         "session_id": {
-          "description": "Ended agent/workspace session id.",
+          "description": "Ended execution session id.",
           "title": "Session Id",
           "type": "string"
         },
@@ -3313,7 +3313,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Run terminal commands inside an explicit agent/workspace session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+    "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
     "inputSchema": {
       "properties": {
         "async_": {
@@ -3329,7 +3329,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "cwd": {
           "default": ".",
-          "description": "Optional working directory for the command, resolved inside the agent/workspace session workdir. Omit or pass . to use the session workdir.",
+          "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -3395,7 +3395,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "title": "Purpose"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3449,7 +3449,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "result": {
           "additionalProperties": true,
-          "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning agent session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
+          "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
           "title": "Result",
           "type": "object"
         }
@@ -3471,7 +3471,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Write Python code to a temporary file and execute it inside an explicit agent/workspace session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+    "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
     "inputSchema": {
       "properties": {
         "async_": {
@@ -3487,7 +3487,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "cwd": {
           "default": ".",
-          "description": "Optional working directory for the command, resolved inside the agent/workspace session workdir. Omit or pass . to use the session workdir.",
+          "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
           "title": "Cwd",
           "type": "string"
         },
@@ -3553,7 +3553,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "title": "Purpose"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3607,7 +3607,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "result": {
           "additionalProperties": true,
-          "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning agent session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
+          "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
           "title": "Result",
           "type": "object"
         },
@@ -3650,7 +3650,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3658,7 +3658,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "shell_id": {
-          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
+          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the execution session_id.",
           "title": "Shell Id",
           "type": "string"
         }
@@ -3725,7 +3725,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3733,7 +3733,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "shell_id": {
-          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
+          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the execution session_id.",
           "title": "Shell Id",
           "type": "string"
         }
@@ -3805,7 +3805,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "integer"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3813,7 +3813,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "shell_id": {
-          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
+          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the execution session_id.",
           "title": "Shell Id",
           "type": "string"
         }
@@ -3886,7 +3886,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
     "inputSchema": {
       "properties": {
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -3894,7 +3894,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "shell_id": {
-          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id.",
+          "description": "Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the execution session_id.",
           "title": "Shell Id",
           "type": "string"
         }
@@ -3974,7 +3974,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
     "inputSchema": {
       "properties": {
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -4095,7 +4095,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
@@ -4175,7 +4175,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "string"
         },
         "session_id": {
-          "description": "Opaque shared agent/workspace session_id returned by session_start.",
+          "description": "Opaque execution session_id returned by session_start.",
           "maxLength": 128,
           "minLength": 8,
           "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",

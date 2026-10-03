@@ -207,7 +207,7 @@ class ControlState:
     def attach_session_task(
         self, session_id: str, task_id: str
     ) -> ControlSessionRecord:
-        """Durably attach one execution session to at most one semantic task."""
+        """Durably attach one execution session to one task."""
         with self._lock:
             self._require_started()
             current = self._sessions.get(session_id)
@@ -226,7 +226,7 @@ class ControlState:
             return updated
 
     def detach_task(self, task_id: str) -> None:
-        """Clear references to one deleted semantic task from retained sessions."""
+        """Clear a deleted task from retained sessions."""
         with self._lock:
             self._require_started()
             changed = False

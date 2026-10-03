@@ -45,7 +45,7 @@ async def audit_tail(
     entry_id: AuditEntryIdArg = None,
     include_full_payloads: AuditIncludeFullPayloadsArg = False,
 ) -> AuditTailOutput:
-    """Read bounded canonical audit history by semantic task_id, concrete execution session_id, or their intersection. At least one identity is required. A task_id never selects execution routing."""
+    """Read bounded audit history by task_id, session_id, or both. At least one is required."""
     del (
         task_id,
         session_id,

@@ -49,7 +49,7 @@ Use `bash` for bounded, non-interactive commands such as formatting, tests, buil
 Run the narrowest relevant test first. If it passes, run the project's normal validation command and summarize any failures.
 ```
 
-For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the executor-bound session genuinely needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same shared `session_id`.
+For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the execution session needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same `session_id`.
 
 ## Automate a web page
 
@@ -75,11 +75,11 @@ Pair or select the intended executor, then start a session with its stable execu
 Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that execution session. Semantic task/progress/plan state is control-owned under a separate `task_id`. Pass `task_id` to `session_start` when the execution context belongs to that task; the attachment never selects or rebinds a machine/workdir. See [Executors](executors.md) for pairing, reconnect, and trust management.
+File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that execution session. Task state is control-owned under a separate `task_id`. Pass that id to `session_start` when creating a session for the task; it does not select or rebind an executor/workdir. See [Executors](executors.md) for pairing, reconnect, and trust management.
 
 ## Keep durable task progress
 
-For substantial multi-step work, create or resume a semantic task with `task`, use `task(action="get", task_id=...)` for durable handoff, `task(action="report", ...)` for progress, and `task_plan` for stable plan steps. `read_todos` and `write_todos` are compatibility projections over that same task plan.
+For substantial multi-step work, create or resume a task before starting its execution sessions. Use `task(action="get", task_id=...)` for handoff, `task(action="report", ...)` for progress, and `task_plan` for plan steps. `read_todos` and `write_todos` project the same plan.
 
 `session_end` releases only one execution context. The semantic task remains independently readable and mutable by `task_id`, including when it has zero active sessions.
 

@@ -15,7 +15,7 @@ shells, jobs, and terminals.
 
 ## What you can do
 
-After connecting an MCP client, start a workspace session and ask it to:
+After connecting an MCP client, start an execution session and ask it to:
 
 - inspect, search, edit, and patch repositories;
 - run tests, builds, Git commands, and bounded shell tasks;

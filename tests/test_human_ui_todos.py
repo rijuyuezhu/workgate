@@ -97,6 +97,35 @@ async def test_session_snapshot_projects_attached_task(tmp_path, monkeypatch):
     assert data["session"]["task_id"] == task_id
     assert data["task_id"] == task_id
     assert data["task"]["task_id"] == task_id
+    assert "revision" not in data
+
+
+@pytest.mark.asyncio
+async def test_session_snapshot_without_task_has_no_task_state(
+    tmp_path, monkeypatch
+):
+    _configure(monkeypatch, tmp_path)
+    (tmp_path / "project").mkdir(parents=True, exist_ok=True)
+    app, harness = build_paired_http_app(get_settings())
+    started = await harness.control.session_coordinator.start_session(
+        workdir="project",
+        executor_id=harness.executor_id,
+    )
+    assert isinstance(started, dict)
+    session_id = str(started["session_id"])
+    client = TestClient(app, base_url=BASE_URL, client=("203.0.113.14", 50005))
+
+    response = client.get(
+        "/api/ui/sessions/snapshot", params={"session_id": session_id}
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["session_id"] == session_id
+    assert data["task_id"] is None
+    assert data["task"] is None
+    assert data["todos"] == []
+    assert "revision" not in data
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ type JobStatus = Literal[
 
 
 class JobInfo(BaseModel):
-    """One tracked command or managed operation owned by an explicit agent session."""
+    """One tracked command or managed operation owned by an execution session."""
 
     job_id: str = Field(
         description="Stable tracked job identifier. Use this with the `job` companion poll, cancel, or retry actions in the same session."
@@ -41,7 +41,7 @@ class JobInfo(BaseModel):
         description="Working directory or display context associated with the tracked job."
     )
     session_id: str = Field(
-        description="Agent/workspace session_id that owns this tracked job."
+        description="Execution session_id that owns this tracked job."
     )
     progress: dict[str, object] | None = Field(
         default=None,
@@ -95,7 +95,7 @@ class JobRetryOutput(JobInfo):
 
 
 class JobListOutput(BaseModel):
-    """Tracked job inventory for one agent session."""
+    """Tracked job inventory for one execution session."""
 
     jobs: list[JobInfo] = Field(
         description="Tracked jobs for the requested session, sorted newest first, optionally excluding terminal jobs."

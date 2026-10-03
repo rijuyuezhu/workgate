@@ -142,20 +142,6 @@ def _final_payload(
     }
 
 
-async def _read_final(
-    runtime: Any, task_id: str
-) -> tuple[ReadTodosOutput, TaskOutput]:
-    return await runtime.task_service.read_with_task(task_id)
-
-
-async def _write_final(
-    runtime: Any,
-    task_id: str,
-    todos: list[dict[str, str]],
-) -> tuple[WriteTodosOutput, TaskOutput]:
-    return await runtime.task_service.write_with_task(task_id, todos)
-
-
 async def api_todos(request: Request) -> Response:
     """Read or replace one explicit task's Todo projection."""
     try:
@@ -163,7 +149,7 @@ async def api_todos(request: Request) -> Response:
         if request.method == "GET":
             task_id = _task_id_arg(request.query_params.get("task_id"))
             _require_todo_scopes()
-            result, task = await _read_final(runtime, task_id)
+            result, task = await runtime.task_service.read_with_task(task_id)
             return _json_ok(_final_payload(task_id, result, task=task))
 
         body = await request.json()
@@ -172,7 +158,9 @@ async def api_todos(request: Request) -> Response:
         task_id = _task_id_arg(body.get("task_id"))
         _require_todo_scopes(write=True)
         todos = _todo_items(body.get("todos"))
-        result, task = await _write_final(runtime, task_id, todos)
+        result, task = await runtime.task_service.write_with_task(
+            task_id, todos
+        )
         return _json_ok(_final_payload(task_id, result, task=task))
     except HTTPException:
         raise

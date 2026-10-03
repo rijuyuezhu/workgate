@@ -36,7 +36,7 @@ def _download_tools_enabled(settings: ControlConfig) -> bool:
 
 def _create_file_link_description(context: McpToolContext) -> str:
     settings = context.settings
-    return f"""Create a temporary tokenized HTTP URL for an immutable creation-time snapshot of one existing regular file in an executor-backed agent session. Snapshot creation reads the file through the executor bound to session_id; after the payload is committed, the public URL remains independent of executor availability. By default the browser downloads it as an attachment; set inline=true only when browser rendering is desired. The response includes the sensitive bearer token and URL exactly once plus a non-secret link_id for later management. list_file_links cannot recover the bearer; revoke_file_link uses link_id. Current TTL default/cap: {settings.file_download_default_ttl_s}/{settings.file_download_max_ttl_s} seconds. Current file-size cap: {settings.file_download_max_file_bytes} bytes, with 0 meaning no configured cap."""
+    return f"""Create a temporary tokenized URL for an immutable snapshot of one regular file in an execution session. Snapshot creation reads through the bound executor; afterward the URL is independent of executor availability. The bearer URL is returned once and link_id is used for later management. Current TTL default/cap: {settings.file_download_default_ttl_s}/{settings.file_download_max_ttl_s} seconds. Current file-size cap: {settings.file_download_max_file_bytes} bytes, with 0 meaning no configured cap."""
 
 
 @download_tool(

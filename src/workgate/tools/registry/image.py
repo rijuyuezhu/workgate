@@ -26,6 +26,6 @@ async def view_image(
     session_id: SessionIdArg,
     path: ImagePathArg,
 ) -> ViewImageOutput:
-    """View a PNG, JPEG, GIF, or WebP file as native MCP image content. The path resolves inside the shared session workdir on its bound executor; use this instead of read when visual inspection is needed."""
+    """View a PNG, JPEG, GIF, or WebP file from the execution session workdir as native MCP image content."""
     del session_id, path
     raise RuntimeError("view_image requires control routing")

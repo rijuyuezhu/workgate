@@ -68,17 +68,14 @@ class LiveWorkspaceLinks(BaseModel):
 
 
 class LiveWorkspaceSnapshot(BaseModel):
-    """Server-reconstructed task view with explicit execution-session attachments."""
+    """Task view with its execution-session attachments."""
 
     version: Literal[2] = 2
     task: TaskOutput
     sessions: list[LiveWorkspaceSession] = Field(default_factory=list)
     session: LiveWorkspaceSession | None = Field(
         default=None,
-        description=(
-            "Explicitly selected execution session for resource panes. None means "
-            "the task is displayed without selecting a machine/workdir."
-        ),
+        description="Explicitly selected execution session, if any.",
     )
     task_control_actions: list[
         Literal["block", "resume", "cancel", "next_instruction"]

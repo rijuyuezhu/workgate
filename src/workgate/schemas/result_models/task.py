@@ -1,4 +1,4 @@
-"""Typed structured outputs for durable semantic task state."""
+"""Typed structured outputs for durable task state."""
 
 from typing import Literal
 
@@ -8,7 +8,7 @@ TaskStatus = Literal["active", "blocked", "completed", "cancelled"]
 
 
 class TaskProgress(BaseModel):
-    """Latest durable progress handoff for one semantic task."""
+    """Latest durable task progress."""
 
     summary: str | None = Field(
         default=None, description="Current concise progress summary."
@@ -27,7 +27,7 @@ class TaskProgress(BaseModel):
 
 
 class TaskPlanStep(BaseModel):
-    """One stable step in a semantic task plan."""
+    """One stable task-plan step."""
 
     id: str = Field(description="Stable caller-visible plan step identifier.")
     content: str = Field(description="Human-readable plan step text.")
@@ -44,7 +44,7 @@ class TaskPlanStep(BaseModel):
 
 
 class TaskPlan(BaseModel):
-    """Structured machine-readable plan for one semantic task."""
+    """Structured task plan."""
 
     steps: list[TaskPlanStep] = Field(
         default_factory=list, description="Ordered plan steps with stable IDs."
@@ -52,7 +52,7 @@ class TaskPlan(BaseModel):
 
 
 class TaskDocument(BaseModel):
-    """Canonical semantic task document."""
+    """Canonical task document."""
 
     version: Literal[2] = 2
     created_at: float = Field(
@@ -80,15 +80,12 @@ class TaskOutput(TaskDocument):
     task_id: str = Field(description="Opaque durable semantic task identifier.")
     session_ids: list[str] = Field(
         default_factory=list,
-        description=(
-            "Execution sessions explicitly attached to this task, including retained "
-            "ended-session history while those session records exist."
-        ),
+        description="Retained execution sessions attached to this task.",
     )
 
 
 class TaskDeleteOutput(BaseModel):
-    """Result of deleting one terminal semantic task."""
+    """Result of deleting one terminal task."""
 
     task_id: str
     deleted: Literal[True] = True

@@ -41,7 +41,7 @@ async def task(
     next_action: ProgressNextActionArg = None,
     blockers: ProgressBlockersArg = None,
 ) -> TaskOutput | TaskDeleteOutput:
-    """Create, inspect, report, block, resume, finish, cancel, or delete one semantic task. task_id is independent of executor/workdir identity."""
+    """Create, inspect, report, transition, or delete one semantic task."""
     del (
         action,
         task_id,
@@ -65,6 +65,6 @@ async def task_plan(
     task_id: TaskIdArg,
     steps: PlanStepsArg,
 ) -> TaskOutput:
-    """Replace one semantic task's complete plan. This never chooses or changes an execution session."""
+    """Replace one semantic task's complete plan."""
     del task_id, steps
     raise RuntimeError("task_plan requires control routing")

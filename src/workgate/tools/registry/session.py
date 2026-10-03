@@ -1,4 +1,4 @@
-"""Explicit agent session tool registry."""
+"""Execution session tool registry."""
 
 from ...schemas.input_models.session import (
     SessionCopyBackgroundArg,
@@ -30,7 +30,7 @@ def _unrouted_session_tool(name: str) -> RuntimeError:
 
 
 class SessionToolRegistry(DeclarativeToolRegistry):
-    """Register explicit agent session tools."""
+    """Register execution session tools."""
 
     name = "session"
     """Registry group name used for tool-surface organization."""
@@ -44,15 +44,15 @@ def _session_start_description(_context: McpToolContext) -> str:
 
 
 def _session_change_cwd_description(_context: McpToolContext) -> str:
-    return """Change an existing executor-backed agent/workspace session to a new required workdir. Relative workdirs resolve against the executor's fixed workspace_root; old grounding snapshots are invalidated before the durable cwd changes. Use this when the user redirects you to a different project/subdirectory."""
+    return """Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated."""
 
 
 def _session_copy_description(_context: McpToolContext) -> str:
-    return """Copy one file or directory between two existing executor-backed agent/workspace sessions. Paths resolve inside their respective session workdirs and neither session is created, migrated, or rebound. Same-executor copies involve one executor; cross-executor copies export an immutable verified payload owned by control and import it into the existing destination session without using the control workspace as a filesystem endpoint. By default the call waits and returns SessionCopyOutput. Set background=true for long transfers to return a managed job immediately, then use the job companion with src_session_id to poll structured progress, cancel safely, or retry according to transfer-specific semantics. The response reports whether both endpoints share an executor."""
+    return """Copy one file or directory between two existing execution sessions. Paths resolve inside their session workdirs. Set background=true to return a managed job owned by src_session_id."""
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one explicit executor-backed execution session. This stops owned work and releases execution capacity but does not finish, cancel, freeze, or delete an attached semantic task. The task remains independently readable and mutable by task_id. This is destructive for running work in that session but does not delete workspace files."""
+    return """End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted."""
 
 
 @session_tool(
@@ -67,7 +67,7 @@ async def session_start(
     executor_id: SessionExecutorIdArg = None,
     task_id: SessionTaskIdArg = None,
 ) -> SessionStartOutput:
-    """Start an explicit agent/workspace session."""
+    """Start an execution session."""
     raise _unrouted_session_tool("session_start")
 
 
@@ -81,7 +81,7 @@ async def session_change_cwd(
     session_id: SessionIdArg,
     workdir: SessionWorkdirArg,
 ) -> SessionStartOutput:
-    """Change an explicit agent/workspace session workdir."""
+    """Change an execution session workdir."""
     raise _unrouted_session_tool("session_change_cwd")
 
 
@@ -94,7 +94,7 @@ async def session_change_cwd(
 async def session_end(
     session_id: SessionIdArg, force: SessionEndForceArg = False
 ) -> SessionEndOutput:
-    """Stop owned work and end an explicit agent/workspace session."""
+    """Stop owned work and end an execution session."""
     raise _unrouted_session_tool("session_end")
 
 

@@ -391,7 +391,7 @@ async def live_workspace_task_control(
     action: TaskAction,
     instruction: str | None = None,
 ) -> LiveWorkspaceSnapshot:
-    """Apply one semantic task mutation without selecting execution implicitly."""
+    """Apply one task mutation without changing execution selection."""
 
     current_task = await runtime.task_service.read_task(task_id)
     allowed_actions, state_message = _task_control_actions(current_task)
@@ -447,7 +447,7 @@ async def live_workspace_end(
 def register_live_workspace(
     mcp: FastMCP, runtime: ControlRuntime | None
 ) -> None:
-    """Register the HTTP-only task-centric MCP App on a routed runtime."""
+    """Register the HTTP-only Live Workspace MCP App."""
 
     if (
         runtime is None
@@ -460,7 +460,7 @@ def register_live_workspace(
     resource_options = {
         "name": "workgate-live-workspace",
         "title": "Workgate Live Workspace",
-        "description": "Task-centric human view with explicit attached execution sessions.",
+        "description": "Task view with attached execution sessions.",
         "mime_type": _RESOURCE_MIME,
         "meta": _resource_meta(runtime),
     }
@@ -478,9 +478,8 @@ def register_live_workspace(
 
     @mcp.tool(
         description=(
-            "Open the Live Workspace for one explicit semantic task_id. "
-            "Pass session_id only to select one already-attached execution context; "
-            "omitting it never guesses a machine or workdir."
+            "Open one task. Optional session_id must already be attached and selects "
+            "session-specific panes."
         ),
         annotations=_read_only_annotations(),
         meta=_app_meta(read_scopes, resource_uri=versioned_uri),
@@ -498,7 +497,7 @@ def register_live_workspace(
         )
 
     @mcp.tool(
-        description="Refresh one explicit semantic task and optional selected execution session.",
+        description="Refresh one task and its optional selected execution session.",
         annotations=_read_only_annotations(),
         meta=_app_meta(read_scopes),
         structured_output=True,
@@ -515,7 +514,7 @@ def register_live_workspace(
         )
 
     @mcp.tool(
-        description="Apply one safe semantic task control without changing execution routing.",
+        description="Apply one task control without changing execution routing.",
         annotations=_mutating_annotations(destructive=True),
         meta=_app_meta(task_write_scopes),
         structured_output=True,
@@ -536,10 +535,7 @@ def register_live_workspace(
         )
 
     @mcp.tool(
-        description=(
-            "End one explicitly selected execution session attached to the task "
-            "after a separate human confirmation."
-        ),
+        description="End an attached execution session after explicit confirmation.",
         annotations=_mutating_annotations(destructive=True),
         meta=_app_meta((SCOPE_SHELL_EXECUTE,)),
         structured_output=True,

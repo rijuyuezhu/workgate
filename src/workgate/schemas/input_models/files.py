@@ -13,7 +13,7 @@ FilePathArg = Annotated[
 ListPathArg = Annotated[
     str,
     Field(
-        description="Directory path to list. Relative paths resolve inside the agent/workspace session workdir."
+        description="Directory path to list. Relative paths resolve inside the execution session workdir."
     ),
 ]
 RecursiveArg = Annotated[
@@ -31,7 +31,7 @@ MaxEntriesArg = Annotated[
 ToolSessionIdArg = Annotated[
     str | None,
     Field(
-        description="Optional explicit agent/workspace session id returned by session_start. Internal helpers may omit it when no grounding snapshot is needed."
+        description="Optional execution session id returned by session_start. Internal helpers may omit it when no grounding snapshot is needed."
     ),
 ]
 EditStartLineArg = Annotated[

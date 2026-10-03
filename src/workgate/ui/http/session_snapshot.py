@@ -67,7 +67,7 @@ async def api_session_snapshot(request: Request) -> Response:
         runtime = todos_http._runtime(request)
         record = runtime.control_state.snapshot_sessions().get(session_id)
         if record is None:
-            raise LookupError(f"unknown shared session_id {session_id!r}")
+            raise LookupError(f"unknown session_id {session_id!r}")
 
         audit_args = audit_http._query_args(request)
         audit_args.pop("session", None)
@@ -95,7 +95,6 @@ async def api_session_snapshot(request: Request) -> Response:
             payload = {
                 "task_id": None,
                 "task": None,
-                "revision": 0,
                 "updated_at": None,
                 "todos": [],
             }

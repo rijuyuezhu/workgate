@@ -686,6 +686,7 @@ async def test_legacy_session_task_migrates_to_deterministic_task_id(
     harness.control.state_store.write_json(
         legacy_path,
         {
+            "revision": 4,
             "updated_at": 123.0,
             "todos": [
                 {
@@ -707,6 +708,7 @@ async def test_legacy_session_task_migrates_to_deterministic_task_id(
     assert not legacy_path.exists()
 
     task = await harness.control.task_service.read_task(task_id)
+    assert "revision" not in task.model_dump()
     assert task.label == "legacy task"
     assert task.plan.steps[0].id == "legacy"
     assert task.session_ids == [session_id]
@@ -732,7 +734,7 @@ async def test_legacy_migration_cleans_residual_source_after_interrupted_cleanup
     session_id = str(started["session_id"])
     store = harness.control.state_store
     legacy_path = store.layout.control_task_state_path(session_id)
-    store.write_json(legacy_path, {"todos": []})
+    store.write_json(legacy_path, {"revision": 0, "todos": []})
     real_remove = store.remove
     failed = False
 
