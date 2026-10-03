@@ -243,7 +243,7 @@ export function createSessionsController({
       empty.className = "empty-state";
       const suffix = controllerState.sessionExecutorId ? ` on ${controllerState.sessionExecutorId}` : "";
       empty.textContent = controllerState.sessionIncludeInactive
-        ? `No agent sessions${suffix}.`
+        ? `No execution sessions${suffix}.`
         : `No sessions active in the last 5 hours${suffix}.`;
       elements.sessionList.append(empty);
     } else {
@@ -376,7 +376,7 @@ export function createSessionsController({
       renderTodoSessions(payload.sessions);
       elements.sessionState.textContent = `${payload.count || 0} ${controllerState.sessionIncludeInactive ? "total" : "active"} sessions${requestedExecutor ? ` · ${requestedExecutor}` : ""}`;
       if (!controllerState.todoSessionId) {
-        clearSelectedSessionResources(requestedExecutor ? `No agent sessions on ${requestedExecutor}` : "No agent sessions");
+        clearSelectedSessionResources(requestedExecutor ? `No execution sessions on ${requestedExecutor}` : "No execution sessions");
       }
       else if (controllerState.todoSessionId !== previousSession) clearSelectedSessionResources("Loading selected session");
       return payload;
