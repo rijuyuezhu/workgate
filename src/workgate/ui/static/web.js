@@ -84,7 +84,7 @@ void (async () => {
     },
     sessions: {
       title: "Sessions",
-      description: "Inspect agent sessions, todos, lifecycle state, and scoped Audit records.",
+      description: "Inspect execution sessions, attached task state, and scoped Audit records.",
     },
     terminals: {
       title: "Terminals",

@@ -171,6 +171,20 @@ class DurableObjectSqlStateStore:
             children.add(remainder.split("/", 1)[0])
         return tuple(path / name for name in sorted(children))
 
+    def iter_files(self, path: Path) -> Iterable[Path]:
+        """Return logical direct child files represented by stored values."""
+        base_key = self._key(path, allow_root=True)
+        prefix = "" if not base_key else base_key.rstrip("/") + "/"
+        children: list[str] = []
+        for candidate in self._all_keys():
+            if not candidate.startswith(prefix):
+                continue
+            remainder = candidate[len(prefix) :]
+            if not remainder or "/" in remainder:
+                continue
+            children.append(remainder)
+        return tuple(path / name for name in sorted(children))
+
     @contextmanager
     def transaction(self, path: Path) -> Generator[None]:
         """Serialize one synchronous actor-local read/modify/write scope."""

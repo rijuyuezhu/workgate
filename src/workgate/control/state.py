@@ -14,7 +14,7 @@ from pydantic import (
 
 from ..persistence import StateStore
 from ..protocol.credentials import ExecutorCredentialVerifier
-from ..protocol.ids import ExecutorId, SessionId
+from ..protocol.ids import ExecutorId, SessionId, TaskId
 
 _REGISTRY_VERSION = 1
 Timestamp = Annotated[float, Field(ge=0, allow_inf_nan=False)]
@@ -51,6 +51,7 @@ class ControlSessionRecord(BaseModel):
 
     session_id: SessionId
     executor_id: ExecutorId
+    task_id: TaskId | None = None
     requested_workdir: str = Field(min_length=1, max_length=4096)
     resolved_workdir_display: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
@@ -166,9 +167,80 @@ class ControlState:
                 and current.executor_id != record.executor_id
             ):
                 raise ValueError("session executor binding cannot change")
+            if current is not None and record.task_id != current.task_id:
+                raise ValueError(
+                    "session task attachment cannot change through lifecycle updates"
+                )
             candidate = {**self._sessions, record.session_id: record}
             self._write_sessions(candidate)
             self._sessions = candidate
+
+    def update_session(
+        self, session_id: str, **changes: Any
+    ) -> ControlSessionRecord:
+        """Patch lifecycle fields while preserving immutable session bindings."""
+        allowed = {
+            "status",
+            "requested_workdir",
+            "resolved_workdir_display",
+            "updated_at",
+        }
+        unsupported = set(changes) - allowed
+        if unsupported:
+            raise ValueError(
+                "unsupported session lifecycle field(s): "
+                + ", ".join(sorted(unsupported))
+            )
+        with self._lock:
+            self._require_started()
+            current = self._sessions.get(session_id)
+            if current is None:
+                raise KeyError(session_id)
+            updated = ControlSessionRecord.model_validate(
+                current.model_copy(update=changes).model_dump()
+            )
+            candidate = {**self._sessions, session_id: updated}
+            self._write_sessions(candidate)
+            self._sessions = candidate
+            return updated
+
+    def attach_session_task(
+        self, session_id: str, task_id: str
+    ) -> ControlSessionRecord:
+        """Durably attach one execution session to one task."""
+        with self._lock:
+            self._require_started()
+            current = self._sessions.get(session_id)
+            if current is None:
+                raise KeyError(session_id)
+            if current.task_id is not None and current.task_id != task_id:
+                raise ValueError("session task attachment cannot change")
+            if current.task_id == task_id:
+                return current
+            updated = ControlSessionRecord.model_validate(
+                current.model_copy(update={"task_id": task_id}).model_dump()
+            )
+            candidate = {**self._sessions, session_id: updated}
+            self._write_sessions(candidate)
+            self._sessions = candidate
+            return updated
+
+    def detach_task(self, task_id: str) -> None:
+        """Clear a deleted task from retained sessions."""
+        with self._lock:
+            self._require_started()
+            changed = False
+            candidate = dict(self._sessions)
+            for session_id, current in self._sessions.items():
+                if str(current.task_id or "") != task_id:
+                    continue
+                candidate[session_id] = ControlSessionRecord.model_validate(
+                    current.model_copy(update={"task_id": None}).model_dump()
+                )
+                changed = True
+            if changed:
+                self._write_sessions(candidate)
+                self._sessions = candidate
 
     def remove_session(self, session_id: str) -> None:
         """Durably forget a checkpoint only when no executor side effect exists."""

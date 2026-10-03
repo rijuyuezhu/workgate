@@ -13,7 +13,7 @@ ShellCommandArg = Annotated[
 ShellCwdArg = Annotated[
     str,
     Field(
-        description="Optional working directory for the command, resolved inside the agent/workspace session workdir. Omit or pass . to use the session workdir."
+        description="Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir."
     ),
 ]
 ShellTimeoutArg = Annotated[
@@ -61,7 +61,7 @@ PythonCodeArg = Annotated[
 ShellIdArg = Annotated[
     str,
     Field(
-        description="Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the agent/workspace session_id."
+        description="Persistent shell_id returned by bash(pty=true) or list_persistent_shells. This is not the execution session_id."
     ),
 ]
 InputTextArg = Annotated[

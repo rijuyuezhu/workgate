@@ -2,14 +2,14 @@
 
 `workgate` records server and tool activity so users can review what happened. Audit data may include project text, command input, command output, errors, and remote activity after best-effort credential redaction.
 
-Durable task-state tools redact their generic tool-call input/output payloads entirely. Separate mutation events retain only structural details such as revision, changed fields, and step IDs/statuses. The task document itself still contains the full progress and plan text, so its control-state storage remains sensitive.
+Durable task-state tools redact their generic tool-call input/output payloads entirely. Separate mutation events retain only structural details such as changed fields and step IDs/statuses. The task document itself still contains the full progress and plan text, so its control-state storage remains sensitive.
 Treat the entire audit directory as sensitive.
 
 ## Review activity
 
 The browser and OpenTUI **Audit** panels are the easiest way to filter recent activity and inspect an entry.
 
-From an MCP client, start an explicit executor-backed session and use `audit_tail(session_id=...)`. The default response is a bounded recent list. Use filters to narrow the result rather than requesting a large history.
+From an MCP client, use `audit_tail(task_id=...)` for task-wide history, `audit_tail(session_id=...)` for one concrete execution session, or pass both to request their intersection. Neither identity selects or rebinds execution. The default response is a bounded recent list; use filters to narrow it rather than requesting a large history.
 
 To retrieve a retained full sanitized value, request one specific entry with `include_full_payloads=true`. This requires the additional `audit:full` scope. Redacted credentials cannot be recovered.
 
@@ -37,7 +37,7 @@ Listing audit summaries requires `audit:read`. Full retained payloads require `a
 
 ## Troubleshooting
 
-- **No entries appear:** confirm auditing is enabled, select the correct local or remote machine, and widen the time or event filters.
+- **No entries appear:** confirm auditing is enabled, select the correct task or session, and widen the time or event filters.
 - **A detail is unavailable:** the payload may not have been retained, may have expired, or the current OAuth session may lack permission.
 - **The audit directory is growing too large:** lower retention and payload limits in configuration.
 - **You need to report a bug:** export only the smallest relevant entries and review them manually for secrets and project content.

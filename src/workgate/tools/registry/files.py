@@ -36,12 +36,12 @@ file_tool = FileToolRegistry.get_tool_decorator()
 
 def _list_files_description(context: McpToolContext) -> str:
     del context
-    return """List files and directories under a session workdir path for quick inspection. Relative paths resolve inside the explicit agent/workspace session. The result reports whether entries were truncated by the requested limit or server cap. The bound executor applies its configured directory-entry limit."""
+    return """List files and directories under an execution session workdir. The result reports whether entries were truncated by the requested limit or server cap."""
 
 
 def _write_file_description(context: McpToolContext) -> str:
     del context
-    return """Write a complete UTF-8 file inside an explicit agent/workspace session. Use only for new files or intentional whole-file replacement; do not use it for partial edits. For ordinary edits to existing files, use hashline_edit from copied read/search rows instead of rewriting the file. Use edit_lines only when you already have exact structured path/start/end/replacement data. Use bash only when a command-driven transformation is clearer. The bound executor applies its configured write limit."""
+    return """Write a complete UTF-8 file inside an execution session. Use it for new files or intentional whole-file replacement; prefer hashline_edit for ordinary edits to existing files."""
 
 
 def _edit_lines_description(context: McpToolContext) -> str:

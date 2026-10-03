@@ -37,17 +37,17 @@ search_tool = SearchToolRegistry.get_tool_decorator()
 
 def _tree_view_description(context: McpToolContext) -> str:
     del context
-    return """Return a compact directory tree inside an explicit executor-backed agent/workspace session for high-level project orientation before targeted file reads. Use tree_view when you need structure, directories, and broad layout; use glob_search when you already know filename patterns; use search when you need content matches. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured tree-entry limit."""
+    return """Return a compact directory tree inside an execution session. Use it for broad project structure; use glob_search for filename patterns and search for content matches."""
 
 
 def _glob_search_description(context: McpToolContext) -> str:
     del context
-    return """Find files by glob pattern inside an explicit executor-backed agent/workspace session when you know filename patterns and need matching paths, not file contents. Use glob_search for path discovery by pattern; use tree_view for directory shape; use search for content matches with edit-grounding metadata. Pass the shared session_id returned by session_start. cwd defaults to the session workdir; any relative cwd override resolves inside that session workdir on the bound executor. The bound executor applies its configured glob-result limit."""
+    return """Find paths by glob pattern inside an execution session. Use tree_view for directory structure and search for content matches."""
 
 
 def _search_description(context: McpToolContext) -> str:
     del context
-    return """Search code content inside an explicit executor-backed agent/workspace session for matching lines. Use this built-in search for content discovery instead of shell grep/ripgrep when you need editable grounding, because displayed rows carry hashline grounding for hashline_edit. Use read when you already know the exact file/range, glob_search when you only need matching paths, and workspace_search/fetch when connector-compatible result shapes are useful; those tools still require the same session_id. pattern is text or regex depending on regex; paths scopes to files, directories, globs, or file line selectors such as `src/app.py:10-20,30-40`. gitignore defaults to true, so search respects .gitignore, .ignore, and related ignore rules; set gitignore=false to include ignored files. matches contains actual matched lines only. displayed_lines contains the shown editable rows and marks each row with kind=\"match\" or kind=\"context\"; numbered_content keeps the same rows in copyable `[path#snapshot_id]` plus `line:text` form that can be copied into hashline_edit. Use `skip` with the same pattern and paths to page through later actual matches when results are truncated or noisy. Use edit_lines only when you already have exact structured path/start/end/replacement data. The bound executor applies its configured search-result limit."""
+    return """Search file content on the execution session's bound executor. gitignore is respected by default, and displayed rows carry grounding for hashline_edit. Use read for known files/ranges and glob_search when only matching paths are needed."""
 
 
 @search_tool(

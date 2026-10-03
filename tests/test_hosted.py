@@ -113,7 +113,7 @@ def test_durable_object_sql_state_store_crud_and_logical_directories() -> None:
     sql = _SqliteSqlStorage()
     store = DurableObjectSqlStateStore(sql)
     session_a = store.layout.session_metadata_path("session_a")
-    session_b = store.layout.session_todos_path("session_b")
+    session_b = store.layout.session_snapshots_path("session_b")
 
     store.write_json(session_a, {"value": "alpha"})
     store.write_json(session_b, {"value": "beta"})
@@ -130,6 +130,9 @@ def test_durable_object_sql_state_store_crud_and_logical_directories() -> None:
     assert tuple(store.iter_directories(store.layout.sessions_dir)) == (
         store.layout.session_dir("session_a"),
         store.layout.session_dir("session_b"),
+    )
+    assert tuple(store.iter_files(store.layout.session_dir("session_a"))) == (
+        session_a,
     )
     with pytest.raises(ValueError, match="Refusing to read"):
         store.read_json(session_a, max_bytes=1)

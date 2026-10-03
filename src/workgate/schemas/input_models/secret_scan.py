@@ -7,7 +7,7 @@ from pydantic import Field
 SecretScanCwdArg = Annotated[
     str,
     Field(
-        description="Directory to scan. Relative paths resolve inside the agent/workspace session workdir."
+        description="Directory to scan. Relative paths resolve inside the execution session workdir."
     ),
 ]
 SecretScanGlobArg = Annotated[

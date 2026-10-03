@@ -44,7 +44,7 @@ Use workgate to run pwd in that session and report the output.
 
 ## Open a Live Workspace
 
-When the ChatGPT client supports MCP Apps, ask it to open `workspace_open` with the explicit `session_id` returned by `session_start`. The app stays bound to that session and shows its durable task state, jobs, persistent shells, recent activity, and links into the authenticated Human UI. Human controls update the same task document; ending the execution session is a separate confirmed action.
+When the ChatGPT client supports MCP Apps, create a task and open `workspace_open` with its `task_id`. Pass an attached `session_id` only for session-specific jobs, shells, or Human UI links. Ending that session does not finish the task.
 
 ## Common mistakes
 

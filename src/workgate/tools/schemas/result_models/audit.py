@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field
 class AuditTailOutput(BaseModel):
     """Bounded logical audit query result from canonical control history."""
 
-    session_id: str
-    """Explicit shared session used to authorize and scope the query."""
+    task_id: str | None = None
+    """Semantic task scope, when requested."""
+    session_id: str | None = None
+    """Concrete execution-session scope, when requested."""
     entries: list[dict[str, Any]] = Field(default_factory=list)
     """Bounded logical audit entries with references or resolved sanitized values."""
     count: int

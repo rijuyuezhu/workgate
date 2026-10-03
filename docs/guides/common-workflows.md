@@ -49,7 +49,7 @@ Use `bash` for bounded, non-interactive commands such as formatting, tests, buil
 Run the narrowest relevant test first. If it passes, run the project's normal validation command and summarize any failures.
 ```
 
-For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the executor-bound session genuinely needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same shared `session_id`.
+For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the execution session needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same `session_id`.
 
 ## Automate a web page
 
@@ -75,13 +75,13 @@ Pair or select the intended executor, then start a session with its stable execu
 Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
 ```
 
-File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that shared session. Durable task/progress/plan state and the Todo compatibility view are control-owned, but they are still addressed by that same explicit `session_id`; executor disconnect or restart does not erase them. See [Executors](executors.md) for pairing, reconnect, and trust management.
+File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that execution session. Task state is control-owned under a separate `task_id`. Pass that id to `session_start` when creating a session for the task; it does not select or rebind an executor/workdir. See [Executors](executors.md) for pairing, reconnect, and trust management.
 
 ## Keep durable task progress
 
-For substantial multi-step work, use `read_session_task` to resume the durable handoff, `report_session_progress` to update the objective, summary, findings, next action, blockers, or semantic task status, and `update_session_plan` for stable plan steps. Both mutation tools require the latest `expected_revision`; reload after a conflict instead of overwriting another client.
+For substantial multi-step work, create or resume a task before starting its execution sessions. Use `task(action="get", task_id=...)` for handoff, `task(action="report", ...)` for progress, and `task_plan` for plan steps. `read_todos` and `write_todos` project the same plan.
 
-`session_end` releases the execution context without changing semantic task status. The task document remains readable afterward as history, but it is no longer writable because the associated execution session is ended.
+`session_end` releases only one execution context. The semantic task remains independently readable and mutable by `task_id`, including when it has zero active sessions.
 
 ## Review activity
 

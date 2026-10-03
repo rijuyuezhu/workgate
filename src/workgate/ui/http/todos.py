@@ -1,4 +1,4 @@
-"""Authenticated Human UI APIs for control-owned shared-session Todos."""
+"""Authenticated Human UI APIs for semantic-task Todos."""
 
 from typing import Any
 
@@ -8,21 +8,17 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ...config.control import get_control_config
-from ...control.task_state import TaskRevisionConflictError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
-from ...oauth.core.scopes import (
-    SCOPE_SHELL_READ,
-    SCOPE_SHELL_WRITE,
-)
-from ...protocol.ids import SessionId
-from ...schemas.result_models.task import SessionTaskOutput
+from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
+from ...protocol.ids import TaskId
+from ...schemas.result_models.task import TaskOutput
 from ...schemas.result_models.todo import ReadTodosOutput, WriteTodosOutput
 from .common import json_error as _json_error
 
 UI_TODO_ID_MAX_BYTES = 256
 UI_TODO_CONTENT_MAX_BYTES = 16_384
 UI_TODO_LABEL_MAX_BYTES = 64
-_FINAL_SESSION_ID_ADAPTER = TypeAdapter(SessionId)
+_FINAL_TASK_ID_ADAPTER = TypeAdapter(TaskId)
 
 
 def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
@@ -36,12 +32,12 @@ def _require_scopes(*required: str) -> None:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-def _session_id_arg(value: Any) -> str:
-    session_id = str(value or "").strip()
+def _task_id_arg(value: Any) -> str:
+    task_id = str(value or "").strip()
     try:
-        return str(_FINAL_SESSION_ID_ADAPTER.validate_python(session_id))
+        return str(_FINAL_TASK_ID_ADAPTER.validate_python(task_id))
     except ValidationError as exc:
-        raise ValueError("session_id must be a valid shared sess_ id") from exc
+        raise ValueError("task_id must be a valid task_ id") from exc
 
 
 def _require_todo_scopes(*, write: bool = False) -> None:
@@ -51,110 +47,24 @@ def _require_todo_scopes(*, write: bool = False) -> None:
     _require_scopes(*required)
 
 
-def _shared_session(request: Request, session_id: str) -> tuple[Any, Any]:
+def _runtime(request: Request) -> Any:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
         raise RuntimeError("Human UI Todos requires the control runtime")
-    record = runtime.control_state.snapshot_sessions().get(session_id)
-    if record is None:
-        raise LookupError(f"unknown shared session_id {session_id!r}")
-    return runtime, record
-
-
-def _bounded_text(
-    value: Any,
-    *,
-    field: str,
-    max_bytes: int,
-    default: str,
-    allow_empty: bool = True,
-) -> str:
-    normalized = str(value if value is not None else default)
-    if not normalized and not allow_empty:
-        raise ValueError(f"{field} must not be empty")
-    if len(normalized.encode("utf-8")) > max_bytes:
-        raise ValueError(f"{field} exceeds {max_bytes} encoded bytes")
-    return normalized
-
-
-def _todo_items(value: Any) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        raise ValueError("todos must be a JSON array")
-    settings = get_control_config()
-    if len(value) > settings.max_todos:
-        raise ValueError(
-            f"Refusing to write {len(value)} todos; max is {settings.max_todos}"
-        )
-    normalized: list[dict[str, str]] = []
-    identifiers: set[str] = set()
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise ValueError(f"todos[{index}] must be a JSON object")
-        identifier = _bounded_text(
-            item.get("id"),
-            field=f"todos[{index}].id",
-            max_bytes=UI_TODO_ID_MAX_BYTES,
-            default=str(index + 1),
-            allow_empty=False,
-        )
-        if identifier in identifiers:
-            raise ValueError(f"duplicate todo id: {identifier}")
-        identifiers.add(identifier)
-        normalized.append(
-            {
-                "id": identifier,
-                "content": _bounded_text(
-                    item.get("content"),
-                    field=f"todos[{index}].content",
-                    max_bytes=UI_TODO_CONTENT_MAX_BYTES,
-                    default="",
-                ),
-                "status": _bounded_text(
-                    item.get("status"),
-                    field=f"todos[{index}].status",
-                    max_bytes=UI_TODO_LABEL_MAX_BYTES,
-                    default="pending",
-                    allow_empty=False,
-                ),
-                "priority": _bounded_text(
-                    item.get("priority"),
-                    field=f"todos[{index}].priority",
-                    max_bytes=UI_TODO_LABEL_MAX_BYTES,
-                    default="medium",
-                    allow_empty=False,
-                ),
-            }
-        )
-    return normalized
-
-
-def _expected_revision(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError("expected_revision must be a non-negative integer")
-    return value
+    return runtime
 
 
 def _final_payload(
-    record: Any,
+    task_id: str,
     result: ReadTodosOutput | WriteTodosOutput,
     *,
-    task: Any | None = None,
+    task: TaskOutput,
 ) -> dict[str, Any]:
     settings = get_control_config()
-    session_id = str(record.session_id)
-    payload = {
-        "session_id": session_id,
-        "session": {
-            "session_id": session_id,
-            "executor_id": str(record.executor_id),
-            "workdir": record.resolved_workdir_display
-            or record.requested_workdir,
-            "label": record.label,
-            "created_at": float(record.created_at),
-            "updated_at": float(record.updated_at),
-            "expires_at": None,
-        },
+    return {
+        "task_id": task_id,
         **result.model_dump(mode="json"),
+        "task": task.model_dump(mode="json"),
         "limits": {
             "todos": settings.max_todos,
             "bytes": settings.max_todo_bytes,
@@ -163,68 +73,36 @@ def _final_payload(
             "label_bytes": UI_TODO_LABEL_MAX_BYTES,
         },
     }
-    if task is not None:
-        payload["task"] = task.model_dump(mode="json")
-    return payload
-
-
-async def _read_final(
-    runtime: Any, session_id: str
-) -> tuple[ReadTodosOutput, SessionTaskOutput]:
-    return await runtime.task_service.read_with_task(session_id)
-
-
-async def _write_final(
-    runtime: Any,
-    session_id: str,
-    todos: list[dict[str, str]],
-    expected_revision: int,
-) -> tuple[WriteTodosOutput, SessionTaskOutput]:
-    return await runtime.task_service.write_with_task(
-        session_id,
-        todos,
-        expected_revision,
-    )
 
 
 async def api_todos(request: Request) -> Response:
-    """Read or revision-guardedly replace one explicit session's todo list."""
+    """Read or replace one explicit task's Todo projection."""
     try:
+        runtime = _runtime(request)
         if request.method == "GET":
-            session_id = _session_id_arg(request.query_params.get("session_id"))
+            task_id = _task_id_arg(request.query_params.get("task_id"))
             _require_todo_scopes()
-            runtime, record = _shared_session(request, session_id)
-            result, task = await _read_final(runtime, session_id)
-            return _json_ok(_final_payload(record, result, task=task))
+            result, task = await runtime.task_service.read_with_task(task_id)
+            return _json_ok(_final_payload(task_id, result, task=task))
 
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("request body must be a JSON object")
-        session_id = _session_id_arg(body.get("session_id"))
+        task_id = _task_id_arg(body.get("task_id"))
         _require_todo_scopes(write=True)
-        expected_revision = _expected_revision(body.get("expected_revision"))
-        todos = _todo_items(body.get("todos"))
-        runtime, record = _shared_session(request, session_id)
-        result, task = await _write_final(
-            runtime,
-            session_id,
-            todos,
-            expected_revision,
+        todos = body.get("todos")
+        if not isinstance(todos, list):
+            raise ValueError("todos must be a JSON array")
+        result, task = await runtime.task_service.write_with_task(
+            task_id, todos
         )
-        return _json_ok(_final_payload(record, result, task=task))
+        return _json_ok(_final_payload(task_id, result, task=task))
     except HTTPException:
         raise
-    except TaskRevisionConflictError as exc:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": "revision_conflict",
-                "message": str(exc),
-            },
-            status_code=409,
-        )
     except LookupError as exc:
         return _json_error(exc, status_code=404)
+    except PermissionError as exc:
+        return _json_error(exc, status_code=403)
     except ConnectionError as exc:
         return _json_error(exc, status_code=503)
     except RuntimeError as exc:

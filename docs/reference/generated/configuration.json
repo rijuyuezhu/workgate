@@ -877,7 +877,7 @@
           {
             "code": "256"
           },
-          "Maximum durable agent/workspace sessions after stale-session pruning."
+          "Maximum durable execution sessions after stale-session pruning."
         ],
         [
           {
@@ -897,7 +897,7 @@
           {
             "code": "2592000"
           },
-          "Idle retention for durable agent/workspace sessions; 0 disables age-based expiry."
+          "Idle retention for durable execution sessions; 0 disables age-based expiry."
         ],
         [
           {
@@ -917,7 +917,7 @@
           {
             "code": "2000"
           },
-          "Maximum grounding snapshots retained for one agent session."
+          "Maximum grounding snapshots retained for one execution session."
         ],
         [
           {
@@ -2417,7 +2417,7 @@
       "cli": "--max-agent-sessions",
       "default": 256,
       "default_display": "256",
-      "description": "Maximum durable agent/workspace sessions after stale-session pruning.",
+      "description": "Maximum durable execution sessions after stale-session pruning.",
       "env": "WORKGATE_MAX_AGENT_SESSIONS",
       "name": "max_agent_sessions",
       "nullable": false,
@@ -2430,7 +2430,7 @@
       "cli": "--agent-session-retention-s",
       "default": 2592000,
       "default_display": "2592000",
-      "description": "Idle retention for durable agent/workspace sessions; 0 disables age-based expiry.",
+      "description": "Idle retention for durable execution sessions; 0 disables age-based expiry.",
       "env": "WORKGATE_AGENT_SESSION_RETENTION_S",
       "name": "agent_session_retention_s",
       "nullable": false,
@@ -2443,7 +2443,7 @@
       "cli": "--max-session-snapshots",
       "default": 2000,
       "default_display": "2000",
-      "description": "Maximum grounding snapshots retained for one agent session.",
+      "description": "Maximum grounding snapshots retained for one execution session.",
       "env": "WORKGATE_MAX_SESSION_SNAPSHOTS",
       "name": "max_session_snapshots",
       "nullable": false,

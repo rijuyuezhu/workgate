@@ -141,7 +141,7 @@ def test_audit_dual_writes_session_log_but_keeps_global_extras(
 
     audit("global_extra", detail="not owned by a session")
     call_id = "dual-write-call"
-    session_ids = audit_tool_call_start(
+    session_ids, _ = audit_tool_call_start(
         call_id=call_id,
         transport="http",
         tool="read",
@@ -184,7 +184,7 @@ def test_audit_skips_invalid_session_ids_without_leaving_running_calls(
     _configure_audit(tmp_path, monkeypatch)
     call_id = "invalid-session-id"
 
-    session_ids = audit_tool_call_start(
+    session_ids, _ = audit_tool_call_start(
         call_id=call_id,
         transport="http",
         tool="read",
@@ -290,7 +290,7 @@ def test_browser_audit_omits_page_body_and_url_secrets(tmp_path, monkeypatch):
     form_secret = "form-secret"
     call_id = "browser-output-redaction"
 
-    session_ids = audit_tool_call_start(
+    session_ids, _ = audit_tool_call_start(
         call_id=call_id,
         transport="mcp",
         tool="browser_act",

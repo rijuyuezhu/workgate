@@ -53,9 +53,8 @@ LOCAL_MCP_TOOL_NAMES = {
     "list_file_links",
     "revoke_file_link",
     "secret_scan",
-    "read_session_task",
-    "report_session_progress",
-    "update_session_plan",
+    "task",
+    "task_plan",
     "read_todos",
     "write_todos",
     "job",
@@ -135,7 +134,7 @@ async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_model_facing_tools_require_session_id_by_default(
+async def test_model_facing_tools_require_explicit_semantic_identity(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
@@ -143,29 +142,41 @@ async def test_model_facing_tools_require_session_id_by_default(
     clear_settings_cache()
 
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
-    sessionless_allowlist = {
+    identityless_allowlist = {
+        "audit_tail",
         "session_start",
+        "task",
         "version",
     }
 
-    assert sessionless_allowlist <= set(tools)
+    assert identityless_allowlist <= set(tools)
 
-    unexpected_sessionless = set()
+    unexpected_identityless = set()
     for name, tool in tools.items():
         required = set(tool.inputSchema.get("required", []))
         has_single_session = "session_id" in required
         has_copy_sessions = {"src_session_id", "dst_session_id"} <= required
+        has_task = "task_id" in required
         if (
-            not (has_single_session or has_copy_sessions)
-            and name not in sessionless_allowlist
+            not (has_single_session or has_copy_sessions or has_task)
+            and name not in identityless_allowlist
         ):
-            unexpected_sessionless.add(name)
+            unexpected_identityless.add(name)
 
-    assert unexpected_sessionless == set()
-    for name in sessionless_allowlist:
-        assert "session_id" not in set(
-            tools[name].inputSchema.get("required", [])
+    assert unexpected_identityless == set()
+    assert "session_id" not in set(
+        tools["task"].inputSchema.get("required", [])
+    )
+    assert "task_id" not in set(tools["task"].inputSchema.get("required", []))
+    for name in ("task", "task_plan", "write_todos"):
+        assert "expected_revision" not in set(
+            tools[name].inputSchema.get("properties", {})
         )
+    audit_properties = set(
+        tools["audit_tail"].inputSchema.get("properties", {})
+    )
+    assert {"task_id", "session_id"} <= audit_properties
+    assert not set(tools["audit_tail"].inputSchema.get("required", []))
 
 
 @pytest.mark.asyncio
@@ -491,8 +502,8 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
-    args = {"session_id": session["session_id"]}
+    task = client.post("/tools/task", json={"action": "create"}).json()
+    args = {"task_id": task["task_id"]}
     http_payload = client.get("/tools/todo", params=args).json()
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "read_todos", args
@@ -502,7 +513,7 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_http_session_task_matches_mcp_and_progress_mutates_it(
+async def test_http_task_matches_mcp_and_progress_mutates_it(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
@@ -513,32 +524,46 @@ async def test_http_session_task_matches_mcp_and_progress_mutates_it(
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
-    session_id = session["session_id"]
+    created = client.post(
+        "/tools/task",
+        json={"action": "create", "objective": "Durable task"},
+    )
+    assert created.status_code == 200
+    task_id = created.json()["task_id"]
     reported = client.post(
-        "/tools/session-progress",
+        "/tools/task",
         json={
-            "session_id": session_id,
-            "expected_revision": 0,
-            "objective": "Durable task",
+            "action": "report",
+            "task_id": task_id,
             "summary": "Reported over HTTP",
         },
     )
     assert reported.status_code == 200
-    assert reported.json()["revision"] == 1
 
-    args = {"session_id": session_id}
-    http_payload = client.get("/tools/session-task", params=args).json()
+    args = {"action": "get", "task_id": task_id}
+    http_payload = client.post("/tools/task", json=args).json()
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
-        "read_session_task", args
+        "task", args
     )
 
-    assert http_payload == _mcp_payload_data(mcp_response)
+    mcp_payload = _mcp_payload_data(mcp_response)
+    assert isinstance(mcp_payload, dict)
+    assert http_payload == mcp_payload["result"]
     assert http_payload["objective"] == "Durable task"
     assert http_payload["progress"]["summary"] == "Reported over HTTP"
 
 
-def test_http_task_mutations_reject_boolean_expected_revision(
+@pytest.mark.asyncio
+async def test_unrouted_todo_registry_stubs_fail_closed():
+    from workgate.tools.registry.todo import read_todos, write_todos
+
+    with pytest.raises(RuntimeError, match="requires control routing"):
+        await read_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA")
+    with pytest.raises(RuntimeError, match="requires control routing"):
+        await write_todos.func("task_AAAAAAAAAAAAAAAAAAAAAA", [])
+
+
+def test_http_task_router_validates_actions_and_covers_lifecycle(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
@@ -548,31 +573,99 @@ def test_http_task_mutations_reject_boolean_expected_revision(
     clear_settings_cache()
 
     client = TestClient(_build_paired_surface_http_app())
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
-    payload = {
-        "session_id": session["session_id"],
-        "expected_revision": True,
-    }
 
-    progress = client.post(
-        "/tools/session-progress",
-        json={**payload, "summary": "reject boolean revisions"},
-    )
-    plan = client.post(
-        "/tools/session-plan",
+    invalid_create = client.post(
+        "/tools/task",
         json={
-            **payload,
-            "steps": [{"id": "one", "content": "reject boolean revisions"}],
+            "action": "create",
+            "task_id": "task_AAAAAAAAAAAAAAAAAAAAAA",
         },
     )
+    invalid_create_report = client.post(
+        "/tools/task", json={"action": "create", "summary": "not allowed"}
+    )
+    missing_task = client.post("/tools/task", json={"action": "get"})
+    assert invalid_create.status_code == 400
+    assert invalid_create_report.status_code == 400
+    assert missing_task.status_code == 400
 
-    assert progress.status_code == 400
-    assert plan.status_code == 400
+    task_id = client.post("/tools/task", json={"action": "create"}).json()[
+        "task_id"
+    ]
+    invalid_get = client.post(
+        "/tools/task",
+        json={"action": "get", "task_id": task_id, "summary": "not allowed"},
+    )
+    invalid_block = client.post(
+        "/tools/task",
+        json={
+            "action": "block",
+            "task_id": task_id,
+            "label": "not allowed",
+        },
+    )
+    assert invalid_get.status_code == 400
+    assert invalid_block.status_code == 400
+
+    blocked = client.post(
+        "/tools/task",
+        json={"action": "block", "task_id": task_id},
+    )
+    resumed = client.post(
+        "/tools/task",
+        json={"action": "resume", "task_id": task_id},
+    )
+    finished = client.post(
+        "/tools/task",
+        json={"action": "finish", "task_id": task_id},
+    )
+    assert blocked.status_code == 200
+    assert resumed.status_code == 200
+    assert finished.status_code == 200
+
+    rejected_session = client.post(
+        "/tools/session_start", json={"workdir": ".", "task_id": task_id}
+    )
+    assert rejected_session.status_code == 400
+    assert "completed task" in rejected_session.json()["message"]
+
+    deleted = client.post(
+        "/tools/task",
+        json={"action": "delete", "task_id": task_id},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
 
 
-def test_http_task_stale_revision_is_conflict_and_plan_typos_are_rejected(
-    tmp_path, monkeypatch
-):
+def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    client = TestClient(_build_paired_surface_http_app())
+    task_id = client.post("/tools/task", json={"action": "create"}).json()[
+        "task_id"
+    ]
+    cancelled = client.post(
+        "/tools/task",
+        json={
+            "action": "cancel",
+            "task_id": task_id,
+        },
+    )
+    assert cancelled.status_code == 200
+
+    start = client.post(
+        "/tools/session_start",
+        json={"workdir": ".", "task_id": task_id},
+    )
+    assert start.status_code == 400
+    assert "cancelled task" in start.json()["message"]
+
+
+def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
@@ -582,35 +675,31 @@ def test_http_task_stale_revision_is_conflict_and_plan_typos_are_rejected(
     client = TestClient(
         _build_paired_surface_http_app(), raise_server_exceptions=False
     )
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
-    session_id = session["session_id"]
+    task_id = client.post("/tools/task", json={"action": "create"}).json()[
+        "task_id"
+    ]
     first = client.post(
-        "/tools/session-progress",
+        "/tools/task-plan",
         json={
-            "session_id": session_id,
-            "expected_revision": 0,
-            "summary": "advance revision",
+            "task_id": task_id,
+            "steps": [{"id": "one", "content": "first"}],
+        },
+    )
+    replacement = client.post(
+        "/tools/task-plan",
+        json={
+            "task_id": task_id,
+            "steps": [{"id": "one", "content": "replacement"}],
         },
     )
     assert first.status_code == 200
-
-    stale = client.post(
-        "/tools/session-plan",
-        json={
-            "session_id": session_id,
-            "expected_revision": 0,
-            "steps": [{"id": "one", "content": "stale"}],
-        },
-    )
-    assert stale.status_code == 409
-    assert stale.json()["error"] == "revision_conflict"
-    assert "revision 0 to 1" in stale.json()["message"]
+    assert replacement.status_code == 200
+    assert replacement.json()["plan"]["steps"][0]["content"] == "replacement"
 
     typo = client.post(
-        "/tools/session-plan",
+        "/tools/task-plan",
         json={
-            "session_id": session_id,
-            "expected_revision": 1,
+            "task_id": task_id,
             "steps": [
                 {
                     "id": "one",
@@ -651,11 +740,11 @@ def test_http_tool_name_is_not_request_overridable(tmp_path, monkeypatch):
     clear_settings_cache()
 
     client = TestClient(_build_paired_surface_http_app())
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    task = client.post("/tools/task", json={"action": "create"}).json()
     response = client.get(
         "/tools/todo",
         params={
-            "session_id": session["session_id"],
+            "task_id": task["task_id"],
             "tool_name": "list_persistent_shells",
         },
     )
@@ -750,7 +839,7 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
     assert prune_response.json()["links"] == []
 
 
-def test_todos_are_session_scoped(tmp_path, monkeypatch):
+def test_todos_are_task_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
@@ -758,33 +847,39 @@ def test_todos_are_session_scoped(tmp_path, monkeypatch):
     clear_settings_cache()
 
     client = TestClient(_build_paired_surface_http_app())
-    first = client.post("/tools/session_start", json={"workdir": "."}).json()[
-        "session_id"
+    first = client.post("/tools/task", json={"action": "create"}).json()[
+        "task_id"
     ]
-    second = client.post("/tools/session_start", json={"workdir": "."}).json()[
-        "session_id"
+    second = client.post("/tools/task", json={"action": "create"}).json()[
+        "task_id"
     ]
     first_items = [{"id": "first", "content": "one"}]
     second_items = [{"id": "second", "content": "two"}]
 
     assert (
         client.post(
-            "/tools/todo", json={"session_id": first, "todos": first_items}
+            "/tools/todo",
+            json={
+                "task_id": first,
+                "todos": first_items,
+            },
         ).status_code
         == 200
     )
     assert (
         client.post(
-            "/tools/todo", json={"session_id": second, "todos": second_items}
+            "/tools/todo",
+            json={
+                "task_id": second,
+                "todos": second_items,
+            },
         ).status_code
         == 200
     )
 
-    first_payload = client.get(
-        "/tools/todo", params={"session_id": first}
-    ).json()
+    first_payload = client.get("/tools/todo", params={"task_id": first}).json()
     second_payload = client.get(
-        "/tools/todo", params={"session_id": second}
+        "/tools/todo", params={"task_id": second}
     ).json()
     assert first_payload["todos"][0]["id"] == "first"
     assert first_payload["todos"][0]["content"] == "one"

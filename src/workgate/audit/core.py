@@ -53,6 +53,9 @@ _CURRENT_AUDIT_CALL_ID: ContextVar[str | None] = ContextVar(
 _CURRENT_AUDIT_SESSION_IDS: ContextVar[tuple[str, ...]] = ContextVar(
     "workgate_audit_session_ids", default=()
 )
+_CURRENT_AUDIT_TASK_IDS: ContextVar[tuple[str, ...]] = ContextVar(
+    "workgate_audit_task_ids", default=()
+)
 _AUDIT_PAYLOAD_SWEEP_INTERVAL_S = 60.0
 _AUDIT_PAYLOAD_SWEEP_TIMES: dict[str, float] = {}
 _AUDIT_MAX_DEPTH = 12
@@ -67,9 +70,8 @@ _AUDIT_CYCLE_KEY = "$workgate_audit_cycle"
 _AUDIT_SAFE_IDENTIFIER_SUFFIXES = ("_sha256", "_fingerprint", "_token_id")
 _AUDIT_REDACTED_TOOL_PAYLOADS = frozenset(
     {
-        "read_session_task",
-        "report_session_progress",
-        "update_session_plan",
+        "task",
+        "task_plan",
         "read_todos",
         "write_todos",
     }
@@ -549,14 +551,19 @@ def current_audit_call_id() -> str | None:
 
 @contextmanager
 def audit_call_context(
-    call_id: str, session_ids: tuple[str, ...] = ()
+    call_id: str,
+    session_ids: tuple[str, ...] = (),
+    task_ids: tuple[str, ...] = (),
 ) -> Generator[None]:
-    """Bind lifecycle and session ids while a public tool implementation runs."""
+    """Bind lifecycle, execution-session, and semantic-task ids for one tool."""
     call_token = _CURRENT_AUDIT_CALL_ID.set(call_id)
     session_token = _CURRENT_AUDIT_SESSION_IDS.set(session_ids)
+    resolved_task_ids = task_ids or _task_ids_for_session_ids(session_ids)
+    task_token = _CURRENT_AUDIT_TASK_IDS.set(resolved_task_ids)
     try:
         yield
     finally:
+        _CURRENT_AUDIT_TASK_IDS.reset(task_token)
         _CURRENT_AUDIT_SESSION_IDS.reset(session_token)
         _CURRENT_AUDIT_CALL_ID.reset(call_token)
 
@@ -766,24 +773,50 @@ def _audit_node(record: dict[str, Any]) -> str:
     return str(record.get("machine") or record.get("node") or "local")
 
 
-def _audit_session(record: dict[str, Any]) -> str:
+def _record_string_ids(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(
+        dict.fromkeys(item for item in value if isinstance(item, str) and item)
+    )
+
+
+def _audit_sessions(record: dict[str, Any]) -> tuple[str, ...]:
+    sessions = list(_record_string_ids(record.get("session_ids")))
     direct = (
         record.get("session_id")
         or record.get("session")
         or record.get("shell_id")
     )
-    if direct:
-        return str(direct)
+    if isinstance(direct, str) and direct:
+        sessions.append(direct)
     call_input = _audit_call_input(record)
     if isinstance(call_input, dict):
-        nested = (
-            call_input.get("session_id")
-            or call_input.get("session")
-            or call_input.get("shell_id")
-        )
-        if nested:
-            return str(nested)
-    return ""
+        sessions.extend(tool_input_session_ids(call_input))
+    return tuple(dict.fromkeys(sessions))
+
+
+def _audit_session(record: dict[str, Any]) -> str:
+    sessions = _audit_sessions(record)
+    return sessions[0] if sessions else ""
+
+
+def _audit_tasks(record: dict[str, Any]) -> tuple[str, ...]:
+    tasks = list(_record_string_ids(record.get("task_ids")))
+    direct = record.get("task_id") or record.get("task")
+    if isinstance(direct, str) and direct:
+        tasks.append(direct)
+    call_input = _audit_call_input(record)
+    if isinstance(call_input, dict):
+        nested = call_input.get("task_id") or call_input.get("task")
+        if isinstance(nested, str) and nested:
+            tasks.append(nested)
+    return tuple(dict.fromkeys(tasks))
+
+
+def _audit_task(record: dict[str, Any]) -> str:
+    tasks = _audit_tasks(record)
+    return tasks[0] if tasks else ""
 
 
 def _audit_call_key(record: dict[str, Any]) -> tuple[str, str, str]:
@@ -801,6 +834,45 @@ def _audit_call_input(record: dict[str, Any]) -> Any:
     if isinstance(arguments, dict):
         return arguments.get("keyword_args", arguments)
     return None
+
+
+def _merge_audit_identity(
+    entry: dict[str, Any], record: dict[str, Any]
+) -> None:
+    sessions = tuple(
+        dict.fromkeys(
+            (
+                *_record_string_ids(entry.get("session_ids")),
+                *(
+                    (str(entry["session"]),)
+                    if isinstance(entry.get("session"), str)
+                    and entry.get("session")
+                    else ()
+                ),
+                *_audit_sessions(record),
+            )
+        )
+    )
+    if sessions:
+        entry["session"] = sessions[0]
+        entry["session_ids"] = list(sessions)
+
+    tasks = tuple(
+        dict.fromkeys(
+            (
+                *_record_string_ids(entry.get("task_ids")),
+                *(
+                    (str(entry["task"]),)
+                    if isinstance(entry.get("task"), str) and entry.get("task")
+                    else ()
+                ),
+                *_audit_tasks(record),
+            )
+        )
+    )
+    if tasks:
+        entry["task"] = tasks[0]
+        entry["task_ids"] = list(tasks)
 
 
 def _new_audit_call_entry(record: dict[str, Any], index: int) -> dict[str, Any]:
@@ -823,9 +895,7 @@ def _new_audit_call_entry(record: dict[str, Any], index: int) -> dict[str, Any]:
     }
     if call_id:
         entry["call_id"] = call_id
-    session = _audit_session(record)
-    if session:
-        entry["session"] = session
+    _merge_audit_identity(entry, record)
     call_input = _audit_call_input(record)
     if call_input is not None:
         entry["input"] = call_input
@@ -847,6 +917,7 @@ def _finish_audit_call_entry(
     for name in ("duration_ms", "output", "error", "error_type"):
         if name in record:
             entry[name] = record[name]
+    _merge_audit_identity(entry, record)
 
 
 def _unpaired_audit_end_entry(
@@ -871,9 +942,7 @@ def _unpaired_audit_end_entry(
     }
     if call_id:
         entry["call_id"] = call_id
-    session = _audit_session(record)
-    if session:
-        entry["session"] = session
+    _merge_audit_identity(entry, record)
     for name in ("ok", "duration_ms", "output", "error", "error_type"):
         if name in record:
             entry[name] = record[name]
@@ -912,6 +981,7 @@ def _coalesce_audit_records(
                 nested = _nested_audit_event(record)
                 if nested is not None:
                     parent.setdefault("related_events", []).append(nested)
+                    _merge_audit_identity(parent, record)
                 continue
             if event in _AUDIT_LIFECYCLE_EVENTS:
                 continue
@@ -950,9 +1020,7 @@ def _coalesce_audit_records(
             "operation": _audit_operation(record),
             _AUDIT_SOURCE_INDEXES: [index],
         }
-        session = _audit_session(record)
-        if session and not row.get("session"):
-            row["session"] = session
+        _merge_audit_identity(row, record)
         rows.append(row)
     return rows
 
@@ -981,6 +1049,9 @@ def summarize_audit_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "ok",
         "duration_ms",
         "session",
+        "session_ids",
+        "task",
+        "task_ids",
         "call_id",
     ):
         if name in entry:
@@ -1082,6 +1153,9 @@ def _audit_search_document(row: dict[str, Any]) -> str:
         "node": row.get("node"),
         "operation": row.get("operation"),
         "session": row.get("session"),
+        "session_ids": row.get("session_ids"),
+        "task_ids": row.get("task_ids"),
+        "task": row.get("task"),
         "status": row.get("status"),
         "ok": row.get("ok"),
         "call_id": row.get("call_id"),
@@ -1095,6 +1169,7 @@ def query_audit(
     event: str | None = None,
     operation: str | None = None,
     session: str | None = None,
+    task: str | None = None,
     search: str | None = None,
     start_ts: float | None = None,
     end_ts: float | None = None,
@@ -1115,6 +1190,12 @@ def query_audit(
     event_filter = (event or "").casefold().strip()
     operation_filter = (operation or "").casefold().strip()
     session_filter = (session or "").casefold().strip()
+    task_filter = (task or "").casefold().strip()
+    task_session_ids = (
+        {value.casefold() for value in _session_ids_for_task_id(str(task))}
+        if task_filter
+        else set()
+    )
     matched: list[dict[str, Any]] = []
     for row in rows:
         if exclude_call_id and str(row.get("call_id") or "") == exclude_call_id:
@@ -1137,11 +1218,36 @@ def query_audit(
             and operation_filter != str(row.get("operation") or "").casefold()
         ):
             continue
-        if (
-            session_filter
-            and session_filter != str(row.get("session") or "").casefold()
-        ):
+        row_sessions = {
+            value.casefold()
+            for value in (
+                *_record_string_ids(row.get("session_ids")),
+                *(
+                    (str(row["session"]),)
+                    if isinstance(row.get("session"), str)
+                    and row.get("session")
+                    else ()
+                ),
+            )
+        }
+        if session_filter and session_filter not in row_sessions:
             continue
+        if task_filter:
+            row_tasks = {
+                value.casefold()
+                for value in (
+                    *_record_string_ids(row.get("task_ids")),
+                    *(
+                        (str(row["task"]),)
+                        if isinstance(row.get("task"), str) and row.get("task")
+                        else ()
+                    ),
+                )
+            }
+            if task_filter not in row_tasks and not (
+                not row_tasks and row_sessions & task_session_ids
+            ):
+                continue
         if needle and needle not in _audit_search_document(row):
             continue
         matched.append(row)
@@ -1212,6 +1318,99 @@ def get_session_audit_entry(
     )
 
 
+def _task_ids_for_session_ids(session_ids: tuple[str, ...]) -> tuple[str, ...]:
+    """Resolve durable task attachments without importing control runtime state."""
+    if not session_ids:
+        return ()
+    try:
+        state_store = get_state_store()
+        payload = state_store.read_json(
+            state_store.layout.control_sessions_path
+        )
+    except Exception:
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    rows = payload.get("sessions")
+    if not isinstance(rows, list):
+        return ()
+    wanted = set(session_ids)
+    task_ids: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("session_id") or "") not in wanted:
+            continue
+        task_id = row.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            task_ids.append(task_id)
+    return tuple(dict.fromkeys(task_ids))
+
+
+def _session_ids_for_task_id(task_id: str) -> tuple[str, ...]:
+    """Resolve retained execution-session attachments for one semantic task."""
+    if not task_id:
+        return ()
+    try:
+        state_store = get_state_store()
+        payload = state_store.read_json(
+            state_store.layout.control_sessions_path
+        )
+    except Exception:
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    rows = payload.get("sessions")
+    if not isinstance(rows, list):
+        return ()
+    session_ids: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("task_id") or "") != task_id:
+            continue
+        session_id = row.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            session_ids.append(session_id)
+    return tuple(dict.fromkeys(session_ids))
+
+
+def _audit_tool_input_task_ids(
+    value: Any, session_ids: tuple[str, ...] = ()
+) -> tuple[str, ...]:
+    """Extract explicit task identity plus task attachments of session arguments."""
+    task_ids: list[str] = []
+    if isinstance(value, Mapping):
+        task_id = value.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            task_ids.append(task_id)
+    task_ids.extend(_task_ids_for_session_ids(session_ids))
+    return tuple(dict.fromkeys(task_ids))
+
+
+def _tool_output_identity_ids(
+    tool: str, value: Any
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Extract identities only from tools that create semantic identities."""
+    if tool not in {"session_start", "task"} or not isinstance(value, Mapping):
+        return (), ()
+    mappings: list[Mapping[str, Any]] = [value]
+    result = value.get("result")
+    if isinstance(result, Mapping):
+        mappings.append(result)
+    session_ids: list[str] = []
+    task_ids: list[str] = []
+    for mapping in mappings:
+        if tool == "session_start":
+            session_ids.extend(tool_input_session_ids(mapping))
+        explicit_task = mapping.get("task_id")
+        if isinstance(explicit_task, str) and explicit_task:
+            task_ids.append(explicit_task)
+    resolved_sessions = tuple(dict.fromkeys(session_ids))
+    task_ids.extend(_task_ids_for_session_ids(resolved_sessions))
+    return resolved_sessions, tuple(dict.fromkeys(task_ids))
+
+
 def _audit_record_session_ids(fields: Mapping[str, Any]) -> tuple[str, ...]:
     """Return explicit or context-bound sessions that own one audit record."""
     explicit: list[str] = []
@@ -1229,6 +1428,31 @@ def _audit_record_session_ids(fields: Mapping[str, Any]) -> tuple[str, ...]:
     if not explicit:
         explicit.extend(_CURRENT_AUDIT_SESSION_IDS.get())
     return tuple(dict.fromkeys(explicit))
+
+
+def _audit_record_task_ids(
+    fields: Mapping[str, Any], session_ids: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Return explicit or context-bound semantic tasks for one audit record."""
+    task_ids: list[str] = []
+    values = fields.get("task_ids")
+    if isinstance(values, list | tuple):
+        task_ids.extend(
+            value for value in values if isinstance(value, str) and value
+        )
+    for name in ("task_id", "task"):
+        value = fields.get(name)
+        if isinstance(value, str) and value:
+            task_ids.append(value)
+    if not task_ids:
+        nested = fields.get("input")
+        if isinstance(nested, Mapping):
+            task_ids.extend(_audit_tool_input_task_ids(nested, session_ids))
+    if not task_ids:
+        task_ids.extend(_CURRENT_AUDIT_TASK_IDS.get())
+    if not task_ids:
+        task_ids.extend(_task_ids_for_session_ids(session_ids))
+    return tuple(dict.fromkeys(task_ids))
 
 
 def _append_session_audit_records(
@@ -1260,6 +1484,11 @@ def audit(event: str, **fields: Any) -> None:
     if parent_call_id and "parent_call_id" not in fields:
         fields = {**fields, "parent_call_id": parent_call_id}
     session_ids = _audit_record_session_ids(fields)
+    task_ids = _audit_record_task_ids(fields, session_ids)
+    if task_ids:
+        fields = dict(fields)
+        fields.setdefault("task", task_ids[0])
+        fields.setdefault("task_ids", list(task_ids))
     event_limit = max(512, int(settings.max_audit_event_bytes))
     if settings.max_audit_log_bytes > 0:
         event_limit = min(
@@ -1325,8 +1554,8 @@ def audit_tool_call_start(
     transport: str,
     tool: str,
     input: Any,
-) -> tuple[str, ...]:
-    """Record the bounded input and caller context for one tool call."""
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Record one tool-call start and return its execution/task identities."""
     audit_input = _redact_browser_tool_input(tool, input)
     fields: dict[str, Any] = {
         "call_id": call_id,
@@ -1335,11 +1564,15 @@ def audit_tool_call_start(
         "input": _tool_audit_projection(tool, audit_input),
     }
     session_ids = tool_input_session_ids(input)
+    task_ids = _audit_tool_input_task_ids(input, session_ids)
     if session_ids:
         fields["session"] = session_ids[0]
         fields["session_ids"] = list(session_ids)
+    if task_ids:
+        fields["task"] = task_ids[0]
+        fields["task_ids"] = list(task_ids)
     audit("tool_call_start", **fields)
-    return session_ids
+    return session_ids, task_ids
 
 
 def audit_tool_call_end(
@@ -1352,8 +1585,14 @@ def audit_tool_call_end(
     output: Any = None,
     error: dict[str, Any] | None = None,
     session_ids: tuple[str, ...] = (),
+    task_ids: tuple[str, ...] = (),
 ) -> None:
     """Record the bounded output or nested exception details for one tool call."""
+    if error is None:
+        output_sessions, output_tasks = _tool_output_identity_ids(tool, output)
+        session_ids = tuple(dict.fromkeys((*session_ids, *output_sessions)))
+        task_ids = tuple(dict.fromkeys((*task_ids, *output_tasks)))
+
     fields: dict[str, Any] = {
         "call_id": call_id,
         "transport": transport,
@@ -1364,6 +1603,9 @@ def audit_tool_call_end(
     if session_ids:
         fields["session"] = session_ids[0]
         fields["session_ids"] = list(session_ids)
+    if task_ids:
+        fields["task"] = task_ids[0]
+        fields["task_ids"] = list(task_ids)
     if error is not None:
         fields["error"] = _redact_browser_tool_error(tool, error)
     else:

@@ -8,7 +8,7 @@ AgentSessionIdArg = Annotated[
     str,
     Field(
         description=(
-            "Required shared session id. The bound executor adds "
+            "Required execution session id. The bound executor adds "
             "<workdir>/.agents/skills as the highest-priority source."
         )
     ),
@@ -17,7 +17,7 @@ AgentMcpSessionIdArg = Annotated[
     str | None,
     Field(
         description=(
-            "Optional shared session id. Pass it to include/call stdio MCP "
+            "Optional execution session id. Pass it to include/call stdio MCP "
             "servers owned by the executor bound to that session."
         )
     ),

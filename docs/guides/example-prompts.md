@@ -23,13 +23,13 @@ Help me pair a Workgate executor named gpu1 with my control service. Give me the
 ## Inspect an executor
 
 ```text
-Use workgate on executor gpu1 in /home/me/project. Start a shared session there, inspect the repository and environment, run git status, and report what is available before editing.
+Use workgate on executor gpu1 in /home/me/project. Start an execution session there, inspect the repository and environment, run git status, and report what is available before editing.
 ```
 
 ## Run a test on an executor
 
 ```text
-Use workgate on executor gpu1. Start or reuse the appropriate shared session, find the relevant test for the requested change, run it as a bounded or background job as appropriate, and summarize the result.
+Use workgate on executor gpu1. Start or reuse the appropriate execution session, find the relevant test for the requested change, run it as a bounded or background job as appropriate, and summarize the result.
 ```
 
 ## Copy an artifact

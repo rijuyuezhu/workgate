@@ -17,6 +17,10 @@ SessionId = Annotated[
     str,
     StringConstraints(pattern=r"^sess_[A-Za-z0-9_-]{22,}$", max_length=128),
 ]
+TaskId = Annotated[
+    str,
+    StringConstraints(pattern=r"^task_[A-Za-z0-9_-]{22,}$", max_length=128),
+]
 CommandId = Annotated[
     str,
     StringConstraints(pattern=r"^cmd_[A-Za-z0-9_-]{22,}$", max_length=128),
@@ -52,6 +56,11 @@ def new_executor_id() -> str:
 def new_session_id() -> str:
     """Return a new shared control/executor session identifier."""
     return _new_opaque_id("sess_")
+
+
+def new_task_id() -> str:
+    """Return a new durable semantic task identifier."""
+    return _new_opaque_id("task_")
 
 
 def new_command_id() -> str:

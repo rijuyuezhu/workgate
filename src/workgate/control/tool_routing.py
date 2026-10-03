@@ -24,9 +24,7 @@ _SESSION_CONTROL_TOOLS = frozenset(
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
     {"create_file_link", "list_file_links", "revoke_file_link"}
 )
-_TASK_CONTROL_TOOLS = frozenset(
-    {"read_session_task", "report_session_progress", "update_session_plan"}
-)
+_TASK_CONTROL_TOOLS = frozenset({"task", "task_plan"})
 _TODO_CONTROL_TOOLS = frozenset({"read_todos", "write_todos"})
 _AUDIT_CONTROL_TOOLS = frozenset({"audit_tail"})
 _JOB_CONTROL_TOOLS = frozenset({"job"})
@@ -58,10 +56,12 @@ class ControlToolRouter:
 
     async def invoke(self, tool_name: str, args: dict[str, Any]) -> Any:
         if tool_name == "session_start":
+            task_id = args.get("task_id")
             return await self._sessions.start_session(
                 workdir=str(args["workdir"]),
                 label=args.get("label"),
                 executor_id=args.get("executor_id"),
+                task_id=str(task_id) if task_id is not None else None,
             )
         if tool_name == "session_change_cwd":
             return await self._sessions.change_cwd(
@@ -94,40 +94,86 @@ class ControlToolRouter:
                 include_finished=bool(args.get("include_finished", True)),
                 lines=int(args.get("lines", 200)),
             )
-        if tool_name == "read_session_task":
-            return await self._tasks.read_task(str(args["session_id"]))
-        if tool_name == "report_session_progress":
-            return await self._tasks.report_progress(
-                str(args["session_id"]),
-                expected_revision=args["expected_revision"],
-                objective=args.get("objective"),
-                summary=args.get("summary"),
-                findings=args.get("findings"),
-                next_action=args.get("next_action"),
-                blockers=args.get("blockers"),
-                task_status=args.get("task_status"),
-            )
-        if tool_name == "update_session_plan":
+        if tool_name == "task":
+            action = str(args["action"])
+            task_id = args.get("task_id")
+            report_fields = {
+                "label": args.get("label"),
+                "objective": args.get("objective"),
+                "summary": args.get("summary"),
+                "findings": args.get("findings"),
+                "next_action": args.get("next_action"),
+                "blockers": args.get("blockers"),
+            }
+            if action == "create":
+                if task_id is not None:
+                    raise ValueError("task_id is not valid for action=create")
+                if any(
+                    report_fields[name] is not None
+                    for name in (
+                        "summary",
+                        "findings",
+                        "next_action",
+                        "blockers",
+                    )
+                ):
+                    raise ValueError(
+                        "action=create accepts only label and objective task fields"
+                    )
+                return await self._tasks.create_task(
+                    label=report_fields["label"],
+                    objective=report_fields["objective"],
+                )
+            if task_id is None:
+                raise ValueError(f"task_id is required for action={action}")
+            task_id = str(task_id)
+            if action == "get":
+                if any(value is not None for value in report_fields.values()):
+                    raise ValueError(
+                        "action=get does not accept mutation fields"
+                    )
+                return await self._tasks.read_task(task_id)
+            if action == "report":
+                return await self._tasks.report_progress(
+                    task_id,
+                    **report_fields,
+                )
+            if any(value is not None for value in report_fields.values()):
+                raise ValueError(
+                    f"action={action} does not accept report fields"
+                )
+            if action == "block":
+                return await self._tasks.block_task(task_id)
+            if action == "resume":
+                return await self._tasks.resume_task(task_id)
+            if action == "finish":
+                return await self._tasks.finish_task(task_id)
+            if action == "cancel":
+                return await self._tasks.cancel_task(task_id)
+            if action == "delete":
+                return await self._tasks.delete_task(task_id)
+            raise ValueError(f"unsupported task action: {action}")
+        if tool_name == "task_plan":
             return await self._tasks.update_plan(
-                str(args["session_id"]),
-                expected_revision=args["expected_revision"],
+                str(args["task_id"]),
                 steps=args["steps"],
             )
         if tool_name == "read_todos":
-            return await self._tasks.read(str(args["session_id"]))
+            return await self._tasks.read(str(args["task_id"]))
         if tool_name == "write_todos":
             return await self._tasks.write(
-                str(args["session_id"]),
+                str(args["task_id"]),
                 list(args.get("todos") or []),
-                args.get("expected_revision"),
             )
         if tool_name == "audit_tail":
+            task_id = args.get("task_id")
+            session_id = args.get("session_id")
             return await self._audit.execute(
-                session_id=str(args["session_id"]),
+                task_id=str(task_id) if task_id is not None else None,
+                session_id=str(session_id) if session_id is not None else None,
                 limit=int(args.get("limit", 100)),
                 event=args.get("event"),
                 operation=args.get("operation"),
-                audit_session=args.get("audit_session"),
                 search=args.get("search"),
                 start_ts=args.get("start_ts"),
                 end_ts=args.get("end_ts"),

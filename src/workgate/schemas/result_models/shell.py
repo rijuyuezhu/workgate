@@ -56,7 +56,7 @@ class ShellExecutionOutput(BaseModel):
         description="Resolved working directory used for this shell execution."
     )
     result: dict[str, Any] = Field(
-        description="Structured result from the selected shell mode: bounded command output, async job metadata with owning agent session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools."
+        description="Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools."
     )
 
 
@@ -73,7 +73,7 @@ class RunPythonCodeOutput(BaseModel):
         description="Resolved working directory used for this Python execution."
     )
     result: dict[str, Any] = Field(
-        description="Structured result from the selected shell mode: bounded command output, async job metadata with owning agent session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools."
+        description="Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools."
     )
     script_path: str = Field(
         description="Path to the temporary Python script that was executed."

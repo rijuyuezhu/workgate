@@ -1,14 +1,14 @@
-"""Typed structured outputs for the session-scoped Live Workspace MCP App."""
+"""Typed structured outputs for the task-centric Live Workspace MCP App."""
 
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .task import SessionTaskDocument
+from .task import TaskOutput
 
 
 class LiveWorkspaceSession(BaseModel):
-    """Canonical Workgate session identity and availability projection."""
+    """One execution session attached to the displayed semantic task."""
 
     session_id: str
     label: str | None = None
@@ -23,7 +23,7 @@ class LiveWorkspaceSession(BaseModel):
 
 
 class LiveWorkspaceJob(BaseModel):
-    """Bounded job metadata safe for the compact Live Workspace."""
+    """Bounded job metadata for one explicitly selected execution session."""
 
     job_id: str
     kind: str
@@ -46,19 +46,20 @@ class LiveWorkspaceShell(BaseModel):
 
 
 class LiveWorkspaceActivity(BaseModel):
-    """Allow-listed audit identity fields for recent activity."""
+    """Allow-listed task-attributed audit identity fields."""
 
     id: str | None = None
     ts: float | None = None
     event: str | None = None
     tool: str | None = None
     operation: str | None = None
+    session: str | None = None
     ok: bool | None = None
     duration_ms: float | None = None
 
 
 class LiveWorkspaceLinks(BaseModel):
-    """Links to fuller authenticated Human UI views."""
+    """Links to fuller authenticated Human UI views for a selected session."""
 
     sessions: str
     files: str
@@ -67,11 +68,15 @@ class LiveWorkspaceLinks(BaseModel):
 
 
 class LiveWorkspaceSnapshot(BaseModel):
-    """Server-reconstructed view of one explicit Workgate session."""
+    """Task view with its execution-session attachments."""
 
-    version: Literal[1] = 1
-    session: LiveWorkspaceSession
-    task: SessionTaskDocument
+    version: Literal[2] = 2
+    task: TaskOutput
+    sessions: list[LiveWorkspaceSession] = Field(default_factory=list)
+    session: LiveWorkspaceSession | None = Field(
+        default=None,
+        description="Explicitly selected execution session, if any.",
+    )
     task_control_actions: list[
         Literal["block", "resume", "cancel", "next_instruction"]
     ] = Field(default_factory=list)
@@ -81,4 +86,4 @@ class LiveWorkspaceSnapshot(BaseModel):
     shells: list[LiveWorkspaceShell] = Field(default_factory=list)
     shells_message: str | None = None
     activity: list[LiveWorkspaceActivity] = Field(default_factory=list)
-    links: LiveWorkspaceLinks
+    links: LiveWorkspaceLinks | None = None

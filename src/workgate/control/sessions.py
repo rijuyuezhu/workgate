@@ -58,6 +58,8 @@ class ControlSessionCoordinator:
         *,
         max_agent_sessions: int | None = None,
         agent_session_retention_s: int = 0,
+        task_session_admitter: Callable[[ControlSessionRecord], None]
+        | None = None,
         clock=time.time,
     ) -> None:
         self._state = state
@@ -70,6 +72,7 @@ class ControlSessionCoordinator:
         self._reconcile_tasks: set[asyncio.Task[None]] = set()
         self._missing_by_executor: dict[str, dict[str, float]] = {}
         self._activity_by_session: dict[str, float] = {}
+        self._task_session_admitter = task_session_admitter
         self._auto_cleanup_blocked: Callable[[str], Awaitable[bool]] | None = (
             None
         )
@@ -134,6 +137,7 @@ class ControlSessionCoordinator:
         workdir: str,
         label: str | None = None,
         executor_id: str | None = None,
+        task_id: str | None = None,
     ) -> JsonValue:
         selected = await self.select_executor(executor_id)
         session_id = str(new_session_id())
@@ -144,6 +148,7 @@ class ControlSessionCoordinator:
             record = ControlSessionRecord(
                 session_id=session_id,
                 executor_id=selected,
+                task_id=task_id,
                 requested_workdir=workdir,
                 resolved_workdir_display=None,
                 label=label,
@@ -151,7 +156,12 @@ class ControlSessionCoordinator:
                 created_at=now,
                 updated_at=now,
             )
-            self._state.put_session(record)
+            if record.task_id is None:
+                self._state.put_session(record)
+            elif self._task_session_admitter is None:
+                raise ValueError("semantic task attachment is unavailable")
+            else:
+                self._task_session_admitter(record)
         lock = self._lock(session_id)
         async with lock:
             try:
@@ -226,14 +236,11 @@ class ControlSessionCoordinator:
             payload = self._unwrap(result)
             resolved = self._resolved_workdir(payload)
             now = self._clock()
-            self._state.put_session(
-                record.model_copy(
-                    update={
-                        "requested_workdir": workdir,
-                        "resolved_workdir_display": resolved,
-                        "updated_at": now,
-                    }
-                )
+            record = self._state.update_session(
+                session_id,
+                requested_workdir=workdir,
+                resolved_workdir_display=resolved,
+                updated_at=now,
             )
             self.observe_session_activity(session_id, observed_at=now)
             return self._with_executor_binding(record, payload)
@@ -253,13 +260,9 @@ class ControlSessionCoordinator:
     ) -> dict[str, Any]:
         session_id = str(record.session_id)
         if record.status != "terminating":
-            record = record.model_copy(
-                update={
-                    "status": "terminating",
-                    "updated_at": self._clock(),
-                }
+            record = self._state.update_session(
+                session_id, status="terminating", updated_at=self._clock()
             )
-            self._state.put_session(record)
         control_stopped_jobs: list[str] = []
         if self._before_terminate is not None:
             control_stopped_jobs = await self._before_terminate(session_id)
@@ -461,7 +464,7 @@ class ControlSessionCoordinator:
         maximum = self._max_agent_sessions
         if maximum is not None and self._nonended_session_count() >= maximum:
             raise RuntimeError(
-                "agent session limit reached: "
+                "execution session limit reached: "
                 f"{maximum}; end an active session or wait for retention cleanup"
             )
 
@@ -499,14 +502,11 @@ class ControlSessionCoordinator:
                 if record.status == "creating" or (
                     record.resolved_workdir_display != item.resolved_workdir
                 ):
-                    self._state.put_session(
-                        record.model_copy(
-                            update={
-                                "status": "active",
-                                "resolved_workdir_display": item.resolved_workdir,
-                                "updated_at": self._clock(),
-                            }
-                        )
+                    self._state.update_session(
+                        session_id,
+                        status="active",
+                        resolved_workdir_display=item.resolved_workdir,
+                        updated_at=self._clock(),
                     )
                 continue
             if record.status == "active":
@@ -647,14 +647,11 @@ class ControlSessionCoordinator:
         payload = self._unwrap(result)
         resolved = self._resolved_workdir(payload)
         now = self._clock()
-        self._state.put_session(
-            record.model_copy(
-                update={
-                    "status": "active",
-                    "resolved_workdir_display": resolved,
-                    "updated_at": now,
-                }
-            )
+        record = self._state.update_session(
+            str(record.session_id),
+            status="active",
+            resolved_workdir_display=resolved,
+            updated_at=now,
         )
         self.observe_session_activity(str(record.session_id), observed_at=now)
         return self._with_executor_binding(record, payload)
@@ -681,14 +678,11 @@ class ControlSessionCoordinator:
             item = SessionInventorySummary.model_validate(result.result)
         except Exception:
             return
-        self._state.put_session(
-            record.model_copy(
-                update={
-                    "status": "active",
-                    "resolved_workdir_display": item.resolved_workdir,
-                    "updated_at": self._clock(),
-                }
-            )
+        self._state.update_session(
+            str(record.session_id),
+            status="active",
+            resolved_workdir_display=item.resolved_workdir,
+            updated_at=self._clock(),
         )
         self._replace_session_activity(
             str(record.session_id), item.last_active_at
@@ -716,10 +710,8 @@ class ControlSessionCoordinator:
             missing.pop(str(record.session_id), None)
             if not missing:
                 self._missing_by_executor.pop(str(record.executor_id), None)
-        self._state.put_session(
-            record.model_copy(
-                update={"status": "ended", "updated_at": self._clock()}
-            )
+        self._state.update_session(
+            str(record.session_id), status="ended", updated_at=self._clock()
         )
 
     async def _require_available(self, record: ControlSessionRecord) -> None:
@@ -792,4 +784,7 @@ class ControlSessionCoordinator:
     ) -> dict[str, JsonValue]:
         if not isinstance(payload, dict):
             raise RuntimeError("executor session result is not an object")
-        return {**payload, "executor_id": str(record.executor_id)}
+        result = {**payload, "executor_id": str(record.executor_id)}
+        if record.task_id is not None:
+            result["task_id"] = str(record.task_id)
+        return result

@@ -421,7 +421,7 @@ class ControlDownloadService:
     async def list(
         self, *, session_id: str, include_expired: bool
     ) -> ListFileLinksOutput:
-        """List control-owned links for one still-active shared session."""
+        """List control-owned links for one still-active execution session."""
         async with self._sessions.session_admission((session_id,)):
             return _list_file_links_owned(
                 include_expired, session_id, settings=self._settings
@@ -430,7 +430,7 @@ class ControlDownloadService:
     async def revoke(
         self, *, session_id: str, link_id: str
     ) -> RevokeFileLinkOutput:
-        """Revoke one control-owned bearer link for an active shared session."""
+        """Revoke one control-owned bearer link for an active execution session."""
         async with self._sessions.session_admission((session_id,)):
             return _revoke_file_link_owned(
                 link_id, session_id, settings=self._settings

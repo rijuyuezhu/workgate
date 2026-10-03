@@ -212,7 +212,7 @@ into a central distributed registry.
 
 ## Session lifecycle
 
-There is one shared `session_id` end-to-end:
+There is one execution `session_id` shared end-to-end:
 
 ```text
 control:  session_id -> executor_id + durable product state

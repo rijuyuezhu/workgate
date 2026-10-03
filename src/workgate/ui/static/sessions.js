@@ -21,7 +21,6 @@ export function createSessionsController({
     sessionTerminating: false,
     task: null,
     todoItems: [],
-    todoRevision: 0,
     todoGeneration: 0,
     todoMutationBusy: false,
     todoDirty: false,
@@ -43,6 +42,9 @@ export function createSessionsController({
 
   function selectedSession() {
     return controllerState.todoSessions.find((session) => session.session_id === controllerState.todoSessionId) || null;
+  }
+  function selectedTaskId() {
+    return text(selectedSession() && selectedSession().task_id, "");
   }
 
   function sessionTimestamp(value) {
@@ -80,27 +82,29 @@ export function createSessionsController({
   function setTodoControls() {
     const session = selectedSession();
     const sessionReady = Boolean(controllerState.todoSessionId && session);
+    const taskReady = Boolean(selectedTaskId());
     const executorOffline = sessionAvailability(session) === "executor_offline";
-    const ended = text(session && session.status, "") === "ended";
     const taskStatus = text(controllerState.task && controllerState.task.status, "");
-    const taskTerminal = taskStatus === "completed" || taskStatus === "cancelled";
+    const taskTerminal = taskStatus === "cancelled";
+    const taskCompleted = taskStatus === "completed";
+    const taskMutable = taskReady && !taskTerminal && !taskCompleted;
     elements.sessionExecutor.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionIncludeInactive.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionRefresh.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
       controllerState.sessionLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
-    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !sessionReady;
-    elements.todoAdd.disabled = controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal || controllerState.todoItems.length >= controllerState.todoLimits.todos;
-    elements.todoSave.disabled = controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal || !controllerState.todoDirty;
+    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !taskReady;
+    elements.todoAdd.disabled = controllerState.todoMutationBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
+    elements.todoSave.disabled = controllerState.todoMutationBusy || !taskMutable || !controllerState.todoDirty;
     elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !sessionReady;
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
       control.disabled = controllerState.sessionAuditLoading || !sessionReady;
     }
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
-      control.disabled = controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal;
+      control.disabled = controllerState.todoMutationBusy || !taskMutable;
     }
     for (const row of elements.todoList.querySelectorAll(".todo-row")) {
-      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !sessionReady || ended || taskTerminal ? "true" : "false");
+      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !taskMutable ? "true" : "false");
     }
   }
 
@@ -111,7 +115,7 @@ export function createSessionsController({
 
   function setTodoDirty(dirty = true) {
     controllerState.todoDirty = dirty;
-    if (dirty) elements.todoState.textContent = `Unsaved changes · ${controllerState.todoSessionId}`;
+    if (dirty) elements.todoState.textContent = "Unsaved changes · " + selectedTaskId();
     setTodoControls();
   }
 
@@ -131,14 +135,13 @@ export function createSessionsController({
     elements.taskFindings.textContent = taskListText(progress.findings);
     elements.taskBlockers.textContent = taskListText(progress.blockers);
     elements.taskState.textContent = task
-      ? `revision ${Number.isInteger(task.revision) ? task.revision : 0} · ${text(task.execution_status, "unknown execution state")}`
-      : "No durable task state";
+      ? text(task.task_id, "task")
+      : "No semantic task attached to this execution session";
   }
 
   function clearSelectedSessionResources(message = "Select a session") {
     controllerState.task = null;
     controllerState.todoItems = [];
-    controllerState.todoRevision = 0;
     controllerState.todoDirty = false;
     controllerState.todoGeneration += 1;
     renderTaskState();
@@ -240,7 +243,7 @@ export function createSessionsController({
       empty.className = "empty-state";
       const suffix = controllerState.sessionExecutorId ? ` on ${controllerState.sessionExecutorId}` : "";
       empty.textContent = controllerState.sessionIncludeInactive
-        ? `No agent sessions${suffix}.`
+        ? `No execution sessions${suffix}.`
         : `No sessions active in the last 5 hours${suffix}.`;
       elements.sessionList.append(empty);
     } else {
@@ -373,7 +376,7 @@ export function createSessionsController({
       renderTodoSessions(payload.sessions);
       elements.sessionState.textContent = `${payload.count || 0} ${controllerState.sessionIncludeInactive ? "total" : "active"} sessions${requestedExecutor ? ` · ${requestedExecutor}` : ""}`;
       if (!controllerState.todoSessionId) {
-        clearSelectedSessionResources(requestedExecutor ? `No agent sessions on ${requestedExecutor}` : "No agent sessions");
+        clearSelectedSessionResources(requestedExecutor ? `No execution sessions on ${requestedExecutor}` : "No execution sessions");
       }
       else if (controllerState.todoSessionId !== previousSession) clearSelectedSessionResources("Loading selected session");
       return payload;
@@ -517,7 +520,6 @@ export function createSessionsController({
       `${open} open`,
       `${completed} completed`,
       `${skipped} skipped`,
-      `revision ${controllerState.todoRevision}`,
     ];
     elements.todoSummary.replaceChildren(
       ...labels.map((label) => {
@@ -535,7 +537,7 @@ export function createSessionsController({
     if (!visible.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this session.";
+      empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this task.";
       elements.todoList.append(empty);
       setTodoControls();
       return;
@@ -610,7 +612,7 @@ export function createSessionsController({
   }
 
   function addTodo() {
-    if (controllerState.todoMutationBusy || !controllerState.todoSessionId || controllerState.todoItems.length >= controllerState.todoLimits.todos) return;
+    if (controllerState.todoMutationBusy || !selectedTaskId() || controllerState.todoItems.length >= controllerState.todoLimits.todos) return;
     const item = { id: newTodoId(), content: "", status: "pending", priority: "medium" };
     controllerState.todoItems.push(item);
     elements.todoFilter.value = "all";
@@ -621,10 +623,10 @@ export function createSessionsController({
   }
 
   function todoQuery() {
-    return `/todos?${new URLSearchParams({ session_id: controllerState.todoSessionId }).toString()}`;
+    return "/todos?" + new URLSearchParams({ task_id: selectedTaskId() }).toString();
   }
 
-  function applyTodoPayload(payload, requestedSession) {
+  function applyTodoPayload(payload, requestedTask) {
     controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : null;
     controllerState.todoItems = Array.isArray(payload.todos)
       ? payload.todos.map((item) => ({
@@ -634,29 +636,28 @@ export function createSessionsController({
           priority: text(item.priority, "medium"),
         }))
       : [];
-    controllerState.todoRevision = Number.isInteger(payload.revision) && payload.revision >= 0 ? payload.revision : 0;
     if (payload.limits && typeof payload.limits === "object") {
       controllerState.todoLimits = { ...controllerState.todoLimits, ...payload.limits };
     }
     controllerState.todoDirty = false;
     renderTaskState();
     renderTodos();
-    elements.todoState.textContent = `${requestedSession} · loaded ${controllerState.todoItems.length} plan steps`;
+    elements.todoState.textContent = `${requestedTask} · loaded ${controllerState.todoItems.length} plan steps`;
   }
 
   async function refreshTodos({ force = false } = {}) {
-    if (!controllerState.todoSessionId || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
+    const requestedTask = selectedTaskId();
+    if (!requestedTask || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
     const generation = ++controllerState.todoGeneration;
-    const requestedSession = controllerState.todoSessionId;
-    elements.todoState.textContent = `Loading ${requestedSession}`;
+    elements.todoState.textContent = "Loading " + requestedTask;
     setTodoControls();
     try {
       const payload = await request(todoQuery());
-      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return null;
-      applyTodoPayload(payload, requestedSession);
+      if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return null;
+      applyTodoPayload(payload, requestedTask);
       return payload;
     } catch (error) {
-      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return null;
+      if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return null;
       elements.todoState.textContent = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
@@ -665,46 +666,33 @@ export function createSessionsController({
   }
 
   async function saveTodos() {
-    if (!controllerState.todoDirty || controllerState.todoMutationBusy || !controllerState.todoSessionId) return;
+    const requestedTask = selectedTaskId();
+    if (!controllerState.todoDirty || controllerState.todoMutationBusy || !requestedTask) return;
     const generation = ++controllerState.todoGeneration;
-    const requestedSession = controllerState.todoSessionId;
-    const expectedRevision = controllerState.todoRevision;
     const todos = controllerState.todoItems.map((item) => ({ ...item }));
     setTodoMutationBusy(true);
-    elements.todoState.textContent = `Saving ${requestedSession} revision ${expectedRevision}`;
+    elements.todoState.textContent = "Saving " + requestedTask;
     try {
       const payload = await request("/todos", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          session_id: requestedSession,
-          expected_revision: expectedRevision,
+          task_id: requestedTask,
           todos,
         }),
       });
-      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return;
+      if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return;
       controllerState.todoItems = Array.isArray(payload.todos) ? payload.todos.map((item) => ({ ...item })) : [];
-      controllerState.todoRevision = Number(payload.revision) || expectedRevision + 1;
       controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : controllerState.task;
       controllerState.todoDirty = false;
       renderTaskState();
       renderTodos();
-      elements.todoState.textContent = `Saved ${requestedSession} · revision ${controllerState.todoRevision}`;
+      elements.todoState.textContent = "Saved " + requestedTask;
     } catch (error) {
-      if (generation !== controllerState.todoGeneration || requestedSession !== controllerState.todoSessionId) return;
-      if (error && error.status === 409) {
-        controllerState.todoDirty = false;
-        try {
-          await refreshTodos({ force: true });
-          elements.todoState.textContent = "Todo list changed elsewhere; reloaded the latest revision";
-        } catch (reloadError) {
-          elements.todoState.textContent = reloadError instanceof Error ? reloadError.message : String(reloadError);
-        }
-      } else {
-        elements.todoState.textContent = error instanceof Error ? error.message : String(error);
-      }
+      if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return;
+      elements.todoState.textContent = error instanceof Error ? error.message : String(error);
     } finally {
-      if (requestedSession === controllerState.todoSessionId) setTodoMutationBusy(false);
+      if (requestedTask === selectedTaskId()) setTodoMutationBusy(false);
     }
   }
 

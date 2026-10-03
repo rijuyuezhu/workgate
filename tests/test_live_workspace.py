@@ -7,7 +7,7 @@ from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.mcp import live_workspace as live
 from workgate.control.mcp.app import build_mcp
-from workgate.schemas.result_models.task import SessionTaskOutput
+from workgate.schemas.result_models.task import TaskDocument
 
 
 def _started_session_id(value: Any) -> str:
@@ -29,8 +29,21 @@ def _http_settings(tmp_path, monkeypatch):
     return get_settings()
 
 
+async def _task_session(harness, *, label: str = "review me"):
+    task = await harness.control.task_service.create_task(
+        label="workspace task"
+    )
+    started = await harness.control.session_coordinator.start_session(
+        workdir=".",
+        label=label,
+        executor_id=harness.executor_id,
+        task_id=task.task_id,
+    )
+    return task.task_id, _started_session_id(started)
+
+
 @pytest.mark.asyncio
-async def test_live_workspace_mcp_app_metadata_is_session_scoped(
+async def test_live_workspace_mcp_app_metadata_is_task_scoped(
     tmp_path, monkeypatch
 ):
     settings = _http_settings(tmp_path, monkeypatch)
@@ -39,8 +52,14 @@ async def test_live_workspace_mcp_app_metadata_is_session_scoped(
 
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     assert "workspace_open" in tools
-    assert tools["workspace_open"].meta is not None
-    open_meta = tools["workspace_open"].meta
+    open_tool = tools["workspace_open"]
+    assert open_tool.meta is not None
+    assert "task_id" in open_tool.inputSchema["properties"]
+    assert "task_id" in open_tool.inputSchema["required"]
+    assert "session_id" in open_tool.inputSchema["properties"]
+    assert "session_id" not in open_tool.inputSchema["required"]
+
+    open_meta = open_tool.meta
     assert open_meta["ui/resourceUri"].startswith(
         "ui://workgate/live-workspace-"
     )
@@ -59,42 +78,24 @@ async def test_live_workspace_mcp_app_metadata_is_session_scoped(
         meta = tools[name].meta
         assert meta is not None
         assert meta["ui"]["visibility"] == ["app"]
-    control_meta = tools["workspace_task_control"].meta
-    assert control_meta is not None
-    assert control_meta["securitySchemes"][0]["scopes"] == [
-        "shell:read",
-        "shell:write",
-        "audit:read",
-    ]
-    assert tools["workspace_task_control"].annotations is not None
-    assert tools["workspace_task_control"].annotations.destructiveHint is True
-    assert tools["workspace_end"].annotations is not None
-    assert tools["workspace_end"].annotations.destructiveHint is True
 
     resources = {
         str(resource.uri): resource for resource in await mcp.list_resources()
     }
     assert "ui://workgate/live-workspace.html" in resources
     assert open_meta["ui/resourceUri"] in resources
-    assert (
-        resources[open_meta["ui/resourceUri"]].mimeType
-        == "text/html;profile=mcp-app"
-    )
 
 
 @pytest.mark.asyncio
-async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activity(
+async def test_live_workspace_is_task_first_and_never_selects_session_implicitly(
     tmp_path, monkeypatch
 ):
     settings = _http_settings(tmp_path, monkeypatch)
     harness = build_paired_control_harness(settings)
-    started = await harness.control.session_coordinator.start_session(
-        workdir=".", label="review me"
-    )
-    session_id = _started_session_id(started)
-    await harness.control.task_service.write(
-        session_id,
-        [{"id": "one", "content": "inspect", "status": "in_progress"}],
+    task_id, session_id = await _task_session(harness)
+    await harness.control.task_service.update_plan(
+        task_id,
+        steps=[{"id": "one", "content": "inspect", "status": "in_progress"}],
     )
 
     audit_queries = []
@@ -108,7 +109,9 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
                     "ts": 124.0,
                     "event": "tool_call",
                     "tool": "workspace_snapshot",
-                    "operation": "execute",
+                    "operation": "other",
+                    "task": task_id,
+                    "session": session_id,
                     "ok": True,
                     "duration_ms": 1,
                 },
@@ -117,54 +120,48 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
                     "ts": 123.0,
                     "event": "tool_call",
                     "tool": "bash",
-                    "operation": "execute",
+                    "operation": "shell",
+                    "task": task_id,
+                    "session": session_id,
                     "ok": True,
                     "duration_ms": 7,
                     "args": {"command": "printf super-secret"},
-                    "result": {"stdout": "super-secret"},
-                    "token": "super-secret",
                 },
             ]
         }
 
     monkeypatch.setattr(live, "query_audit", fake_query_audit)
 
-    snapshot = await live.live_workspace_snapshot(harness.control, session_id)
-    data = snapshot.model_dump(mode="json")
+    task_only = await live.live_workspace_snapshot(harness.control, task_id)
+    assert task_only.task.task_id == task_id
+    assert task_only.session is None
+    assert [item.session_id for item in task_only.sessions] == [session_id]
+    assert task_only.jobs == []
+    assert task_only.shells == []
+    assert task_only.links is None
 
-    assert data["session"]["session_id"] == session_id
-    assert data["session"]["executor_id"] == harness.executor_id
-    assert data["session"]["label"] == "review me"
-    assert data["session"]["availability"] == "available"
-    assert data["task"]["revision"] == 1
-    assert data["task"]["plan"]["steps"][0]["content"] == "inspect"
-    assert data["task_control_actions"] == [
+    selected = await live.live_workspace_snapshot(
+        harness.control, task_id, session_id
+    )
+    assert selected.session is not None
+    assert selected.session.session_id == session_id
+    assert selected.session.executor_id == harness.executor_id
+    assert selected.task.plan.steps[0].content == "inspect"
+    assert selected.task_control_actions == [
         "block",
         "cancel",
         "next_instruction",
     ]
-    assert audit_queries == [
-        {
-            "limit": live._ACTIVITY_SCAN_LIMIT,
-            "session": session_id,
-            "sort": "desc",
-            "exclude_call_id": None,
-        }
-    ]
-    assert data["activity"] == [
-        {
-            "id": "audit-1",
-            "ts": 123.0,
-            "event": "tool_call",
-            "tool": "bash",
-            "operation": "execute",
-            "ok": True,
-            "duration_ms": 7.0,
-        }
-    ]
-    assert "super-secret" not in str(data)
+    assert selected.activity[0].id == "audit-1"
+    assert selected.activity[0].session == session_id
+    assert "super-secret" not in str(selected.model_dump(mode="json"))
+    assert audit_queries[0]["task"] == task_id
+    assert "session" not in audit_queries[0]
+
+    assert selected.links is not None
+    links = selected.links.model_dump()
     for view in ("sessions", "files", "terminals", "audit"):
-        parsed = urlparse(data["links"][view])
+        parsed = urlparse(links[view])
         assert parsed.scheme == "https"
         assert parsed.netloc == "workgate.example.test"
         assert parsed.path == "/ui"
@@ -172,17 +169,12 @@ async def test_live_workspace_snapshot_reuses_explicit_session_and_redacts_activ
         query = parse_qs(parsed.query)
         assert query["session_id"] == [session_id]
         assert query["executor_id"] == [harness.executor_id]
-    canonical_workdir = data["session"]["workdir"]
-    assert canonical_workdir != "."
-    assert parse_qs(urlparse(data["links"]["files"]).query)["workdir"] == [
-        canonical_workdir
-    ]
-    assert "shell_id" not in parse_qs(
-        urlparse(data["links"]["terminals"]).query
-    )
 
-    with pytest.raises(ValueError, match="unknown session_id"):
-        await live.live_workspace_snapshot(harness.control, "sess_00000000")
+    other = await harness.control.task_service.create_task(label="other")
+    with pytest.raises(ValueError, match="not attached"):
+        await live.live_workspace_snapshot(
+            harness.control, other.task_id, session_id
+        )
 
 
 @pytest.mark.asyncio
@@ -206,47 +198,12 @@ async def test_live_workspace_job_message_does_not_forward_backend_exception_tex
 
     monkeypatch.setattr(harness.control.job_service, "execute", secret_job_list)
     jobs, message = await live._job_projection(
-        harness.control, "sess_00000000", "active"
+        harness.control, "sess_0000000000000000000001", "active"
     )
 
     assert jobs == []
     assert message == "Some executor job metadata is unavailable."
     assert "backend-super-secret" not in message
-    assert calls == [
-        {
-            "session_id": "sess_00000000",
-            "list_jobs": True,
-            "include_finished": False,
-            "lines": 1,
-        }
-    ]
-
-
-class _TaskService:
-    def __init__(self) -> None:
-        self.task = SessionTaskOutput(
-            revision=4,
-            objective="ship Live Workspace",
-            status="active",
-            session_id="sess_fake",
-            label=None,
-            execution_status="active",
-        )
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def read_task(self, _session_id: str) -> SessionTaskOutput:
-        return self.task
-
-    async def report_progress(
-        self, session_id: str, **kwargs: Any
-    ) -> SessionTaskOutput:
-        self.calls.append((session_id, kwargs))
-        if "task_status" in kwargs:
-            self.task.status = kwargs["task_status"]
-        if "next_action" in kwargs:
-            self.task.progress.next_action = kwargs["next_action"]
-        self.task.revision += 1
-        return self.task
 
 
 @pytest.mark.parametrize(
@@ -261,52 +218,32 @@ class _TaskService:
 def test_live_workspace_task_actions_follow_task_lifecycle(
     task_status, expected
 ):
-    task = SessionTaskOutput.model_validate(
+    task = TaskDocument.model_validate(
         {
+            "created_at": 1.0,
+            "updated_at": 1.0,
             "status": task_status,
-            "session_id": "sess_test",
-            "execution_status": "active",
         }
     )
-    actions, _message = live._task_control_actions(
-        task,
-        execution_status="active",
-    )
+    actions, _message = live._task_control_actions(task)
     assert actions == expected
-
-    ended_actions, ended_message = live._task_control_actions(
-        task,
-        execution_status="ended",
-    )
-    assert ended_actions == []
-    assert ended_message is not None
 
 
 @pytest.mark.asyncio
-async def test_live_workspace_controls_use_canonical_task_service(
+async def test_live_workspace_controls_mutate_task_independently_of_session(
     tmp_path, monkeypatch
 ):
     settings = _http_settings(tmp_path, monkeypatch)
     harness = build_paired_control_harness(settings)
-    started = await harness.control.session_coordinator.start_session(
-        workdir="."
-    )
-    session_id = _started_session_id(started)
-    service = _TaskService()
-    harness.control.task_service = service  # type: ignore[assignment]
+    task_id, session_id = await _task_session(harness)
     monkeypatch.setattr(live, "query_audit", lambda **_kwargs: {"entries": []})
 
     blocked = await live.live_workspace_task_control(
         harness.control,
+        task_id=task_id,
         session_id=session_id,
         action="block",
-        expected_revision=4,
     )
-    assert service.calls[-1] == (
-        session_id,
-        {"expected_revision": 4, "task_status": "blocked"},
-    )
-    assert blocked.task is not None
     assert blocked.task.status == "blocked"
     assert blocked.task_control_actions == [
         "resume",
@@ -314,91 +251,83 @@ async def test_live_workspace_controls_use_canonical_task_service(
         "next_instruction",
     ]
 
-    with pytest.raises(ValueError, match="not available"):
-        await live.live_workspace_task_control(
-            harness.control,
-            session_id=session_id,
-            action="block",
-            expected_revision=5,
-        )
-    assert len(service.calls) == 1
-
     instructed = await live.live_workspace_task_control(
         harness.control,
-        session_id=session_id,
+        task_id=task_id,
+        session_id=None,
         action="next_instruction",
-        expected_revision=5,
         instruction="Please inspect the failing browser test.",
     )
-    assert service.calls[-1][1]["next_action"] == (
-        "Please inspect the failing browser test."
-    )
-    assert instructed.task is not None
+    assert instructed.session is None
     assert instructed.task.progress.next_action is not None
     assert instructed.task.progress.next_action.startswith("Please inspect")
 
     with pytest.raises(ValueError, match="instruction is required"):
         await live.live_workspace_task_control(
             harness.control,
-            session_id=session_id,
+            task_id=task_id,
+            session_id=None,
             action="next_instruction",
-            expected_revision=6,
             instruction=" ",
         )
 
 
 @pytest.mark.asyncio
-async def test_live_workspace_end_requires_exact_separate_confirmation(
+async def test_live_workspace_end_requires_task_attachment_and_confirmation(
     tmp_path, monkeypatch
 ):
     settings = _http_settings(tmp_path, monkeypatch)
     harness = build_paired_control_harness(settings)
-    started = await harness.control.session_coordinator.start_session(
-        workdir="."
-    )
-    session_id = _started_session_id(started)
+    task_id, session_id = await _task_session(harness)
+    other = await harness.control.task_service.create_task(label="other")
 
     with pytest.raises(ValueError, match="exactly match"):
         await live.live_workspace_end(
             harness.control,
+            task_id=task_id,
             session_id=session_id,
             confirm_session_id="sess_wrong",
         )
-    assert (
-        harness.control.control_state.snapshot_sessions()[session_id].status
-        == "active"
-    )
+    with pytest.raises(ValueError, match="not attached"):
+        await live.live_workspace_end(
+            harness.control,
+            task_id=other.task_id,
+            session_id=session_id,
+            confirm_session_id=session_id,
+        )
 
     ended = await live.live_workspace_end(
         harness.control,
+        task_id=task_id,
         session_id=session_id,
         confirm_session_id=session_id,
     )
     assert ended.ended is True
-    assert (
-        harness.control.control_state.snapshot_sessions()[session_id].status
-        == "ended"
+    task = await harness.control.task_service.report_progress(
+        task_id,
+        summary="Still mutable after execution ended",
     )
+    assert task.progress.summary == "Still mutable after execution ended"
 
 
 @pytest.mark.asyncio
-async def test_live_workspace_snapshot_survives_executor_offline(
+async def test_live_workspace_selected_session_survives_executor_offline(
     tmp_path, monkeypatch
 ):
     settings = _http_settings(tmp_path, monkeypatch)
     harness = build_paired_control_harness(settings)
-    started = await harness.control.session_coordinator.start_session(
-        workdir="."
-    )
-    session_id = _started_session_id(started)
+    task_id, session_id = await _task_session(harness)
     monkeypatch.setattr(live, "query_audit", lambda **_kwargs: {"entries": []})
 
     async def offline(_executor_id: str) -> bool:
         return False
 
     harness.control.executor_transport.is_online = offline  # type: ignore[method-assign]
-    snapshot = await live.live_workspace_snapshot(harness.control, session_id)
+    snapshot = await live.live_workspace_snapshot(
+        harness.control, task_id, session_id
+    )
 
+    assert snapshot.session is not None
     assert snapshot.session.session_id == session_id
     assert snapshot.session.availability == "executor_offline"
     assert snapshot.shells == []

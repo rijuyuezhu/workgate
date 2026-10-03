@@ -1,4 +1,4 @@
-"""Authenticated Human UI inventory for control-owned shared sessions."""
+"""Authenticated Human UI inventory for control-owned execution sessions."""
 
 import asyncio
 import time
@@ -55,6 +55,7 @@ def _final_session_payload(
     return {
         "session_id": str(record.session_id),
         "executor_id": str(record.executor_id),
+        "task_id": str(record.task_id) if record.task_id is not None else None,
         "workdir": record.resolved_workdir_display or record.requested_workdir,
         "requested_workdir": record.requested_workdir,
         "label": record.label,
@@ -109,7 +110,7 @@ def _bool_arg(value: Any, *, default: bool = False) -> bool:
 
 
 async def api_sessions(request: Request) -> Response:
-    """Return canonical shared sessions with authoritative activity projection."""
+    """Return canonical execution sessions with authoritative activity projection."""
     try:
         _require_scopes()
         executor_id = _executor_arg(request.query_params.get("executor_id"))
@@ -169,7 +170,7 @@ async def api_sessions(request: Request) -> Response:
 
 
 async def api_session_action(request: Request) -> Response:
-    """Apply one explicit control-plane action to a shared session."""
+    """Apply one explicit control-plane action to an execution session."""
     try:
         action = str(request.path_params.get("action") or "").casefold()
         if action != "terminate":
@@ -191,7 +192,7 @@ async def api_session_action(request: Request) -> Response:
         record = runtime.control_state.snapshot_sessions().get(session_id)
         if record is None:
             return json_error(
-                ValueError(f"unknown shared session_id {session_id!r}"),
+                ValueError(f"unknown session_id {session_id!r}"),
                 status_code=404,
             )
         result = await runtime.session_coordinator.end_session(session_id)

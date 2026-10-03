@@ -39,9 +39,9 @@ class ControlRuntime:
     executor_pairing: ExecutorPairingService
     """Process-local device-code pairing attempts and transient credential delivery."""
     session_coordinator: ControlSessionCoordinator
-    """Control authority for final shared session lifecycle and executor routing."""
+    """Control authority for execution-session lifecycle and executor routing."""
     session_copy_service: ControlSessionCopyService
-    """Control orchestration for copies between existing shared sessions."""
+    """Control orchestration for copies between existing execution sessions."""
     download_service: ControlDownloadService
     """Control-owned public file-link snapshots sourced through executor RPC."""
     job_service: ControlJobService
@@ -77,6 +77,7 @@ class ControlRuntime:
         executor_transport_started = False
         try:
             self.control_state.start()
+            await self.task_service.migrate_legacy_sessions()
             self.executor_transport.start()
             executor_transport_started = True
             await self.managed_jobs_runtime.start()
@@ -170,11 +171,13 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_pending_attempts=config.executor_pairing_max_pending,
         ttl_s=config.executor_pairing_ttl_s,
     )
+    task_service = ControlTaskService(control_state, state_store, config)
     session_coordinator = ControlSessionCoordinator(
         control_state,
         executor_transport,
         max_agent_sessions=config.max_agent_sessions,
         agent_session_retention_s=config.agent_session_retention_s,
+        task_session_admitter=task_service.admit_session_attachment,
     )
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
@@ -206,10 +209,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         managed_jobs_runtime,
         managed_retry_availability=session_copy_service.retry_require_available,
     )
-    task_service = ControlTaskService(
-        control_state, state_store, config, session_coordinator
-    )
-    audit_service = ControlAuditService(session_coordinator)
+    audit_service = ControlAuditService(task_service, control_state)
     session_coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=job_service.auto_cleanup_blocked,
         before_terminate=job_service.stop_referencing_jobs,

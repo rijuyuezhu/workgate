@@ -1,4 +1,4 @@
-"""Control-orchestrated copy between two existing final shared sessions."""
+"""Control-orchestrated copy between two existing execution sessions."""
 
 import asyncio
 import base64

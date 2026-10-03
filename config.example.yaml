@@ -101,11 +101,11 @@ max_output_bytes: 200000
 max_job_log_bytes: 10000000
 # Maximum retained tracked-job records; 0 keeps only active jobs.
 max_jobs: 1000
-# Maximum durable agent/workspace sessions after stale-session pruning.
+# Maximum durable execution sessions after stale-session pruning.
 max_agent_sessions: 256
-# Idle retention for durable agent/workspace sessions; 0 disables age-based expiry.
+# Idle retention for durable execution sessions; 0 disables age-based expiry.
 agent_session_retention_s: 2592000
-# Maximum grounding snapshots retained for one agent session.
+# Maximum grounding snapshots retained for one execution session.
 max_session_snapshots: 2000
 # Maximum encoded grounding-snapshot metadata retained for one session.
 max_session_snapshot_bytes: 8388608

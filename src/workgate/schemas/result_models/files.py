@@ -88,7 +88,7 @@ class ReadFileOutput(BaseModel):
     )
     session_id: str | None = Field(
         default=None,
-        description="Explicit agent/workspace session that recorded this read, or null when no grounding snapshot was recorded.",
+        description="Execution session that recorded this read, or null when no grounding snapshot was recorded.",
     )
     snapshot_id: str | None = Field(
         default=None,
@@ -142,7 +142,7 @@ class ReadFileMetadata(BaseModel):
     )
     session_id: str | None = Field(
         default=None,
-        description="Explicit agent/workspace session that recorded this read, or null when no grounding snapshot was recorded.",
+        description="Execution session that recorded this read, or null when no grounding snapshot was recorded.",
     )
     snapshot_id: str | None = Field(
         default=None,

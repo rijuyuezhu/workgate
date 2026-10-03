@@ -1,4 +1,4 @@
-"""Typed input annotations for explicit agent sessions."""
+"""Typed input annotations for execution sessions."""
 
 from typing import Annotated, Literal
 
@@ -10,7 +10,7 @@ SessionIdArg = Annotated[
         min_length=8,
         max_length=128,
         pattern=r"^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-        description="Opaque shared agent/workspace session_id returned by session_start.",
+        description="Opaque execution session_id returned by session_start.",
     ),
 ]
 SessionExecutorIdArg = Annotated[
@@ -32,7 +32,19 @@ SessionLabelArg = Annotated[
     Field(
         min_length=1,
         max_length=80,
-        description="Optional human-readable label for this agent session.",
+        description="Optional human-readable label for this execution session.",
+    ),
+]
+SessionTaskIdArg = Annotated[
+    str | None,
+    Field(
+        default=None,
+        max_length=128,
+        pattern=r"^task_[A-Za-z0-9_-]{22,}$",
+        description=(
+            "Optional existing semantic task_id to attach to this execution session. "
+            "It never selects or changes the executor or workdir."
+        ),
     ),
 ]
 SessionEndForceArg = Annotated[
@@ -77,6 +89,6 @@ OptionalSessionIdArg = Annotated[
         min_length=8,
         max_length=128,
         pattern=r"^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
-        description="Optional explicit agent/workspace session_id used by internal transfer primitives.",
+        description="Optional execution session_id used by internal transfer primitives.",
     ),
 ]

@@ -29,14 +29,6 @@ AuditOperationArg = Annotated[
         description="Optional normalized operation-category filter.",
     ),
 ]
-AuditSessionArg = Annotated[
-    str | None,
-    Field(
-        default=None,
-        max_length=256,
-        description="Optional audit-record session identifier filter.",
-    ),
-]
 AuditSearchArg = Annotated[
     str | None,
     Field(

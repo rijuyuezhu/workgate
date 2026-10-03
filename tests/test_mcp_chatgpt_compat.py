@@ -171,15 +171,15 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     assert "Do not commit, push, amend, create PRs, release" in mcp.instructions
     assert "secret_scan is heuristic" in mcp.instructions
     assert (
-        "`session_id` identifies the shared control/executor agent session"
+        "A task attachment never chooses or changes the executor/workdir"
         in mcp.instructions
     )
-    assert "`bash(async_=true)` returns a `job_id`" in mcp.instructions
+    assert "`session_end` ends only that execution context" in mcp.instructions
     assert (
-        "`bash(pty=true)` returns a `shell_id` owned by the session"
+        "`bash(async_=true)` and background `session_copy` return `job_id`"
         in mcp.instructions
     )
-    assert "Do not use `shell_id` with `job`" in mcp.instructions
+    assert "`bash(pty=true)` returns a `shell_id`" in mcp.instructions
 
     transport_security = mcp.settings.transport_security
     assert transport_security is not None
@@ -647,7 +647,6 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
         "list_persistent_shells",
         "read",
         "read_persistent_shell_output",
-        "read_session_task",
         "read_todos",
         "search",
         "secret_scan",
