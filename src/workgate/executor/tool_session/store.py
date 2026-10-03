@@ -12,7 +12,7 @@ from ...errors import (
     SessionTerminationRequestedError,
 )
 from ...persistence import StateStore
-from ...utils.path_policy import resolve_path
+from ..path import resolve_path
 from .records import (
     AgentSession,
     SnapshotRecord,

@@ -20,10 +20,10 @@ from workgate.executor.files import (
     parse_hashline_edit_input,
 )
 from workgate.executor.files_service import FilesService
+from workgate.executor.path import resolve_path
 from workgate.executor.tool_session.bindings import SessionBinding
 from workgate.executor.tool_session.resolver import SessionResolver
 from workgate.persistence import get_state_store, use_state_store
-from workgate.utils.path_policy import resolve_path
 
 _SESSION_COUNTER = 0
 

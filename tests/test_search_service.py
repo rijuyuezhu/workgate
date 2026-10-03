@@ -103,7 +103,7 @@ async def test_search_service_resolves_fresh_workdir_per_operation(
     assert [match.path for match in second_result.matches] == ["two.txt"]
 
 
-def test_search_path_access_and_scope_parsing_are_explicit(
+def test_search_path_resolution_and_scope_parsing_are_explicit(
     tmp_path, monkeypatch
 ):
     store, settings = _store_and_settings(tmp_path, monkeypatch)
@@ -116,25 +116,11 @@ def test_search_path_access_and_scope_parsing_are_explicit(
     outside.write_text("outside\n", encoding="utf-8")
     runner = build_local_search_runner(resolve_executor_config(settings), store)
 
-    assert (
-        runner.paths.resolve_in_workdir(
-            str(workdir), "demo.txt", must_exist=True
-        )
-        == target
-    )
-    assert runner.paths.display(target) == "work/demo.txt"
-    assert (
-        runner.paths.resolve_in_workdir(
-            str(workdir), "../outside.txt", must_exist=True
-        )
-        == outside
-    )
-
     path_args, glob_args, line_scopes = runner._split_scopes(
         workdir,
-        ["*.py", "demo.txt:1-2", "demo.txt:3-4"],
+        ["*.py", "demo.txt:1-2", "demo.txt:3-4", str(outside)],
     )
-    assert path_args == ["demo.txt"]
+    assert path_args == ["demo.txt", str(outside)]
     assert glob_args == ["*.py"]
     assert line_scopes == {str(target): ((1, 4),)}
 

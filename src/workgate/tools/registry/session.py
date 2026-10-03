@@ -44,7 +44,7 @@ def _session_start_description(_context: McpToolContext) -> str:
     return """Start an execution session on one executor. Omit workdir to use the executor default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."""
 
 
-def _session_change_cwd_description(_context: McpToolContext) -> str:
+def _session_change_workdir_description(_context: McpToolContext) -> str:
     return """Change an execution session's workdir. Relative paths resolve against the executor default workdir, and old grounding snapshots are invalidated."""
 
 
@@ -53,7 +53,7 @@ def _session_copy_description(_context: McpToolContext) -> str:
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted."""
+    return """End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted."""
 
 
 @session_tool(
@@ -74,16 +74,16 @@ async def session_start(
 
 @session_tool(
     http_method="POST",
-    http_path="/tools/session_change_cwd",
-    description=_session_change_cwd_description,
+    http_path="/tools/session_change_workdir",
+    description=_session_change_workdir_description,
     oauth_scopes=("shell:read",),
 )
-async def session_change_cwd(
+async def session_change_workdir(
     session_id: SessionIdArg,
     workdir: SessionWorkdirArg,
 ) -> SessionStartOutput:
     """Change an execution session workdir."""
-    raise _unrouted_session_tool("session_change_cwd")
+    raise _unrouted_session_tool("session_change_workdir")
 
 
 @session_tool(

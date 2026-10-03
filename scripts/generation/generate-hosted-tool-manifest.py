@@ -31,7 +31,7 @@ HOSTED_TOOL_NAMES = (
     "search",
     "secret_scan",
     "session_start",
-    "session_change_cwd",
+    "session_change_workdir",
     "session_end",
     "bash",
     "run_python_code",

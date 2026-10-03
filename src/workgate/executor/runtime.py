@@ -7,21 +7,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config.executor import ExecutorConfig, effective_default_workdir
+from ..config.executor import ExecutorConfig, resolve_default_workdir
 from ..config.role_config import use_role_config
 from ..persistence import use_state_store
 from ..protocol.executor import (
-    SESSION_CHANGE_CWD_OP,
+    SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
 )
-from ..utils.path_policy import resolve_path
 from .agent import ExecutorAgentBridgeService
 from .browser import BrowserService
 from .dispatch import ExecutorDispatcher
 from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
+from .path import resolve_path
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
 from .terminal.runtime import (
@@ -252,7 +252,7 @@ class ExecutorRuntime:
             SESSION_CREATE_OP,
             SESSION_LOOKUP_OP,
             SESSION_TERMINATE_OP,
-            SESSION_CHANGE_CWD_OP,
+            SESSION_CHANGE_WORKDIR_OP,
         }:
             if command.session_id is None:
                 raise ValueError(f"{command.op} requires session_id")
@@ -281,8 +281,8 @@ class ExecutorRuntime:
                 return await self.sessions.terminate(session_id)
             workdir = command.args.get("workdir")
             if not isinstance(workdir, str) or not workdir:
-                raise ValueError("session.change_cwd requires workdir")
-            return await self.sessions.change_cwd(session_id, workdir)
+                raise ValueError("session.change_workdir requires workdir")
+            return await self.sessions.change_workdir(session_id, workdir)
 
         args = dict(command.args)
         if command.session_id is not None:
@@ -353,7 +353,7 @@ def build_executor_runtime(
     ) -> Path:
         return resolve_path(
             path,
-            base=effective_default_workdir(config.default_workdir),
+            base=resolve_default_workdir(config.default_workdir),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,

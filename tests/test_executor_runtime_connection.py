@@ -14,7 +14,7 @@ from workgate.executor.profile import (
 from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.executor import (
-    SESSION_CHANGE_CWD_OP,
+    SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     ExecutorCommand,
     ExecutorHelloRequest,
@@ -128,7 +128,7 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
             "label must be a string",
         ),
         (
-            SESSION_CHANGE_CWD_OP,
+            SESSION_CHANGE_WORKDIR_OP,
             "sess_0000000000000000000001",
             {"workdir": ""},
             "requires workdir",

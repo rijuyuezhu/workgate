@@ -1,4 +1,4 @@
-"""Scan workspace text files for credential-like strings."""
+"""Scan session-scoped text files for credential-like strings."""
 
 import asyncio
 import re

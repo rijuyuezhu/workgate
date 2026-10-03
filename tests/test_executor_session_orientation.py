@@ -8,8 +8,7 @@ from workgate.executor.session_orientation import (
     _git_info,
     _git_output,
     _instruction_files,
-    _relative_display,
-    change_session_cwd,
+    change_session_workdir,
     session_output,
 )
 
@@ -40,13 +39,7 @@ def test_session_orientation_discovers_workspace_instructions(
         Path("project") / "src" / "CLAUDE.md",
         Path("AGENTS.md"),
     ]
-    assert Path(_relative_display(nested, config.default_workdir)) == (
-        Path("project") / "src"
-    )
     outside = tmp_path / "outside"
-    assert _relative_display(outside, config.default_workdir) == str(
-        outside.resolve()
-    )
     assert _instruction_files(config, outside) == []
 
 
@@ -92,7 +85,7 @@ def test_git_orientation_handles_missing_git(
     assert _git_info(config, config.default_workdir).is_repo is False
 
 
-def test_session_output_and_change_cwd_use_executor_authority(
+def test_session_output_and_change_workdir_use_executor_authority(
     tmp_path: Path,
 ) -> None:
     settings, config = _config(tmp_path)
@@ -106,7 +99,7 @@ def test_session_output_and_change_cwd_use_executor_authority(
     )
 
     initial = session_output(config, session)
-    changed = change_session_cwd(
+    changed = change_session_workdir(
         config,
         store,
         session.session_id,

@@ -1982,7 +1982,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit.",
+    "description": "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the scanned files are secret-free. The bound executor applies its configured result limit.",
     "inputSchema": {
       "properties": {
         "cwd": {
@@ -2056,7 +2056,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "type": "object"
         }
       },
-      "description": "Heuristic workspace secret-scan result.",
+      "description": "Heuristic secret-scan result.",
       "properties": {
         "findings": {
           "description": "Returned heuristic secret findings.",
@@ -2236,9 +2236,9 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "$ref": "#/$defs/SessionCapabilitiesEnvironment",
               "description": "Effective capabilities."
             },
-            "policy": {
-              "$ref": "#/$defs/SessionPolicyEnvironment",
-              "description": "Safe effective policy and limits."
+            "limits": {
+              "$ref": "#/$defs/SessionLimits",
+              "description": "Effective executor limits."
             },
             "runtime": {
               "$ref": "#/$defs/SessionRuntimeEnvironment",
@@ -2247,24 +2247,19 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             "tools": {
               "$ref": "#/$defs/SessionToolsEnvironment",
               "description": "Allowlisted tool probes."
-            },
-            "workspace": {
-              "$ref": "#/$defs/SessionWorkspaceEnvironment",
-              "description": "Workspace identity."
             }
           },
           "required": [
             "runtime",
-            "workspace",
             "tools",
             "capabilities",
-            "policy"
+            "limits"
           ],
           "title": "SessionEnvironment",
           "type": "object"
         },
-        "SessionPolicyEnvironment": {
-          "description": "Safe executor-owned limits and modes that influence tool selection.",
+        "SessionLimits": {
+          "description": "Executor-owned limits relevant to tool selection.",
           "properties": {
             "max_concurrent_commands": {
               "description": "Concurrent executor command limit.",
@@ -2377,7 +2372,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             "max_transfer_archive_entries",
             "max_transfer_unpacked_bytes"
           ],
-          "title": "SessionPolicyEnvironment",
+          "title": "SessionLimits",
           "type": "object"
         },
         "SessionRuntimeEnvironment": {
@@ -2533,27 +2528,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           ],
           "title": "SessionToolsEnvironment",
           "type": "object"
-        },
-        "SessionWorkspaceEnvironment": {
-          "description": "Workdir orientation reported by the executor that owns the session.",
-          "properties": {
-            "default_workdir": {
-              "description": "Effective default workdir on the execution target.",
-              "title": "Default Workdir",
-              "type": "string"
-            },
-            "workdir": {
-              "description": "Canonical workdir on the execution target.",
-              "title": "Workdir",
-              "type": "string"
-            }
-          },
-          "required": [
-            "default_workdir",
-            "workdir"
-          ],
-          "title": "SessionWorkspaceEnvironment",
-          "type": "object"
         }
       },
       "description": "Execution-session orientation.",
@@ -2570,7 +2544,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "environment": {
           "$ref": "#/$defs/SessionEnvironment",
-          "description": "Bounded runtime, workspace, tool, capability, and policy orientation."
+          "description": "Bounded runtime, tool, capability, and limit orientation."
         },
         "executor_id": {
           "anyOf": [
@@ -2689,10 +2663,10 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         "session_id",
         "workdir"
       ],
-      "title": "session_change_cwdArguments",
+      "title": "session_change_workdirArguments",
       "type": "object"
     },
-    "name": "session_change_cwd",
+    "name": "session_change_workdir",
     "outputSchema": {
       "$defs": {
         "GitSessionInfo": {
@@ -2783,9 +2757,9 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "$ref": "#/$defs/SessionCapabilitiesEnvironment",
               "description": "Effective capabilities."
             },
-            "policy": {
-              "$ref": "#/$defs/SessionPolicyEnvironment",
-              "description": "Safe effective policy and limits."
+            "limits": {
+              "$ref": "#/$defs/SessionLimits",
+              "description": "Effective executor limits."
             },
             "runtime": {
               "$ref": "#/$defs/SessionRuntimeEnvironment",
@@ -2794,24 +2768,19 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             "tools": {
               "$ref": "#/$defs/SessionToolsEnvironment",
               "description": "Allowlisted tool probes."
-            },
-            "workspace": {
-              "$ref": "#/$defs/SessionWorkspaceEnvironment",
-              "description": "Workspace identity."
             }
           },
           "required": [
             "runtime",
-            "workspace",
             "tools",
             "capabilities",
-            "policy"
+            "limits"
           ],
           "title": "SessionEnvironment",
           "type": "object"
         },
-        "SessionPolicyEnvironment": {
-          "description": "Safe executor-owned limits and modes that influence tool selection.",
+        "SessionLimits": {
+          "description": "Executor-owned limits relevant to tool selection.",
           "properties": {
             "max_concurrent_commands": {
               "description": "Concurrent executor command limit.",
@@ -2924,7 +2893,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
             "max_transfer_archive_entries",
             "max_transfer_unpacked_bytes"
           ],
-          "title": "SessionPolicyEnvironment",
+          "title": "SessionLimits",
           "type": "object"
         },
         "SessionRuntimeEnvironment": {
@@ -3080,27 +3049,6 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           ],
           "title": "SessionToolsEnvironment",
           "type": "object"
-        },
-        "SessionWorkspaceEnvironment": {
-          "description": "Workdir orientation reported by the executor that owns the session.",
-          "properties": {
-            "default_workdir": {
-              "description": "Effective default workdir on the execution target.",
-              "title": "Default Workdir",
-              "type": "string"
-            },
-            "workdir": {
-              "description": "Canonical workdir on the execution target.",
-              "title": "Workdir",
-              "type": "string"
-            }
-          },
-          "required": [
-            "default_workdir",
-            "workdir"
-          ],
-          "title": "SessionWorkspaceEnvironment",
-          "type": "object"
         }
       },
       "description": "Execution-session orientation.",
@@ -3117,7 +3065,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
         },
         "environment": {
           "$ref": "#/$defs/SessionEnvironment",
-          "description": "Bounded runtime, workspace, tool, capability, and policy orientation."
+          "description": "Bounded runtime, tool, capability, and limit orientation."
         },
         "executor_id": {
           "anyOf": [
@@ -3213,7 +3161,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted.",
+    "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted.",
     "inputSchema": {
       "properties": {
         "force": {

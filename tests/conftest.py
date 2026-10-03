@@ -46,9 +46,9 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
     clear_settings_cache()
     from tests.helpers import configure_test_tool_session_store
     from workgate.config.settings import get_settings
+    from workgate.executor.path import resolve_path
     from workgate.executor.tool_session.store import ToolSessionStore
     from workgate.persistence import FileStateStore, use_state_store
-    from workgate.utils.path_policy import resolve_path
 
     initial_settings = get_settings()
     state_store = FileStateStore(lambda: get_settings().state_dir)

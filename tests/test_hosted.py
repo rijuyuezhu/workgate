@@ -234,7 +234,7 @@ async def test_hosted_actor_reconstruction_keeps_facts_but_drops_live_state(
         session_id=new_session_id(),
         executor_id=delivered.executor_id,
         requested_workdir="project",
-        resolved_workdir_display="/workspace/project",
+        resolved_workdir="/workspace/project",
         status="active",
         created_at=10,
         updated_at=10,

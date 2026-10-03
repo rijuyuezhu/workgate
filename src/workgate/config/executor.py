@@ -51,7 +51,7 @@ EXECUTOR_SETTING_NAMES = frozenset(
 ) & frozenset(Settings.model_fields)
 
 
-def effective_default_workdir(path: Path) -> Path:
+def resolve_default_workdir(path: Path) -> Path:
     """Return the live default directory, falling back to the filesystem root."""
     resolved = path.resolve(strict=False)
     return resolved if resolved.is_dir() else Path("/").resolve(strict=False)
@@ -71,10 +71,9 @@ def get_executor_config() -> ExecutorConfig:
 
 def resolve_executor_config(settings: Settings) -> ExecutorConfig:
     """Snapshot executor-owned authority from user-facing settings."""
-    default_workdir = effective_default_workdir(settings.default_workdir)
     return ExecutorConfig(
         state_dir=settings.state_dir.resolve(strict=False),
-        default_workdir=default_workdir,
+        default_workdir=settings.default_workdir.resolve(strict=False),
         max_concurrent_commands=settings.max_concurrent_commands,
         max_tmux_sessions=settings.max_tmux_sessions,
         ui_terminal_idle_timeout_s=settings.ui_terminal_idle_timeout_s,

@@ -90,7 +90,7 @@ def test_executor_session_lookup_absence_and_non_directory_workdir(
 
 
 @pytest.mark.asyncio
-async def test_executor_session_create_uses_effective_default_workdir(
+async def test_executor_session_create_uses_resolve_default_workdir(
     tmp_path: Path,
 ) -> None:
     configured = tmp_path / "missing-default"
@@ -101,7 +101,7 @@ async def test_executor_session_create_uses_effective_default_workdir(
             agent_bridge_enabled=False,
         )
     )
-    assert config.default_workdir == Path("/").resolve(strict=False)
+    assert config.default_workdir == configured.resolve(strict=False)
     store = build_tool_session_store(
         Settings(
             default_workdir=configured,
@@ -117,7 +117,9 @@ async def test_executor_session_create_uses_effective_default_workdir(
         label=None,
     )
 
-    assert result.workdir == str(config.default_workdir)
+    root = str(Path("/").resolve(strict=False))
+    assert result.workdir == root
+    assert result.default_workdir == root
 
 
 @pytest.mark.asyncio
@@ -136,7 +138,6 @@ async def test_executor_session_create_falls_back_when_default_disappears(
     root = str(Path("/").resolve(strict=False))
     assert result.workdir == root
     assert result.default_workdir == root
-    assert result.environment.workspace.default_workdir == root
 
 
 @pytest.mark.asyncio

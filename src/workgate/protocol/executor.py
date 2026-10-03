@@ -20,7 +20,7 @@ EXECUTOR_CAPABILITY_BROWSER = "browser.v1"
 SESSION_CREATE_OP = "session.create"
 SESSION_LOOKUP_OP = "session.lookup"
 SESSION_TERMINATE_OP = "session.terminate"
-SESSION_CHANGE_CWD_OP = "session.change_cwd"
+SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 
 
 class ExecutorRuntimeSummary(BaseModel):

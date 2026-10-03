@@ -89,7 +89,6 @@ class WorkgateControl(DurableObject):
         configured_base_url = getattr(self._env, "WORKGATE_BASE_URL", None)
         base_url = str(configured_base_url or inferred_base_url).rstrip("/")
         settings = Settings(
-            default_workdir=Path("/workspace"),
             state_dir=Path("/state"),
             data_dir=Path("/data"),
             base_url=base_url,

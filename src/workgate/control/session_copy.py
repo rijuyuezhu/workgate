@@ -1227,7 +1227,7 @@ class ControlSessionCopyService:
 
     @staticmethod
     def _workdir(record: ControlSessionRecord) -> str:
-        workdir = record.resolved_workdir_display or record.requested_workdir
+        workdir = record.resolved_workdir or record.requested_workdir
         if workdir is None:
             raise RuntimeError(
                 f"session {record.session_id} has no resolved workdir"

@@ -155,10 +155,7 @@ async def test_one_task_can_span_distinct_executors_and_workdirs(
     second_record = records[str(second["session_id"])]
     assert str(first_record.executor_id) == harness.executor_id
     assert str(second_record.executor_id) == second_executor
-    assert (
-        first_record.resolved_workdir_display
-        != second_record.resolved_workdir_display
-    )
+    assert first_record.resolved_workdir != second_record.resolved_workdir
     current = await harness.control.task_service.read_task(task.task_id)
     assert current.session_ids == [first["session_id"], second["session_id"]]
 

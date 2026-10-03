@@ -67,6 +67,20 @@ def _executor_session(
 
 
 @pytest.mark.asyncio
+async def test_apply_patch_rejects_file_as_cwd(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    cwd = workspace / "not-a-directory"
+    cwd.write_text("data", encoding="utf-8")
+    _, config, store, session_id = _executor_session(
+        workspace, tmp_path / "state"
+    )
+
+    with pytest.raises(NotADirectoryError, match="not-a-directory"):
+        await apply_patch_execute(config, store, "", str(cwd), session_id)
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_envelope_is_session_bound_and_atomic(
     tmp_path: Path,
 ) -> None:

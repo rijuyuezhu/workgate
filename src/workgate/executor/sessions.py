@@ -4,12 +4,12 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config.executor import ExecutorConfig, effective_default_workdir
+from ..config.executor import ExecutorConfig, resolve_default_workdir
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
 from .errors import ExecutorOperationFailure
 from .path import resolve_path
-from .session_orientation import change_session_cwd, session_output
+from .session_orientation import change_session_workdir, session_output
 from .shell_service import ShellService
 from .tool_session.lifecycle import session_lifecycle_lock
 from .tool_session.store import ToolSessionStore, UnknownAgentSessionError
@@ -124,12 +124,12 @@ class ExecutorSessionService:
             )
         return stopped
 
-    async def change_cwd(self, session_id: str, workdir: str) -> Any:
+    async def change_workdir(self, session_id: str, workdir: str) -> Any:
         """Resolve against the executor default, then mutate cwd crash-safely."""
         resolved = self._resolve_workdir(workdir)
         async with session_lifecycle_lock(session_id):
             return await asyncio.to_thread(
-                change_session_cwd,
+                change_session_workdir,
                 self._config,
                 self._store,
                 session_id,
@@ -137,7 +137,7 @@ class ExecutorSessionService:
             )
 
     def _resolve_workdir(self, workdir: str | None) -> Path:
-        base = effective_default_workdir(self._config.default_workdir)
+        base = resolve_default_workdir(self._config.default_workdir)
         if workdir is None:
             return base
         resolved = resolve_path(

@@ -10,7 +10,7 @@ Ask the client to start a session in the project directory before doing any work
 Use workgate in /path/to/project. Start a session, inspect the returned workspace and Git state, and read any instruction files before changing anything.
 ```
 
-Keep using the returned `session_id`. Use `session_change_cwd` when the task moves to another directory instead of starting unrelated operations from an assumed path.
+Keep using the returned `session_id`. Use `session_change_workdir` when the task moves to another directory instead of starting unrelated operations from an assumed path.
 
 ## Inspect before editing
 

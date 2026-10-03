@@ -13,7 +13,7 @@ from ..errors import BrowserUnavailableError, exception_from_tool_error
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
-    SESSION_CHANGE_CWD_OP,
+    SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
@@ -150,7 +150,7 @@ class ControlSessionCoordinator:
                 executor_id=selected,
                 task_id=task_id,
                 requested_workdir=workdir,
-                resolved_workdir_display=None,
+                resolved_workdir=None,
                 label=label,
                 status="creating",
                 created_at=now,
@@ -220,14 +220,14 @@ class ControlSessionCoordinator:
             payload = self._unwrap(result)
             return payload
 
-    async def change_cwd(self, session_id: str, workdir: str) -> JsonValue:
+    async def change_workdir(self, session_id: str, workdir: str) -> JsonValue:
         lock = self._lock(session_id)
         async with lock:
             record = self._require_status(session_id, {"active"})
             await self._require_available(record)
             result = await self._transport.call(
                 str(record.executor_id),
-                SESSION_CHANGE_CWD_OP,
+                SESSION_CHANGE_WORKDIR_OP,
                 {"workdir": workdir},
                 session_id=session_id,
             )
@@ -239,7 +239,7 @@ class ControlSessionCoordinator:
             record = self._state.update_session(
                 session_id,
                 requested_workdir=workdir,
-                resolved_workdir_display=resolved,
+                resolved_workdir=resolved,
                 updated_at=now,
             )
             self.observe_session_activity(session_id, observed_at=now)
@@ -500,12 +500,12 @@ class ControlSessionCoordinator:
                     session_id, item.last_active_at
                 )
                 if record.status == "creating" or (
-                    record.resolved_workdir_display != item.resolved_workdir
+                    record.resolved_workdir != item.resolved_workdir
                 ):
                     self._state.update_session(
                         session_id,
                         status="active",
-                        resolved_workdir_display=item.resolved_workdir,
+                        resolved_workdir=item.resolved_workdir,
                         updated_at=self._clock(),
                     )
                 continue
@@ -650,7 +650,7 @@ class ControlSessionCoordinator:
         record = self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir_display=resolved,
+            resolved_workdir=resolved,
             updated_at=now,
         )
         self.observe_session_activity(str(record.session_id), observed_at=now)
@@ -681,7 +681,7 @@ class ControlSessionCoordinator:
         self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir_display=item.resolved_workdir,
+            resolved_workdir=item.resolved_workdir,
             updated_at=self._clock(),
         )
         self._replace_session_activity(

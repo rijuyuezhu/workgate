@@ -3,7 +3,7 @@
 import platform
 
 from .. import __version__
-from ..config.executor import ExecutorConfig, effective_default_workdir
+from ..config.executor import ExecutorConfig, resolve_default_workdir
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
@@ -37,7 +37,7 @@ def build_executor_hello(
                 else ()
             ),
         ),
-        default_workdir=str(effective_default_workdir(config.default_workdir)),
+        default_workdir=str(resolve_default_workdir(config.default_workdir)),
         sessions=sessions,
         shells=shells,
         jobs=jobs,

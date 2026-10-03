@@ -20,12 +20,12 @@ from workgate.errors import (
     syscall_path_not_found_error,
     tool_error_payload,
 )
+from workgate.executor.path import resolve_path
 from workgate.executor.terminal.runtime import (
     build_terminal_runtime,
     use_terminal_runtime,
 )
 from workgate.persistence import get_state_store
-from workgate.utils.path_policy import resolve_path
 
 
 def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,7 +99,7 @@ def test_syscall_path_detection_accepts_absolute_endpoint_outside_default(
     assert result.path == tmp_path.parent / "outside-default"
 
 
-def test_explicit_path_policy_raises_typed_missing_path_error(
+def test_explicit_path_resolution_raises_typed_missing_path_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _configure(tmp_path, monkeypatch)

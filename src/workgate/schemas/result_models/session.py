@@ -48,17 +48,6 @@ class SessionRuntimeEnvironment(BaseModel):
     )
 
 
-class SessionWorkspaceEnvironment(BaseModel):
-    """Workdir orientation reported by the executor that owns the session."""
-
-    default_workdir: str = Field(
-        description="Effective default workdir on the execution target."
-    )
-    workdir: str = Field(
-        description="Canonical workdir on the execution target."
-    )
-
-
 class SessionToolProbe(BaseModel):
     """Bounded availability and version result for one allowlisted tool."""
 
@@ -97,8 +86,8 @@ class SessionCapabilitiesEnvironment(BaseModel):
     )
 
 
-class SessionPolicyEnvironment(BaseModel):
-    """Safe executor-owned limits and modes that influence tool selection."""
+class SessionLimits(BaseModel):
+    """Executor-owned limits relevant to tool selection."""
 
     shell_default_timeout_s: int = Field(
         description="Default bounded shell timeout in seconds."
@@ -158,18 +147,13 @@ class SessionEnvironment(BaseModel):
     """Structured, bounded environment orientation for one session target."""
 
     runtime: SessionRuntimeEnvironment = Field(description="Runtime identity.")
-    workspace: SessionWorkspaceEnvironment = Field(
-        description="Workspace identity."
-    )
     tools: SessionToolsEnvironment = Field(
         description="Allowlisted tool probes."
     )
     capabilities: SessionCapabilitiesEnvironment = Field(
         description="Effective capabilities."
     )
-    policy: SessionPolicyEnvironment = Field(
-        description="Safe effective policy and limits."
-    )
+    limits: SessionLimits = Field(description="Effective executor limits.")
 
 
 class SessionStartOutput(BaseModel):
@@ -208,7 +192,7 @@ class SessionStartOutput(BaseModel):
         description="Project instruction files discovered from the session workdir through its ancestors."
     )
     environment: SessionEnvironment = Field(
-        description="Bounded runtime, workspace, tool, capability, and policy orientation."
+        description="Bounded runtime, tool, capability, and limit orientation."
     )
     message: str = Field(
         description="Short model-facing instruction for using this session."

@@ -31,7 +31,7 @@ LOCAL_MCP_TOOL_NAMES = {
     "workspace_search",
     "fetch",
     "session_start",
-    "session_change_cwd",
+    "session_change_workdir",
     "session_end",
     "session_copy",
     "version",

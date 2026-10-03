@@ -19,8 +19,8 @@ from pydantic import TypeAdapter, ValidationError
 from ..config.executor import ExecutorConfig
 from ..errors import BrowserUnavailableError
 from ..schemas.input_models.browser import BrowserActionsArg
-from ..utils.path_policy import relative_display_from_base
 from .errors import ExecutorOperationFailure
+from .path import display_path
 from .tool_session.store import ToolSessionStore
 
 _MAX_BROWSER_SESSIONS = 8
@@ -799,7 +799,7 @@ class BrowserService:
             raise FileExistsError(
                 "browser screenshots never overwrite an existing path"
             ) from None
-        return relative_display_from_base(target, Path(session.workdir))
+        return display_path(target, Path(session.workdir))
 
     def _require_owner(self, owner_session_id: str) -> None:
         self._store.admit_active_session(owner_session_id)

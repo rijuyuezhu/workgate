@@ -556,7 +556,7 @@ REST_ROUTES: dict[str, tuple[str, str]] = {
     "bash": ("POST", "/tools/bash"),
     "job": ("POST", "/tools/job"),
     "session_start": ("POST", "/tools/session_start"),
-    "session_change_cwd": ("POST", "/tools/session_change_cwd"),
+    "session_change_workdir": ("POST", "/tools/session_change_workdir"),
     "session_copy": ("POST", "/tools/session_copy"),
     "read": ("POST", "/tools/read"),
     "search": ("POST", "/tools/search"),

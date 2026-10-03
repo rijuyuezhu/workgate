@@ -16,7 +16,7 @@ class ReadTarget:
     """A path plus optional display selectors parsed from one read target."""
 
     path: str
-    """Workspace path with recognized selector suffixes removed."""
+    """Path with recognized selector suffixes removed."""
 
     start_line: int | None
     """Optional 1-based first line selected by the target."""

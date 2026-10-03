@@ -14,7 +14,7 @@ class SecretFinding(BaseModel):
 
 
 class SecretScanOutput(BaseModel):
-    """Heuristic workspace secret-scan result."""
+    """Heuristic secret-scan result."""
 
     findings: list[SecretFinding] = Field(
         description="Returned heuristic secret findings."

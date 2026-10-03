@@ -191,19 +191,16 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
     monkeypatch.setattr(env_ops, "conpty_available", lambda: False)
     monkeypatch.setattr(env_ops, "browser_capability_available", lambda: False)
 
-    environment = env_ops.collect_executor_session_environment(
-        config, workdir=str(tmp_path)
-    )
+    environment = env_ops.collect_executor_session_environment(config)
     payload = environment.model_dump(mode="json")
 
-    assert environment.workspace.default_workdir == str(tmp_path)
     assert environment.capabilities.raw_pty is True
     assert environment.capabilities.browser is False
-    assert environment.policy.max_jobs == 17
-    assert environment.policy.max_search_results == 23
+    assert environment.limits.max_jobs == 17
+    assert environment.limits.max_search_results == 23
     assert set(payload["capabilities"]) == {"raw_pty", "conpty", "browser"}
-    assert "authentication_mode" not in payload["policy"]
-    assert "max_agent_sessions" not in payload["policy"]
+    assert "authentication_mode" not in payload["limits"]
+    assert "max_agent_sessions" not in payload["limits"]
     for control_only in (
         "browser_ui",
         "browser_console",
@@ -221,9 +218,7 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
             RuntimeError("probe-secret-fixture")
         ),
     )
-    fallback = env_ops.collect_executor_session_environment(
-        config, workdir=str(tmp_path)
-    )
+    fallback = env_ops.collect_executor_session_environment(config)
     assert fallback.tools.git.status == "error"
     assert "probe-secret-fixture" not in json.dumps(
         fallback.model_dump(mode="json")

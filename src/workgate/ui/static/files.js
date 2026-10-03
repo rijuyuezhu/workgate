@@ -271,7 +271,7 @@ export function createFilesController({
       }
       const image = document.createElement("img");
       image.className = "file-preview-image";
-      image.alt = text(entry.name, "Workspace image");
+      image.alt = text(entry.name, "File image");
       image.src = `data:${payload.media_type};base64,${payload.data_base64}`;
       elements.filePreviewBody.replaceChildren(image);
       return;

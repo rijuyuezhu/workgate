@@ -861,7 +861,7 @@ def test_session_transfer_display_uses_session_workdir(tmp_path, monkeypatch):
     assert directory_stat.path == "folder"
     assert directory_stat.type == "dir"
     with pytest.raises(ValueError, match="mutually exclusive"):
-        transfer_ops._display_transfer_path(
+        transfer_ops._display_user_path(
             target,
             session_id=session_id,
             workdir=str(workdir),

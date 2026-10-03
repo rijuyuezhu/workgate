@@ -1,4 +1,4 @@
-"""Runtime settings for the Workgate workspace control plane."""
+"""Runtime settings for Workgate."""
 
 import os
 import re

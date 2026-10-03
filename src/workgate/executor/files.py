@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.executor import ExecutorConfig, effective_default_workdir
+from ..config.executor import ExecutorConfig, resolve_default_workdir
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditContextOutput,
@@ -27,7 +27,7 @@ from ..schemas.result_models.files import (
 )
 from ..utils.path_locks import path_lock, path_locks
 from .path import (
-    relative_display_from_base,
+    display_path,
     resolve_path,
 )
 from .tool_session.bindings import SessionBinding
@@ -72,7 +72,7 @@ def _resolve_file_path(
 ) -> Path:
     """Resolve a path relative to the session workdir or executor default."""
     base = (
-        effective_default_workdir(config.default_workdir)
+        resolve_default_workdir(config.default_workdir)
         if binding is None
         else Path(binding.workdir).resolve(strict=False)
     )
@@ -92,11 +92,11 @@ def _display_file(
 ) -> str:
     """Render a path relative to its operation workdir when possible."""
     base = (
-        effective_default_workdir(config.default_workdir)
+        resolve_default_workdir(config.default_workdir)
         if binding is None
         else Path(binding.workdir).resolve(strict=False)
     )
-    return relative_display_from_base(path, base)
+    return display_path(path, base)
 
 
 def _atomic_write_text(path: Path, content: str) -> None:

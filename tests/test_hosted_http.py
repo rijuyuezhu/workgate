@@ -67,10 +67,12 @@ class _Sessions:
         self.calls.append(("session_start", kwargs))
         return {"session_id": "ABCDEFGH", **kwargs}
 
-    async def change_cwd(self, session_id: str, workdir: str) -> dict[str, Any]:
+    async def change_workdir(
+        self, session_id: str, workdir: str
+    ) -> dict[str, Any]:
         self.calls.append(
             (
-                "session_change_cwd",
+                "session_change_workdir",
                 {"session_id": session_id, "workdir": workdir},
             )
         )
@@ -277,7 +279,7 @@ def test_hosted_tool_surface_is_explicit_and_excludes_unadapted_features() -> (
 ):
     assert {
         "session_start",
-        "session_change_cwd",
+        "session_change_workdir",
         "session_end",
         "read",
         "bash",
@@ -1012,7 +1014,7 @@ async def test_hosted_misc_routes_and_status_projection() -> None:
         session_id=session_id,
         executor_id=executor_id,
         status="active",
-        resolved_workdir_display="/workspace/project",
+        resolved_workdir="/workspace/project",
     )
     actor.executor_transport.online = True
     gateway = HostedHttpGateway(actor, owner_token="x" * 32)
@@ -1357,7 +1359,7 @@ async def test_hosted_mcp_session_change_and_end_routes() -> None:
     actor = _actor()
     gateway = HostedHttpGateway(actor, owner_token="x" * 32)
     changed = await gateway._mcp.call_tool(
-        "session_change_cwd",
+        "session_change_workdir",
         {"session_id": "ABCDEFGH", "workdir": "src"},
     )
     assert changed["workdir"] == "src"

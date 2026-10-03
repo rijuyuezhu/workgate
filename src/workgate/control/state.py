@@ -53,7 +53,7 @@ class ControlSessionRecord(BaseModel):
     executor_id: ExecutorId
     task_id: TaskId | None = None
     requested_workdir: str | None = Field(default=None, max_length=4096)
-    resolved_workdir_display: str | None = Field(default=None, max_length=4096)
+    resolved_workdir: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
     status: Literal["creating", "active", "terminating", "ended"]
     created_at: Timestamp
@@ -182,7 +182,7 @@ class ControlState:
         allowed = {
             "status",
             "requested_workdir",
-            "resolved_workdir_display",
+            "resolved_workdir",
             "updated_at",
         }
         unsupported = set(changes) - allowed

@@ -250,7 +250,7 @@ _RENDERERS: dict[str, ToolTextRenderer] = {
     "read_agent_skill_file": _content_text,
     "fetch": _fetch_text,
     "session_start": _session_text,
-    "session_change_cwd": _session_text,
+    "session_change_workdir": _session_text,
 }
 
 

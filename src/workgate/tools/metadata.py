@@ -48,7 +48,7 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "revoke_file_link",
         "run_python_code",
         "send_persistent_shell_input",
-        "session_change_cwd",
+        "session_change_workdir",
         "session_copy",
         "session_end",
         "session_start",
@@ -59,7 +59,7 @@ _NON_DESTRUCTIVE_MUTATION_TOOL_NAMES = frozenset(
     {
         "create_file_link",
         "resize_persistent_shell",
-        "session_change_cwd",
+        "session_change_workdir",
         "session_start",
     }
 )

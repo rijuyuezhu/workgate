@@ -74,7 +74,7 @@ Agent Bridge authentication is separate from the built-in OAuth server that prot
 
 ## Session environment disclosure boundary
 
-`session_start` and `session_change_cwd` return a bounded `environment` object so clients can choose tools without arbitrary shell inspection. It is an explicit allowlist, not a serialization of `Settings`, `os.environ`, process arguments, or executable paths.
+`session_start` and `session_change_workdir` return a bounded `environment` object so clients can choose tools without arbitrary shell inspection. It is an explicit allowlist, not a serialization of `Settings`, `os.environ`, process arguments, or executable paths.
 
 - Runtime fields contain normalized versions/platform tokens only. Executor identity contains package/bundle versions and a normalized service kind/status, never bundle digests, join tokens, service definitions, or command lines.
 - Tool probes run only allowlisted version commands, concurrently, with independent 1.5-second timeouts and bounded output. Responses expose an extracted version token and safe source category, not full executable paths, stdout/stderr, or exception text. Missing, timed-out, and failed probes are not marked available.

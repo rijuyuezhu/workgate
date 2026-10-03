@@ -268,7 +268,7 @@ drop an executor-backed binding merely to free a slot.
 
 ### Workdir changes
 
-`session_change_cwd` is an executor-authoritative resource mutation. Under its
+`session_change_workdir` is an executor-authoritative resource mutation. Under its
 session/snapshot synchronization, executor:
 
 1. resolves the requested path against `default_workdir` when relative and
