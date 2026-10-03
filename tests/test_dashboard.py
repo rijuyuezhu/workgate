@@ -96,7 +96,7 @@ def test_dashboard_snapshot_preserves_machine_alerts(monkeypatch) -> None:
     machine["alerts"] = [
         {
             "severity": "critical",
-            "title": "Workspace disk is 99% full",
+            "title": "Disk is 99% full",
             "detail": "/executor/workspace",
         }
     ]
@@ -140,10 +140,10 @@ def test_dashboard_snapshot_degrades_when_audit_is_unavailable(
 def test_executor_dashboard_snapshot_health_and_machine_alerts(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     config = resolve_executor_config(
-        Settings(
-            workspace_root=tmp_path / "workspace", state_dir=tmp_path / "state"
-        )
+        Settings(default_workdir=workspace, state_dir=tmp_path / "state")
     )
     system = {"disk_percent": 90.0, "memory_percent": 20.0}
     monkeypatch.setattr(
@@ -168,8 +168,8 @@ def test_executor_dashboard_snapshot_health_and_machine_alerts(
         "alerts": [
             {
                 "severity": "warning",
-                "title": "Workspace disk is 90% full",
-                "detail": str(config.workspace_root),
+                "title": "Disk is 90% full",
+                "detail": str(config.default_workdir),
             }
         ],
         "sources": {"system": "ok"},

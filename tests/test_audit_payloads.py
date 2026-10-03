@@ -19,7 +19,7 @@ from workgate.persistence import StateLayout
 
 def _settings(tmp_path: Path, **overrides: Any) -> SharedRoleConfig:
     values: dict[str, Any] = {
-        "workspace_root": tmp_path,
+        "default_workdir": tmp_path,
         "state_dir": tmp_path / ".state",
         "agent_bridge_enabled": False,
         "audit_inline_value_bytes": 256,

@@ -30,7 +30,7 @@ def _configure(
     auth_mode: str = "none",
 ) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(workspace / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)

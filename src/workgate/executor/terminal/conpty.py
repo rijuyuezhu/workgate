@@ -26,7 +26,6 @@ from ...schemas.result_models.shell import (
     SendPersistentShellInputOutput,
     StartPersistentShellOutput,
 )
-from ...utils.path_policy import relative_display_from_root
 from ...utils.private_files import private_file_lock
 from ...utils.processes import user_subprocess_env
 
@@ -343,9 +342,8 @@ class _RawSubscriber:
 class ConPtyRegistry:
     """Own live ConPTY shell sessions and lease state for one executor runtime."""
 
-    def __init__(self, state_store: StateStore, workspace_root: Path) -> None:
+    def __init__(self, state_store: StateStore) -> None:
         self.state_store = state_store
-        self.workspace_root = workspace_root.resolve(strict=False)
         self.sessions: dict[str, _ConPtySession] = {}
         self.lock = threading.RLock()
         self._operations: dict[asyncio.Task[Any], int] = {}
@@ -779,7 +777,7 @@ async def start_shell(
         )
         return StartPersistentShellOutput(
             shell_id=shell_id,
-            cwd=relative_display_from_root(cwd, registry.workspace_root),
+            cwd=str(cwd),
             command=initial,
             backend=CONPTY_BACKEND,
         )
@@ -936,9 +934,7 @@ async def list_shells() -> ListPersistentShellsOutput:
                         "created": str(session.created),
                         "attached": "1" if session.attached() else "0",
                         "backend": CONPTY_BACKEND,
-                        "cwd": relative_display_from_root(
-                            session.cwd, registry.workspace_root
-                        ),
+                        "cwd": str(session.cwd),
                         "command": session.command,
                     }
                 )
@@ -950,7 +946,7 @@ async def list_shells() -> ListPersistentShellsOutput:
 
 
 async def list_owned_shell_ids(owner_session_id: str) -> list[str]:
-    """Return live ConPTY shell ids owned by one explicit agent session."""
+    """Return live ConPTY shell ids owned by one execution session."""
     registry = _conpty_registry()
     operation = registry.begin_operation()
     try:

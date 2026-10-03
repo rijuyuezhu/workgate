@@ -11,7 +11,7 @@ from workgate.tools.registry.read import ReadToolRegistry
 
 
 def _settings(tmp_path, monkeypatch) -> Settings:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     return Settings()

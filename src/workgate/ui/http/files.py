@@ -89,7 +89,7 @@ async def _call(
 
 
 async def api_files(request: Request) -> Response:
-    """List one bounded executor workspace directory for the Human UI."""
+    """List one bounded executor filesystem directory for the Human UI."""
     try:
         executor_id = _executor_id_arg(request.query_params.get("executor_id"))
         _require_file_scopes()
@@ -152,7 +152,7 @@ async def api_file_content(request: Request) -> Response:
 
 
 async def api_file_action(request: Request) -> Response:
-    """Mutate executor workspace entries through narrow executor-owned primitives."""
+    """Mutate executor filesystem entries through narrow executor-owned primitives."""
     action = str(request.path_params.get("action") or "")
     try:
         body = await request.json()

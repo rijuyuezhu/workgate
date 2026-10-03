@@ -36,8 +36,7 @@ def _session_record(
     return ControlSessionRecord(
         session_id=session_id or new_session_id(),
         executor_id=executor_id,
-        requested_workdir="~/src/workgate",
-        resolved_workdir_display="/home/user/src/workgate",
+        workdir="/home/user/src/workgate",
         label="workgate",
         status="creating",
         created_at=20,

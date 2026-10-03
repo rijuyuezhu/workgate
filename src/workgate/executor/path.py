@@ -1,15 +1,57 @@
 """Executor path, temporary-file, and text-size helpers."""
 
+import os
 import time
 from pathlib import Path
 
 from ..app_paths import ensure_private_directory
-from ..utils.path_policy import (
-    relative_display_from_root as relative_display_from_root,
-)
-from ..utils.path_policy import (
-    resolve_path_with_policy as resolve_path_with_policy,
-)
+from ..errors import PathNotFoundError
+
+
+def resolve_default_workdir(path: Path) -> Path:
+    """Return the live default directory, falling back to the filesystem root."""
+    resolved = path.resolve(strict=False)
+    return resolved if resolved.is_dir() else Path("/").resolve(strict=False)
+
+
+def resolve_path(
+    path: str | Path,
+    *,
+    base: Path,
+    must_exist: bool = False,
+    allow_missing_parent: bool = True,
+    follow_final_symlink: bool = True,
+) -> Path:
+    """Resolve one user path relative to an explicit base directory."""
+    root = base.resolve(strict=False)
+    raw = Path(os.path.expandvars(os.path.expanduser(str(path))))
+    if not raw.is_absolute():
+        raw = root / raw
+    if follow_final_symlink:
+        resolved = raw.resolve(strict=False)
+    else:
+        resolved_parent = raw.parent.resolve(strict=False)
+        resolved = resolved_parent / raw.name if raw.name else resolved_parent
+
+    exists = (
+        resolved.exists() if follow_final_symlink else os.path.lexists(resolved)
+    )
+    if must_exist and not exists:
+        raise PathNotFoundError(resolved)
+    if not allow_missing_parent and not resolved.parent.exists():
+        raise PathNotFoundError(resolved.parent)
+    return resolved
+
+
+def display_path(path: Path, base: Path) -> str:
+    """Render a path relative to a display base when possible."""
+    resolved_base = base.resolve(strict=False)
+    candidate = path if path.is_absolute() else resolved_base / path
+    lexical = Path(os.path.abspath(candidate))
+    try:
+        return lexical.relative_to(resolved_base).as_posix()
+    except ValueError:
+        return lexical.as_posix()
 
 
 def temp_dir(directory: Path) -> Path:

@@ -143,7 +143,7 @@
               <strong id="dashboard-memory-value">—</strong>
             </div>
             <div class="dashboard-resource-row">
-              <span>Workspace disk</span>
+              <span>Disk</span>
               <div class="dashboard-resource-track"><i id="dashboard-disk-bar"></i></div>
               <strong id="dashboard-disk-value">—</strong>
             </div>
@@ -334,7 +334,7 @@
     <section id="file-panel" class="panel file-panel app-view" data-app-view="files" hidden>
       <div class="section-heading file-heading">
         <div>
-          <p class="eyebrow">Executor workspace</p>
+          <p class="eyebrow">Executor filesystem</p>
           <h2>Files</h2>
         </div>
         <span id="file-state" class="muted">Not loaded</span>
@@ -345,7 +345,7 @@
           <select id="file-executor" name="file-executor"></select>
         </label>
         <form id="file-path-form" class="file-path-form">
-          <label class="visually-hidden" for="file-path">Workspace path</label>
+          <label class="visually-hidden" for="file-path">File path</label>
           <input id="file-path" name="file-path" type="text" value="." maxlength="4096" autocomplete="off" spellcheck="false">
           <button type="submit">Go</button>
         </form>
@@ -363,8 +363,8 @@
         </div>
       </div>
       <div class="file-layout">
-        <nav id="file-list" class="file-list" aria-label="Workspace files" aria-live="polite">
-          <div class="empty-state">Loading workspace files…</div>
+        <nav id="file-list" class="file-list" aria-label="Executor files" aria-live="polite">
+          <div class="empty-state">Loading files…</div>
         </nav>
         <article class="file-preview">
           <div class="file-preview-header">

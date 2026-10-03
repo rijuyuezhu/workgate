@@ -595,7 +595,7 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
         root = Path({str(tmp_path)!r})
         runtime = build_control_runtime(
             Settings(
-                workspace_root=root / "executor-workspace-must-not-be-needed",
+                default_workdir=root / "executor-workspace-must-not-be-needed",
                 state_dir=root / "control-state",
                 auth_mode="none",
                 ui_enabled=False,

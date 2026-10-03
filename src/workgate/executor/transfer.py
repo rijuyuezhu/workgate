@@ -46,12 +46,14 @@ from ..schemas.result_models.transfer import (
     TransferWriteChunkOutput,
 )
 from ..utils.path_locks import path_lock, path_locks
-from ..utils.path_policy import (
-    relative_display_from_root,
-    resolve_path_with_policy,
-)
 from ..utils.private_files import atomic_write_private_text
-from .path import prune_temp_dir, temp_dir
+from .path import (
+    display_path,
+    prune_temp_dir,
+    resolve_default_workdir,
+    resolve_path,
+    temp_dir,
+)
 from .tool_session.store import ToolSessionStore
 
 _TRANSFER_TMP_MARKER = "workgate-transfer"
@@ -134,24 +136,33 @@ class TransferContext:
     store: ToolSessionStore
 
 
-def _policy_path(
-    context: TransferContext,
-    path: str | Path,
-    *,
-    must_exist: bool = False,
-    follow_final_symlink: bool = True,
-) -> Path:
-    return resolve_path_with_policy(
-        path,
-        workspace_root=context.config.workspace_root,
-        allow_full_control=context.config.allow_full_control,
-        must_exist=must_exist,
-        follow_final_symlink=follow_final_symlink,
+def _display(path: Path, context: TransferContext) -> str:
+    return display_path(
+        path, resolve_default_workdir(context.config.default_workdir)
     )
 
 
-def _display(path: Path, context: TransferContext) -> str:
-    return relative_display_from_root(path, context.config.workspace_root)
+def _display_user_path(
+    path: Path,
+    *,
+    session_id: str | None = None,
+    workdir: str | None = None,
+    context: TransferContext,
+) -> str:
+    """Render a user path relative to the same base used to resolve it."""
+    if session_id is not None and workdir is not None:
+        raise ValueError("session_id and workdir are mutually exclusive")
+    if session_id is not None:
+        base = Path(context.store.require_session(session_id).workdir)
+    elif workdir is not None:
+        base = resolve_path(
+            workdir,
+            base=resolve_default_workdir(context.config.default_workdir),
+            must_exist=True,
+        )
+    else:
+        base = resolve_default_workdir(context.config.default_workdir)
+    return display_path(path, base)
 
 
 def _scratch_dir(context: TransferContext) -> Path:
@@ -240,7 +251,7 @@ def _resolve_temp_path(
     """Resolve a transfer scratch path under the configured temp directory."""
     raw = Path(os.path.expandvars(os.path.expanduser(str(path))))
     if not raw.is_absolute():
-        raw = context.config.workspace_root / raw
+        raw = resolve_default_workdir(context.config.default_workdir) / raw
     resolved = raw.resolve(strict=False)
     base = _scratch_dir(context).resolve()
     try:
@@ -258,10 +269,9 @@ def _resolve_transfer_path(
     must_exist: bool = False,
     session_id: str | None = None,
     workdir: str | None = None,
-    allow_temp: bool = True,
     context: TransferContext,
 ) -> Path:
-    """Resolve one readable user/session path, allowing internal scratch paths."""
+    """Resolve one readable user/session path."""
     if session_id is not None and workdir is not None:
         raise ValueError("session_id and workdir are mutually exclusive")
     if session_id is not None:
@@ -269,23 +279,17 @@ def _resolve_transfer_path(
         session = store.touch_session(session_id)
         return store.resolve_session_path(session, path, must_exist=must_exist)
     if workdir is not None:
-        base = _policy_path(context, workdir, must_exist=True)
-        raw = Path(path)
-        candidate = raw if raw.is_absolute() else base / raw
-        resolved = _policy_path(context, candidate, must_exist=must_exist)
-        try:
-            resolved.relative_to(base)
-        except ValueError as exc:
-            raise ValueError(f"Path escapes session workdir: {path}") from exc
-        return resolved
-    try:
-        return _policy_path(context, path, must_exist=must_exist)
-    except ValueError:
-        if allow_temp:
-            return _resolve_temp_path(
-                path, must_exist=must_exist, context=context
-            )
-        raise
+        base = resolve_path(
+            workdir,
+            base=resolve_default_workdir(context.config.default_workdir),
+            must_exist=True,
+        )
+        return resolve_path(path, base=base, must_exist=must_exist)
+    return resolve_path(
+        path,
+        base=resolve_default_workdir(context.config.default_workdir),
+        must_exist=must_exist,
+    )
 
 
 def _resolve_transfer_destination(
@@ -293,7 +297,6 @@ def _resolve_transfer_destination(
     *,
     session_id: str | None = None,
     workdir: str | None = None,
-    allow_temp: bool = True,
     context: TransferContext,
 ) -> Path:
     """Resolve a destination without following its final directory entry."""
@@ -306,21 +309,17 @@ def _resolve_transfer_destination(
             session, path, follow_final_symlink=False
         )
     if workdir is not None:
-        base = _policy_path(context, workdir, must_exist=True)
-        raw = Path(path)
-        candidate = raw if raw.is_absolute() else base / raw
-        resolved = _policy_path(context, candidate, follow_final_symlink=False)
-        try:
-            resolved.parent.relative_to(base)
-        except ValueError as exc:
-            raise ValueError(f"Path escapes session workdir: {path}") from exc
-        return resolved
-    try:
-        return _policy_path(context, path, follow_final_symlink=False)
-    except ValueError:
-        if allow_temp:
-            return _resolve_temp_path(path, context=context)
-        raise
+        base = resolve_path(
+            workdir,
+            base=resolve_default_workdir(context.config.default_workdir),
+            must_exist=True,
+        )
+        return resolve_path(path, base=base, follow_final_symlink=False)
+    return resolve_path(
+        path,
+        base=resolve_default_workdir(context.config.default_workdir),
+        follow_final_symlink=False,
+    )
 
 
 def transfer_stat(
@@ -331,7 +330,7 @@ def transfer_stat(
     workdir: str | None = None,
     context: TransferContext,
 ) -> TransferStatOutput:
-    """Return transfer metadata for one workspace or session path."""
+    """Return transfer metadata for one default- or session-anchored path."""
     source = _resolve_transfer_path(
         path,
         must_exist=True,
@@ -342,7 +341,9 @@ def transfer_stat(
     source_stat = source.stat()
     if source.is_file():
         return TransferStatOutput(
-            path=_display(source, context),
+            path=_display_user_path(
+                source, session_id=session_id, workdir=workdir, context=context
+            ),
             type="file",
             size=source_stat.st_size,
             modified=source_stat.st_mtime,
@@ -350,13 +351,17 @@ def transfer_stat(
         )
     if source.is_dir():
         return TransferStatOutput(
-            path=_display(source, context),
+            path=_display_user_path(
+                source, session_id=session_id, workdir=workdir, context=context
+            ),
             type="dir",
             size=None,
             modified=source_stat.st_mtime,
         )
     return TransferStatOutput(
-        path=_display(source, context),
+        path=_display_user_path(
+            source, session_id=session_id, workdir=workdir, context=context
+        ),
         type="other",
         size=source_stat.st_size,
         modified=source_stat.st_mtime,
@@ -394,7 +399,9 @@ def transfer_read_chunk(
         data = handle.read(limit)
     digest = hashlib.sha256(data).hexdigest()
     return TransferReadChunkOutput(
-        path=_display(source, context),
+        path=_display_user_path(
+            source, session_id=session_id, workdir=workdir, context=context
+        ),
         offset=start,
         bytes=len(data),
         size=size,
@@ -605,9 +612,9 @@ def _abandon_final_write_receipt(
         destination = (
             _resolve_temp_path(receipt.destination, context=context)
             if discard_committed_destination
-            else _policy_path(
-                context,
+            else resolve_path(
                 receipt.destination,
+                base=resolve_default_workdir(context.config.default_workdir),
                 must_exist=False,
                 follow_final_symlink=False,
             )
@@ -741,16 +748,15 @@ def _abandon_unpack_receipt(
             receipt_path, max_bytes=64 * 1024
         )
         receipt = _UnpackTransferReceipt.model_validate(raw)
-        destination = _policy_path(
-            context,
+        destination = resolve_path(
             receipt.destination,
+            base=resolve_default_workdir(context.config.default_workdir),
             must_exist=False,
             follow_final_symlink=False,
         )
         archive = _resolve_transfer_path(
             receipt.archive,
             must_exist=False,
-            allow_temp=True,
             context=context,
         )
     except OSError, ValueError, ValidationError:
@@ -1227,8 +1233,18 @@ def transfer_copy_file(
                 raise ValueError("transfer source path is not a regular file")
             size = int(source_stat.st_size)
             return TransferCopyFileOutput(
-                source_path=_display(source, context),
-                path=_display(destination, context),
+                source_path=_display_user_path(
+                    source,
+                    session_id=source_session_id,
+                    workdir=source_workdir,
+                    context=context,
+                ),
+                path=_display_user_path(
+                    destination,
+                    session_id=destination_session_id,
+                    workdir=destination_workdir,
+                    context=context,
+                ),
                 bytes=size,
                 sha256=_sha256_file(source, limit),
                 chunks=0 if size == 0 else (size + limit - 1) // limit,
@@ -1276,8 +1292,18 @@ def transfer_copy_file(
             temporary.unlink(missing_ok=True)
 
     return TransferCopyFileOutput(
-        source_path=_display(source, context),
-        path=_display(destination, context),
+        source_path=_display_user_path(
+            source,
+            session_id=source_session_id,
+            workdir=source_workdir,
+            context=context,
+        ),
+        path=_display_user_path(
+            destination,
+            session_id=destination_session_id,
+            workdir=destination_workdir,
+            context=context,
+        ),
         bytes=copied,
         sha256=digest.hexdigest(),
         chunks=chunks,
@@ -1486,8 +1512,18 @@ def transfer_begin_write(
                     )
                 _transfer_metadata_path(temporary).unlink(missing_ok=True)
                 return TransferBeginWriteOutput(
-                    path=_display(destination, context),
-                    temp_path=_display(temporary, context),
+                    path=_display_user_path(
+                        destination,
+                        session_id=session_id,
+                        workdir=workdir,
+                        context=context,
+                    ),
+                    temp_path=_display_user_path(
+                        temporary,
+                        session_id=session_id,
+                        workdir=workdir,
+                        context=context,
+                    ),
                     transfer_id=requested_id,
                     created=not receipt.destination_existed,
                     expected_bytes=expected,
@@ -1534,8 +1570,18 @@ def transfer_begin_write(
             if ranges not in ([], [[0, offset]]):
                 raise ValueError("transfer resume ranges are not contiguous")
             return TransferBeginWriteOutput(
-                path=_display(destination, context),
-                temp_path=_display(temporary, context),
+                path=_display_user_path(
+                    destination,
+                    session_id=session_id,
+                    workdir=workdir,
+                    context=context,
+                ),
+                temp_path=_display_user_path(
+                    temporary,
+                    session_id=session_id,
+                    workdir=workdir,
+                    context=context,
+                ),
                 transfer_id=requested_id,
                 created=not receipt.destination_existed,
                 expected_bytes=expected,
@@ -1565,8 +1611,12 @@ def transfer_begin_write(
             temporary.unlink(missing_ok=True)
             raise
     return TransferBeginWriteOutput(
-        path=_display(destination, context),
-        temp_path=_display(temporary, context),
+        path=_display_user_path(
+            destination, session_id=session_id, workdir=workdir, context=context
+        ),
+        temp_path=_display_user_path(
+            temporary, session_id=session_id, workdir=workdir, context=context
+        ),
         transfer_id=requested_id,
         created=not receipt.destination_existed,
         expected_bytes=expected,
@@ -1643,8 +1693,12 @@ def transfer_write_bytes(
             metadata["temporary_size"] = int(updated_stat.st_size)
         _write_transfer_metadata(temporary, metadata)
     return TransferWriteChunkOutput(
-        path=_display(destination, context),
-        temp_path=_display(temporary, context),
+        path=_display_user_path(
+            destination, session_id=session_id, workdir=workdir, context=context
+        ),
+        temp_path=_display_user_path(
+            temporary, session_id=session_id, workdir=workdir, context=context
+        ),
         offset=start,
         bytes=len(data),
         sha256=digest,
@@ -1810,7 +1864,9 @@ def transfer_finish_write(
             receipt.model_dump(mode="python", exclude_none=True),
         )
     return TransferFinishWriteOutput(
-        path=_display(destination, context),
+        path=_display_user_path(
+            destination, session_id=session_id, workdir=workdir, context=context
+        ),
         bytes=size,
         sha256=digest,
         completed=True,
@@ -1845,8 +1901,18 @@ def transfer_abort_write(
         )
         if current is not None and current.status != "receiving":
             return TransferAbortWriteOutput(
-                path=_display(destination, context),
-                temp_path=_display(temporary, context),
+                path=_display_user_path(
+                    destination,
+                    session_id=session_id,
+                    workdir=workdir,
+                    context=context,
+                ),
+                temp_path=_display_user_path(
+                    temporary,
+                    session_id=session_id,
+                    workdir=workdir,
+                    context=context,
+                ),
                 deleted=False,
             )
         if temporary.exists():
@@ -1856,8 +1922,12 @@ def transfer_abort_write(
         if current is not None:
             context.store.state_store.remove(receipt_path)
     return TransferAbortWriteOutput(
-        path=_display(destination, context),
-        temp_path=_display(temporary, context),
+        path=_display_user_path(
+            destination, session_id=session_id, workdir=workdir, context=context
+        ),
+        temp_path=_display_user_path(
+            temporary, session_id=session_id, workdir=workdir, context=context
+        ),
         deleted=deleted,
     )
 
@@ -1886,7 +1956,7 @@ def transfer_alloc_temp_path(
     session_id: str | None = None,
     context: TransferContext,
 ) -> TransferAllocTempPathOutput:
-    """Allocate a safe temporary workspace path for transfer scratch data."""
+    """Allocate a confined temporary path for transfer scratch data."""
     _ = session_id
     _prune_transfer_scratch(context)
     safe_suffix = (
@@ -1955,7 +2025,9 @@ def transfer_pack_dir(
         archive.unlink(missing_ok=True)
         raise
     return TransferPackDirOutput(
-        path=_display(source, context),
+        path=_display_user_path(
+            source, session_id=session_id, workdir=workdir, context=context
+        ),
         archive_path=_display(archive, context),
         bytes=size,
         sha256=_sha256_file(archive),
@@ -2024,6 +2096,8 @@ def _resumable_unpack_archive(
     overwrite: bool,
     cleanup_archive: bool,
     transfer_id: str,
+    session_id: str | None,
+    workdir: str | None,
     context: TransferContext,
 ) -> TransferUnpackArchiveOutput:
     """Commit one directory import under a transfer-specific durable receipt."""
@@ -2247,7 +2321,12 @@ def _resumable_unpack_archive(
         )
         _write_unpack_receipt(context, receipt_path, receipt)
         return TransferUnpackArchiveOutput(
-            path=_display(destination, context),
+            path=_display_user_path(
+                destination,
+                session_id=session_id,
+                workdir=workdir,
+                context=context,
+            ),
             archive_path=str(receipt.get("archive_display") or archive_path),
             entries=int(receipt["entries"]),
             completed=True,
@@ -2299,6 +2378,8 @@ def transfer_unpack_archive(
             overwrite=overwrite,
             cleanup_archive=cleanup_archive,
             transfer_id=transfer_id,
+            session_id=session_id,
+            workdir=workdir,
             context=context,
         )
     destination = _resolve_transfer_destination(
@@ -2398,7 +2479,12 @@ def transfer_unpack_archive(
             else:
                 archive_deleted = not archive.exists()
         return TransferUnpackArchiveOutput(
-            path=_display(destination, context),
+            path=_display_user_path(
+                destination,
+                session_id=session_id,
+                workdir=workdir,
+                context=context,
+            ),
             archive_path=_display(archive, context),
             entries=len(members),
             completed=True,

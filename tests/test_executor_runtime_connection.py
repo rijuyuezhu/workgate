@@ -14,7 +14,7 @@ from workgate.executor.profile import (
 from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.executor import (
-    SESSION_CHANGE_CWD_OP,
+    SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     ExecutorCommand,
     ExecutorHelloRequest,
@@ -78,7 +78,7 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=tmp_path / "workspace",
+                default_workdir=tmp_path / "workspace",
                 state_dir=tmp_path / "state",
             )
         )
@@ -119,7 +119,7 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
             SESSION_CREATE_OP,
             "sess_0000000000000000000001",
             {"workdir": ""},
-            "requires workdir",
+            "non-empty string or null",
         ),
         (
             SESSION_CREATE_OP,
@@ -128,7 +128,7 @@ async def test_executor_runtime_without_final_profile_stays_in_migration_mode(
             "label must be a string",
         ),
         (
-            SESSION_CHANGE_CWD_OP,
+            SESSION_CHANGE_WORKDIR_OP,
             "sess_0000000000000000000001",
             {"workdir": ""},
             "requires workdir",
@@ -145,7 +145,7 @@ async def test_executor_runtime_protocol_guards_fail_closed(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=tmp_path / "workspace",
+                default_workdir=tmp_path / "workspace",
                 state_dir=tmp_path / "state",
             )
         )
@@ -166,9 +166,10 @@ async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
 
     state_dir = tmp_path / "state"
     workspace = tmp_path / "workspace"
+    workspace.mkdir()
     runtime = build_executor_runtime(
         resolve_executor_config(
-            Settings(workspace_root=workspace, state_dir=state_dir)
+            Settings(default_workdir=workspace, state_dir=state_dir)
         )
     )
     profile = ExecutorProfile(
@@ -192,7 +193,7 @@ async def test_executor_runtime_profile_starts_v1_loop_and_holds_profile_lock(
         assert _FakeControlClient.profiles == [profile]
         assert len(_FakeControlClient.hellos) == 1
         hello = _FakeControlClient.hellos[0]
-        assert hello.workspace_root == str(workspace.resolve(strict=False))
+        assert hello.default_workdir == str(workspace.resolve(strict=False))
         assert hello.sessions == ()
         assert hello.shells == ()
         assert hello.jobs == ()
@@ -221,13 +222,13 @@ async def test_executor_runtime_hello_includes_resource_inventory(
     workspace.mkdir()
     runtime = build_executor_runtime(
         resolve_executor_config(
-            Settings(workspace_root=workspace, state_dir=state_dir)
+            Settings(default_workdir=workspace, state_dir=state_dir)
         )
     )
     session_id = "sess_0000000000000000000001"
     before = SessionInventorySummary(
         session_id=session_id,
-        resolved_workdir=str(workspace),
+        workdir=str(workspace),
         has_persistent_shells=True,
         has_active_jobs=True,
     )
@@ -287,7 +288,7 @@ async def test_reconnect_hello_retries_when_session_ids_change(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=workspace,
+                default_workdir=workspace,
                 state_dir=tmp_path / "state",
             )
         )
@@ -296,11 +297,11 @@ async def test_reconnect_hello_retries_when_session_ids_change(
     second_id = "sess_0000000000000000000002"
     first = SessionInventorySummary(
         session_id=first_id,
-        resolved_workdir=str(workspace),
+        workdir=str(workspace),
     )
     second = SessionInventorySummary(
         session_id=second_id,
-        resolved_workdir=str(workspace),
+        workdir=str(workspace),
     )
     snapshots = iter(((first,), (second,), (second,), (second,)))
     monkeypatch.setattr(runtime.sessions, "inventory", lambda: next(snapshots))
@@ -335,7 +336,7 @@ async def test_executor_runtime_terminal_attach_owns_stream_task(
     from workgate.executor.terminal import stream as stream_module
 
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
     )
     runtime = build_executor_runtime(resolve_executor_config(settings))
@@ -410,7 +411,7 @@ async def test_executor_runtime_restart_reuses_same_profile_credential(
     from workgate.executor import control_client as control_client_module
 
     settings = Settings(
-        workspace_root=tmp_path / "workspace", state_dir=tmp_path / "state"
+        default_workdir=tmp_path / "workspace", state_dir=tmp_path / "state"
     )
     profile = ExecutorProfile(
         control_url="https://control.example",

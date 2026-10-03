@@ -67,10 +67,12 @@ class _Sessions:
         self.calls.append(("session_start", kwargs))
         return {"session_id": "ABCDEFGH", **kwargs}
 
-    async def change_cwd(self, session_id: str, workdir: str) -> dict[str, Any]:
+    async def change_workdir(
+        self, session_id: str, workdir: str
+    ) -> dict[str, Any]:
         self.calls.append(
             (
-                "session_change_cwd",
+                "session_change_workdir",
                 {"session_id": session_id, "workdir": workdir},
             )
         )
@@ -189,7 +191,6 @@ class _Transport:
         self.calls.append(("hello", (credential, request)))
         return SimpleNamespace(
             model_dump=lambda **_: {
-                "protocol_version": 1,
                 "heartbeat_interval_s": 15,
                 "offline_after_s": 45,
                 "poll_timeout_s": 25,
@@ -277,7 +278,7 @@ def test_hosted_tool_surface_is_explicit_and_excludes_unadapted_features() -> (
 ):
     assert {
         "session_start",
-        "session_change_cwd",
+        "session_change_workdir",
         "session_end",
         "read",
         "bash",
@@ -962,7 +963,7 @@ async def test_hosted_mcp_allows_pty_when_async_flag_is_also_true() -> None:
 @pytest.mark.parametrize(
     ("name", "arguments", "expected"),
     [
-        ("session_start", {"workdir": 7}, "expected string"),
+        ("session_start", {"workdir": 7}, "no allowed schema matched"),
         (
             "bash",
             {"session_id": "ABCDEFGH", "command": "pwd", "timeout_s": "10"},
@@ -1012,7 +1013,7 @@ async def test_hosted_misc_routes_and_status_projection() -> None:
         session_id=session_id,
         executor_id=executor_id,
         status="active",
-        resolved_workdir_display="/workspace/project",
+        workdir="/workspace/project",
     )
     actor.executor_transport.online = True
     gateway = HostedHttpGateway(actor, owner_token="x" * 32)
@@ -1146,10 +1147,9 @@ def test_hosted_pairing_error_status_mapping(
 
 def _hello_payload() -> dict[str, Any]:
     return {
-        "protocol_version": 1,
         "runtime": {"workgate_version": "test"},
         "capabilities": ["sessions.v1"],
-        "workspace_root": "/workspace",
+        "default_workdir": "/workspace",
         "sessions": [],
         "shells": [],
         "jobs": [],
@@ -1169,7 +1169,6 @@ async def test_hosted_executor_protocol_success_paths() -> None:
         payload=_hello_payload(),
     )
     assert hello.status == 200
-    assert _json_body(hello)["protocol_version"] == 1
 
     validate = await gateway.dispatch(
         method="POST",
@@ -1357,7 +1356,7 @@ async def test_hosted_mcp_session_change_and_end_routes() -> None:
     actor = _actor()
     gateway = HostedHttpGateway(actor, owner_token="x" * 32)
     changed = await gateway._mcp.call_tool(
-        "session_change_cwd",
+        "session_change_workdir",
         {"session_id": "ABCDEFGH", "workdir": "src"},
     )
     assert changed["workdir"] == "src"

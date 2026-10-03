@@ -573,7 +573,7 @@ async def _start_managed_job_unlocked(
     command: str | None = None,
     cwd: str = ".",
 ) -> JobStartOutput:
-    """Start one control-managed task owned by an explicit agent session."""
+    """Start one control-managed task owned by an execution session."""
     runtime = managed_jobs_runtime()
     runtime.require_admission()
     normalized_kind = kind.strip()

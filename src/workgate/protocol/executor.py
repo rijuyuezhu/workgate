@@ -1,12 +1,9 @@
 """Executor protocol v1 wire models."""
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .ids import CommandId, SessionId
 
-EXECUTOR_PROTOCOL_VERSION = 1
 EXECUTOR_PAIR_START_PATH = "/executor/v1/pair/start"
 EXECUTOR_PAIR_POLL_PATH = "/executor/v1/pair/poll"
 EXECUTOR_HELLO_PATH = "/executor/v1/hello"
@@ -20,7 +17,7 @@ EXECUTOR_CAPABILITY_BROWSER = "browser.v1"
 SESSION_CREATE_OP = "session.create"
 SESSION_LOOKUP_OP = "session.lookup"
 SESSION_TERMINATE_OP = "session.terminate"
-SESSION_CHANGE_CWD_OP = "session.change_cwd"
+SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 
 
 class ExecutorRuntimeSummary(BaseModel):
@@ -39,7 +36,7 @@ class SessionInventorySummary(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     session_id: SessionId
-    resolved_workdir: str = Field(min_length=1, max_length=4096)
+    workdir: str = Field(min_length=1, max_length=4096)
     last_active_at: float | None = Field(
         default=None, ge=0, allow_inf_nan=False
     )
@@ -71,13 +68,10 @@ class ExecutorHelloRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    protocol_version: Literal[1] = 1
     runtime: ExecutorRuntimeSummary
     capabilities: tuple[str, ...] = ()
     boot_id: str | None = Field(default=None, min_length=1, max_length=256)
-    workspace_root: str | None = Field(
-        default=None, min_length=1, max_length=4096
-    )
+    default_workdir: str = Field(min_length=1, max_length=4096)
     sessions: tuple[SessionInventorySummary, ...]
     shells: tuple[ShellInventorySummary, ...]
     jobs: tuple[JobInventorySummary, ...]
@@ -88,7 +82,6 @@ class ExecutorHelloResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    protocol_version: Literal[1] = 1
     heartbeat_interval_s: int = Field(gt=0)
     offline_after_s: int = Field(gt=0)
     poll_timeout_s: int = Field(gt=0)

@@ -23,7 +23,7 @@ async def test_composed_transfer_uses_explicit_executor_authority(
     source_dir.mkdir(parents=True)
     (source_dir / "file.txt").write_bytes(b"payload\n")
     settings = Settings(
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -36,7 +36,7 @@ async def test_composed_transfer_uses_explicit_executor_authority(
         workdir=workspace,
     )
 
-    settings.workspace_root = tmp_path / "wrong-workspace"
+    settings.default_workdir = tmp_path / "wrong-workspace"
     settings.max_transfer_archive_entries = 1
     settings.max_transfer_unpacked_bytes = 1
     settings.max_tmp_files = 0
@@ -90,7 +90,7 @@ async def test_transfer_composition_preserves_unbound_command_admission(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=workspace,
+                default_workdir=workspace,
                 state_dir=tmp_path / "state",
                 agent_bridge_enabled=False,
             )

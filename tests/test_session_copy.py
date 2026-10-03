@@ -26,7 +26,7 @@ from workgate.schemas.result_models.jobs import JobStartOutput
 
 
 def _configure(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -154,6 +154,20 @@ async def test_shared_session_copy_preserves_destination_when_overwrite_is_false
     assert (tmp_path / "dst" / "payload.txt").read_text(
         encoding="utf-8"
     ) == "old"
+
+
+def test_copy_binding_requires_confirmed_workdir() -> None:
+    record = ControlSessionRecord(
+        session_id=new_session_id(),
+        executor_id=new_executor_id(),
+        workdir=None,
+        status="active",
+        created_at=1,
+        updated_at=1,
+    )
+
+    with pytest.raises(RuntimeError, match="no confirmed workdir"):
+        ControlSessionCopyService._binding_snapshot(record)
 
 
 @pytest.mark.asyncio
@@ -368,8 +382,7 @@ def _checkpoint_service(
     source = ControlSessionRecord(
         session_id=source_session_id,
         executor_id=source_executor_id,
-        requested_workdir="src",
-        resolved_workdir_display="src",
+        workdir="src",
         status="active",
         created_at=1.0,
         updated_at=1.0,
@@ -377,8 +390,7 @@ def _checkpoint_service(
     destination = ControlSessionRecord(
         session_id=destination_session_id,
         executor_id=destination_executor_id,
-        requested_workdir="dst",
-        resolved_workdir_display="dst",
+        workdir="dst",
         status="active",
         created_at=1.0,
         updated_at=1.0,
@@ -794,8 +806,7 @@ def _fresh_cross_executor_service(
     source = ControlSessionRecord(
         session_id=str(new_session_id()),
         executor_id=source_executor_id,
-        requested_workdir="src",
-        resolved_workdir_display="src",
+        workdir="src",
         status="active",
         created_at=1.0,
         updated_at=1.0,
@@ -803,8 +814,7 @@ def _fresh_cross_executor_service(
     destination = ControlSessionRecord(
         session_id=str(new_session_id()),
         executor_id=destination_executor_id,
-        requested_workdir="dst",
-        resolved_workdir_display="dst",
+        workdir="dst",
         status="active",
         created_at=1.0,
         updated_at=1.0,

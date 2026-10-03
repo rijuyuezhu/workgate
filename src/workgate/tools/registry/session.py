@@ -10,6 +10,7 @@ from ...schemas.input_models.session import (
     SessionExecutorIdArg,
     SessionIdArg,
     SessionLabelArg,
+    SessionStartWorkdirArg,
     SessionTaskIdArg,
     SessionWorkdirArg,
 )
@@ -40,19 +41,19 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools."""
+    return """Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."""
 
 
-def _session_change_cwd_description(_context: McpToolContext) -> str:
-    return """Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated."""
+def _session_change_workdir_description(_context: McpToolContext) -> str:
+    return """Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated."""
 
 
 def _session_copy_description(_context: McpToolContext) -> str:
-    return """Copy one file or directory between two existing execution sessions. Paths resolve inside their session workdirs. Set background=true to return a managed job owned by src_session_id."""
+    return """Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Set background=true to return a managed job owned by src_session_id."""
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted."""
+    return """End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted."""
 
 
 @session_tool(
@@ -62,7 +63,7 @@ def _session_end_description(_context: McpToolContext) -> str:
     oauth_scopes=("shell:read",),
 )
 async def session_start(
-    workdir: SessionWorkdirArg,
+    workdir: SessionStartWorkdirArg = None,
     label: SessionLabelArg = None,
     executor_id: SessionExecutorIdArg = None,
     task_id: SessionTaskIdArg = None,
@@ -73,16 +74,16 @@ async def session_start(
 
 @session_tool(
     http_method="POST",
-    http_path="/tools/session_change_cwd",
-    description=_session_change_cwd_description,
+    http_path="/tools/session_change_workdir",
+    description=_session_change_workdir_description,
     oauth_scopes=("shell:read",),
 )
-async def session_change_cwd(
+async def session_change_workdir(
     session_id: SessionIdArg,
     workdir: SessionWorkdirArg,
 ) -> SessionStartOutput:
     """Change an execution session workdir."""
-    raise _unrouted_session_tool("session_change_cwd")
+    raise _unrouted_session_tool("session_change_workdir")
 
 
 @session_tool(

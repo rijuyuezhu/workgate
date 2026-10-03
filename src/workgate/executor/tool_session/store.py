@@ -1,4 +1,4 @@
-"""Durable state for explicit agent/workspace sessions and grounding snapshots."""
+"""Durable state for execution sessions and grounding snapshots."""
 
 import hashlib
 import threading
@@ -12,7 +12,7 @@ from ...errors import (
     SessionTerminationRequestedError,
 )
 from ...persistence import StateStore
-from ...utils.path_policy import resolve_path_with_policy
+from ..path import resolve_default_workdir, resolve_path
 from .records import (
     AgentSession,
     SnapshotRecord,
@@ -57,7 +57,7 @@ ACTIVE_JOB_STATUSES = _ACTIVE_JOB_STATUSES
 
 
 class SessionPathResolver(Protocol):
-    """Resolve one path against an explicitly owned workspace policy."""
+    """Resolve one path through the executor-owned path resolver."""
 
     def __call__(
         self,
@@ -70,28 +70,27 @@ class SessionPathResolver(Protocol):
 
 
 class UnknownAgentSessionError(ValueError):
-    """Raised when a tool call references a missing agent session."""
+    """Raised when a tool call references a missing execution session."""
 
 
 class ToolSessionStore:
-    """Persist explicit agent sessions and their grounding snapshots."""
+    """Persist execution sessions and their grounding snapshots."""
 
     def __init__(
         self,
         state_store: StateStore,
         *,
         path_resolver: SessionPathResolver | None = None,
-        workspace_root: Path | None = None,
-        allow_full_control: bool = False,
+        default_workdir: Path | None = None,
         max_session_snapshots: int,
         max_session_snapshot_bytes: int,
     ) -> None:
         self._lock = threading.RLock()
         self._state_store = state_store
         if path_resolver is None:
-            if workspace_root is None:
+            if default_workdir is None:
                 raise ValueError(
-                    "workspace_root is required when path_resolver is omitted"
+                    "default_workdir is required when path_resolver is omitted"
                 )
 
             def configured_path_resolver(
@@ -101,10 +100,9 @@ class ToolSessionStore:
                 allow_missing_parent: bool = True,
                 follow_final_symlink: bool = True,
             ) -> Path:
-                return resolve_path_with_policy(
+                return resolve_path(
                     path,
-                    workspace_root=workspace_root,
-                    allow_full_control=allow_full_control,
+                    base=resolve_default_workdir(default_workdir),
                     must_exist=must_exist,
                     allow_missing_parent=allow_missing_parent,
                     follow_final_symlink=follow_final_symlink,
@@ -189,7 +187,7 @@ class ToolSessionStore:
         workdir: str | Path,
         label: str | None = None,
     ) -> AgentSession:
-        """Create one control-allocated shared session on this executor."""
+        """Create one control-allocated execution session on this executor."""
         if valid_session_id(session_id) != session_id:
             raise ValueError("session_id is invalid")
         resolved_workdir = self._path_resolver(workdir, must_exist=True)
@@ -520,9 +518,9 @@ class ToolSessionStore:
                     workdir=str(resolved_workdir),
                     updated_at=time.time(),
                 )
-                # Grounding for the old cwd must be gone before the durable cwd
+                # Grounding for the old workdir must be gone before the durable workdir
                 # can point anywhere else. A crash between these two mutations
-                # therefore leaves either old cwd + no snapshots, or new cwd +
+                # therefore leaves either old workdir + no snapshots, or new workdir +
                 # no old snapshots.
                 self._snapshot_repository.remove_session(session_id)
                 self._write_session_locked(updated)
@@ -616,7 +614,7 @@ class ToolSessionStore:
         allow_missing_parent: bool = True,
         follow_final_symlink: bool = True,
     ) -> Path:
-        """Resolve one session path using this store's owned workspace policy."""
+        """Resolve one path relative to an execution session's workdir."""
         return _resolve_session_path(
             session,
             path,
@@ -636,21 +634,14 @@ def _resolve_session_path(
     allow_missing_parent: bool = True,
     follow_final_symlink: bool = True,
 ) -> Path:
-    workdir = Path(session.workdir).resolve()
-    raw = Path(path)
-    candidate = raw if raw.is_absolute() else workdir / raw
-    resolved = resolver(
-        candidate,
+    return resolver(
+        Path(path)
+        if Path(path).is_absolute()
+        else Path(session.workdir) / path,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
         follow_final_symlink=follow_final_symlink,
     )
-    boundary = resolved if follow_final_symlink else resolved.parent
-    try:
-        boundary.relative_to(workdir)
-    except ValueError as exc:
-        raise ValueError(f"Path escapes session workdir: {path}") from exc
-    return resolved
 
 
 def file_sha256(path: Path) -> str:

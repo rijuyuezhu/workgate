@@ -20,10 +20,10 @@ from workgate.executor.files import (
     parse_hashline_edit_input,
 )
 from workgate.executor.files_service import FilesService
+from workgate.executor.path import resolve_path
 from workgate.executor.tool_session.bindings import SessionBinding
 from workgate.executor.tool_session.resolver import SessionResolver
 from workgate.persistence import get_state_store, use_state_store
-from workgate.utils.path_policy import resolve_path_with_policy
 
 _SESSION_COUNTER = 0
 
@@ -58,10 +58,9 @@ def _files_config():
 
 def _resolve_ambient_path(path: str | Path) -> Path:
     settings = get_settings()
-    return resolve_path_with_policy(
+    return resolve_path(
         path,
-        workspace_root=settings.workspace_root,
-        allow_full_control=settings.allow_full_control,
+        base=settings.default_workdir,
     )
 
 
@@ -151,7 +150,7 @@ def _hashline_edit(input_text: str, session_id: str | None = None):
 
 
 def test_write_and_read_round_trip(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     write_file_execute("a.txt", "hello world")
     assert read_file_execute("a.txt").content == "hello world"
@@ -161,7 +160,7 @@ def test_write_and_read_round_trip(tmp_path, monkeypatch):
 async def test_registered_file_handlers_round_trip_grounded_edits(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     session_id = _create_session()
 
@@ -197,7 +196,7 @@ async def test_registered_file_handlers_round_trip_grounded_edits(
 
 
 def test_list_files_reports_limit_and_truncation(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     listed_dir = tmp_path / "listed"
     listed_dir.mkdir()
@@ -221,7 +220,7 @@ def test_list_files_reports_limit_and_truncation(tmp_path, monkeypatch):
     os.name == "nt", reason="symlink creation may require elevated privileges"
 )
 def test_list_and_delete_preserve_final_symlink(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     target = tmp_path / "target"
     target.mkdir()
@@ -244,7 +243,7 @@ def test_list_and_delete_preserve_final_symlink(tmp_path, monkeypatch):
 
 
 def test_read_text_rejects_invalid_utf8(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "invalid.bin").write_bytes(b"\xff\xfe\xfd")
 
@@ -253,7 +252,7 @@ def test_read_text_rejects_invalid_utf8(tmp_path, monkeypatch):
 
 
 def test_read_text_allows_valid_utf8_control_bytes(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "nul.txt").write_bytes(b"abc\x00def")
 
@@ -265,7 +264,7 @@ def test_read_text_allows_valid_utf8_control_bytes(tmp_path, monkeypatch):
 def test_read_text_returns_line_numbers_and_snapshot_metadata(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "lines.txt").write_text(
         "alpha\nbeta\ngamma\n", encoding="utf-8"
@@ -294,7 +293,7 @@ def test_read_text_returns_line_numbers_and_snapshot_metadata(
 
 
 def test_read_text_reports_original_size_and_truncation(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_FILE_READ_BYTES", "5")
     clear_settings_cache()
     (tmp_path / "long.txt").write_text("hello world", encoding="utf-8")
@@ -312,7 +311,7 @@ def test_read_text_reports_original_size_and_truncation(tmp_path, monkeypatch):
 def test_write_text_does_not_read_existing_file_before_overwrite(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "existing.txt").write_text("old", encoding="utf-8")
 
@@ -331,7 +330,7 @@ def test_write_text_does_not_read_existing_file_before_overwrite(
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not portable")
 def test_atomic_write_preserves_existing_file_mode(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     path = tmp_path / "mode.txt"
     path.write_text("old", encoding="utf-8")
@@ -344,7 +343,7 @@ def test_atomic_write_preserves_existing_file_mode(tmp_path, monkeypatch):
 
 
 def test_concurrent_overwrite_false_creates_file_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     barrier = threading.Barrier(2)
     state_store = get_state_store()
@@ -373,7 +372,7 @@ def test_concurrent_overwrite_false_creates_file_once(tmp_path, monkeypatch):
 
 
 def test_concurrent_snapshot_edits_reject_stale_writer(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     path = tmp_path / "shared.txt"
     path.write_text("alpha\nbeta\n", encoding="utf-8")
@@ -418,7 +417,7 @@ def test_concurrent_snapshot_edits_reject_stale_writer(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "blob.bin").write_bytes(b"abc\xffworld")
 
@@ -437,37 +436,31 @@ async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
     assert payload["metadata"]["error"] == "UnicodeDecodeError"
 
 
-def test_reject_path_escape(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "false")
+def test_default_workdir_does_not_confine_absolute_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
-    with pytest.raises(ValueError):
-        _resolve_ambient_path("/etc/passwd")
+    if os.name != "nt":
+        assert _resolve_ambient_path("/etc/passwd") == Path(
+            "/etc/passwd"
+        ).resolve(strict=False)
 
-
-def test_full_control_mode_allows_workspace_escape(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "true")
-    clear_settings_cache()
-
-    outside_workspace = Path(tmp_path.anchor) / "outside-workspace"
-    assert _resolve_ambient_path(outside_workspace) == Path(
-        os.path.abspath(outside_workspace)
+    outside_default = tmp_path.parent / "outside-default"
+    assert _resolve_ambient_path(outside_default) == Path(
+        os.path.abspath(outside_default)
     )
 
 
 def test_sensitive_looking_path_inside_workspace_is_allowed(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_ALLOW_FULL_CONTROL", "false")
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     assert _resolve_ambient_path(".env") == tmp_path / ".env"
 
 
 def test_read_text_handles_truncated_utf8_sequence(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_FILE_READ_BYTES", "4")
     clear_settings_cache()
     (tmp_path / "utf8.txt").write_text("你好", encoding="utf-8")
@@ -521,7 +514,7 @@ def test_parse_read_target_rejects_invalid_multi_range_selectors(target):
 def test_read_file_execute_multi_ranges_records_grounding_and_edits(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "multi.py").write_text(
         "one\ntwo\nthree\nfour\nfive\n", encoding="utf-8"
@@ -563,7 +556,7 @@ def test_read_file_execute_multi_ranges_records_grounding_and_edits(
 def test_edit_lines_uses_snapshot_and_returns_diff_context(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text(
         "alpha\nbeta\ngamma\ndelta\n", encoding="utf-8"
@@ -604,7 +597,7 @@ def test_edit_lines_uses_snapshot_and_returns_diff_context(
 
 
 def test_edit_lines_rejects_stale_snapshot(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\n", encoding="utf-8")
     session_id = _create_session()
@@ -625,7 +618,7 @@ def test_edit_lines_rejects_stale_snapshot(tmp_path, monkeypatch):
 
 
 def test_edit_lines_rejects_unseen_snapshot_range(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     session_id = _create_session()
@@ -645,7 +638,7 @@ def test_edit_lines_rejects_unseen_snapshot_range(tmp_path, monkeypatch):
 
 
 def test_hashline_edit_replaces_copied_line_rows(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     session_id = _create_session()
@@ -669,7 +662,7 @@ def test_hashline_edit_replaces_copied_line_rows(tmp_path, monkeypatch):
 
 
 def test_hashline_edit_deletes_when_no_replacement_lines(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     session_id = _create_session()
@@ -688,7 +681,7 @@ def test_hashline_edit_deletes_when_no_replacement_lines(tmp_path, monkeypatch):
 
 
 def test_hashline_edit_supports_swap_directive(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     session_id = _create_session()
@@ -707,7 +700,7 @@ def test_hashline_edit_supports_swap_directive(tmp_path, monkeypatch):
 
 
 def test_hashline_edit_supports_insert_directive(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\n", encoding="utf-8")
     session_id = _create_session()
@@ -725,10 +718,10 @@ def test_hashline_edit_supports_insert_directive(tmp_path, monkeypatch):
     )
 
 
-def test_hashline_edit_accepts_workspace_relative_header_from_nested_session(
+def test_hashline_edit_accepts_session_relative_header_from_nested_session(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     project = tmp_path / "project"
     project.mkdir()
@@ -742,9 +735,9 @@ def test_hashline_edit_accepts_workspace_relative_header_from_nested_session(
         "edit.py", start_line=2, end_line=2, session_id=session_id
     )
 
-    assert read_result.path == "project/edit.py"
+    assert read_result.path == "edit.py"
     payload = (
-        "[project/edit.py#"
+        "[edit.py#"
         + str(read_result.snapshot_id)
         + "]"
         + chr(10)
@@ -760,7 +753,7 @@ def test_hashline_edit_accepts_workspace_relative_header_from_nested_session(
 
 
 def test_hashline_edit_rejects_mismatched_old_text(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\n", encoding="utf-8")
     session_id = _create_session()
@@ -781,7 +774,7 @@ def test_parse_hashline_edit_rejects_non_consecutive_rows():
 
 
 def test_hashline_edit_supports_multiple_hunks_same_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text(
         "alpha\nbeta\ngamma\ndelta\n", encoding="utf-8"
@@ -815,7 +808,7 @@ def test_hashline_edit_supports_multiple_hunks_same_file(tmp_path, monkeypatch):
 def test_hashline_edit_supports_multiple_hunks_with_insert(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     session_id = _create_session()
@@ -842,7 +835,7 @@ def test_hashline_edit_supports_multiple_hunks_with_insert(
 
 
 def test_hashline_edit_supports_multiple_files(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "one.py").write_text("alpha\nbeta\n", encoding="utf-8")
     (tmp_path / "two.py").write_text("gamma\ndelta\n", encoding="utf-8")
@@ -871,7 +864,7 @@ def test_hashline_edit_supports_multiple_files(tmp_path, monkeypatch):
 
 
 def test_hashline_edit_rejects_overlapping_hunks(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "edit.py").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     session_id = _create_session()

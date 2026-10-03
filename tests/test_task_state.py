@@ -17,7 +17,7 @@ from workgate.protocol.ids import new_executor_id
 
 
 def _configure(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
@@ -155,10 +155,7 @@ async def test_one_task_can_span_distinct_executors_and_workdirs(
     second_record = records[str(second["session_id"])]
     assert str(first_record.executor_id) == harness.executor_id
     assert str(second_record.executor_id) == second_executor
-    assert (
-        first_record.resolved_workdir_display
-        != second_record.resolved_workdir_display
-    )
+    assert first_record.workdir != second_record.workdir
     current = await harness.control.task_service.read_task(task.task_id)
     assert current.session_ids == [first["session_id"], second["session_id"]]
 

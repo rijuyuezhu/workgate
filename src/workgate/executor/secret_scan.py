@@ -1,4 +1,4 @@
-"""Scan workspace text files for credential-like strings."""
+"""Scan session-scoped text files for credential-like strings."""
 
 import asyncio
 import re
@@ -172,7 +172,7 @@ class SecretScanService:
                     findings.append(
                         SecretFinding(
                             type=name,
-                            path=_display_file(self.files, path),
+                            path=_display_file(self.files, binding, path),
                             line=line,
                         )
                     )

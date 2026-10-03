@@ -31,7 +31,7 @@ def _executor(
     tmp_path: Path, *, max_bytes: int | None = None
 ) -> tuple[ExecutorConfig, ToolSessionStore, str]:
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / ".state",
         agent_bridge_enabled=False,
         max_view_image_bytes=(
@@ -39,10 +39,10 @@ def _executor(
         ),
     )
     config = resolve_executor_config(settings)
-    config.workspace_root.mkdir(parents=True, exist_ok=True)
+    config.default_workdir.mkdir(parents=True, exist_ok=True)
     store = build_tool_session_store(settings)
     session_id = "sess_0000000000000000000001"
-    store.create_session(session_id=session_id, workdir=config.workspace_root)
+    store.create_session(session_id=session_id, workdir=config.default_workdir)
     return config, store, session_id
 
 
@@ -64,7 +64,7 @@ def test_detect_image_type_supports_common_web_formats():
 @pytest.mark.asyncio
 async def test_executor_image_is_session_bound_and_bounded(tmp_path: Path):
     config, store, session_id = _executor(tmp_path)
-    image_path = config.workspace_root / "pixel.png"
+    image_path = config.default_workdir / "pixel.png"
     image_path.write_bytes(PNG_BYTES)
 
     session, image = await image_ops.read_image_execute(
@@ -77,12 +77,13 @@ async def test_executor_image_is_session_bound_and_bounded(tmp_path: Path):
     assert image.size == len(PNG_BYTES)
     assert image.path == "pixel.png"
 
-    outside = config.workspace_root.parent / "outside.png"
+    outside = config.default_workdir.parent / "outside.png"
     outside.write_bytes(PNG_BYTES)
-    with pytest.raises(ValueError, match="escapes (session workdir|workspace)"):
-        await image_ops.read_image_execute(
-            config, store, "../outside.png", session_id
-        )
+    _, outside_image = await image_ops.read_image_execute(
+        config, store, "../outside.png", session_id
+    )
+    assert outside_image.path == outside.as_posix()
+    assert outside_image.data == PNG_BYTES
 
 
 @pytest.mark.asyncio
@@ -92,9 +93,9 @@ async def test_executor_image_rejects_empty_oversized_and_unsupported(
     config, store, session_id = _executor(
         tmp_path, max_bytes=len(PNG_BYTES) - 1
     )
-    (config.workspace_root / "large.png").write_bytes(PNG_BYTES)
-    (config.workspace_root / "empty.png").write_bytes(b"")
-    (config.workspace_root / "fake.png").write_bytes(b"not an image")
+    (config.default_workdir / "large.png").write_bytes(PNG_BYTES)
+    (config.default_workdir / "empty.png").write_bytes(b"")
+    (config.default_workdir / "fake.png").write_bytes(b"not an image")
 
     with pytest.raises(ValueError, match="max is"):
         await image_ops.read_image_execute(
@@ -115,7 +116,7 @@ async def test_executor_image_rejects_empty_oversized_and_unsupported(
 @pytest.mark.asyncio
 async def test_executor_view_image_returns_native_mcp_content(tmp_path: Path):
     config, store, session_id = _executor(tmp_path)
-    (config.workspace_root / "pixel.png").write_bytes(PNG_BYTES)
+    (config.default_workdir / "pixel.png").write_bytes(PNG_BYTES)
 
     result = await image_ops.view_image_execute(
         config, store, "pixel.png", session_id
@@ -136,7 +137,7 @@ async def test_executor_view_image_returns_native_mcp_content(tmp_path: Path):
 async def test_view_image_tool_returns_native_mcp_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()

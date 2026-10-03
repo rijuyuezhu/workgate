@@ -9,7 +9,6 @@
 - Do not expose container-runtime control sockets or unrestricted host roots to the service account.
 - Do not mount unrestricted SSH keys or all of `~/.ssh`.
 - Use single-repository deploy keys or short-lived GitHub App installation tokens.
-- Leave `allow_full_control: false` in executor machine policy by default.
 - Review audit logs after each session, then rotate or discard them with the rest of the short-lived state.
 
 Cloudflare Tunnel is a convenient public transport. Cloudflare Access is optional and is not the built-in authentication layer.
@@ -75,13 +74,13 @@ Agent Bridge authentication is separate from the built-in OAuth server that prot
 
 ## Session environment disclosure boundary
 
-`session_start` and `session_change_cwd` return a bounded `environment` object so clients can choose tools without arbitrary shell inspection. It is an explicit allowlist, not a serialization of `Settings`, `os.environ`, process arguments, or executable paths.
+`session_start` and `session_change_workdir` return a bounded `environment` object so clients can choose tools without arbitrary shell inspection. It is an explicit allowlist, not a serialization of `Settings`, `os.environ`, process arguments, or executable paths.
 
 - Runtime fields contain normalized versions/platform tokens only. Executor identity contains package/bundle versions and a normalized service kind/status, never bundle digests, join tokens, service definitions, or command lines.
 - Tool probes run only allowlisted version commands, concurrently, with independent 1.5-second timeouts and bounded output. Responses expose an extracted version token and safe source category, not full executable paths, stdout/stderr, or exception text. Missing, timed-out, and failed probes are not marked available.
-- Capability and policy fields include only values needed for tool selection. They exclude environment-variable values, OAuth/admin secrets, Agent Bridge server names, state/config directories, audit contents, and other private configuration. OAuth capability changes are represented only as configured/authorized server counts.
-- Executor orientation is produced by the executor and validated as the same typed response before control binds its public session id and machine name. Executor cwd changes refresh machine-side Git, instructions, environment, and canonical workdir instead of substituting control-local information.
-- Tool probes are briefly cached, but cwd-sensitive orientation and dynamic capability/policy fields are rebuilt for each session response. Collection failures degrade to normalized unavailable/error fields rather than failing session creation or returning raw diagnostics.
+- Capability and limit fields include only values needed for tool selection. They exclude environment-variable values, OAuth/admin secrets, Agent Bridge server names, state/config directories, audit contents, and other private configuration. OAuth capability changes are represented only as configured/authorized server counts.
+- Executor orientation is produced by the executor and validated as the same typed response before control binds its public session id and machine name. Session workdir changes refresh machine-side Git, instructions, environment, and canonical workdir instead of substituting control-local information.
+- Tool probes are briefly cached, but workdir-sensitive orientation and dynamic capability/limit fields are rebuilt for each session response. Collection failures degrade to normalized unavailable/error fields rather than failing session creation or returning raw diagnostics.
 
 ## Inbound HTTP request limits
 
@@ -91,14 +90,13 @@ Both declared and observed sizes are enforced. A `Content-Length` above the limi
 
 When OAuth authentication is enabled, protected MCP and REST routes authenticate before the body limiter reads an unauthenticated request. Public OAuth bootstrap and executor pairing routes remain subject to the shared limit. Dynamic OAuth client registration also retains its stricter `oauth_registration_max_body_bytes` limit. Rejections are audited with method, path, declared/observed sizes, and the configured limit, but never with body contents; audit failure does not prevent the 413 response.
 
-## Full-control mode
+## Filesystem authority
 
-`allow_full_control: true` is an explicit **executor** machine-policy mode.
-It allows executor filesystem path resolution to escape the configured
-`workspace_root`; with the default `false`, that structural boundary remains
-enforced. MCP safety annotations remain conservative and continue to identify
-destructive or open-world tools. The control CLI does not accept
-`--allow-full-control`.
+Executor filesystem authority is the executor OS account's permissions.
+`default_workdir` and each execution session's workdir are relative-path
+anchors only; explicit absolute paths may address anything that account can
+access. Use a dedicated account, VM, filesystem permissions, mounts, or another
+operating-system isolation boundary when stronger confinement is required.
 
 ## Bounded command containment
 
@@ -216,15 +214,15 @@ New machines establish trust with `workgate executor connect CONTROL_URL`. Pairi
 
 Executor trust does not expire merely because the machine is suspended, rebooted, or offline for a long time. Temporary transport failures reconnect with the same saved credential. Trust ends only through explicit revoke/replacement, loss/reset of the control trust state, loss of the local executor profile, or a deliberate incompatible trust migration.
 
-Executor machine policy and machine-local integration secrets remain on the executor. Control routes work to the executor bound to an execution session but does not replicate path/command policy, shell configuration, stdio credentials, or arbitrary control secrets into that machine. Network/OAuth/SaaS integrations that execute on control keep their credentials on control.
+Executor machine configuration and machine-local integration secrets remain on the executor. Control routes work to the executor bound to an execution session but does not replicate filesystem/command configuration, shell configuration, stdio credentials, or arbitrary control secrets into that machine. Network/OAuth/SaaS integrations that execute on control keep their credentials on control.
 
-Managed executor services are local CLI-only host administration; there is no MCP tool for installing, starting, stopping, or removing them. Service definitions contain only the runtime command and local paths, never the executor bearer. The managed service reads a private snapshot of executor machine-policy settings, while the paired executor profile remains separate and survives reinstall or uninstall. Lifecycle status treats Workgate upgrades and policy-snapshot drift as stale so the operator can refresh with `install-service`.
+Managed executor services are local CLI-only host administration; there is no MCP tool for installing, starting, stopping, or removing them. Service definitions contain only the runtime command and local paths, never the executor bearer. The managed service reads a private snapshot of executor settings, while the paired executor profile remains separate and survives reinstall or uninstall. Lifecycle status treats Workgate upgrades and settings-snapshot drift as stale so the operator can refresh with `install-service`.
 
-Structured browser automation is executor-owned and requires the separate `browser:use` OAuth scope plus the executor-advertised `browser.v1` capability. Browser contexts are ephemeral and session-owned; teardown closes them before confirming executor-side absence. Navigation is limited to HTTP(S) and `about:blank`, while screenshots must resolve inside the owning session workspace and never overwrite an existing file.
+Structured browser automation is executor-owned and requires the separate `browser:use` OAuth scope plus the executor-advertised `browser.v1` capability. Browser contexts are ephemeral and session-owned; teardown closes them before confirming executor-side absence. Navigation is limited to HTTP(S) and `about:blank`. Relative screenshot paths resolve from the owning session workdir, absolute paths may use any location accessible to the executor OS account, and screenshots never overwrite an existing file.
 
 Snapshots, screenshots, and error buffers are bounded. Actions target snapshot refs rather than arbitrary selectors. Audit keeps coarse browser/action metadata while omitting page bodies, element text, page titles, backend diagnostics, and entered values; URLs are reduced to origins. Persistent profile/storage-state reuse and arbitrary Playwright scripts are not exposed.
 
-Logs from the executor process can contain tool diagnostics, workspace paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
+Logs from the executor process can contain tool diagnostics, filesystem paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
 
 ## Embedded native UI payloads
 

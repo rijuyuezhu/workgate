@@ -41,7 +41,7 @@ def _reset_oauth_state(tmp_path):
 
 @pytest.fixture
 def oauth_client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", ADMIN_PIN)

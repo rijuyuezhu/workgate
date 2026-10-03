@@ -5,7 +5,7 @@ from workgate.config.settings import clear_settings_cache, get_settings
 
 
 def _configure(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
@@ -30,12 +30,12 @@ async def test_shared_session_start_binds_control_record_to_executor(
     assert record.status == "active"
     assert record.executor_id == harness.executor_id
     assert record.label == "test"
-    assert record.resolved_workdir_display == str(tmp_path / "project")
+    assert record.workdir == str(tmp_path / "project")
     assert harness.executor.sessions.lookup(session_id) is not None
 
 
 @pytest.mark.asyncio
-async def test_shared_session_change_cwd_updates_control_and_executor_binding(
+async def test_shared_session_change_workdir_updates_control_and_executor_binding(
     tmp_path, monkeypatch
 ):
     _configure(monkeypatch, tmp_path)
@@ -48,7 +48,7 @@ async def test_shared_session_change_cwd_updates_control_and_executor_binding(
     assert isinstance(started, dict)
     session_id = str(started["session_id"])
 
-    changed = await harness.control.session_coordinator.change_cwd(
+    changed = await harness.control.session_coordinator.change_workdir(
         session_id, "second"
     )
 
@@ -57,11 +57,10 @@ async def test_shared_session_change_cwd_updates_control_and_executor_binding(
     assert changed["executor_id"] == harness.executor_id
     assert changed["workdir"] == str(tmp_path / "second")
     record = harness.control.control_state.snapshot_sessions()[session_id]
-    assert record.requested_workdir == "second"
-    assert record.resolved_workdir_display == str(tmp_path / "second")
+    assert record.workdir == str(tmp_path / "second")
     executor_session = harness.executor.sessions.lookup(session_id)
     assert executor_session is not None
-    assert executor_session.resolved_workdir == str(tmp_path / "second")
+    assert executor_session.workdir == str(tmp_path / "second")
 
 
 @pytest.mark.asyncio

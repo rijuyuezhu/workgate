@@ -75,7 +75,7 @@ def _affects_reconnect_inventory(command: ExecutorCommand) -> bool:
     if command.op in {
         "session.create",
         "session.terminate",
-        "session.change_cwd",
+        "session.change_workdir",
         "start_persistent_shell",
         "send_persistent_shell_input",
         "resize_persistent_shell",

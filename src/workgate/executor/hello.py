@@ -14,6 +14,7 @@ from ..protocol.executor import (
     ShellInventorySummary,
 )
 from .browser import browser_capability_available
+from .path import resolve_default_workdir
 
 
 def build_executor_hello(
@@ -37,7 +38,7 @@ def build_executor_hello(
                 else ()
             ),
         ),
-        workspace_root=str(config.workspace_root),
+        default_workdir=str(resolve_default_workdir(config.default_workdir)),
         sessions=sessions,
         shells=shells,
         jobs=jobs,

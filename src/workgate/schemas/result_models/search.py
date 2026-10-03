@@ -44,7 +44,7 @@ class GlobSearchOutput(BaseModel):
     """Glob file search result."""
 
     paths: list[str] = Field(
-        description="Workspace-relative paths matching the glob pattern."
+        description="Matching paths, relative to the execution session workdir when possible."
     )
 
 

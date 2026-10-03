@@ -56,8 +56,7 @@ def build_tool_session_store(
     config = resolve_executor_config(settings)
     return ToolSessionStore(
         state_store=state_store or FileStateStore(lambda: config.state_dir),
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        default_workdir=config.default_workdir,
         max_session_snapshots=config.max_session_snapshots,
         max_session_snapshot_bytes=config.max_session_snapshot_bytes,
     )
@@ -65,7 +64,7 @@ def build_tool_session_store(
 
 @dataclass
 class PairedControlHarness:
-    """Test-only direct executor bridge with final shared-session semantics."""
+    """Test-only direct executor bridge with execution-session semantics."""
 
     control: ControlRuntime
     executor: ExecutorRuntime

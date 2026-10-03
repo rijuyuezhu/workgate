@@ -92,7 +92,7 @@ void (async () => {
     },
     files: {
       title: "Files",
-      description: "Browse and edit workspace-scoped files on the selected executor.",
+      description: "Browse and edit files on the selected executor.",
     },
     audit: {
       title: "Audit",

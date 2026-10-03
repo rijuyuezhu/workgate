@@ -33,7 +33,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
 ) -> None:
     state_dir = tmp_path / "state"
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=state_dir,
     )
     first = build_control_runtime(settings)
@@ -54,8 +54,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
     session = ControlSessionRecord(
         session_id=session_id,
         executor_id=executor_id,
-        requested_workdir="~/src/workgate",
-        resolved_workdir_display="/home/user/src/workgate",
+        workdir="/home/user/src/workgate",
         label="workgate",
         status="active",
         created_at=20,
@@ -91,6 +90,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
         credential,
         ExecutorHelloRequest(
             runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            default_workdir="/workspace",
             sessions=(),
             shells=(),
             jobs=(),
@@ -127,11 +127,12 @@ async def test_control_runtime_restores_only_durable_product_facts(
 
         reconnect = ExecutorHelloRequest(
             runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            default_workdir="/workspace",
             capabilities=("session",),
             sessions=(
                 SessionInventorySummary(
                     session_id=session_id,
-                    resolved_workdir="/home/user/src/workgate",
+                    workdir="/home/user/src/workgate",
                     has_persistent_shells=True,
                     has_active_jobs=True,
                 ),
@@ -165,7 +166,7 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
     source_state = tmp_path / "source-state"
     source_data = tmp_path / "source-data"
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=source_state,
         data_dir=source_data,
     )
@@ -184,8 +185,7 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
     session = ControlSessionRecord(
         session_id=session_id,
         executor_id=executor_id,
-        requested_workdir=".",
-        resolved_workdir_display=str(tmp_path),
+        workdir=str(tmp_path),
         status="active",
         created_at=20,
         updated_at=20,
@@ -215,7 +215,7 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
     shutil.copytree(source_state, restored_state)
     shutil.copytree(source_data, restored_data)
     restored_settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=restored_state,
         data_dir=restored_data,
     )
@@ -241,10 +241,11 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
 
         hello = ExecutorHelloRequest(
             runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            default_workdir="/workspace",
             sessions=(
                 SessionInventorySummary(
                     session_id=session_id,
-                    resolved_workdir=str(tmp_path),
+                    workdir=str(tmp_path),
                 ),
             ),
             shells=(),
@@ -261,7 +262,7 @@ async def test_executor_trust_survives_seven_day_control_shutdown(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "state",
         data_dir=tmp_path / "data",
     )
@@ -269,6 +270,7 @@ async def test_executor_trust_survives_seven_day_control_shutdown(
     credential = new_executor_credential()
     hello = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),
@@ -315,7 +317,7 @@ async def test_control_runtime_start_failure_discards_control_projection(
 ) -> None:
     state_dir = tmp_path / "state"
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=state_dir,
     )
     seed = build_control_runtime(settings)
@@ -354,7 +356,7 @@ async def test_authenticated_hello_does_not_wait_for_post_hello_executor_rpc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = build_control_runtime(
-        Settings(workspace_root=tmp_path, state_dir=tmp_path / "state")
+        Settings(default_workdir=tmp_path, state_dir=tmp_path / "state")
     )
     await runtime.start()
     executor_id = new_executor_id()
@@ -392,6 +394,7 @@ async def test_authenticated_hello_does_not_wait_for_post_hello_executor_rpc(
     )
     hello = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),

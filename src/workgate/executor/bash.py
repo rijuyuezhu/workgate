@@ -28,10 +28,17 @@ type JobStarter = Callable[
 ]
 
 
-def _as_result_dict(value: Any) -> dict[str, Any]:
+def _as_result_dict(
+    value: Any,
+    *,
+    cwd: str | None = None,
+) -> dict[str, Any]:
     """Return a JSON-compatible result dictionary."""
     data = to_jsonable(value)
-    return data if isinstance(data, dict) else {"result": data}
+    result = data if isinstance(data, dict) else {"result": data}
+    if cwd is not None and "cwd" in result:
+        result["cwd"] = cwd
+    return result
 
 
 async def bash_execute(
@@ -80,7 +87,7 @@ async def bash_execute(
                 mode="pty",
                 command=command,
                 cwd=cwd_text,
-                result=_as_result_dict(result),
+                result=_as_result_dict(result, cwd=cwd_text),
             )
 
     if not async_:
@@ -102,7 +109,7 @@ async def bash_execute(
                 mode="command",
                 command=command,
                 cwd=cwd_text,
-                result=_as_result_dict(result),
+                result=_as_result_dict(result, cwd=cwd_text),
             )
 
     if job_start is None:

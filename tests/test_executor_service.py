@@ -29,7 +29,7 @@ def _portable_posix_uid(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _settings(tmp_path: Path, **kwargs) -> Settings:
     return Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
         **kwargs,
@@ -190,7 +190,6 @@ def test_managed_config_reconstructs_foreground_executor_policy(
     manager, _profile_value = _paired_manager(
         tmp_path,
         system="Linux",
-        allow_full_control=True,
         max_output_bytes=123_456,
     )
     manager._write_service_config()
@@ -311,7 +310,7 @@ def test_systemd_install_is_private_idempotent_and_preserves_identity(
     assert profile.control_url not in service_config
     assert "super-private-admin-secret" not in service_config
     assert '"state_dir"' in service_config
-    assert '"workspace_root"' in service_config
+    assert '"default_workdir"' in service_config
 
     launcher = manager.launcher_path.read_text(encoding="utf-8")
     compile(launcher, str(manager.launcher_path), "exec")

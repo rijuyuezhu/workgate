@@ -39,7 +39,7 @@ def _reset_settings() -> Generator[None]:
 def _configure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, auth: str
 ) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth)
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)

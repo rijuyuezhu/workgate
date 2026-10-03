@@ -13,7 +13,9 @@ class ReadOutput(BaseModel):
     kind: Literal["file", "directory"] = Field(
         description="Type of target that was read."
     )
-    path: str = Field(description="Workspace-relative target path.")
+    path: str = Field(
+        description="Target path, relative to the operation workdir when possible."
+    )
     raw: bool = Field(
         default=False,
         description="Whether content omits model-facing line-number prefixes.",

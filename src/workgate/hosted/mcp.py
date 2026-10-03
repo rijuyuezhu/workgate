@@ -78,8 +78,8 @@ class HostedMcpGateway:
                 label=payload.get("label"),
                 executor_id=payload.get("executor_id"),
             )
-        if name == "session_change_cwd":
-            return await sessions.change_cwd(
+        if name == "session_change_workdir":
+            return await sessions.change_workdir(
                 str(payload["session_id"]), str(payload["workdir"])
             )
         if name == "session_end":

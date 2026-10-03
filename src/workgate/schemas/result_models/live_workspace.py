@@ -14,7 +14,7 @@ class LiveWorkspaceSession(BaseModel):
     label: str | None = None
     executor_id: str
     executor_name: str | None = None
-    workdir: str
+    workdir: str | None = None
     status: str
     availability: str
     created_at: float

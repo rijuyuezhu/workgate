@@ -1,4 +1,4 @@
-"""Durable tool-session record models and JSON codecs."""
+"""Durable execution-session record models and JSON codecs."""
 
 import json
 import re
@@ -12,12 +12,12 @@ SESSION_ID_MAX_LENGTH = 128
 
 @dataclass(frozen=True)
 class AgentSession:
-    """One explicit agent workspace session."""
+    """One executor-owned execution session."""
 
     session_id: str
-    """Opaque shared control/executor session identifier."""
+    """Opaque control/executor session identifier."""
     workdir: str
-    """Current workspace root resolved by this executor."""
+    """Current execution workdir resolved by this executor."""
     created_at: float
     """Unix timestamp when the session was created."""
     updated_at: float
@@ -35,11 +35,11 @@ class SnapshotRecord:
     """One displayed file snapshot recorded for stale-edit checks."""
 
     session_id: str
-    """Owning agent session identifier."""
+    """Owning execution session identifier."""
     snapshot_id: str
     """Opaque identifier returned with the displayed snapshot."""
     path: str
-    """Workspace-relative or absolute path represented by the snapshot."""
+    """Session-workdir-relative or absolute path represented by the snapshot."""
     file_sha256: str
     """SHA-256 digest of the complete file at display time."""
     total_lines: int
@@ -53,7 +53,7 @@ class SnapshotRecord:
 
 
 def valid_session_id(value: Any) -> str | None:
-    """Return one final shared session id, or None for invalid input."""
+    """Return one valid execution-session id, or None for invalid input."""
     if not isinstance(value, str):
         return None
     if len(value) <= SESSION_ID_MAX_LENGTH and _SESSION_ID_RE.fullmatch(value):

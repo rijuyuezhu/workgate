@@ -258,7 +258,7 @@ class ControlSessionCopyService:
         overwrite: bool = True,
         chunk_size: int | None = None,
     ) -> JobStartOutput:
-        """Start one durable control-managed copy under shared-session admission."""
+        """Start one durable control-managed copy under execution-session admission."""
         normalized_chunk_size = normalize_chunk_size(chunk_size)
         async with self._sessions.session_admission(
             (src_session_id, dst_session_id)
@@ -296,7 +296,7 @@ class ControlSessionCopyService:
             )
 
     def managed_job_registration(self) -> tuple[str, ManagedJobHandler]:
-        """Return this runtime's shared-session-aware managed-copy handler."""
+        """Return this runtime's execution-session-aware managed-copy handler."""
         return SESSION_COPY_MANAGED_KIND, self._run_managed_job
 
     async def reconcile_abandonments(
@@ -1227,10 +1227,13 @@ class ControlSessionCopyService:
 
     @staticmethod
     def _binding_snapshot(record: ControlSessionRecord) -> dict[str, str]:
+        if record.workdir is None:
+            raise RuntimeError(
+                f"session {record.session_id} has no confirmed workdir"
+            )
         return {
             "executor_id": str(record.executor_id),
-            "workdir": record.resolved_workdir_display
-            or record.requested_workdir,
+            "workdir": record.workdir,
         }
 
     @classmethod
@@ -1273,23 +1276,23 @@ class ControlSessionCopyService:
         metrics: dict[str, Any],
     ) -> SessionCopyOutput:
         same_executor = src.executor_id == dst.executor_id
+        source_binding = ControlSessionCopyService._binding_snapshot(src)
+        destination_binding = ControlSessionCopyService._binding_snapshot(dst)
         return SessionCopyOutput(
             kind=kind,
             transport="same_executor" if same_executor else "control_payload",
             resumed_bytes=int(metrics.get("resumed_bytes", 0)),
             source=SessionCopyEndpoint(
                 session_id=str(src.session_id),
-                executor_id=str(src.executor_id),
-                workdir=src.resolved_workdir_display or src.requested_workdir,
+                executor_id=source_binding["executor_id"],
+                workdir=source_binding["workdir"],
                 path=src_path,
-                resolved_path=metrics.get("source_path"),
             ),
             destination=SessionCopyEndpoint(
                 session_id=str(dst.session_id),
-                executor_id=str(dst.executor_id),
-                workdir=dst.resolved_workdir_display or dst.requested_workdir,
+                executor_id=destination_binding["executor_id"],
+                workdir=destination_binding["workdir"],
                 path=dst_path,
-                resolved_path=metrics.get("destination_path"),
             ),
             relation=SessionCopyRelation(
                 route="same_executor"

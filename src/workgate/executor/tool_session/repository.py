@@ -1,4 +1,4 @@
-"""Durable metadata repository for explicit tool sessions."""
+"""Durable metadata repository for execution sessions."""
 
 from pathlib import Path
 

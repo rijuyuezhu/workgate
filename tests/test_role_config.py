@@ -14,8 +14,9 @@ from workgate.executor.runtime import build_executor_runtime
 
 
 def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
+    (tmp_path / "workspace").mkdir()
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         data_dir=tmp_path / "data",
         host="127.0.0.2",
@@ -34,10 +35,10 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
     assert control.data_dir == settings.data_dir.resolve(strict=False)
     assert control.ui_terminal_max_connections == 23
     assert control.executor_max_pending_commands == 17
-    assert not hasattr(control, "workspace_root")
+    assert not hasattr(control, "default_workdir")
     assert not hasattr(control, "shell_executable")
 
-    assert executor.workspace_root == settings.workspace_root.resolve(
+    assert executor.default_workdir == settings.default_workdir.resolve(
         strict=False
     )
     assert executor.shell_executable == "/bin/custom-shell"
@@ -49,14 +50,15 @@ def test_role_configs_expose_only_their_authority(tmp_path: Path) -> None:
 
 
 def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
+    (tmp_path / "executor-workspace").mkdir()
     control_settings = Settings(
-        workspace_root=tmp_path / "control-workspace",
+        default_workdir=tmp_path / "control-workspace",
         state_dir=tmp_path / "control-state",
         data_dir=tmp_path / "control-data",
         mode="http",
     )
     executor_settings = Settings(
-        workspace_root=tmp_path / "executor-workspace",
+        default_workdir=tmp_path / "executor-workspace",
         state_dir=tmp_path / "executor-legacy-state",
     )
 
@@ -74,8 +76,8 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
         strict=False
     )
     assert (
-        executor.config.workspace_root
-        == executor_settings.workspace_root.resolve(strict=False)
+        executor.config.default_workdir
+        == executor_settings.default_workdir.resolve(strict=False)
     )
     assert not hasattr(executor, "legacy_settings")
 
@@ -84,7 +86,7 @@ def test_executor_config_context_is_explicit_and_role_checked(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
     )
     executor = resolve_executor_config(settings)
@@ -105,7 +107,7 @@ def test_executor_config_context_is_explicit_and_role_checked(
 
 def test_control_config_context_is_role_checked(tmp_path: Path) -> None:
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
     )
     control = resolve_control_config(settings)

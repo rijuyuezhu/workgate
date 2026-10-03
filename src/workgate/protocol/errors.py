@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 class ProtocolErrorCode(StrEnum):
     """Stable product-oriented protocol errors shared across the boundary."""
 
-    UNSUPPORTED_PROTOCOL = "unsupported_protocol"
     UNAUTHORIZED_EXECUTOR = "unauthorized_executor"
     EXECUTOR_REVOKED = "executor_revoked"
     PAIRING_REQUIRED = "pairing_required"

@@ -23,7 +23,7 @@ secret_scan_tool = SecretScanToolRegistry.get_tool_decorator()
 
 def _secret_scan_description(context: McpToolContext) -> str:
     del context
-    return """Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit."""
+    return """Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the scanned files are secret-free. The bound executor applies its configured result limit."""
 
 
 @secret_scan_tool(

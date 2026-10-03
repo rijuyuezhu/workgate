@@ -46,7 +46,7 @@ def _configure_audit(
     payload_retention_s: int = 7 * 24 * 60 * 60,
     payloads_enabled: bool = True,
 ) -> Path:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_MAX_AUDIT_LOG_BYTES", str(max_log_bytes))
     monkeypatch.setenv("WORKGATE_MAX_AUDIT_EVENT_BYTES", str(max_event_bytes))
@@ -80,7 +80,7 @@ def _records(path: Path) -> list[dict[str, Any]]:
 def _audit_process(
     workspace: str, state_dir: str, worker: int, events: int
 ) -> None:
-    os.environ["WORKGATE_WORKSPACE_ROOT"] = workspace
+    os.environ["WORKGATE_DEFAULT_WORKDIR"] = workspace
     os.environ["WORKGATE_STATE_DIR"] = state_dir
     os.environ["WORKGATE_MAX_AUDIT_LOG_BYTES"] = "5000000"
     os.environ["WORKGATE_MAX_AUDIT_EVENT_BYTES"] = "100000"
@@ -90,7 +90,7 @@ def _audit_process(
 
 
 def _audit_payload_process(workspace: str, state_dir: str, worker: int) -> None:
-    os.environ["WORKGATE_WORKSPACE_ROOT"] = workspace
+    os.environ["WORKGATE_DEFAULT_WORKDIR"] = workspace
     os.environ["WORKGATE_STATE_DIR"] = state_dir
     os.environ["WORKGATE_AUDIT_INLINE_VALUE_BYTES"] = "256"
     os.environ["WORKGATE_MAX_AUDIT_PAYLOAD_BYTES"] = "100000"

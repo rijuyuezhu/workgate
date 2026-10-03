@@ -1,4 +1,4 @@
-"""Executor-owned runtime and capability orientation for shared sessions."""
+"""Executor-owned runtime and capability orientation for execution sessions."""
 
 import os
 import platform
@@ -19,11 +19,10 @@ from ..config.executor import ExecutorConfig
 from ..schemas.result_models.session import (
     SessionCapabilitiesEnvironment,
     SessionEnvironment,
-    SessionPolicyEnvironment,
+    SessionLimits,
     SessionRuntimeEnvironment,
     SessionToolProbe,
     SessionToolsEnvironment,
-    SessionWorkspaceEnvironment,
 )
 from ..version import package_version
 from .browser import browser_capability_available
@@ -220,9 +219,8 @@ def _runtime_environment() -> SessionRuntimeEnvironment:
     )
 
 
-def _policy_environment(config: ExecutorConfig) -> SessionPolicyEnvironment:
-    return SessionPolicyEnvironment(
-        full_control=config.allow_full_control,
+def _limits(config: ExecutorConfig) -> SessionLimits:
+    return SessionLimits(
         shell_default_timeout_s=config.run_shell_default_timeout_s,
         shell_max_timeout_s=config.run_shell_max_timeout_s,
         max_output_bytes=config.max_output_bytes,
@@ -246,8 +244,6 @@ def _policy_environment(config: ExecutorConfig) -> SessionPolicyEnvironment:
 
 def collect_executor_session_environment(
     config: ExecutorConfig,
-    *,
-    workdir: str,
 ) -> SessionEnvironment:
     """Collect bounded orientation from executor-owned config and machine state."""
     try:
@@ -263,15 +259,11 @@ def collect_executor_session_environment(
     conpty = conpty_available()
     return SessionEnvironment(
         runtime=_runtime_environment(),
-        workspace=SessionWorkspaceEnvironment(
-            workspace_root=str(config.workspace_root),
-            workdir=workdir,
-        ),
         tools=tools,
         capabilities=SessionCapabilitiesEnvironment(
             raw_pty=conpty or tools.tmux.available,
             conpty=conpty,
             browser=browser_capability_available(),
         ),
-        policy=_policy_environment(config),
+        limits=_limits(config),
     )

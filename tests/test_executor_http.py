@@ -53,6 +53,7 @@ def _transport(tmp_path: Path) -> tuple[ExecutorTransport, str, str]:
 def _hello_payload() -> dict[str, object]:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),
@@ -78,7 +79,6 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
     )
     assert hello.status_code == 200
     assert hello.json() == {
-        "protocol_version": 1,
         "heartbeat_interval_s": 10,
         "offline_after_s": 30,
         "poll_timeout_s": 1,
@@ -110,7 +110,7 @@ async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         auth_mode="oauth",
     )
@@ -149,7 +149,7 @@ async def test_pairing_routes_are_public_and_validation_clears_delivery(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         auth_mode="oauth",
         base_url="https://control.test",

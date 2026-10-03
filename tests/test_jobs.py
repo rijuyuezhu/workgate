@@ -363,7 +363,7 @@ async def test_executor_job_execute_rejects_combined_actions():
 
 @pytest.mark.asyncio
 async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()
@@ -493,7 +493,7 @@ async def test_tracked_job_lifecycle_with_backing_shells(tmp_path, monkeypatch):
 async def test_lost_job_start_response_is_rediscovered_by_reconnect_inventory(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()
@@ -549,7 +549,7 @@ async def test_lost_job_start_response_is_rediscovered_by_reconnect_inventory(
 async def test_tracked_jobs_are_isolated_by_agent_session(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()
@@ -601,7 +601,7 @@ async def test_tracked_jobs_are_isolated_by_agent_session(
 async def test_tracked_job_is_lost_when_shell_disappears_without_status(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()
@@ -649,7 +649,7 @@ async def test_tracked_job_is_lost_when_shell_disappears_without_status(
 
 
 def _configure_job_state(tmp_path, monkeypatch, **overrides):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     for name, value in overrides.items():
         monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value))
@@ -3108,7 +3108,7 @@ def test_job_runner_argv_carries_executor_environment_policy(tmp_path):
     config = resolve_executor_config(
         get_settings().model_copy(
             update={
-                "workspace_root": tmp_path,
+                "default_workdir": tmp_path,
                 "subprocess_env_blocklist": ["EXACT_SECRET"],
                 "subprocess_env_blocked_prefixes": ["PRIVATE_"],
             }

@@ -79,7 +79,7 @@ def test_oauth_supported_scopes_include_feature_scopes():
 
 
 def test_oauth_resource_defaults_to_mcp_endpoint(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.delenv("WORKGATE_OAUTH_RESOURCE", raising=False)
     clear_settings_cache()
@@ -90,7 +90,7 @@ def test_oauth_resource_defaults_to_mcp_endpoint(tmp_path, monkeypatch):
 def test_oauth_urls_ignore_untrusted_request_host_headers(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "1234")
     monkeypatch.delenv("WORKGATE_BASE_URL", raising=False)
@@ -161,7 +161,7 @@ def test_oauth_urls_ignore_untrusted_request_host_headers(
 
 @pytest.mark.asyncio
 async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     clear_settings_cache()
 
@@ -190,6 +190,9 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     search_meta = tools["workspace_search"].meta
     session_meta = tools["session_start"].meta
+    assert "workdir" not in set(
+        tools["session_start"].inputSchema.get("required", [])
+    )
     assert "environment_info" not in tools
     assert "remote" not in tools
     assert "remote_admin" not in tools
@@ -264,7 +267,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     assert structured["executor_id"] == harness.executor_id
     assert "target" not in structured
     assert structured["workdir"] == str(tmp_path)
-    assert structured["workspace_root"] == str(tmp_path)
+    assert structured["default_workdir"] == str(tmp_path)
     assert "session_id" in structured["message"]
 
 
@@ -272,7 +275,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
 async def test_shell_tool_schema_exposes_session_and_execution_modes(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -300,7 +303,7 @@ async def test_shell_tool_schema_exposes_session_and_execution_modes(
 async def test_persistent_shell_tools_require_owning_session_and_shell_id(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -334,7 +337,7 @@ async def test_persistent_shell_tools_require_owning_session_and_shell_id(
 async def test_shell_tool_returns_per_tool_structured_content(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -359,7 +362,7 @@ async def test_shell_tool_returns_per_tool_structured_content(
 async def test_file_tool_schema_exposes_grounded_read_contract(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -387,7 +390,7 @@ async def test_file_tool_schema_exposes_grounded_read_contract(
 async def test_search_tool_schema_exposes_search_and_paging_contract(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -435,7 +438,7 @@ async def test_search_tool_schema_exposes_search_and_paging_contract(
 
 @pytest.mark.asyncio
 async def test_misc_tool_output_schemas_are_exposed(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -455,7 +458,7 @@ async def test_misc_tool_output_schemas_are_exposed(tmp_path, monkeypatch):
 async def test_job_tool_schema_exposes_durable_companion_contract(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -499,7 +502,7 @@ async def test_job_tool_schema_exposes_durable_companion_contract(
 async def test_machine_tool_descriptions_do_not_publish_control_limits(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_OUTPUT_BYTES", "12345")
     monkeypatch.setenv("WORKGATE_MAX_GREP_RESULTS", "678")
     clear_settings_cache()
@@ -517,7 +520,7 @@ async def test_machine_tool_descriptions_do_not_publish_control_limits(
 
 
 def test_transport_security_uses_exact_base_url_host(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://example.com:8443")
     clear_settings_cache()
 
@@ -533,7 +536,7 @@ def test_transport_security_uses_exact_base_url_host(tmp_path, monkeypatch):
 def test_transport_security_handles_default_ports_and_ipv6(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://[2001:db8::1]:443")
     clear_settings_cache()
 
@@ -563,16 +566,11 @@ def _assert_tool_annotations(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("allow_full_control", [False, True])
-async def test_tool_safety_annotations_are_mode_independent(
+async def test_tool_safety_annotations_are_stable(
     tmp_path,
     monkeypatch,
-    allow_full_control,
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv(
-        "WORKGATE_ALLOW_FULL_CONTROL", str(allow_full_control).lower()
-    )
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
@@ -632,7 +630,7 @@ async def test_tool_safety_annotations_are_mode_independent(
 
 @pytest.mark.asyncio
 async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
@@ -703,7 +701,7 @@ async def test_agent_bridge_annotations_remain_conservative(
         async def call_tool(self, name, server, tool, args):
             return {"ok": True}
 
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     monkeypatch.setattr(
         tools_module,
@@ -745,7 +743,7 @@ async def test_agent_bridge_annotations_remain_conservative(
 
 
 def test_oauth_registration_requires_redirect_uri(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     clear_settings_cache()
 
@@ -762,7 +760,7 @@ def test_oauth_registration_requires_redirect_uri(tmp_path, monkeypatch):
 
 
 def test_oauth_registration_rejects_unsafe_redirect_uris(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     clear_settings_cache()
 
@@ -799,7 +797,7 @@ def test_oauth_registration_rejects_unsafe_redirect_uris(tmp_path, monkeypatch):
 
 
 def test_oauth_registration_enforces_size_limits(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_REGISTRATION_MAX_BODY_BYTES", "1000")
     monkeypatch.setenv("WORKGATE_OAUTH_REGISTRATION_MAX_REDIRECT_URIS", "1")
@@ -862,7 +860,7 @@ def test_oauth_approved_clients_persist_across_app_rebuild(
     tmp_path, monkeypatch
 ):
     state_dir = tmp_path / ".state"
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(state_dir))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "1234")
@@ -919,7 +917,7 @@ def test_oauth_approved_clients_persist_across_app_rebuild(
 def test_oauth_client_approval_rolls_back_when_persistence_fails(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     oauth_state().clients.clear()
@@ -945,7 +943,7 @@ def test_oauth_client_approval_rolls_back_when_persistence_fails(
 
 
 def test_oauth_invalid_client_store_fails_closed(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store_path = client_store_path()
@@ -959,7 +957,7 @@ def test_oauth_invalid_client_store_fails_closed(tmp_path, monkeypatch):
 
 
 def test_oauth_registration_caps_dynamic_clients(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_MAX_DYNAMIC_CLIENTS", "1")
     clear_settings_cache()
@@ -992,7 +990,7 @@ def test_oauth_registration_caps_dynamic_clients(tmp_path, monkeypatch):
 
 
 def test_prunes_stale_oauth_clients(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_OAUTH_CLIENT_TTL_S", "10")
     clear_settings_cache()
     oauth_state().clients.clear()
@@ -1021,7 +1019,7 @@ def test_prunes_stale_oauth_clients(tmp_path, monkeypatch):
 def test_oauth_registration_allows_new_client_after_ttl_prune(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_MAX_DYNAMIC_CLIENTS", "1")
     monkeypatch.setenv("WORKGATE_OAUTH_CLIENT_TTL_S", "1")
@@ -1046,7 +1044,7 @@ def test_oauth_registration_allows_new_client_after_ttl_prune(
 def test_oauth_authorize_requires_registered_client_and_redirect(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "1234")
     clear_settings_cache()
@@ -1097,7 +1095,7 @@ def test_oauth_authorize_requires_registered_client_and_redirect(
 def test_oauth_authorize_requires_pkce_and_supported_scope(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "1234")
     clear_settings_cache()
@@ -1136,7 +1134,7 @@ def test_oauth_authorize_requires_pkce_and_supported_scope(
 
 
 def test_pin_needed_for_oauth_approval(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.delenv("WORKGATE_OAUTH_ADMIN_PIN", raising=False)
     clear_settings_cache()
@@ -1171,7 +1169,7 @@ def test_pin_needed_for_oauth_approval(tmp_path, monkeypatch):
 
 
 def test_oauth_scope_enforced_for_rest_tools(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
@@ -1212,7 +1210,7 @@ def test_oauth_scope_enforced_for_rest_tools(tmp_path, monkeypatch):
 
 
 def test_oauth_dynamic_registration_authorize_token_flow(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "1234")
     monkeypatch.delenv("WORKGATE_OAUTH_ISSUER", raising=False)
@@ -1324,7 +1322,7 @@ def test_oauth_authorize_redirect_preserves_existing_query():
 
 
 def test_prunes_stale_codes(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_OAUTH_CODE_TTL_S", "10")
     clear_settings_cache()
     oauth_state().codes.clear()
@@ -1369,7 +1367,7 @@ def test_prunes_stale_codes(tmp_path, monkeypatch):
 
 
 def test_oauth_access_tokens_expire_by_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.delenv("WORKGATE_BASE_URL", raising=False)
     monkeypatch.delenv("WORKGATE_OAUTH_ISSUER", raising=False)
     monkeypatch.delenv("WORKGATE_OAUTH_RESOURCE", raising=False)
@@ -1387,7 +1385,7 @@ def test_oauth_access_tokens_expire_by_default(tmp_path, monkeypatch):
 
 
 def test_oauth_authorize_form_is_mobile_friendly(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     response = _authorize_form(
@@ -1412,7 +1410,7 @@ def test_oauth_authorize_form_is_mobile_friendly(tmp_path, monkeypatch):
 
 
 def test_oauth_authorize_form_escapes_reflected_fields(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     marker = chr(60) + "unsafe" + chr(62)

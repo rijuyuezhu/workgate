@@ -450,7 +450,7 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Optional new .png path inside the owning Workgate session workdir. Existing files are never overwritten.",
+                "description": "Optional new .png path. Relative values resolve from the owning session workdir; existing files are never overwritten.",
                 "head": {
                   "code": "screenshot_path"
                 },
@@ -465,7 +465,7 @@
               }
             ]
           },
-          "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG inside the session workdir so existing view_image/create_file_link flows can consume it."
+          "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir."
         ]
       ]
     },
@@ -598,7 +598,7 @@
           {
             "items": [
               {
-                "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+                "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
                 "head": {
                   "code": "path"
                 },
@@ -620,7 +620,7 @@
               }
             ]
           },
-          "Delete a file or directory inside a session workdir."
+          "Delete a file or directory through an execution session."
         ],
         [
           {
@@ -636,7 +636,7 @@
                 "note": "(integer, required)"
               },
               {
-                "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+                "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
                 "head": {
                   "code": "path"
                 },
@@ -712,7 +712,7 @@
                 "note": "(integer, optional)"
               },
               {
-                "description": "Directory path to list. Relative paths resolve inside the execution session workdir.",
+                "description": "Directory path to list. Relative paths resolve from the execution session workdir.",
                 "head": {
                   "code": "path"
                 },
@@ -757,7 +757,7 @@
                 "note": "(boolean, optional)"
               },
               {
-                "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+                "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
                 "head": {
                   "code": "path"
                 },
@@ -900,14 +900,14 @@
           {
             "items": [
               {
-                "description": "Directory inside the explicit session workdir against which patch paths are resolved. Defaults to the session workdir.",
+                "description": "Directory against which patch paths are resolved. Relative values resolve from the session workdir.",
                 "head": {
                   "code": "cwd"
                 },
                 "note": "(string, optional)"
               },
               {
-                "description": "A standard unified diff or an apply_patch envelope beginning with '*** Begin Patch'. Paths resolve inside cwd and the explicit session workdir.",
+                "description": "A standard unified diff or an apply_patch envelope beginning with '*** Begin Patch'. Patch paths must stay within cwd.",
                 "head": {
                   "code": "patch"
                 },
@@ -979,7 +979,7 @@
           {
             "items": [
               {
-                "description": "Directory path that narrows the search root. Relative paths resolve inside the execution session workdir.",
+                "description": "Directory path that narrows the search root. Relative paths resolve from the execution session workdir.",
                 "head": {
                   "code": "cwd"
                 },
@@ -993,7 +993,7 @@
                 "note": "(integer, optional)"
               },
               {
-                "description": "Glob expression matched against workspace-relative paths and file names.",
+                "description": "Glob expression matched against paths relative to the search root and against file names.",
                 "head": {
                   "code": "pattern"
                 },
@@ -1038,7 +1038,7 @@
                 "note": "(integer / null, optional)"
               },
               {
-                "description": "Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the workspace root.",
+                "description": "Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the session workdir.",
                 "head": {
                   "code": "paths"
                 },
@@ -1083,7 +1083,7 @@
           {
             "items": [
               {
-                "description": "Directory path to render as a compact tree. Relative paths resolve inside the execution session workdir.",
+                "description": "Directory path to render as a compact tree. Relative paths resolve from the execution session workdir.",
                 "head": {
                   "code": "cwd"
                 },
@@ -1133,7 +1133,7 @@
           {
             "items": [
               {
-                "description": "Directory to scan. Relative paths resolve inside the execution session workdir.",
+                "description": "Directory to scan. Relative paths resolve from the execution session workdir.",
                 "head": {
                   "code": "cwd"
                 },
@@ -1162,7 +1162,7 @@
               }
             ]
           },
-          "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit."
+          "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the scanned files are secret-free. The bound executor applies its configured result limit."
         ]
       ]
     },
@@ -1178,7 +1178,7 @@
       "rows": [
         [
           {
-            "code": "session_change_cwd"
+            "code": "session_change_workdir"
           },
           {
             "items": [
@@ -1190,7 +1190,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
+                "description": "Working directory to bind to the session. Relative paths resolve against the executor's effective default workdir.",
                 "head": {
                   "code": "workdir"
                 },
@@ -1198,7 +1198,7 @@
               }
             ]
           },
-          "Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated."
+          "Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated."
         ],
         [
           {
@@ -1221,7 +1221,7 @@
                 "note": "(integer / null, optional)"
               },
               {
-                "description": "Path to copy, resolved inside the corresponding source or destination session workdir.",
+                "description": "Path to copy. Relative values resolve from the corresponding source or destination session workdir.",
                 "head": {
                   "code": "dst_path"
                 },
@@ -1249,7 +1249,7 @@
                 "note": "(boolean, optional)"
               },
               {
-                "description": "Path to copy, resolved inside the corresponding source or destination session workdir.",
+                "description": "Path to copy. Relative values resolve from the corresponding source or destination session workdir.",
                 "head": {
                   "code": "src_path"
                 },
@@ -1264,7 +1264,7 @@
               }
             ]
           },
-          "Copy one file or directory between two existing execution sessions. Paths resolve inside their session workdirs. Set background=true to return a managed job owned by src_session_id."
+          "Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Set background=true to return a managed job owned by src_session_id."
         ],
         [
           {
@@ -1288,7 +1288,7 @@
               }
             ]
           },
-          "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted."
+          "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted."
         ],
         [
           {
@@ -1318,15 +1318,15 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
+                "description": "Optional initial workdir. Omit to use the executor's effective default workdir.",
                 "head": {
                   "code": "workdir"
                 },
-                "note": "(string, required)"
+                "note": "(string / null, optional)"
               }
             ]
           },
-          "Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools."
+          "Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."
         ]
       ]
     },
@@ -1361,7 +1361,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
+                "description": "Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it.",
                 "head": {
                   "code": "cwd"
                 },
@@ -1418,7 +1418,7 @@
               }
             ]
           },
-          "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
+          "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; relative cwd overrides resolve from it. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
         ],
         [
           {
@@ -1551,7 +1551,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
+                "description": "Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it.",
                 "head": {
                   "code": "cwd"
                 },
@@ -1608,7 +1608,7 @@
               }
             ]
           },
-          "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
+          "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; relative cwd overrides resolve from it. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
         ],
         [
           {
@@ -1880,7 +1880,7 @@
               }
             ]
           },
-          "Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id."
+          "Search text files from the session workdir and return connector-compatible result cards. Call fetch with the same session_id for a returned result id."
         ]
       ]
     },
@@ -2228,12 +2228,12 @@
         "properties": {
           "cwd": {
             "default": ".",
-            "description": "Directory inside the explicit session workdir against which patch paths are resolved. Defaults to the session workdir.",
+            "description": "Directory against which patch paths are resolved. Relative values resolve from the session workdir.",
             "title": "Cwd",
             "type": "string"
           },
           "patch": {
-            "description": "A standard unified diff or an apply_patch envelope beginning with '*** Begin Patch'. Paths resolve inside cwd and the explicit session workdir.",
+            "description": "A standard unified diff or an apply_patch envelope beginning with '*** Begin Patch'. Patch paths must stay within cwd.",
             "title": "Patch",
             "type": "string"
           },
@@ -2599,7 +2599,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; any cwd override resolves inside that session workdir. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+      "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; relative cwd overrides resolve from it. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -2615,7 +2615,7 @@
           },
           "cwd": {
             "default": ".",
-            "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
+            "description": "Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it.",
             "title": "Cwd",
             "type": "string"
           },
@@ -3597,7 +3597,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG inside the session workdir so existing view_image/create_file_link flows can consume it.",
+      "description": "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir.",
       "inputSchema": {
         "properties": {
           "browser_session_id": {
@@ -3663,7 +3663,7 @@
               }
             ],
             "default": null,
-            "description": "Optional new .png path inside the owning Workgate session workdir. Existing files are never overwritten.",
+            "description": "Optional new .png path. Relative values resolve from the owning session workdir; existing files are never overwritten.",
             "title": "Screenshot Path"
           },
           "session_id": {
@@ -4261,11 +4261,11 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Delete a file or directory inside a session workdir.",
+      "description": "Delete a file or directory through an execution session.",
       "inputSchema": {
         "properties": {
           "path": {
-            "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+            "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
             "title": "Path",
             "type": "string"
           },
@@ -4312,7 +4312,7 @@
             "type": "string"
           },
           "path": {
-            "description": "Workspace-relative path that was deleted.",
+            "description": "Path that was deleted, relative to the operation workdir when possible.",
             "title": "Path",
             "type": "string"
           }
@@ -4341,7 +4341,7 @@
             "type": "integer"
           },
           "path": {
-            "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+            "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
             "title": "Path",
             "type": "string"
           },
@@ -4423,7 +4423,7 @@
                 "type": "string"
               },
               "path": {
-                "description": "Workspace-relative file path for this context.",
+                "description": "File path for this context, relative to the operation workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -4485,7 +4485,7 @@
             "type": "integer"
           },
           "path": {
-            "description": "Workspace-relative file path that was edited.",
+            "description": "File path that was edited, relative to the operation workdir when possible.",
             "title": "Path",
             "type": "string"
           },
@@ -4617,7 +4617,7 @@
         "properties": {
           "cwd": {
             "default": ".",
-            "description": "Directory path that narrows the search root. Relative paths resolve inside the execution session workdir.",
+            "description": "Directory path that narrows the search root. Relative paths resolve from the execution session workdir.",
             "title": "Cwd",
             "type": "string"
           },
@@ -4628,7 +4628,7 @@
             "type": "integer"
           },
           "pattern": {
-            "description": "Glob expression matched against workspace-relative paths and file names.",
+            "description": "Glob expression matched against paths relative to the search root and against file names.",
             "title": "Pattern",
             "type": "string"
           },
@@ -4663,7 +4663,7 @@
         "description": "Glob file search result.",
         "properties": {
           "paths": {
-            "description": "Workspace-relative paths matching the glob pattern.",
+            "description": "Matching paths, relative to the execution session workdir when possible.",
             "items": {
               "type": "string"
             },
@@ -4745,7 +4745,7 @@
                 "type": "string"
               },
               "path": {
-                "description": "Workspace-relative file path for this context.",
+                "description": "File path for this context, relative to the operation workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -4802,7 +4802,7 @@
                 "type": "integer"
               },
               "path": {
-                "description": "Workspace-relative file path edited by this hunk.",
+                "description": "File path edited by this hunk, relative to the operation workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -4854,7 +4854,7 @@
             "type": "array"
           },
           "path": {
-            "description": "Workspace-relative path of the first edited hunk.",
+            "description": "Path of the first edited hunk, relative to the operation workdir when possible.",
             "title": "Path",
             "type": "string"
           },
@@ -5973,7 +5973,7 @@
           },
           "path": {
             "default": ".",
-            "description": "Directory path to list. Relative paths resolve inside the execution session workdir.",
+            "description": "Directory path to list. Relative paths resolve from the execution session workdir.",
             "title": "Path",
             "type": "string"
           },
@@ -6020,7 +6020,7 @@
                 "type": "number"
               },
               "path": {
-                "description": "Workspace-relative entry path.",
+                "description": "Entry path, relative to the operation workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -6280,7 +6280,7 @@
                 "type": "number"
               },
               "path": {
-                "description": "Workspace-relative entry path.",
+                "description": "Entry path, relative to the operation workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -6435,7 +6435,7 @@
                 "type": "integer"
               },
               "path": {
-                "description": "Workspace-relative file path that was read.",
+                "description": "File path that was read, relative to the operation workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -6568,7 +6568,7 @@
             "type": "string"
           },
           "path": {
-            "description": "Workspace-relative target path.",
+            "description": "Target path, relative to the operation workdir when possible.",
             "title": "Path",
             "type": "string"
           },
@@ -7056,7 +7056,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; any cwd override resolves inside that session workdir. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+      "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; relative cwd overrides resolve from it. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -7072,7 +7072,7 @@
           },
           "cwd": {
             "default": ".",
-            "description": "Optional working directory for the command, resolved inside the execution session workdir. Omit or pass . to use the session workdir.",
+            "description": "Optional working directory for the command. Relative values resolve from the execution session workdir; omit or pass . to use it.",
             "title": "Cwd",
             "type": "string"
           },
@@ -7275,7 +7275,7 @@
               }
             ],
             "default": null,
-            "description": "Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the workspace root.",
+            "description": "Optional file, directory, glob, line-scoped file selector such as src/app.py:10-20,30-40, or list of them that scopes the high-level search; omit to search the session workdir.",
             "title": "Paths"
           },
           "pattern": {
@@ -7646,12 +7646,12 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the workspace is secret-free. The bound executor applies its configured result limit.",
+      "description": "Scan text files under an execution session for common secret-like strings before commit, push, release, or sharing logs. Results are heuristic and do not prove the scanned files are secret-free. The bound executor applies its configured result limit.",
       "inputSchema": {
         "properties": {
           "cwd": {
             "default": ".",
-            "description": "Directory to scan. Relative paths resolve inside the execution session workdir.",
+            "description": "Directory to scan. Relative paths resolve from the execution session workdir.",
             "title": "Cwd",
             "type": "string"
           },
@@ -7711,7 +7711,7 @@
                 "type": "integer"
               },
               "path": {
-                "description": "Workspace-relative file path containing the finding.",
+                "description": "File path containing the finding, relative to the execution session workdir when possible.",
                 "title": "Path",
                 "type": "string"
               },
@@ -7730,7 +7730,7 @@
             "type": "object"
           }
         },
-        "description": "Heuristic workspace secret-scan result.",
+        "description": "Heuristic secret-scan result.",
         "properties": {
           "findings": {
             "description": "Returned heuristic secret findings.",
@@ -7850,7 +7850,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Change an execution session's workdir. Relative paths resolve against the executor workspace root, and old grounding snapshots are invalidated.",
+      "description": "Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated.",
       "inputSchema": {
         "properties": {
           "session_id": {
@@ -7862,7 +7862,9 @@
             "type": "string"
           },
           "workdir": {
-            "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
+            "description": "Working directory to bind to the session. Relative paths resolve against the executor's effective default workdir.",
+            "maxLength": 4096,
+            "minLength": 1,
             "title": "Workdir",
             "type": "string"
           }
@@ -7871,7 +7873,7 @@
           "session_id",
           "workdir"
         ],
-        "title": "session_change_cwdArguments",
+        "title": "session_change_workdirArguments",
         "type": "object"
       },
       "meta": {
@@ -7884,7 +7886,7 @@
           }
         ]
       },
-      "name": "session_change_cwd",
+      "name": "session_change_workdir",
       "outputSchema": {
         "$defs": {
           "GitSessionInfo": {
@@ -7975,9 +7977,9 @@
                 "$ref": "#/$defs/SessionCapabilitiesEnvironment",
                 "description": "Effective capabilities."
               },
-              "policy": {
-                "$ref": "#/$defs/SessionPolicyEnvironment",
-                "description": "Safe effective policy and limits."
+              "limits": {
+                "$ref": "#/$defs/SessionLimits",
+                "description": "Effective executor limits."
               },
               "runtime": {
                 "$ref": "#/$defs/SessionRuntimeEnvironment",
@@ -7986,30 +7988,20 @@
               "tools": {
                 "$ref": "#/$defs/SessionToolsEnvironment",
                 "description": "Allowlisted tool probes."
-              },
-              "workspace": {
-                "$ref": "#/$defs/SessionWorkspaceEnvironment",
-                "description": "Workspace identity."
               }
             },
             "required": [
               "runtime",
-              "workspace",
               "tools",
               "capabilities",
-              "policy"
+              "limits"
             ],
             "title": "SessionEnvironment",
             "type": "object"
           },
-          "SessionPolicyEnvironment": {
-            "description": "Safe executor-owned limits and modes that influence tool selection.",
+          "SessionLimits": {
+            "description": "Executor-owned limits relevant to tool selection.",
             "properties": {
-              "full_control": {
-                "description": "Whether executor full-control path policy is active.",
-                "title": "Full Control",
-                "type": "boolean"
-              },
               "max_concurrent_commands": {
                 "description": "Concurrent executor command limit.",
                 "title": "Max Concurrent Commands",
@@ -8102,7 +8094,6 @@
               }
             },
             "required": [
-              "full_control",
               "shell_default_timeout_s",
               "shell_max_timeout_s",
               "max_output_bytes",
@@ -8122,7 +8113,7 @@
               "max_transfer_archive_entries",
               "max_transfer_unpacked_bytes"
             ],
-            "title": "SessionPolicyEnvironment",
+            "title": "SessionLimits",
             "type": "object"
           },
           "SessionRuntimeEnvironment": {
@@ -8278,27 +8269,6 @@
             ],
             "title": "SessionToolsEnvironment",
             "type": "object"
-          },
-          "SessionWorkspaceEnvironment": {
-            "description": "Workspace orientation reported by the executor that owns the session.",
-            "properties": {
-              "workdir": {
-                "description": "Canonical workdir on the execution target.",
-                "title": "Workdir",
-                "type": "string"
-              },
-              "workspace_root": {
-                "description": "Canonical workspace root on the execution target.",
-                "title": "Workspace Root",
-                "type": "string"
-              }
-            },
-            "required": [
-              "workspace_root",
-              "workdir"
-            ],
-            "title": "SessionWorkspaceEnvironment",
-            "type": "object"
           }
         },
         "description": "Execution-session orientation.",
@@ -8308,9 +8278,14 @@
             "title": "Created At",
             "type": "number"
           },
+          "default_workdir": {
+            "description": "Effective default workdir reported by the executor that owns this session.",
+            "title": "Default Workdir",
+            "type": "string"
+          },
           "environment": {
             "$ref": "#/$defs/SessionEnvironment",
-            "description": "Bounded runtime, workspace, tool, capability, and policy orientation."
+            "description": "Bounded runtime, tool, capability, and limit orientation."
           },
           "executor_id": {
             "anyOf": [
@@ -8330,7 +8305,7 @@
             "description": "Lightweight git orientation for the session workdir."
           },
           "instruction_files": {
-            "description": "Workspace-relative project instruction files discovered near the session workdir.",
+            "description": "Project instruction files discovered from the session workdir through its ancestors.",
             "items": {
               "type": "string"
             },
@@ -8382,11 +8357,6 @@
             "description": "Canonical workdir bound to this session.",
             "title": "Workdir",
             "type": "string"
-          },
-          "workspace_root": {
-            "description": "Configured workspace root reported by the executor that owns this session.",
-            "title": "Workspace Root",
-            "type": "string"
           }
         },
         "required": [
@@ -8394,7 +8364,7 @@
           "workdir",
           "created_at",
           "updated_at",
-          "workspace_root",
+          "default_workdir",
           "git",
           "instruction_files",
           "environment",
@@ -8411,7 +8381,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Copy one file or directory between two existing execution sessions. Paths resolve inside their session workdirs. Set background=true to return a managed job owned by src_session_id.",
+      "description": "Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Set background=true to return a managed job owned by src_session_id.",
       "inputSchema": {
         "properties": {
           "background": {
@@ -8434,7 +8404,7 @@
             "title": "Chunk Size"
           },
           "dst_path": {
-            "description": "Path to copy, resolved inside the corresponding source or destination session workdir.",
+            "description": "Path to copy. Relative values resolve from the corresponding source or destination session workdir.",
             "title": "Dst Path",
             "type": "string"
           },
@@ -8464,7 +8434,7 @@
             "type": "boolean"
           },
           "src_path": {
-            "description": "Path to copy, resolved inside the corresponding source or destination session workdir.",
+            "description": "Path to copy. Relative values resolve from the corresponding source or destination session workdir.",
             "title": "Src Path",
             "type": "string"
           },
@@ -8683,35 +8653,14 @@
             "description": "One endpoint in a session-to-session copy.",
             "properties": {
               "executor_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Stable final executor identity for this endpoint, when applicable.",
-                "title": "Executor Id"
-              },
-              "path": {
-                "description": "Caller-provided path inside the session workdir.",
-                "title": "Path",
+                "description": "Executor identity for this endpoint.",
+                "title": "Executor Id",
                 "type": "string"
               },
-              "resolved_path": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Resolved path reported by the underlying transfer primitive.",
-                "title": "Resolved Path"
+              "path": {
+                "description": "Caller-provided path; relative values resolve from the session workdir.",
+                "title": "Path",
+                "type": "string"
               },
               "session_id": {
                 "description": "Execution session id for this endpoint.",
@@ -8726,6 +8675,7 @@
             },
             "required": [
               "session_id",
+              "executor_id",
               "workdir",
               "path"
             ],
@@ -8880,7 +8830,6 @@
                 "type": "string"
               },
               "same_executor": {
-                "default": false,
                 "description": "Whether both execution sessions are bound to the same executor.",
                 "title": "Same Executor",
                 "type": "boolean"
@@ -8893,7 +8842,8 @@
             },
             "required": [
               "route",
-              "same_session"
+              "same_session",
+              "same_executor"
             ],
             "title": "SessionCopyRelation",
             "type": "object"
@@ -8926,7 +8876,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Workspace files are not deleted.",
+      "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted.",
       "inputSchema": {
         "properties": {
           "force": {
@@ -9033,7 +8983,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start an explicit execution session on one executor and bind it to a required workdir. Optionally attach it to an existing semantic task_id; that attachment never chooses or changes the executor/workdir. Omit executor_id only when exactly one eligible executor is online. Pass the returned session_id to machine-facing tools.",
+      "description": "Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online.",
       "inputSchema": {
         "properties": {
           "executor_id": {
@@ -9082,14 +9032,21 @@
             "title": "Task Id"
           },
           "workdir": {
-            "description": "Working directory to bind to the session on the selected executor. Relative paths resolve against that executor's configured workspace root.",
-            "title": "Workdir",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional initial workdir. Omit to use the executor's effective default workdir.",
+            "title": "Workdir"
           }
         },
-        "required": [
-          "workdir"
-        ],
         "title": "session_startArguments",
         "type": "object"
       },
@@ -9194,9 +9151,9 @@
                 "$ref": "#/$defs/SessionCapabilitiesEnvironment",
                 "description": "Effective capabilities."
               },
-              "policy": {
-                "$ref": "#/$defs/SessionPolicyEnvironment",
-                "description": "Safe effective policy and limits."
+              "limits": {
+                "$ref": "#/$defs/SessionLimits",
+                "description": "Effective executor limits."
               },
               "runtime": {
                 "$ref": "#/$defs/SessionRuntimeEnvironment",
@@ -9205,30 +9162,20 @@
               "tools": {
                 "$ref": "#/$defs/SessionToolsEnvironment",
                 "description": "Allowlisted tool probes."
-              },
-              "workspace": {
-                "$ref": "#/$defs/SessionWorkspaceEnvironment",
-                "description": "Workspace identity."
               }
             },
             "required": [
               "runtime",
-              "workspace",
               "tools",
               "capabilities",
-              "policy"
+              "limits"
             ],
             "title": "SessionEnvironment",
             "type": "object"
           },
-          "SessionPolicyEnvironment": {
-            "description": "Safe executor-owned limits and modes that influence tool selection.",
+          "SessionLimits": {
+            "description": "Executor-owned limits relevant to tool selection.",
             "properties": {
-              "full_control": {
-                "description": "Whether executor full-control path policy is active.",
-                "title": "Full Control",
-                "type": "boolean"
-              },
               "max_concurrent_commands": {
                 "description": "Concurrent executor command limit.",
                 "title": "Max Concurrent Commands",
@@ -9321,7 +9268,6 @@
               }
             },
             "required": [
-              "full_control",
               "shell_default_timeout_s",
               "shell_max_timeout_s",
               "max_output_bytes",
@@ -9341,7 +9287,7 @@
               "max_transfer_archive_entries",
               "max_transfer_unpacked_bytes"
             ],
-            "title": "SessionPolicyEnvironment",
+            "title": "SessionLimits",
             "type": "object"
           },
           "SessionRuntimeEnvironment": {
@@ -9497,27 +9443,6 @@
             ],
             "title": "SessionToolsEnvironment",
             "type": "object"
-          },
-          "SessionWorkspaceEnvironment": {
-            "description": "Workspace orientation reported by the executor that owns the session.",
-            "properties": {
-              "workdir": {
-                "description": "Canonical workdir on the execution target.",
-                "title": "Workdir",
-                "type": "string"
-              },
-              "workspace_root": {
-                "description": "Canonical workspace root on the execution target.",
-                "title": "Workspace Root",
-                "type": "string"
-              }
-            },
-            "required": [
-              "workspace_root",
-              "workdir"
-            ],
-            "title": "SessionWorkspaceEnvironment",
-            "type": "object"
           }
         },
         "description": "Execution-session orientation.",
@@ -9527,9 +9452,14 @@
             "title": "Created At",
             "type": "number"
           },
+          "default_workdir": {
+            "description": "Effective default workdir reported by the executor that owns this session.",
+            "title": "Default Workdir",
+            "type": "string"
+          },
           "environment": {
             "$ref": "#/$defs/SessionEnvironment",
-            "description": "Bounded runtime, workspace, tool, capability, and policy orientation."
+            "description": "Bounded runtime, tool, capability, and limit orientation."
           },
           "executor_id": {
             "anyOf": [
@@ -9549,7 +9479,7 @@
             "description": "Lightweight git orientation for the session workdir."
           },
           "instruction_files": {
-            "description": "Workspace-relative project instruction files discovered near the session workdir.",
+            "description": "Project instruction files discovered from the session workdir through its ancestors.",
             "items": {
               "type": "string"
             },
@@ -9601,11 +9531,6 @@
             "description": "Canonical workdir bound to this session.",
             "title": "Workdir",
             "type": "string"
-          },
-          "workspace_root": {
-            "description": "Configured workspace root reported by the executor that owns this session.",
-            "title": "Workspace Root",
-            "type": "string"
           }
         },
         "required": [
@@ -9613,7 +9538,7 @@
           "workdir",
           "created_at",
           "updated_at",
-          "workspace_root",
+          "default_workdir",
           "git",
           "instruction_files",
           "environment",
@@ -10237,7 +10162,7 @@
         "properties": {
           "cwd": {
             "default": ".",
-            "description": "Directory path to render as a compact tree. Relative paths resolve inside the execution session workdir.",
+            "description": "Directory path to render as a compact tree. Relative paths resolve from the execution session workdir.",
             "title": "Cwd",
             "type": "string"
           },
@@ -10497,12 +10422,12 @@
             "type": "string"
           },
           "path": {
-            "description": "Resolved display path inside the session workdir.",
+            "description": "Resolved display path, session-relative when possible.",
             "title": "Path",
             "type": "string"
           },
           "session_id": {
-            "description": "Shared control/executor session id.",
+            "description": "Execution session id.",
             "title": "Session Id",
             "type": "string"
           }
@@ -10957,14 +10882,21 @@
                 "type": "number"
               },
               "workdir": {
-                "title": "Workdir",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Workdir"
               }
             },
             "required": [
               "session_id",
               "executor_id",
-              "workdir",
               "status",
               "availability",
               "created_at",
@@ -11332,7 +11264,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Search text files on the executor bound to session_id and return connector-compatible result cards. This broad read-only search uses that executor's configured workspace root; call fetch with the same session_id for a returned result id.",
+      "description": "Search text files from the session workdir and return connector-compatible result cards. Call fetch with the same session_id for a returned result id.",
       "inputSchema": {
         "properties": {
           "query": {
@@ -11735,14 +11667,21 @@
                 "type": "number"
               },
               "workdir": {
-                "title": "Workdir",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Workdir"
               }
             },
             "required": [
               "session_id",
               "executor_id",
-              "workdir",
               "status",
               "availability",
               "created_at",
@@ -12444,14 +12383,21 @@
                 "type": "number"
               },
               "workdir": {
-                "title": "Workdir",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Workdir"
               }
             },
             "required": [
               "session_id",
               "executor_id",
-              "workdir",
               "status",
               "availability",
               "created_at",
@@ -12834,7 +12780,7 @@
             "type": "boolean"
           },
           "path": {
-            "description": "Workspace-relative path, or an allowed absolute path, for the file or directory operation.",
+            "description": "Path for the file or directory operation. Relative values resolve from the execution session workdir; absolute paths are allowed.",
             "title": "Path",
             "type": "string"
           },
@@ -12881,7 +12827,7 @@
             "type": "boolean"
           },
           "path": {
-            "description": "Workspace-relative file path that was written.",
+            "description": "File path that was written, relative to the operation workdir when possible.",
             "title": "Path",
             "type": "string"
           }

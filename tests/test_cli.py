@@ -107,8 +107,7 @@ def test_control_subcommand_parses_control_owned_runtime_settings():
     assert args.oauth_admin_pin == "pin"
     assert args.ui_enabled is False
     assert args.max_todos == 17
-    assert not hasattr(args, "workspace_root")
-    assert not hasattr(args, "allow_full_control")
+    assert not hasattr(args, "default_workdir")
 
 
 def test_legacy_server_command_is_not_registered():
@@ -120,7 +119,7 @@ def test_standalone_subcommand_keeps_topology_protected():
     args = cli._build_parser().parse_args(
         [
             "standalone",
-            "--workspace-root",
+            "--default-workdir",
             "/tmp/workspace",
             "--port",
             "9999",
@@ -128,7 +127,7 @@ def test_standalone_subcommand_keeps_topology_protected():
     )
 
     assert args.handler is standalone_cli.run_standalone_from_args
-    assert args.workspace_root == "/tmp/workspace"
+    assert args.default_workdir == "/tmp/workspace"
     assert args.port == 9999
     for name in (
         "mode",
@@ -193,8 +192,7 @@ def test_run_standalone_from_args_maps_lock_contention(monkeypatch):
 @pytest.mark.parametrize(
     ("flag", "value"),
     [
-        ("--workspace-root", "/tmp/work"),
-        ("--allow-full-control", "true"),
+        ("--default-workdir", "/tmp/work"),
         ("--shell-executable", "/bin/bash"),
     ],
 )
@@ -331,7 +329,7 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     config.write_text(
         "\n".join(
             (
-                f"workspace_root: {workspace}",
+                f"default_workdir: {workspace}",
                 "oauth_admin_pin: yaml-control-secret",
                 "port: 9876",
             )
@@ -339,7 +337,7 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
         + "\n",
         encoding="utf-8",
     )
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "env-control-secret")
     monkeypatch.setenv("WORKGATE_SHELL_EXECUTABLE", "/bin/executor-env-shell")
 
@@ -347,7 +345,7 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
         ["executor", "run", "--config", str(config)]
     )
     executor_settings = settings_from_args(executor_args)
-    assert executor_settings.workspace_root == workspace
+    assert executor_settings.default_workdir == workspace
     assert executor_settings.shell_executable == "/bin/executor-env-shell"
     assert executor_settings.oauth_admin_pin is None
     assert executor_settings.port == Settings().port
@@ -358,7 +356,7 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     control_settings = settings_from_args(control_args)
     assert control_settings.oauth_admin_pin == "env-control-secret"
     assert control_settings.port == 9876
-    assert control_settings.workspace_root != workspace
+    assert control_settings.default_workdir != workspace
     assert (
         control_settings.shell_executable
         == Settings.model_fields["shell_executable"].get_default()
@@ -420,11 +418,11 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
         encoding="utf-8",
     )
     executor_config.write_text(
-        f"workspace_root: {workspace}\nshell_executable: /bin/executor-only\n",
+        f"default_workdir: {workspace}\nshell_executable: /bin/executor-only\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("WORKGATE_CONFIG", raising=False)
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
     monkeypatch.delenv("WORKGATE_OAUTH_ADMIN_PIN", raising=False)
     monkeypatch.delenv("WORKGATE_SHELL_EXECUTABLE", raising=False)
     monkeypatch.delenv("WORKGATE_STATE_DIR", raising=False)
@@ -433,11 +431,11 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
     control = settings_from_args(control_args)
     assert control.port == 9876
     assert control.oauth_admin_pin == "control-only-secret"
-    assert control.workspace_root != workspace
+    assert control.default_workdir != workspace
 
     executor_args = cli._build_parser().parse_args(["executor", "run"])
     executor = settings_from_args(executor_args)
-    assert executor.workspace_root == workspace
+    assert executor.default_workdir == workspace
     assert executor.state_dir == paths.executor_state_dir
     assert executor.shell_executable == "/bin/executor-only"
     assert executor.oauth_admin_pin is None
@@ -452,20 +450,20 @@ def test_workgate_config_overrides_executor_default_yaml(tmp_path, monkeypatch):
     executor_config_dir = workgate_config / "executor"
     executor_config_dir.mkdir(parents=True)
     (executor_config_dir / "config.yaml").write_text(
-        f"workspace_root: {tmp_path / 'default-workspace'}\n",
+        f"default_workdir: {tmp_path / 'default-workspace'}\n",
         encoding="utf-8",
     )
     explicit = tmp_path / "selected.yaml"
     selected_workspace = tmp_path / "selected-workspace"
     explicit.write_text(
-        f"workspace_root: {selected_workspace}\n", encoding="utf-8"
+        f"default_workdir: {selected_workspace}\n", encoding="utf-8"
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setenv("WORKGATE_CONFIG", str(explicit))
-    monkeypatch.delenv("WORKGATE_WORKSPACE_ROOT", raising=False)
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
 
     args = cli._build_parser().parse_args(["executor", "run"])
-    assert settings_from_args(args).workspace_root == selected_workspace
+    assert settings_from_args(args).default_workdir == selected_workspace
 
 
 def test_version_option_prints_package_version(capsys):
@@ -584,7 +582,7 @@ def test_executor_connect_subcommand_parses_final_pairing_contract():
             "https://example.com",
             "--name",
             "npu-4card",
-            "--workspace-root",
+            "--default-workdir",
             "/home/user/project",
         ]
     )
@@ -593,7 +591,7 @@ def test_executor_connect_subcommand_parses_final_pairing_contract():
     assert args.executor_command == "connect"
     assert args.control_url == "https://example.com"
     assert args.name == "npu-4card"
-    assert args.workspace_root == "/home/user/project"
+    assert args.default_workdir == "/home/user/project"
     assert not hasattr(args, "invite")
 
 
@@ -717,7 +715,7 @@ def test_control_handler_initializes_only_control_owned_directories(
     data_dir = tmp_path / "data"
     settings = Settings(
         mode="mcp",
-        workspace_root=workspace,
+        default_workdir=workspace,
         state_dir=state_dir,
         data_dir=data_dir,
     )

@@ -1,7 +1,9 @@
 import base64
 import errno
 import os
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,17 +39,12 @@ def _configure(
     workspace,
     *,
     auth_mode="none",
-    allow_full_control=False,
     **values,
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(workspace.parent / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)
-    monkeypatch.setenv(
-        "WORKGATE_ALLOW_FULL_CONTROL",
-        str(allow_full_control).lower(),
-    )
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     for name, value in values.items():
         monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value).lower())
@@ -92,7 +89,7 @@ def _token(scope: str) -> str:
     )
 
 
-def test_file_listing_is_sorted_bounded_and_workspace_relative(
+def test_file_listing_is_sorted_bounded_and_can_navigate_above_default(
     monkeypatch, tmp_path
 ):
     workspace = tmp_path / "workspace"
@@ -110,7 +107,7 @@ def test_file_listing_is_sorted_bounded_and_workspace_relative(
     payload = response.json()["data"]
     assert payload["executor_id"] == client.executor_id
     assert payload["path"] == "."
-    assert payload["parent"] == "."
+    assert payload["parent"] == tmp_path.as_posix()
     assert payload["is_truncated"] is False
 
     assert payload["mutations"] == {
@@ -135,7 +132,7 @@ def test_file_listing_is_sorted_bounded_and_workspace_relative(
     assert all(not os.path.isabs(entry["path"]) for entry in payload["entries"])
 
 
-def test_file_api_stays_inside_workspace_even_in_full_control_mode(
+def test_file_api_can_access_paths_outside_default_workdir(
     monkeypatch, tmp_path
 ):
     workspace = tmp_path / "workspace"
@@ -144,11 +141,7 @@ def test_file_api_stays_inside_workspace_even_in_full_control_mode(
     outside.mkdir()
     (outside / "secret.txt").write_text("outside", encoding="utf-8")
     (workspace / "outside-link").symlink_to(outside, target_is_directory=True)
-    client = _client(
-        monkeypatch,
-        workspace,
-        allow_full_control=True,
-    )
+    client = _client(monkeypatch, workspace)
 
     listed = client.get("/api/ui/files", params={"path": str(outside)})
     previewed = client.get(
@@ -165,10 +158,40 @@ def test_file_api_stays_inside_workspace_even_in_full_control_mode(
     )
 
     for response in (listed, previewed, written, linked_write):
-        assert response.status_code == 400
-        assert "escapes workspace" in response.json()["message"].lower()
-    assert not (outside / "new.txt").exists()
-    assert not (outside / "linked.txt").exists()
+        assert response.status_code == 200
+    assert (outside / "new.txt").read_text(encoding="utf-8") == "escape"
+    assert (outside / "linked.txt").read_text(encoding="utf-8") == "escape"
+
+
+def test_file_api_refuses_filesystem_root_mutations(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "source.txt").write_text("source", encoding="utf-8")
+    client = _client(monkeypatch, workspace)
+    filesystem_root = Path(tmp_path.anchor).as_posix()
+
+    mkdir = client.post(
+        "/api/ui/files/mkdir",
+        json={"path": filesystem_root},
+    )
+    copy = client.post(
+        "/api/ui/files/copy",
+        json={"path": filesystem_root, "destination": "root-copy"},
+    )
+    missing_parent = client.post(
+        "/api/ui/files/copy",
+        json={
+            "path": "source.txt",
+            "destination": "missing-parent/copied.txt",
+        },
+    )
+
+    assert mkdir.status_code == 400
+    assert "filesystem root" in mkdir.json()["message"]
+    assert copy.status_code == 400
+    assert "filesystem root" in copy.json()["message"]
+    assert missing_parent.status_code == 400
+    assert missing_parent.json()["error"] == "NotADirectoryError"
 
 
 def test_file_preview_supports_text_binary_directory_and_raster_images(
@@ -350,7 +373,7 @@ def test_file_mutations_require_write_scope_and_preserve_safe_semantics(
     assert created.json()["data"]["created"] is True
 
 
-def test_delete_refuses_workspace_root_and_unlinks_symlink_not_target(
+def test_delete_allows_default_workdir_and_unlinks_symlink_not_target(
     monkeypatch, tmp_path
 ):
     workspace = tmp_path / "workspace"
@@ -361,20 +384,20 @@ def test_delete_refuses_workspace_root_and_unlinks_symlink_not_target(
     link.symlink_to(outside)
     client = _client(monkeypatch, workspace)
 
-    root = client.post(
-        "/api/ui/files/delete", json={"path": ".", "recursive": True}
-    )
     deleted = client.post(
         "/api/ui/files/delete",
         json={"path": "outside-link", "recursive": False},
     )
+    root = client.post(
+        "/api/ui/files/delete", json={"path": ".", "recursive": True}
+    )
 
-    assert root.status_code == 400
-    assert "workspace root" in root.json()["message"]
     assert deleted.status_code == 200
     assert deleted.json()["data"]["deleted"] == "link"
     assert not link.exists()
     assert outside.read_text(encoding="utf-8") == "keep"
+    assert root.status_code == 200
+    assert not workspace.exists()
 
 
 def test_copy_file_preserves_content_mode_and_source(monkeypatch, tmp_path):
@@ -522,14 +545,14 @@ def test_copy_and_move_refuse_existing_or_unsafe_destinations(
     assert nested.status_code == 400
     assert "inside itself" in nested.json()["message"]
     assert root.status_code == 400
-    assert "workspace root" in root.json()["message"]
+    assert "inside itself" in root.json()["message"]
     assert (workspace / "existing.txt").read_text(
         encoding="utf-8"
     ) == "existing"
 
 
 @pytest.mark.parametrize("action", ["copy", "move"])
-def test_copy_and_move_reject_destination_symlink_escape(
+def test_copy_and_move_allow_destination_symlink_outside_default(
     monkeypatch, tmp_path, action
 ):
     workspace = tmp_path / "workspace"
@@ -538,7 +561,7 @@ def test_copy_and_move_reject_destination_symlink_escape(
     outside.mkdir()
     (workspace / "source.txt").write_text("source", encoding="utf-8")
     (workspace / "outside-link").symlink_to(outside, target_is_directory=True)
-    client = _client(monkeypatch, workspace, allow_full_control=True)
+    client = _client(monkeypatch, workspace)
 
     response = client.post(
         f"/api/ui/files/{action}",
@@ -548,10 +571,9 @@ def test_copy_and_move_reject_destination_symlink_escape(
         },
     )
 
-    assert response.status_code == 400
-    assert "escapes workspace" in response.json()["message"].lower()
-    assert not (outside / "escaped.txt").exists()
-    assert (workspace / "source.txt").read_text(encoding="utf-8") == "source"
+    assert response.status_code == 200
+    assert (outside / "escaped.txt").read_text(encoding="utf-8") == "source"
+    assert (workspace / "source.txt").exists() is (action == "copy")
 
 
 def test_rename_refuses_existing_destination(monkeypatch, tmp_path):
@@ -647,6 +669,16 @@ def test_file_executor_id_arg_requires_value_and_rejects_oversized() -> None:
         ValueError, match="executor_id exceeds 255 encoded bytes"
     ):
         ui_files_module._executor_id_arg("x" * 256)
+
+
+def test_file_http_helpers_reject_bad_runtime_and_payload() -> None:
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace()),
+    )
+    with pytest.raises(RuntimeError, match="requires the control runtime"):
+        ui_files_module._runtime(cast(Any, request))
+    with pytest.raises(RuntimeError, match="malformed Human UI Files payload"):
+        ui_files_module._payload("not-a-mapping", "exec_test")
 
 
 def test_opentui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):

@@ -309,7 +309,7 @@ class HostedHttpGateway:
                         "session_id": str(row.session_id),
                         "executor_id": str(row.executor_id),
                         "status": row.status,
-                        "workdir": row.resolved_workdir_display,
+                        "workdir": row.workdir,
                     }
                     for row in sessions.values()
                 ],

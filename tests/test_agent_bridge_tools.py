@@ -120,7 +120,7 @@ def _assert_serialized_configured_values_redacted(
 async def test_fixed_bridge_tools_exist_with_missing_config(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".workgate"))
     clear_settings_cache()
 
@@ -140,7 +140,7 @@ async def test_fixed_bridge_tools_exist_with_missing_config(
 async def test_agent_config_status_reports_missing_config(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".workgate"))
     clear_settings_cache()
 
@@ -186,7 +186,7 @@ async def test_agent_config_status_redacts_probe_error(tmp_path, monkeypatch):
         "AgentMcpClientManager",
         lambda _timeout: FakeMcpClientManager(),
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -223,7 +223,7 @@ async def test_agent_config_status_redacts_env_and_header_values(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -273,7 +273,7 @@ async def test_agent_config_status_redacts_serialized_configured_values(
         "AgentMcpClientManager",
         lambda _timeout: FakeMcpClientManager(),
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -300,7 +300,7 @@ async def test_activate_agent_skill_returns_skill_content(
     (skill_dir / "guide.md").write_text("More guidance.\n", encoding="utf-8")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -339,7 +339,7 @@ async def test_control_exposes_no_dynamic_skill_aliases(tmp_path, monkeypatch):
     (project_skill / "SKILL.md").write_text(
         "# Project Local\n\nSession-local skill.\n", encoding="utf-8"
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -403,7 +403,7 @@ if __name__ == "__main__":
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -512,7 +512,7 @@ async def test_control_oauth_refresh_credentials_are_redacted_from_result_and_au
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -671,7 +671,7 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
     monkeypatch.setattr(
         tools_module, "AgentMcpClientManager", lambda _timeout: fake_manager
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -782,7 +782,7 @@ async def test_call_agent_mcp_tool_redacts_unavailable_probe_error(
         "AgentMcpClientManager",
         lambda _timeout: FakeMcpClientManager(),
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -840,7 +840,7 @@ async def test_call_agent_mcp_tool_redacts_call_error(tmp_path, monkeypatch):
         "AgentMcpClientManager",
         lambda _timeout: FakeMcpClientManager(),
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -895,7 +895,7 @@ async def test_call_agent_mcp_tool_redacts_serialized_configured_values(
         "AgentMcpClientManager",
         lambda _timeout: FakeMcpClientManager(),
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -968,7 +968,7 @@ async def test_call_agent_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
         "AgentMcpClientManager",
         lambda _timeout: ErrorPayloadMcpManager(),
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -1048,7 +1048,7 @@ async def test_agent_mcp_public_metadata_redacts_configured_values(
     monkeypatch.setattr(
         tools_module, "AgentMcpClientManager", lambda _timeout: fake_manager
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -1707,7 +1707,7 @@ async def test_control_oauth_intermediate_credential_is_redacted_from_error_and_
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
     auth_store = AgentAuthStore(get_settings().agent_auth_dir)
@@ -2005,7 +2005,7 @@ async def test_control_oauth_cross_instance_rotation_is_redacted_and_audit_is_sa
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
     initial_store = AgentAuthStore(get_settings().agent_auth_dir)
@@ -2105,7 +2105,7 @@ async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
     auth_root = get_settings().agent_auth_dir
@@ -2201,7 +2201,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_probe_value(
         )
 
     write_config(old_header)
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
     probe_count = 0
@@ -2270,7 +2270,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
         )
 
     write_config(old_header)
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
     upstream_calls = 0
@@ -2361,7 +2361,7 @@ async def test_dynamic_mcp_server_rename_retains_literal_redaction_domain(
         )
 
     write_config("docs", old_header)
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -2479,7 +2479,7 @@ async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
     monkeypatch.setattr(
         tools_module, "AgentMcpClientManager", lambda _timeout: manager
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -2544,7 +2544,7 @@ async def test_dynamic_skill_alias_is_not_control_local(tmp_path, monkeypatch):
     (skill_dir / "SKILL.md").write_text(
         "# Paper Writer\n\nDraft papers.\n", encoding="utf-8"
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -2570,7 +2570,7 @@ async def test_dynamic_mcp_tool_is_visible_and_callable(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     monkeypatch.setattr(
         tools_module,
@@ -2626,7 +2626,7 @@ async def test_dynamic_mcp_tool_redacts_configured_values_in_call_error(
         async def call_tool(self, name, server, tool, args):
             raise RuntimeError(CONFIGURED_VALUE_ERROR)
 
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     monkeypatch.setattr(
         tools_module,
@@ -2696,7 +2696,7 @@ async def test_dynamic_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
                 },
             }
 
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     monkeypatch.setattr(
         tools_module,
@@ -2742,7 +2742,7 @@ async def test_build_mcp_respects_manifest_dynamic_tool_disable(
     (skill_dir / "SKILL.md").write_text(
         "# Paper Writer\n\nDraft papers.\n", encoding="utf-8"
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     monkeypatch.setattr(
         tools_module,
@@ -2773,7 +2773,7 @@ async def test_control_dynamic_registry_ignores_skill_filesystem_changes(
     (skill_dir / "SKILL.md").write_text(
         "# Paper Writer\n\nDraft papers.\n", encoding="utf-8"
     )
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     clear_settings_cache()
 
@@ -2827,7 +2827,7 @@ async def test_agent_bridge_hot_reloads_mcp_server_tools(tmp_path, monkeypatch):
             }
 
     fake_manager = ReloadingMcpManager()
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(config_dir.parent))
     monkeypatch.setattr(
         tools_module, "AgentMcpClientManager", lambda _timeout: fake_manager

@@ -281,23 +281,23 @@
       "rows": [
         [
           {
-            "code": "workspace_root"
+            "code": "default_workdir"
           },
           {
             "lines": [
               {
-                "code": "--workspace-root"
+                "code": "--default-workdir"
               }
             ]
           },
           {
-            "code": "WORKGATE_WORKSPACE_ROOT"
+            "code": "WORKGATE_DEFAULT_WORKDIR"
           },
           "path",
           {
             "code": "invocation CWD"
           },
-          "Workspace filesystem boundary; defaults to the directory Workgate was started from."
+          "Default executor working directory; missing defaults fall back to the filesystem root."
         ],
         [
           {
@@ -719,26 +719,6 @@
       "heading": "Safety and resource limits",
       "kind": "table",
       "rows": [
-        [
-          {
-            "code": "allow_full_control"
-          },
-          {
-            "lines": [
-              {
-                "code": "--allow-full-control"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_ALLOW_FULL_CONTROL"
-          },
-          "true | false",
-          {
-            "code": "false"
-          },
-          "Allow executor filesystem operations to escape workspace_root; use only where unrestricted filesystem access is intended. MCP safety annotations remain conservative in this mode."
-        ],
         [
           {
             "code": "tool_timeout_s"
@@ -2054,12 +2034,12 @@
     },
     {
       "choices": [],
-      "cli": "--workspace-root",
+      "cli": "--default-workdir",
       "default": "invocation CWD",
       "default_display": "invocation CWD",
-      "description": "Workspace filesystem boundary; defaults to the directory Workgate was started from.",
-      "env": "WORKGATE_WORKSPACE_ROOT",
-      "name": "workspace_root",
+      "description": "Default executor working directory; missing defaults fall back to the filesystem root.",
+      "env": "WORKGATE_DEFAULT_WORKDIR",
+      "name": "default_workdir",
       "nullable": false,
       "section": "Paths and state",
       "type": "path",
@@ -2316,22 +2296,6 @@
       "nullable": false,
       "section": "Authentication and OAuth",
       "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "true",
-        "false"
-      ],
-      "cli": "--allow-full-control",
-      "default": false,
-      "default_display": "false",
-      "description": "Allow executor filesystem operations to escape workspace_root; use only where unrestricted filesystem access is intended. MCP safety annotations remain conservative in this mode.",
-      "env": "WORKGATE_ALLOW_FULL_CONTROL",
-      "name": "allow_full_control",
-      "nullable": false,
-      "section": "Safety and resource limits",
-      "type": "true | false",
       "unset_cli": null
     },
     {

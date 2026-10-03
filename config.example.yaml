@@ -31,9 +31,9 @@ ui_terminal_max_connections: 8
 ui_wallpaper: "aurora"
 
 # Paths and state.
-# Workspace filesystem boundary; defaults to the directory Workgate was started from.
+# Default executor working directory; missing defaults fall back to the filesystem root.
 # Default when omitted: invocation CWD.
-# workspace_root: "/absolute/path/to/workspace"
+# default_workdir: "/absolute/path/to/default-workdir"
 # Directory for durable Workgate runtime state.
 # Default when omitted: platform user-state directory.
 # state_dir: "/absolute/path/to/workgate-state"
@@ -86,9 +86,6 @@ oauth_registration_max_redirect_uri_chars: 2048
 oauth_registration_max_client_name_chars: 200
 
 # Safety and resource limits.
-# Allow executor filesystem operations to escape workspace_root; use only where unrestricted
-# filesystem access is intended. MCP safety annotations remain conservative in this mode.
-allow_full_control: false
 # Base control-owned MCP/HTTP tool watchdog timeout in seconds.
 tool_timeout_s: 60
 # Default timeout for bounded shell command calls in seconds.

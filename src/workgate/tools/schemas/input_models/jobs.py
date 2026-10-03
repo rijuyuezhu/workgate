@@ -14,7 +14,7 @@ JobCommandArg = Annotated[
 JobCwdArg = Annotated[
     str,
     Field(
-        description="Working directory for the tracked job. Relative paths resolve inside the execution session workdir."
+        description="Working directory for the tracked job. Relative paths resolve from the execution session workdir."
     ),
 ]
 JobNameArg = Annotated[

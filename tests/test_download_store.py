@@ -26,7 +26,7 @@ from workgate.control.payload_store import PayloadStore
 
 
 def _configure(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_DATA_DIR", str(tmp_path / ".data"))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://files.example.test")
@@ -45,7 +45,7 @@ def _payloads() -> PayloadStore:
 def _create_file_link(path: str):
     source = Path(path)
     if not source.is_absolute():
-        source = get_settings().workspace_root / source
+        source = get_settings().default_workdir / source
     data = source.read_bytes()
     control = _control_config()
     staging = new_staging_path(data_dir=control.data_dir)

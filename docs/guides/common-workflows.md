@@ -10,7 +10,7 @@ Ask the client to start a session in the project directory before doing any work
 Use workgate in /path/to/project. Start a session, inspect the returned workspace and Git state, and read any instruction files before changing anything.
 ```
 
-Keep using the returned `session_id`. Use `session_change_cwd` when the task moves to another directory instead of starting unrelated operations from an assumed path.
+Keep using the returned `session_id`. Use `session_change_workdir` when the task moves to another directory instead of starting unrelated operations from an assumed path.
 
 ## Inspect before editing
 
@@ -53,7 +53,7 @@ For a long-running non-interactive command, set `async_=true` and manage the ret
 
 ## Automate a web page
 
-When the bound executor advertises browser support, use `browser_session` to start an isolated Chromium context, `browser_snapshot` to obtain bounded visible text and short interactive-element refs such as `e1`, and `browser_act` for high-level navigation and interaction. Re-snapshot after navigation or substantial DOM replacement before reusing refs. Optional screenshots are written only to a new `.png` path inside the owning session workdir and can then be inspected with `view_image` or shared with the normal file-link flow.
+When the bound executor advertises browser support, use `browser_session` to start an isolated Chromium context, `browser_snapshot` to obtain bounded visible text and short interactive-element refs such as `e1`, and `browser_act` for high-level navigation and interaction. Re-snapshot after navigation or substantial DOM replacement before reusing refs. Optional screenshots use a new `.png` path; relative paths resolve from the owning session workdir and can then be inspected with `view_image` or shared with the normal file-link flow.
 
 Browser sessions are ephemeral and do not silently reuse a person's normal browser profile or credentials. Workgate permits `http://`, `https://`, and `about:blank` navigation on this surface; local `file:` navigation and arbitrary Playwright scripts are not exposed.
 

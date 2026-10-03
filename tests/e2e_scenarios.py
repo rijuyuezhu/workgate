@@ -14,7 +14,7 @@ CORE_TOOL_NAMES = {
     "bash",
     "job",
     "session_start",
-    "session_change_cwd",
+    "session_change_workdir",
     "session_copy",
     "search",
     "workspace_search",
@@ -56,7 +56,7 @@ async def exercise_environment_tool(
     assert isinstance(payload["executor_id"], str)
     assert payload["executor_id"]
     assert payload["workdir"] == str(workspace)
-    assert payload["workspace_root"] == str(workspace)
+    assert payload["default_workdir"] == str(workspace)
     assert payload["session_id"].startswith("sess_")
     assert len(payload["session_id"]) >= 27
 
@@ -167,7 +167,7 @@ async def exercise_explicit_session_workflow(
     other_dir = workspace / "other-work"
     other_dir.mkdir()
     changed = await client.call_tool(
-        "session_change_cwd",
+        "session_change_workdir",
         {"session_id": session_id, "workdir": "other-work"},
     )
     assert changed["session_id"] == session_id

@@ -11,8 +11,7 @@ It works offline after Workgate and the machine-local tools you need are install
 For normal use, create `~/.config/workgate/config.yaml`:
 
 ```yaml
-workspace_root: /absolute/path/to/project
-allow_full_control: false
+default_workdir: /absolute/path/to/project
 ```
 
 Then run:

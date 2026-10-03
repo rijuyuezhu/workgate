@@ -31,7 +31,7 @@ def _create_session(
     session_id = "sess_0000000000000000000001"
     target = Path(workdir)
     if not target.is_absolute():
-        target = config.workspace_root / target
+        target = config.default_workdir / target
     store.create_session(session_id=session_id, workdir=target.resolve())
     return config, store, session_id
 
@@ -40,7 +40,7 @@ def _create_session(
 async def test_shell_execution_runs_bounded_command_in_session_workdir(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     session_dir = tmp_path / "project"
     session_dir.mkdir()
@@ -61,13 +61,14 @@ async def test_shell_execution_runs_bounded_command_in_session_workdir(
     assert result.mode == "command"
     assert result.command == command
     assert result.cwd == str(session_dir)
+    assert result.result["cwd"] == str(session_dir)
     assert result.result["ok"] is True, result.result
     assert result.result["stdout"] == f"hello:{session_dir}"
 
 
 @pytest.mark.asyncio
 async def test_foreground_shell_blocks_session_teardown(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     config, store, session_id = _create_session()
     command_entered = asyncio.Event()
@@ -110,7 +111,7 @@ async def test_foreground_shell_blocks_session_teardown(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_foreground_python_blocks_session_teardown(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     config, store, session_id = _create_session()
     command_entered = asyncio.Event()
@@ -158,17 +159,19 @@ async def test_foreground_python_blocks_session_teardown(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shell_execution_rejects_cwd_escape(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+async def test_shell_execution_allows_cwd_outside_session_workdir(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "project").mkdir()
     (tmp_path / "other").mkdir()
     config, store, session_id = _create_session("project")
 
-    with pytest.raises(ValueError, match="Path escapes session workdir"):
-        await shell_ops.bash_execute(
-            config, store, session_id, "pwd", cwd="../other"
-        )
+    result = await shell_ops.bash_execute(
+        config, store, session_id, "pwd", cwd="../other"
+    )
+    assert result.cwd == str(tmp_path / "other")
 
 
 @pytest.mark.asyncio
@@ -216,7 +219,7 @@ async def test_shell_execution_routes_async_to_session_job(monkeypatch):
 async def test_shell_execution_routes_pty_to_persistent_shell(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     config, store, session_id = _create_session()
     calls = []
@@ -260,6 +263,8 @@ async def test_shell_execution_routes_pty_to_persistent_shell(
     )
 
     assert result.mode == "pty"
+    assert result.cwd == str(tmp_path)
+    assert result.result["cwd"] == str(tmp_path)
     assert result.result["shell_id"] == "shell-1"
     assert calls == [(str(tmp_path), "server", "python -i", session_id)]
     assert store.require_session(session_id).persistent_shell_ids == (
@@ -269,7 +274,7 @@ async def test_shell_execution_routes_pty_to_persistent_shell(
 
 @pytest.mark.asyncio
 async def test_pty_registration_failure_rolls_back_shell(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     config, store, session_id = _create_session()
     killed: list[str] = []
@@ -304,7 +309,7 @@ async def test_pty_registration_failure_rolls_back_shell(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shell_execution_is_exposed_in_mcp(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
     get_test_tool_session_store().clear()
@@ -334,7 +339,7 @@ async def test_shell_execution_is_exposed_in_mcp(tmp_path, monkeypatch):
 async def test_run_python_code_applies_configured_environment_filters(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("PY_SECRET", "hidden")
     monkeypatch.setenv("KEEP_VISIBLE", "visible")
     clear_settings_cache()

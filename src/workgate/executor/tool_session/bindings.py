@@ -1,4 +1,4 @@
-"""Per-operation immutable views of executor-owned shared sessions."""
+"""Per-operation immutable views of executor-owned execution sessions."""
 
 from dataclasses import dataclass
 
@@ -7,10 +7,10 @@ from .records import AgentSession, valid_session_id
 
 @dataclass(frozen=True)
 class SessionBinding:
-    """Validated executor-local coordinates for one shared-session operation."""
+    """Validated executor-local coordinates for one execution-session operation."""
 
     session_id: str
-    """Shared control/executor session identifier."""
+    """Control/executor execution session identifier."""
     workdir: str
     """Authoritative executor-side workdir snapshot for this operation."""
 

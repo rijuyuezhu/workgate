@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from workgate.protocol import EXECUTOR_PROTOCOL_VERSION
 from workgate.protocol.credentials import (
     executor_credential_is_trusted,
     executor_credential_verifier,
@@ -169,16 +168,15 @@ def test_protocol_rejects_old_short_session_identity() -> None:
 def test_hello_uses_complete_thin_resource_inventory() -> None:
     session_id = new_session_id()
     hello = ExecutorHelloRequest(
-        protocol_version=EXECUTOR_PROTOCOL_VERSION,
         runtime=ExecutorRuntimeSummary(
             workgate_version="5.0.0a1", platform="linux-x86_64"
         ),
         capabilities=("session", "shell"),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
                 last_active_at=123.0,
                 has_persistent_shells=True,
                 has_active_jobs=True,
@@ -195,11 +193,10 @@ def test_hello_uses_complete_thin_resource_inventory() -> None:
     )
 
     encoded = hello.model_dump(mode="json")
-    assert encoded["protocol_version"] == 1
     assert encoded["sessions"] == [
         {
             "session_id": session_id,
-            "resolved_workdir": "/workspace/project",
+            "workdir": "/workspace/project",
             "last_active_at": 123.0,
             "has_persistent_shells": True,
             "has_active_jobs": True,
@@ -220,8 +217,8 @@ def test_hello_uses_complete_thin_resource_inventory() -> None:
 
 def test_hello_requires_all_authoritative_inventory_fields() -> None:
     payload = {
-        "protocol_version": EXECUTOR_PROTOCOL_VERSION,
         "runtime": {"workgate_version": "5.0.0a1"},
+        "default_workdir": "/workspace",
         "sessions": [],
         "shells": [],
         "jobs": [],
@@ -232,7 +229,7 @@ def test_hello_requires_all_authoritative_inventory_fields() -> None:
     assert hello.shells == ()
     assert hello.jobs == ()
 
-    for missing in ("sessions", "shells", "jobs"):
+    for missing in ("default_workdir", "sessions", "shells", "jobs"):
         with pytest.raises(ValidationError):
             ExecutorHelloRequest.model_validate(
                 {key: value for key, value in payload.items() if key != missing}
@@ -240,12 +237,11 @@ def test_hello_requires_all_authoritative_inventory_fields() -> None:
 
 
 def test_hello_timing_requires_offline_threshold_after_heartbeat() -> None:
-    response = ExecutorHelloResponse(
+    ExecutorHelloResponse(
         heartbeat_interval_s=15,
         offline_after_s=60,
         poll_timeout_s=30,
     )
-    assert response.protocol_version == 1
 
     with pytest.raises(ValidationError):
         ExecutorHelloResponse(
@@ -317,7 +313,6 @@ def test_operation_and_protocol_errors_remain_separate() -> None:
 
 def test_protocol_error_taxonomy_is_intentionally_small() -> None:
     assert {code.value for code in ProtocolErrorCode} == {
-        "unsupported_protocol",
         "unauthorized_executor",
         "executor_revoked",
         "pairing_required",

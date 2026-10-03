@@ -67,8 +67,8 @@ class _Lease:
 
 @pytest.mark.asyncio
 async def test_terminal_runtime_context_is_nested_and_reversible() -> None:
-    outer = build_terminal_runtime(get_state_store(), workspace_root=Path.cwd())
-    inner = build_terminal_runtime(get_state_store(), workspace_root=Path.cwd())
+    outer = build_terminal_runtime(get_state_store())
+    inner = build_terminal_runtime(get_state_store())
 
     await outer.start()
     await inner.start()
@@ -95,9 +95,7 @@ async def test_terminal_runtime_context_is_nested_and_reversible() -> None:
 async def test_terminal_runtime_start_is_idempotent_and_close_is_terminal() -> (
     None
 ):
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
 
     await runtime.start()
     await runtime.start()
@@ -111,9 +109,7 @@ async def test_terminal_runtime_start_is_idempotent_and_close_is_terminal() -> (
 async def test_terminal_runtime_lifespan_owns_resources_not_ambient_context() -> (
     None
 ):
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
 
     async with runtime.lifespan() as active:
         assert active is runtime
@@ -131,9 +127,7 @@ async def test_terminal_runtime_lifespan_owns_resources_not_ambient_context() ->
 async def test_terminal_runtime_rolls_back_when_bridge_start_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
 
     async def fail_bridge_start() -> None:
         raise RuntimeError("bridge start failed")
@@ -151,9 +145,7 @@ async def test_terminal_runtime_rolls_back_when_bridge_start_fails(
 async def test_terminal_runtime_stops_admission_before_dependency_ordered_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
     await runtime.start()
     events: list[str] = []
 
@@ -202,9 +194,7 @@ async def test_terminal_runtime_stops_admission_before_dependency_ordered_close(
 async def test_terminal_runtime_closes_registered_bridge_and_conpty_resources() -> (
     None
 ):
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
     await runtime.start()
     bridge_process = _BridgeProcess()
     conpty_process = _ConPtyProcess()
@@ -248,9 +238,7 @@ async def test_terminal_runtime_closes_registered_bridge_and_conpty_resources() 
 async def test_terminal_runtime_reports_bridge_close_failure_after_conpty_close() -> (
     None
 ):
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
     await runtime.start()
     bridge_process = _FailingBridgeProcess()
     bridge = _Bridge(
@@ -277,9 +265,7 @@ async def test_terminal_runtime_reports_bridge_close_failure_after_conpty_close(
 
 @pytest.mark.asyncio
 async def test_terminal_bridge_registry_expires_owned_bridge() -> None:
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
     await runtime.start()
     process = _BridgeProcess()
     bridge = _Bridge(
@@ -305,9 +291,7 @@ async def test_terminal_bridge_registry_expires_owned_bridge() -> None:
 
 @pytest.mark.asyncio
 async def test_conpty_registry_close_retries_unconfirmed_termination() -> None:
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=Path.cwd()
-    )
+    runtime = build_terminal_runtime(get_state_store())
     await runtime.start()
     process = _ConPtyProcess(fail_first_close=True)
     lease = _Lease()

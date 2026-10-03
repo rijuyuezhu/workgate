@@ -30,11 +30,9 @@ from workgate.persistence import get_state_store
 
 @pytest.fixture(autouse=True)
 async def _terminal_runtime(monkeypatch, tmp_path):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    runtime = build_terminal_runtime(
-        get_state_store(), workspace_root=tmp_path, idle_timeout_s=60
-    )
+    runtime = build_terminal_runtime(get_state_store(), idle_timeout_s=60)
     await runtime.start()
     try:
         with use_terminal_runtime(runtime):

@@ -65,7 +65,7 @@ def _reset_human_ui_state(tmp_path):
 
 
 def _configure_ui(monkeypatch, tmp_path, *, auth_mode="none", **values):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
@@ -1009,7 +1009,7 @@ def test_bootstrap_includes_trusted_offline_executor(monkeypatch, tmp_path):
             "executor_id": executor_id,
             "name": "executor-a",
             "status": "offline",
-            "workspace_root": "",
+            "default_workdir": "",
             "last_seen_at": None,
             "last_seen_age_s": None,
             "queue_depth": 0,

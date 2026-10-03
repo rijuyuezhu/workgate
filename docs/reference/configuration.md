@@ -30,18 +30,19 @@ settings. `workgate standalone` may read one user-facing file, then resolves
 separate child configuration before launching control and executor. A role's
 `--help` is authoritative for its CLI overrides.
 
-YAML uses flat setting names such as `auth_mode` and `workspace_root`.
+YAML uses flat setting names such as `auth_mode` and `default_workdir`.
 Persistent filesystem paths in YAML must resolve to absolute paths. Relative
 environment or CLI path overrides are invocation-oriented and resolve from the
 directory Workgate was started in.
 
-`workspace_root` is executor policy. Long-running executors should set it
-explicitly rather than rely on the service manager's working directory.
+`default_workdir` anchors relative executor paths. Long-running executors
+should set it explicitly when they want a stable default independent of the
+service manager's working directory.
 
 ## Application-owned paths
 
-Workgate keeps application data separate from executor workspaces. Linux
-defaults are:
+Workgate keeps application data separate from executor working directories.
+Linux defaults are:
 
 | Lifetime | Default | Examples |
 | --- | --- | --- |

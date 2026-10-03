@@ -37,7 +37,7 @@ def _store(tmp_path: Path) -> FileStateStore:
 
 def _config(tmp_path: Path):
     return resolve_executor_config(
-        Settings(workspace_root=tmp_path / "workspace")
+        Settings(default_workdir=tmp_path / "workspace")
     )
 
 

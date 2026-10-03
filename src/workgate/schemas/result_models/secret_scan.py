@@ -8,13 +8,13 @@ class SecretFinding(BaseModel):
 
     type: str = Field(description="Heuristic pattern name that matched.")
     path: str = Field(
-        description="Workspace-relative file path containing the finding."
+        description="File path containing the finding, relative to the execution session workdir when possible."
     )
     line: int = Field(description="1-based line number containing the finding.")
 
 
 class SecretScanOutput(BaseModel):
-    """Heuristic workspace secret-scan result."""
+    """Heuristic secret-scan result."""
 
     findings: list[SecretFinding] = Field(
         description="Returned heuristic secret findings."

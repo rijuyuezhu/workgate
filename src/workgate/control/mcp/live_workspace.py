@@ -202,7 +202,7 @@ async def _session_projection(
         label=record.label,
         executor_id=str(record.executor_id),
         executor_name=executor.name if executor is not None else None,
-        workdir=record.resolved_workdir_display or record.requested_workdir,
+        workdir=record.workdir,
         status=str(record.status),
         availability=availability,
         created_at=float(record.created_at),
@@ -358,13 +358,14 @@ async def live_workspace_snapshot(
         )
         jobs, jobs_message = jobs_result
         shells, shells_message = shells_result
-        links = _human_ui_links(
-            runtime,
-            session_id=session_id,
-            executor_id=selected.executor_id,
-            workdir=selected.workdir,
-            shell_id=shells[0].shell_id if shells else None,
-        )
+        if selected.workdir is not None:
+            links = _human_ui_links(
+                runtime,
+                session_id=session_id,
+                executor_id=selected.executor_id,
+                workdir=selected.workdir,
+                shell_id=shells[0].shell_id if shells else None,
+            )
 
     activity = await _activity_projection(task_id)
     task_actions, controls_message = _task_control_actions(task)

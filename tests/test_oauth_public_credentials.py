@@ -26,7 +26,7 @@ def _settings(
     pin: str | None = "12345678",
 ) -> Settings:
     return Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         auth_mode=auth_mode,
         base_url=base_url,

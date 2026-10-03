@@ -271,7 +271,7 @@ export function createFilesController({
       }
       const image = document.createElement("img");
       image.className = "file-preview-image";
-      image.alt = text(entry.name, "Workspace image");
+      image.alt = text(entry.name, "File image");
       image.src = `data:${payload.media_type};base64,${payload.data_base64}`;
       elements.filePreviewBody.replaceChildren(image);
       return;
@@ -437,7 +437,7 @@ export function createFilesController({
     if (!entry) return;
     const current = splitFilePath(entry.path);
     const suggested = joinFilePath(current.parent, `${current.name}.copy`);
-    const destination = globalThis.prompt("Copy to workspace path:", suggested);
+    const destination = globalThis.prompt("Copy to path:", suggested);
     if (destination === null || !destination.trim()) return;
     const target = destination.trim();
     setFileMutationBusy(true);
@@ -460,7 +460,7 @@ export function createFilesController({
   async function moveSelectedFile() {
     const entry = currentFileEntry();
     if (!entry) return;
-    const destination = globalThis.prompt("Move to workspace path:", entry.path);
+    const destination = globalThis.prompt("Move to path:", entry.path);
     if (destination === null || !destination.trim()) return;
     const target = destination.trim();
     setFileMutationBusy(true);

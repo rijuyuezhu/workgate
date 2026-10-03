@@ -33,7 +33,7 @@ def version_response(request: Request) -> JSONResponse:
 
 
 def ready_response(request: Request) -> JSONResponse:
-    """Return process readiness without exposing executor workspace policy."""
+    """Return process readiness without exposing executor machine configuration."""
     return JSONResponse({"ok": True})
 
 

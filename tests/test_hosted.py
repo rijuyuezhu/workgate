@@ -95,14 +95,14 @@ def _hello(session_id: str | None = None) -> ExecutorHelloRequest:
         else (
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
             ),
         )
     )
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=sessions,
         shells=(),
         jobs=(),
@@ -233,8 +233,7 @@ async def test_hosted_actor_reconstruction_keeps_facts_but_drops_live_state(
     session = ControlSessionRecord(
         session_id=new_session_id(),
         executor_id=delivered.executor_id,
-        requested_workdir="project",
-        resolved_workdir_display="/workspace/project",
+        workdir="/workspace/project",
         status="active",
         created_at=10,
         updated_at=10,

@@ -227,7 +227,7 @@ from workgate.tools.mcp_text import render_tool_text
             "Session sess_1 ready in /workspace/repo.\nReuse this session_id.",
         ),
         (
-            "session_change_cwd",
+            "session_change_workdir",
             {
                 "session_id": "sess_1",
                 "workdir": "/workspace/other",

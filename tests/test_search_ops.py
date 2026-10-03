@@ -117,7 +117,7 @@ def _files_service() -> FilesService:
 
 @pytest.mark.asyncio
 async def test_tree_reports_existing_directory(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "project" / "src").mkdir(parents=True)
     (tmp_path / "project" / "README.md").write_text("hello", encoding="utf-8")
@@ -136,7 +136,7 @@ async def test_tree_reports_existing_directory(tmp_path, monkeypatch):
 async def test_tree_clamps_entries_without_sorting_entire_tree(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_TREE_ENTRIES", "3")
     clear_settings_cache()
     for idx in range(10):
@@ -155,7 +155,7 @@ async def test_tree_clamps_entries_without_sorting_entire_tree(
 async def test_tree_returns_context_for_missing_directory(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "actual").mkdir()
 
@@ -174,7 +174,7 @@ async def test_tree_returns_context_for_missing_directory(
 
 @pytest.mark.asyncio
 async def test_grep_accepts_query_starting_with_dash(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -193,7 +193,7 @@ async def test_grep_accepts_query_starting_with_dash(tmp_path, monkeypatch):
 async def test_grep_returns_leading_matches_when_output_is_large(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_MAX_GREP_RESULTS", "3")
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
@@ -214,7 +214,7 @@ async def test_grep_returns_leading_matches_when_output_is_large(
 async def test_grep_returns_structured_error_when_rg_is_missing(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_RG_BIN", "missing-rg-for-test")
     clear_settings_cache()
     (tmp_path / "app.py").write_text("needle\n", encoding="utf-8")
@@ -230,7 +230,7 @@ async def test_grep_returns_structured_error_when_rg_is_missing(
 async def test_grep_search_suppresses_cancelled_stderr_reader(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     class FakeStdout:
@@ -272,7 +272,7 @@ async def test_grep_search_suppresses_cancelled_stderr_reader(
 
 @pytest.mark.asyncio
 async def test_glob_finds_matching_paths(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('x')", encoding="utf-8")
@@ -289,7 +289,7 @@ async def test_glob_finds_matching_paths(tmp_path, monkeypatch):
 async def test_tree_and_glob_resolve_relative_to_session_workdir(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     (tmp_path / "outer.txt").write_text("outer", encoding="utf-8")
     (tmp_path / "project" / "src").mkdir(parents=True)
@@ -309,14 +309,14 @@ async def test_tree_and_glob_resolve_relative_to_session_workdir(
     assert tree.root == str(tmp_path / "project")
     assert "src/" in tree.entries
     assert "outer.txt" not in tree.entries
-    assert glob.paths == ["project/src/app.py"]
+    assert glob.paths == ["src/app.py"]
 
 
 @pytest.mark.asyncio
 async def test_search_display_lines_resolve_from_session_workdir(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -338,9 +338,9 @@ async def test_search_display_lines_resolve_from_session_workdir(
 
     assert result.ok is True
     assert result.count == 1
-    assert result.matches[0].path == "project/src/app.py"
+    assert result.matches[0].path == "src/app.py"
     assert result.matches[0].numbered_line is not None
-    assert result.matches[0].numbered_line.startswith("[project/src/app.py#")
+    assert result.matches[0].numbered_line.startswith("[src/app.py#")
     assert result.displayed_count == 3
     assert [line.line for line in result.displayed_lines] == [1, 2, 3]
     assert [line.kind for line in result.displayed_lines] == [
@@ -348,7 +348,7 @@ async def test_search_display_lines_resolve_from_session_workdir(
         "match",
         "context",
     ]
-    assert result.numbered_content.startswith("[project/src/app.py#")
+    assert result.numbered_content.startswith("[src/app.py#")
     assert "needle outside" not in result.numbered_content
 
 
@@ -356,7 +356,7 @@ async def test_search_display_lines_resolve_from_session_workdir(
 async def test_grep_search_returns_grounded_numbered_matches(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -406,7 +406,7 @@ async def test_grep_search_returns_grounded_numbered_matches(
 async def test_search_respects_gitignore_by_default_and_can_include_ignored(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -439,7 +439,7 @@ async def test_search_respects_gitignore_by_default_and_can_include_ignored(
 async def test_search_merges_context_windows_for_multiple_matches(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -472,7 +472,7 @@ async def test_search_merges_context_windows_for_multiple_matches(
 async def test_hashline_edit_accepts_displayed_search_context_row(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -498,7 +498,7 @@ async def test_hashline_edit_accepts_displayed_search_context_row(
 
 @pytest.mark.asyncio
 async def test_high_level_search_scopes_to_paths(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -527,7 +527,7 @@ async def test_high_level_search_scopes_to_paths(tmp_path, monkeypatch):
 async def test_high_level_search_accepts_line_scoped_path_selector(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -562,7 +562,7 @@ async def test_high_level_search_accepts_line_scoped_path_selector(
 async def test_high_level_search_skip_pages_grounded_results(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -613,7 +613,7 @@ async def test_high_level_search_skip_pages_grounded_results(
 async def test_high_level_search_paths_accept_line_scoped_file_selectors(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -650,7 +650,7 @@ async def test_high_level_search_paths_accept_line_scoped_file_selectors(
 async def test_high_level_search_rejects_invalid_line_selector(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -672,7 +672,7 @@ async def test_high_level_search_rejects_invalid_line_selector(
 async def test_search_numbered_content_can_feed_hashline_edit(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -697,7 +697,7 @@ async def test_search_numbered_content_can_feed_hashline_edit(
 async def test_high_level_search_merges_repeated_line_scoped_file_selectors(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):
         pytest.skip("missing rg")
@@ -731,7 +731,7 @@ async def test_mcp_search_facade_returns_grounded_results(
     from tests.helpers import build_paired_control_harness, mcp_structured
     from workgate.control.mcp.app import build_mcp
 
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
     if not shutil.which(get_settings().rg_bin):

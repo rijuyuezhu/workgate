@@ -15,7 +15,7 @@ def _settings(tmp_path: Path, **overrides: object) -> ControlConfig:
     return resolve_control_config(
         Settings.model_validate(
             {
-                "workspace_root": tmp_path / "workspace",
+                "default_workdir": tmp_path / "workspace",
                 "state_dir": tmp_path / "state",
                 "auth_mode": "none",
                 **overrides,

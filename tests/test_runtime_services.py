@@ -21,7 +21,7 @@ from workgate.persistence import (
 
 def _outer_services(tmp_path):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / "outer-state",
     )
     return settings, FileStateStore(lambda: settings.state_dir)
@@ -31,7 +31,7 @@ def test_executor_runtime_services_construct_explicit_store_dependencies(
     tmp_path,
 ):
     settings = Settings(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         state_dir=tmp_path / ".state",
     )
     services = build_runtime_services(resolve_executor_config(settings))
@@ -46,7 +46,7 @@ def test_role_runtime_construction_does_not_rebind_state_context(tmp_path):
     with use_state_store(outer_state_store):
         control = build_control_runtime(
             Settings(
-                workspace_root=tmp_path / "unused-control-workspace",
+                default_workdir=tmp_path / "unused-control-workspace",
                 state_dir=tmp_path / "control-state",
                 auth_mode="none",
             )
@@ -54,7 +54,7 @@ def test_role_runtime_construction_does_not_rebind_state_context(tmp_path):
         executor = build_runtime_services(
             resolve_executor_config(
                 Settings(
-                    workspace_root=tmp_path,
+                    default_workdir=tmp_path,
                     state_dir=tmp_path / "executor-state",
                 )
             )
@@ -73,7 +73,7 @@ async def test_control_runtime_lifespan_does_not_rebind_state_context(tmp_path):
     _, outer_state_store = _outer_services(tmp_path)
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path / "control-must-not-use-workspace",
+            default_workdir=tmp_path / "control-must-not-use-workspace",
             state_dir=tmp_path / "control-state",
             auth_mode="none",
         )
@@ -95,7 +95,7 @@ async def test_executor_runtime_lifespan_does_not_rebind_state_context(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=tmp_path,
+                default_workdir=tmp_path,
                 state_dir=tmp_path / "executor-state",
             )
         ),
@@ -117,7 +117,7 @@ async def test_executor_terminal_start_failure_preserves_state_context(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=tmp_path,
+                default_workdir=tmp_path,
                 state_dir=tmp_path / "executor-state",
             )
         ),
@@ -145,7 +145,7 @@ async def test_control_runtime_does_not_rebind_oauth_or_managed_jobs_context(
     await outer_jobs.start()
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path / "unused-control-workspace",
+            default_workdir=tmp_path / "unused-control-workspace",
             state_dir=tmp_path / "control-state",
             auth_mode="none",
         )
@@ -177,7 +177,7 @@ async def test_control_human_ui_start_failure_rolls_back_control_dependencies(
     outer_oauth = OAuthState(tmp_path / "outer-oauth-state")
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path / "unused-control-workspace",
+            default_workdir=tmp_path / "unused-control-workspace",
             state_dir=tmp_path / "control-state",
             auth_mode="none",
         )
@@ -205,7 +205,7 @@ async def test_control_runtime_close_can_retry_failed_owned_cleanup(
 ) -> None:
     runtime = build_control_runtime(
         Settings(
-            workspace_root=tmp_path / "unused-control-workspace",
+            default_workdir=tmp_path / "unused-control-workspace",
             state_dir=tmp_path / "control-state",
             auth_mode="none",
         )
@@ -237,7 +237,7 @@ async def test_executor_runtime_close_can_retry_failed_owned_cleanup(
     runtime = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=tmp_path,
+                default_workdir=tmp_path,
                 state_dir=tmp_path / "executor-state",
             )
         ),

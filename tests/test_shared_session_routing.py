@@ -49,12 +49,12 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
     # ambient compatibility settings. This in-process protocol test switches
     # the ambient bridge to the executor while it is alive, then back to control
     # after the simulated executor exit.
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(executor_workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(executor_workspace))
     clear_settings_cache()
 
     control = build_control_runtime(
         Settings(
-            workspace_root=control_workspace,
+            default_workdir=control_workspace,
             state_dir=tmp_path / "control-state",
             auth_mode="none",
             agent_bridge_enabled=False,
@@ -63,7 +63,7 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
     executor = build_executor_runtime(
         resolve_executor_config(
             Settings(
-                workspace_root=executor_workspace,
+                default_workdir=executor_workspace,
                 state_dir=tmp_path / "executor-state",
                 agent_bridge_enabled=False,
             )
@@ -184,7 +184,7 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
         connection = None
         await executor.aclose()
         executor_closed = True
-        monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(control_workspace))
+        monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(control_workspace))
         clear_settings_cache()
         clock["now"] = 1_000.0
         assert not await control.executor_transport.is_online(executor_id)

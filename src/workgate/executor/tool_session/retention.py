@@ -82,7 +82,7 @@ class JobProtectionReader:
         return protected
 
     def _managed_payload_session_ids(self, payload: Any) -> set[str]:
-        """Return existing agent sessions referenced by managed-job payloads."""
+        """Return existing execution sessions referenced by managed-job payloads."""
         protected: set[str] = set()
         pending = [payload]
         while pending:

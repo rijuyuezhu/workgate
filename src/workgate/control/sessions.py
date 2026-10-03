@@ -13,7 +13,7 @@ from ..errors import BrowserUnavailableError, exception_from_tool_error
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
-    SESSION_CHANGE_CWD_OP,
+    SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
@@ -86,7 +86,7 @@ class ControlSessionCoordinator:
         auto_cleanup_blocked: Callable[[str], Awaitable[bool]],
         before_terminate: Callable[[str], Awaitable[list[str]]],
     ) -> None:
-        """Attach control-owned resource protection to the shared-session lifecycle."""
+        """Attach control-owned resource protection to the execution-session lifecycle."""
         self._auto_cleanup_blocked = auto_cleanup_blocked
         self._before_terminate = before_terminate
 
@@ -134,7 +134,7 @@ class ControlSessionCoordinator:
     async def start_session(
         self,
         *,
-        workdir: str,
+        workdir: str | None = None,
         label: str | None = None,
         executor_id: str | None = None,
         task_id: str | None = None,
@@ -149,8 +149,7 @@ class ControlSessionCoordinator:
                 session_id=session_id,
                 executor_id=selected,
                 task_id=task_id,
-                requested_workdir=workdir,
-                resolved_workdir_display=None,
+                workdir=None,
                 label=label,
                 status="creating",
                 created_at=now,
@@ -220,26 +219,25 @@ class ControlSessionCoordinator:
             payload = self._unwrap(result)
             return payload
 
-    async def change_cwd(self, session_id: str, workdir: str) -> JsonValue:
+    async def change_workdir(self, session_id: str, workdir: str) -> JsonValue:
         lock = self._lock(session_id)
         async with lock:
             record = self._require_status(session_id, {"active"})
             await self._require_available(record)
             result = await self._transport.call(
                 str(record.executor_id),
-                SESSION_CHANGE_CWD_OP,
+                SESSION_CHANGE_WORKDIR_OP,
                 {"workdir": workdir},
                 session_id=session_id,
             )
             if not result.ok:
                 await self.reconcile_session_activity_after_error(record)
             payload = self._unwrap(result)
-            resolved = self._resolved_workdir(payload)
+            resolved = self._executor_workdir(payload)
             now = self._clock()
             record = self._state.update_session(
                 session_id,
-                requested_workdir=workdir,
-                resolved_workdir_display=resolved,
+                workdir=resolved,
                 updated_at=now,
             )
             self.observe_session_activity(session_id, observed_at=now)
@@ -500,12 +498,12 @@ class ControlSessionCoordinator:
                     session_id, item.last_active_at
                 )
                 if record.status == "creating" or (
-                    record.resolved_workdir_display != item.resolved_workdir
+                    record.workdir != item.workdir
                 ):
                     self._state.update_session(
                         session_id,
                         status="active",
-                        resolved_workdir_display=item.resolved_workdir,
+                        workdir=item.workdir,
                         updated_at=self._clock(),
                     )
                 continue
@@ -645,12 +643,12 @@ class ControlSessionCoordinator:
                 f"executor session.create failed: {result.error.code}: {result.error.message}"
             )
         payload = self._unwrap(result)
-        resolved = self._resolved_workdir(payload)
+        resolved = self._executor_workdir(payload)
         now = self._clock()
         record = self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir_display=resolved,
+            workdir=resolved,
             updated_at=now,
         )
         self.observe_session_activity(str(record.session_id), observed_at=now)
@@ -681,7 +679,7 @@ class ControlSessionCoordinator:
         self._state.update_session(
             str(record.session_id),
             status="active",
-            resolved_workdir_display=item.resolved_workdir,
+            workdir=item.workdir,
             updated_at=self._clock(),
         )
         self._replace_session_activity(
@@ -770,7 +768,7 @@ class ControlSessionCoordinator:
         return result.result
 
     @staticmethod
-    def _resolved_workdir(payload: JsonValue) -> str:
+    def _executor_workdir(payload: JsonValue) -> str:
         if not isinstance(payload, dict):
             raise RuntimeError("executor session result is not an object")
         value = payload.get("workdir")

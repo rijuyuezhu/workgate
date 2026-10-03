@@ -240,7 +240,7 @@ def _configure_http_limit(
     *,
     auth_mode: str = "none",
 ) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_MAX_HTTP_REQUEST_BYTES", "64")
@@ -286,7 +286,7 @@ def test_mcp_public_route_uses_shared_limit(tmp_path, monkeypatch):
     _configure_http_limit(tmp_path, monkeypatch)
     configure_settings(
         Settings(
-            workspace_root=tmp_path,
+            default_workdir=tmp_path,
             state_dir=tmp_path / ".state",
             auth_mode="none",
             max_http_request_bytes=64,
@@ -311,7 +311,7 @@ def test_protected_mcp_route_authenticates_before_reading_large_body(
     _configure_http_limit(tmp_path, monkeypatch, auth_mode="oauth")
     configure_settings(
         Settings(
-            workspace_root=tmp_path,
+            default_workdir=tmp_path,
             state_dir=tmp_path / ".state",
             auth_mode="oauth",
             max_http_request_bytes=64,

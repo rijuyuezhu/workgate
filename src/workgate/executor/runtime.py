@@ -11,17 +11,17 @@ from ..config.executor import ExecutorConfig
 from ..config.role_config import use_role_config
 from ..persistence import use_state_store
 from ..protocol.executor import (
-    SESSION_CHANGE_CWD_OP,
+    SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
 )
-from ..utils.path_policy import resolve_path_with_policy
 from .agent import ExecutorAgentBridgeService
 from .browser import BrowserService
 from .dispatch import ExecutorDispatcher
 from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
+from .path import resolve_default_workdir, resolve_path
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
 from .terminal.runtime import (
@@ -57,7 +57,7 @@ class ExecutorRuntime:
     shell: ShellService
     """Executor-owned public shell and tracked-job resource service."""
     sessions: ExecutorSessionService
-    """Executor-authoritative shared-session resource service."""
+    """Executor-authoritative execution-session resource service."""
     ui_files: UiFilesService
     """Executor-owned internal Human UI file operations."""
     ui_terminals: UiTerminalsService
@@ -252,7 +252,7 @@ class ExecutorRuntime:
             SESSION_CREATE_OP,
             SESSION_LOOKUP_OP,
             SESSION_TERMINATE_OP,
-            SESSION_CHANGE_CWD_OP,
+            SESSION_CHANGE_WORKDIR_OP,
         }:
             if command.session_id is None:
                 raise ValueError(f"{command.op} requires session_id")
@@ -260,8 +260,12 @@ class ExecutorRuntime:
             if command.op == SESSION_CREATE_OP:
                 workdir = command.args.get("workdir")
                 label = command.args.get("label")
-                if not isinstance(workdir, str) or not workdir:
-                    raise ValueError("session.create requires workdir")
+                if workdir is not None and (
+                    not isinstance(workdir, str) or not workdir
+                ):
+                    raise ValueError(
+                        "session.create workdir must be a non-empty string or null"
+                    )
                 if label is not None and not isinstance(label, str):
                     raise ValueError(
                         "session.create label must be a string or null"
@@ -277,8 +281,8 @@ class ExecutorRuntime:
                 return await self.sessions.terminate(session_id)
             workdir = command.args.get("workdir")
             if not isinstance(workdir, str) or not workdir:
-                raise ValueError("session.change_cwd requires workdir")
-            return await self.sessions.change_cwd(session_id, workdir)
+                raise ValueError("session.change_workdir requires workdir")
+            return await self.sessions.change_workdir(session_id, workdir)
 
         args = dict(command.args)
         if command.session_id is not None:
@@ -347,10 +351,9 @@ def build_executor_runtime(
         allow_missing_parent: bool = True,
         follow_final_symlink: bool = True,
     ) -> Path:
-        return resolve_path_with_policy(
+        return resolve_path(
             path,
-            workspace_root=config.workspace_root,
-            allow_full_control=config.allow_full_control,
+            base=resolve_default_workdir(config.default_workdir),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -376,7 +379,6 @@ def build_executor_runtime(
         shell=shell_service,
         terminal_runtime=build_terminal_runtime(
             services.state_store,
-            workspace_root=config.workspace_root,
             idle_timeout_s=config.ui_terminal_idle_timeout_s,
             max_connections=config.ui_terminal_max_connections,
         ),

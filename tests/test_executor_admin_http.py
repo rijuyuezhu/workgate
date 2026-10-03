@@ -16,7 +16,7 @@ from workgate.ui.security import (
 
 
 def _configure(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://control.test")
@@ -31,6 +31,7 @@ def _hello_payload() -> dict[str, object]:
             platform="linux",
             build="fixture",
         ),
+        default_workdir="/workspace",
         sessions=(),
         shells=(),
         jobs=(),

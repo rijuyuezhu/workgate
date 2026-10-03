@@ -30,11 +30,10 @@ mkdir -p ~/.config/workgate
 Then create `~/.config/workgate/config.yaml`:
 
 ```yaml
-workspace_root: /absolute/path/to/your/project
-allow_full_control: false
+default_workdir: /absolute/path/to/your/project
 ```
 
-Use an absolute workspace path.
+Use an absolute default working directory.
 
 The generated [Configuration reference](../reference/configuration.md) lists all
 settings. Environment variables and CLI flags remain available as overrides,
@@ -68,7 +67,7 @@ command prints the path to that PIN rather than the secret itself.
 Connect a local MCP client to the endpoint above, then try:
 
 ```text
-Start a session in my configured workspace, inspect the repository and its
+Start a session in my configured default workdir, inspect the repository and its
 instruction files, then summarize the environment and Git status. Do not change
 files yet.
 ```

@@ -62,11 +62,9 @@ def _hello(
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=capabilities,
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=tuple(
-            SessionInventorySummary(
-                session_id=session_id, resolved_workdir=workdir
-            )
+            SessionInventorySummary(session_id=session_id, workdir=workdir)
             for session_id, workdir in sessions
         ),
         shells=(),
@@ -140,7 +138,28 @@ async def test_start_persists_creating_before_executor_call(
     record = state.snapshot_sessions()[session_id]
     assert record.executor_id == executor_id
     assert record.status == "active"
-    assert record.resolved_workdir_display == "/workspace/project"
+    assert record.workdir == "/workspace/project"
+
+
+@pytest.mark.asyncio
+async def test_start_allows_executor_default_workdir(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    _trust(state, executor_id)
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello()
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+
+    result = await coordinator.start_session()
+
+    assert isinstance(result, dict)
+    session_id = str(result["session_id"])
+    record = state.snapshot_sessions()[session_id]
+    assert record.workdir == "/workspace/project"
+    assert transport.calls[-1][2]["workdir"] is None
 
 
 @pytest.mark.asyncio
@@ -205,9 +224,7 @@ async def test_offered_create_timeout_uses_positive_lookup_without_replay(
             raise exc
         assert op == "session.lookup"
         assert session_id == create_session_id
-        return _ok(
-            {"session_id": session_id, "resolved_workdir": "/workspace/project"}
-        )
+        return _ok({"session_id": session_id, "workdir": "/workspace/project"})
 
     transport.call_impl = offered_then_lookup
     with pytest.raises(TimeoutError):
@@ -290,10 +307,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
             ControlSessionRecord(
                 session_id=session_id,
                 executor_id=executor_id,
-                requested_workdir="project",
-                resolved_workdir_display=(
-                    "/workspace/old" if status == "active" else None
-                ),
+                workdir=("/workspace/old" if status == "active" else None),
                 label=None,
                 status=status,  # type: ignore[arg-type]
                 created_at=1,
@@ -309,7 +323,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
 
     sessions = state.snapshot_sessions()
     assert sessions[creating].status == "active"
-    assert sessions[creating].resolved_workdir_display == "/workspace/project"
+    assert sessions[creating].workdir == "/workspace/project"
     assert sessions[active].status == "active"
     assert (
         await coordinator.session_availability(active) == "missing_on_executor"
@@ -333,11 +347,11 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
     transport.hellos[executor_id] = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
                 last_active_at=123.0,
             ),
         ),
@@ -368,7 +382,7 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
             "sessions": (
                 SessionInventorySummary(
                     session_id=session_id,
-                    resolved_workdir="/workspace/project",
+                    workdir="/workspace/project",
                     last_active_at=30_000.0,
                 ),
             )
@@ -407,11 +421,11 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
     initial_hello = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version="test"),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
-        workspace_root="/workspace",
+        default_workdir="/workspace",
         sessions=(
             SessionInventorySummary(
                 session_id=session_id,
-                resolved_workdir="/workspace/project",
+                workdir="/workspace/project",
                 last_active_at=1_000.0,
             ),
         ),
@@ -452,7 +466,7 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
                     "sessions": (
                         SessionInventorySummary(
                             session_id=session_id,
-                            resolved_workdir="/workspace/project",
+                            workdir="/workspace/project",
                             last_active_at=20_000.0,
                         ),
                     )
@@ -589,8 +603,7 @@ async def test_end_persists_terminating_before_command(tmp_path: Path) -> None:
         ControlSessionRecord(
             session_id=session_id,
             executor_id=executor_id,
-            requested_workdir="project",
-            resolved_workdir_display="/workspace/project",
+            workdir="/workspace/project",
             label=None,
             status="active",
             created_at=1,
@@ -619,8 +632,7 @@ def _active_record(executor_id: str, session_id: str) -> ControlSessionRecord:
     return ControlSessionRecord(
         session_id=session_id,
         executor_id=executor_id,
-        requested_workdir="project",
-        resolved_workdir_display="/workspace/project",
+        workdir="/workspace/project",
         label=None,
         status="active",
         created_at=1,
@@ -646,8 +658,7 @@ async def test_start_reaps_stale_creating_session_through_desired_absence(
         ControlSessionRecord(
             session_id=existing,
             executor_id=executor_id,
-            requested_workdir="project",
-            resolved_workdir_display=None,
+            workdir=None,
             label=None,
             status="creating",
             created_at=1,
@@ -707,7 +718,7 @@ async def test_start_reaps_expired_session_through_confirmed_absence(
             return _ok(
                 {
                     "session_id": existing,
-                    "resolved_workdir": "/workspace/project",
+                    "workdir": "/workspace/project",
                     "last_active_at": 1.0,
                     "has_persistent_shells": False,
                     "has_active_jobs": False,
@@ -859,7 +870,7 @@ async def test_overflow_does_not_reap_session_with_owned_resources(
         return _ok(
             {
                 "session_id": existing,
-                "resolved_workdir": "/workspace/project",
+                "workdir": "/workspace/project",
                 "last_active_at": 1.0,
                 "has_persistent_shells": True,
                 "has_active_jobs": False,
@@ -903,7 +914,7 @@ async def test_overflow_revalidates_activity_before_termination(
         return _ok(
             {
                 "session_id": existing,
-                "resolved_workdir": "/workspace/project",
+                "workdir": "/workspace/project",
                 "last_active_at": 1.0 if lookups == 1 else 19_999.0,
                 "has_persistent_shells": False,
                 "has_active_jobs": False,
@@ -945,7 +956,7 @@ async def test_overflow_respects_control_managed_resource_hook(
         return _ok(
             {
                 "session_id": existing,
-                "resolved_workdir": "/workspace/project",
+                "workdir": "/workspace/project",
                 "last_active_at": 1.0,
                 "has_persistent_shells": False,
                 "has_active_jobs": False,

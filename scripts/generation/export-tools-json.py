@@ -35,7 +35,7 @@ async def export_tools() -> list[dict[str, Any]]:
     with tempfile.TemporaryDirectory(prefix="workgate-tools-") as tmp:
         tmp_root = Path(tmp)
         os.environ.setdefault(
-            "WORKGATE_WORKSPACE_ROOT", str(tmp_root / "workspace")
+            "WORKGATE_DEFAULT_WORKDIR", str(tmp_root / "workspace")
         )
         os.environ.setdefault("WORKGATE_STATE_DIR", str(tmp_root / "state"))
         clear_settings_cache()

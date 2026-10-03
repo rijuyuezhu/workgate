@@ -1,4 +1,4 @@
-"""Executor-owned durable state and machine-session service composition."""
+"""Executor-owned durable state and execution-session service composition."""
 
 from dataclasses import dataclass
 
@@ -9,7 +9,7 @@ from .tool_session.store import SessionPathResolver, ToolSessionStore
 
 @dataclass(frozen=True)
 class RuntimeServices:
-    """Executor process services that include machine-session authority."""
+    """Executor process services that own execution-session state."""
 
     state_store: FileStateStore
     tool_session_store: ToolSessionStore
@@ -20,13 +20,12 @@ def build_runtime_services(
     *,
     path_resolver: SessionPathResolver | None = None,
 ) -> RuntimeServices:
-    """Construct executor state and machine-session services without installing them."""
+    """Construct executor state and execution-session services without installing them."""
     state_store = FileStateStore(lambda: config.state_dir)
     tool_session_store = ToolSessionStore(
         state_store=state_store,
         path_resolver=path_resolver,
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
+        default_workdir=config.default_workdir,
         max_session_snapshots=config.max_session_snapshots,
         max_session_snapshot_bytes=config.max_session_snapshot_bytes,
     )

@@ -11,13 +11,13 @@ Workgate has two roles:
 - **control** owns owner identity, public APIs/UI, executor trust and presence,
   public session identity/binding, orchestration, control-owned integrations,
   payload/share artifacts, audit, and restart-critical product state;
-- **executor** owns machine reality: workspace paths, files/search, shell and
-  Python execution, PTYs, persistent shells, background jobs, grounding state,
-  machine-local integrations, and executor-local policy/secrets.
+- **executor** owns machine reality: working directories, files/search, shell
+  and Python execution, PTYs, persistent shells, background jobs, grounding
+  state, machine-local integrations, and executor-local policy/secrets.
 
 The boundary is about machine authority, not whether a process may use its own
 private filesystem. Control may read/write its own config, state, data, runtime,
-payload, audit, and secret storage. It must not gain arbitrary executor workspace,
+payload, audit, and secret storage. It must not gain arbitrary executor filesystem,
 shell, PTY, or process authority.
 
 Standalone mode still runs two OS processes and uses the real loopback executor
@@ -40,18 +40,18 @@ workgate.executor   machine-facing composition and authority
 
 `workgate.protocol` must not depend on filesystem persistence, HTTP server
 frameworks, systemd/deployment code, Cloudflare/provider SDKs, shell/PTY code,
-or control/executor implementation modules. Protocol v1 models live there; the
-runtime mechanisms that implement them belong to the owning process.
+or control/executor implementation modules. Executor protocol wire models live
+there; the runtime mechanisms that implement them belong to the owning process.
 
 Control and executor have distinct resolved configuration authority. Control
 owns public bind/base URL, auth/OAuth/UI, pairing/presence, command admission,
-and control persistence policy. Executor owns `workspace_root`, path/command
-policy, machine limits, local integrations, and executor state/data/runtime.
+and control persistence policy. Executor owns `default_workdir`, machine limits,
+local integrations, and executor state/data/runtime.
 Standalone may accept one user-facing config file, but its supervisor resolves
 separate child configurations before launch.
 
-Relative session workdirs are always resolved against the executor's fixed
-configured `workspace_root`, never against a session's previous cwd.
+Relative session workdirs resolve against the executor's effective
+`default_workdir`; ordinary session-relative operations then use the session workdir.
 
 ## Identity, credentials, and pairing
 
@@ -110,6 +110,7 @@ The baseline executor surface is versioned under `/executor/v1`:
 /pair/start
 /pair/poll
 /hello
+/validate
 /heartbeat
 /poll
 /result
@@ -124,8 +125,8 @@ for authentication.
 Hello carries a **complete** thin inventory by contract:
 
 ```text
-protocol/runtime/capability metadata
-session_id + resolved cwd
+runtime/capability metadata
+session_id + workdir
 shell_id + session_id
 job_id + session_id + status
 ```
@@ -216,7 +217,7 @@ There is one execution `session_id` shared end-to-end:
 
 ```text
 control:  session_id -> executor_id + durable product state
-executor: same id    -> resolved workdir + machine state
+executor: same id    -> workdir + machine state
 ```
 
 There is no second worker/executor session ID and no live migration or silent
@@ -267,16 +268,18 @@ drop an executor-backed binding merely to free a slot.
 
 ### Workdir changes
 
-`session_change_cwd` is an executor-authoritative resource mutation. Under its
+`session_change_workdir` is an executor-authoritative resource mutation. Under its
 session/snapshot synchronization, executor:
 
-1. resolves and validates the requested path against fixed `workspace_root`;
+1. resolves the requested path against the effective `default_workdir` when relative and
+   validates that the result is an existing directory;
 2. invalidates/removes old durable and cached grounding/snapshots;
-3. atomically replaces the durable session cwd;
+3. atomically replaces the durable session workdir;
 4. reports refreshed orientation.
 
-This ordering is crash-safe: a crash before cwd replacement leaves old cwd with
-no snapshots; a crash after replacement leaves new cwd with no old snapshots.
+This ordering is crash-safe: a crash before workdir replacement leaves the old
+workdir with no snapshots; a crash after replacement leaves the new workdir with
+no old snapshots.
 If the response is lost after commit, control does not replay the mutation; hello
 inventory or explicit lookup repairs its display projection.
 
@@ -286,11 +289,11 @@ Cross-executor copy may use a feature-specific transfer checkpoint; this is not 
 reason to build a generic workflow engine.
 
 For a relative destination, the first executor-side file write begin resolves
-against the executor-authoritative destination session cwd and durably records
+against the executor-authoritative destination session workdir and durably records
 the canonical destination under the transfer ID before creating transfer-owned
 temp state. Resumable directory unpack does the same before creating its staging
 tree. Later write/unpack/abandon recovery follows those executor-issued bindings;
-control's `resolved_workdir` projection is display/reconciliation state and is
+control's `workdir` projection is display/reconciliation state and is
 never durable filesystem authority for the transfer. If completed directory
 unpack has already consumed its internal scratch archive, the completed unpack
 receipt is the durable proof that lets retry/abandon reconcile the linked write

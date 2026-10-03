@@ -28,7 +28,7 @@ from workgate.protocol.pairing import PairPollSuccess, PairStartResponse
 
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
-        workspace_root=tmp_path / "workspace",
+        default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
     )
@@ -91,7 +91,7 @@ async def test_run_requires_paired_executor(
     with pytest.raises(RuntimeError, match="executor is not paired"):
         await executor_cli._run(argparse.Namespace())
 
-    assert settings.workspace_root.is_dir()
+    assert not settings.default_workdir.exists()
     assert settings.state_dir.is_dir()
 
 
@@ -495,18 +495,9 @@ async def test_connect_keeps_valid_existing_profile_without_pairing(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("code", "status_code"),
-    [
-        (None, None),
-        (ProtocolErrorCode.UNSUPPORTED_PROTOCOL, 400),
-    ],
-)
-async def test_connect_does_not_repair_transient_or_protocol_incompatible_profile(
+async def test_connect_does_not_repair_non_pairing_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    code: ProtocolErrorCode | None,
-    status_code: int | None,
 ) -> None:
     settings = _settings(tmp_path)
     store = _store(tmp_path)
@@ -518,16 +509,7 @@ async def test_connect_does_not_repair_transient_or_protocol_incompatible_profil
             return None
 
         async def validate(self) -> None:
-            error = (
-                None
-                if code is None
-                else ProtocolError(code=code, message="owner action")
-            )
-            raise ExecutorControlError(
-                "control unavailable or incompatible",
-                status_code=status_code,
-                protocol_error=error,
-            )
+            raise ExecutorControlError("control unavailable")
 
         async def aclose(self) -> None:
             return None

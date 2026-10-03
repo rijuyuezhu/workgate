@@ -7,7 +7,6 @@ from .core import SearchConfig
 from .service import (
     LocalSearchRunner,
     SearchGrounding,
-    SearchPathAccess,
     SearchService,
 )
 
@@ -15,14 +14,10 @@ from .service import (
 def build_local_search_runner(
     config: ExecutorConfig, store: ToolSessionStore
 ) -> LocalSearchRunner:
-    """Compose a local Search runner from resolved executor policy."""
-    paths = SearchPathAccess(
-        workspace_root=config.workspace_root,
-        allow_full_control=config.allow_full_control,
-    )
+    """Compose a local Search runner from resolved executor config."""
     grounding = SearchGrounding(
         store=store,
-        paths=paths,
+        default_workdir=config.default_workdir,
         max_file_read_bytes=config.max_file_read_bytes,
     )
     return LocalSearchRunner(
@@ -31,7 +26,7 @@ def build_local_search_runner(
             max_results=config.max_grep_results,
             max_output_bytes=config.max_output_bytes,
         ),
-        paths=paths,
+        default_workdir=config.default_workdir,
         grounding=grounding,
     )
 

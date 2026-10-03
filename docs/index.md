@@ -33,6 +33,6 @@ provides the same main management areas. See
 [Human interface](guides/human-interface.md).
 
 !!! warning
-    Give executors access only to workspaces you are prepared for an AI coding
-    agent to modify. Keep OAuth enabled for public deployments and leave
-    full-control mode disabled unless the environment is disposable.
+    An executor can access any filesystem location permitted to its OS account.
+    Run it as a suitably restricted user, and keep OAuth enabled for public
+    deployments.

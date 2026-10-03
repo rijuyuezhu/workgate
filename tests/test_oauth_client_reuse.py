@@ -37,7 +37,7 @@ def _reset_oauth_state(tmp_path):
 
 @pytest.fixture
 def oauth_client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)
     clear_settings_cache()
@@ -140,7 +140,7 @@ def test_registration_keeps_distinct_names_and_uri_sets_separate(oauth_client):
 def test_registration_prefers_approved_then_oldest_matching_client(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_OAUTH_CLIENT_TTL_S", "0")
     clear_settings_cache()
@@ -206,7 +206,7 @@ def test_registration_reuses_approved_client_after_memory_reload(
 def test_concurrent_matching_registrations_create_exactly_one_client(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     request = RegistrationRequest(
@@ -244,7 +244,7 @@ def test_concurrent_matching_registrations_create_exactly_one_client(
 def test_reuse_audit_records_only_bounded_registration_metadata(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     events: list[tuple[str, dict[str, object]]] = []

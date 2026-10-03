@@ -19,7 +19,7 @@ from .task_state import ControlTaskService
 
 _MACHINE_TOOL_NAMES = MACHINE_TOOL_NAMES
 _SESSION_CONTROL_TOOLS = frozenset(
-    {"session_start", "session_change_cwd", "session_end", "session_copy"}
+    {"session_start", "session_change_workdir", "session_end", "session_copy"}
 )
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
     {"create_file_link", "list_file_links", "revoke_file_link"}
@@ -58,13 +58,17 @@ class ControlToolRouter:
         if tool_name == "session_start":
             task_id = args.get("task_id")
             return await self._sessions.start_session(
-                workdir=str(args["workdir"]),
+                workdir=(
+                    str(args["workdir"])
+                    if args.get("workdir") is not None
+                    else None
+                ),
                 label=args.get("label"),
                 executor_id=args.get("executor_id"),
                 task_id=str(task_id) if task_id is not None else None,
             )
-        if tool_name == "session_change_cwd":
-            return await self._sessions.change_cwd(
+        if tool_name == "session_change_workdir":
+            return await self._sessions.change_workdir(
                 str(args["session_id"]), str(args["workdir"])
             )
         if tool_name == "session_end":

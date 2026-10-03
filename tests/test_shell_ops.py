@@ -398,7 +398,7 @@ async def test_owned_conpty_shell_uses_shared_admission_and_reservation(
 async def test_tmux_reconciliation_preserves_inflight_reservation(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     clear_settings_cache()
     store = get_tool_session_store()
@@ -620,7 +620,7 @@ async def test_owned_tmux_name_collision_preserves_existing_ownership(
 
     with pytest.raises(RuntimeError, match="already exists: existing-shell"):
         await shell_ops.start_persistent_shell_execute(
-            _executor_config(max_tmux_sessions=8, workspace_root=tmp_path),
+            _executor_config(max_tmux_sessions=8, default_workdir=tmp_path),
             cast(Any, store),
             str(tmp_path),
             "existing",
@@ -643,7 +643,7 @@ def test_persistent_shell_capacity_is_shared_across_processes(
     active_path = tmp_path / "active-shells"
     barrier_path = tmp_path / "start-both"
     result_paths = [tmp_path / "result-one", tmp_path / "result-two"]
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(state_dir))
     monkeypatch.setenv("WORKGATE_MAX_TMUX_SESSIONS", "1")
     clear_settings_cache()
@@ -783,7 +783,7 @@ def test_conpty_admission_is_shared_across_processes(
     state_dir = tmp_path / ".state"
     barrier_path = tmp_path / "start-both"
     result_paths = [tmp_path / "result-one", tmp_path / "result-two"]
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(workspace))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(state_dir))
     monkeypatch.setenv("WORKGATE_MAX_TMUX_SESSIONS", str(max_sessions))
     clear_settings_cache()
@@ -849,7 +849,7 @@ while not barrier_path.exists():
     time.sleep(0.01)
 
 async def main():
-    runtime = build_terminal_runtime(services.state_store, workspace_root=Path.cwd())
+    runtime = build_terminal_runtime(services.state_store)
     await runtime.start()
     try:
         with use_terminal_runtime(runtime):
@@ -960,7 +960,7 @@ async def test_tmux_start_cancellation_cleans_created_session(
 
     task = asyncio.create_task(
         shell_ops._start_persistent_shell_locked(
-            _executor_config(max_tmux_sessions=8, workspace_root=tmp_path),
+            _executor_config(max_tmux_sessions=8, default_workdir=tmp_path),
             _executor_store(),
             str(tmp_path),
             "owned",
@@ -1505,7 +1505,7 @@ def test_tmux_session_name_strips_invalid_edges_and_has_safe_fallback():
 
 @pytest.mark.asyncio
 async def test_bash_rejects_timeout_above_public_cap(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     mcp, _harness = build_paired_mcp(get_settings())
@@ -1527,7 +1527,7 @@ async def test_bash_rejects_timeout_above_public_cap(tmp_path, monkeypatch):
 def test_control_tool_watchdog_ignores_executor_shell_policy(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "1")
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "1")
@@ -1546,7 +1546,7 @@ def test_control_tool_watchdog_ignores_executor_shell_policy(
 async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     mcp, _harness = build_paired_mcp(get_settings())
@@ -1581,7 +1581,7 @@ async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
 def test_rest_shell_timeout_returns_partial_output_after_cleanup(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     clear_settings_cache()
 
@@ -1613,7 +1613,7 @@ def test_rest_shell_timeout_returns_partial_output_after_cleanup(
 
 
 def test_rest_tool_watchdog_returns_timeout(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
@@ -1634,7 +1634,7 @@ def test_rest_tool_watchdog_returns_timeout(tmp_path, monkeypatch):
 
 
 def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     clear_settings_cache()
 
@@ -1667,7 +1667,7 @@ def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
 def test_rest_tool_watchdog_preserves_file_and_todo_mutations(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
     clear_settings_cache()
@@ -1693,8 +1693,8 @@ def test_rest_tool_watchdog_preserves_file_and_todo_mutations(
     assert todo_read_response.json()["error"] == "tool_timeout"
 
 
-def test_rest_readyz_does_not_expose_workspace_root(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+def test_rest_readyz_does_not_expose_default_workdir(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     clear_settings_cache()
 
@@ -1706,7 +1706,7 @@ def test_rest_readyz_does_not_expose_workspace_root(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     mcp, harness = build_paired_mcp(get_settings())
@@ -1734,7 +1734,7 @@ async def test_mcp_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
 
 
 def test_apply_patch_watchdog_covers_both_git_phases(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "15")
     clear_settings_cache()
 
@@ -1745,7 +1745,7 @@ def test_apply_patch_watchdog_covers_both_git_phases(tmp_path, monkeypatch):
 def test_run_shell_command_timeout_uses_ten_second_default(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "10")
     clear_settings_cache()
 
@@ -1869,7 +1869,7 @@ async def test_spawn_process_resolves_relative_shell_from_command_cwd(
 
 
 def test_run_shell_command_timeout_allows_explicit_cap(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     assert run_shell_command_timeout(_executor_config(), 120) == 120
@@ -1878,7 +1878,7 @@ def test_run_shell_command_timeout_allows_explicit_cap(tmp_path, monkeypatch):
 def test_internal_shell_timeout_uses_at_least_builtin_default(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "5")
     clear_settings_cache()
 
@@ -1888,7 +1888,7 @@ def test_internal_shell_timeout_uses_at_least_builtin_default(
 def test_internal_shell_timeout_uses_larger_run_shell_values(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S", "120")
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "7200")
     clear_settings_cache()
@@ -1899,7 +1899,7 @@ def test_internal_shell_timeout_uses_larger_run_shell_values(
 
 @pytest.mark.asyncio
 async def test_trusted_argv_still_rejects_empty_argv(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     with pytest.raises(ValueError, match="argv must not be empty"):
@@ -1910,7 +1910,7 @@ async def test_trusted_argv_still_rejects_empty_argv(tmp_path, monkeypatch):
 async def test_run_shell_command_timeout_includes_subprocess_spawn(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     async def hanging_spawn(
@@ -1930,7 +1930,7 @@ async def test_run_shell_command_timeout_includes_subprocess_spawn(
 
 @pytest.mark.asyncio
 async def test_run_shell_does_not_filter_command_text(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(_executor_config(), "echo shutdown", timeout_s=5)
@@ -1945,7 +1945,7 @@ async def test_run_shell_does_not_filter_command_text(tmp_path, monkeypatch):
 async def test_bounded_command_reaps_same_group_background_child(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(
@@ -1968,7 +1968,7 @@ async def test_bounded_command_reaps_same_group_background_child(
 async def test_bounded_command_reaps_descendant_that_escapes_process_group(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(
@@ -1991,7 +1991,7 @@ async def test_bounded_command_reaps_descendant_that_escapes_process_group(
 async def test_timed_out_bounded_command_reaps_escaped_descendant(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(
@@ -2013,7 +2013,7 @@ async def test_timed_out_bounded_command_reaps_escaped_descendant(
 async def test_run_shell_command_streams_and_bounds_large_output(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(
@@ -2068,7 +2068,7 @@ def test_tail_buffer_ignores_empty_chunks():
 async def test_run_shell_uses_unused_stderr_budget_for_stdout(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(
@@ -2088,7 +2088,7 @@ async def test_run_shell_uses_unused_stderr_budget_for_stdout(
 async def test_run_shell_shares_total_budget_between_streams(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(
@@ -2112,7 +2112,7 @@ async def test_run_shell_shares_total_budget_between_streams(
 async def test_run_shell_command_timeout_marks_result_and_cleans_up(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
     result = await run_shell(_executor_config(), "sleep 30", timeout_s=1)
@@ -2243,7 +2243,7 @@ async def test_send_shell_invokes_tmux_promptly(monkeypatch):
 async def test_run_shell_command_filters_server_environment(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "should-not-leak")
     monkeypatch.setenv("PYTHONPATH", "/app/src")
@@ -2270,7 +2270,7 @@ async def test_run_shell_command_filters_server_environment(
 def test_frozen_subprocess_env_restores_loader_environment(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/bundled")
     monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib")
     monkeypatch.setenv("LD_PRELOAD", "/tmp/bundled/libpreload.so")
@@ -2294,7 +2294,7 @@ def test_frozen_subprocess_env_restores_loader_environment(
 def test_non_frozen_subprocess_env_preserves_loader_environment(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("WORKGATE_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("LD_LIBRARY_PATH", "/custom/lib")
     monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/original/lib")
     monkeypatch.delattr(sys, "frozen", raising=False)
@@ -2315,7 +2315,7 @@ async def test_run_shell_command_applies_configured_environment_filters(
     monkeypatch.setenv("PRIVATE_TOKEN", "hidden")
     monkeypatch.setenv("KEEP_VISIBLE", "visible")
     config = _executor_config(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         subprocess_env_blocklist=("EXACT_SECRET",),
         subprocess_env_blocked_prefixes=("PRIVATE_",),
     )
@@ -2342,7 +2342,7 @@ async def test_run_shell_command_rejects_blocked_environment_overrides(
     name, tmp_path
 ):
     config = _executor_config(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         subprocess_env_blocklist=("EXACT_SECRET",),
         subprocess_env_blocked_prefixes=("PRIVATE_",),
     )
@@ -2363,7 +2363,7 @@ async def test_conpty_persistent_shell_receives_filtered_executor_environment(
     monkeypatch.setenv("EXACT_SECRET", "hidden")
     monkeypatch.setenv("KEEP_VISIBLE", "visible")
     config = _executor_config(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         subprocess_env_blocklist=(
             "EXACT_SECRET",
             "TERM",
@@ -2416,7 +2416,7 @@ def test_configured_filter_wins_after_frozen_loader_restore(
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", "/tmp/bundled", raising=False)
     config = _executor_config(
-        workspace_root=tmp_path,
+        default_workdir=tmp_path,
         subprocess_env_blocklist=("LD_LIBRARY_PATH",),
     )
 
