@@ -74,7 +74,7 @@ def _dispatch_control(settings: Any) -> None:
 
 
 def run_control_from_args(args: argparse.Namespace) -> None:
-    """Load production control settings without acquiring executor workspace authority."""
+    """Load production control settings without acquiring executor machine authority."""
     settings = settings_from_args(args)
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.data_dir)

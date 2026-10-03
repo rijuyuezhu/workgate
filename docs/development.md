@@ -66,7 +66,7 @@ editing generated output by hand.
 ## Where code belongs
 
 - `src/workgate/control/`: public/control authority and orchestration
-- `src/workgate/executor/`: workspace, files, shells, jobs, PTYs, and machine-local authority
+- `src/workgate/executor/`: filesystem, shells, jobs, PTYs, and machine-local authority
 - `src/workgate/protocol/`: dependency-light control/executor contracts
 - `src/workgate/tools/`: public tool declarations and shared routing contracts
 - `src/workgate/ui/`: browser/OpenTUI application surfaces

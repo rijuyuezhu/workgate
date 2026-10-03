@@ -17,10 +17,6 @@ AUDIT_LOG_STATE_DIR_NAME = "audit_log"
 AUDIT_PAYLOAD_STATE_DIR_NAME = "payloads"
 AGENT_AUTH_STATE_DIR_NAME = "agent_auth"
 ENV_PREFIX = "WORKGATE_"
-_REMOVED_EXECUTOR_ENV_VARS = (
-    "WORKGATE_WORKSPACE_ROOT",
-    "WORKGATE_ALLOW_FULL_CONTROL",
-)
 _CONFIG_PATH_FIELDS = frozenset({"default_workdir", "state_dir", "data_dir"})
 _RESERVED_UI_PATHS = (
     "/api",
@@ -473,16 +469,6 @@ def env_overrides(
 ) -> dict[str, Any]:
     """Return explicitly present environment values for one role-owned field set."""
     selected = _selected_setting_names(setting_names)
-    if "default_workdir" in selected:
-        removed = [
-            name for name in _REMOVED_EXECUTOR_ENV_VARS if name in os.environ
-        ]
-        if removed:
-            raise ValueError(
-                "Removed executor environment settings are still set: "
-                f"{removed}. Use WORKGATE_DEFAULT_WORKDIR for the default cwd "
-                "and remove WORKGATE_ALLOW_FULL_CONTROL."
-            )
     present = {
         name: field_name
         for field_name in selected

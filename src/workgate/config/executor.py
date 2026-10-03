@@ -51,6 +51,12 @@ EXECUTOR_SETTING_NAMES = frozenset(
 ) & frozenset(Settings.model_fields)
 
 
+def effective_default_workdir(path: Path) -> Path:
+    """Return the live default directory, falling back to the filesystem root."""
+    resolved = path.resolve(strict=False)
+    return resolved if resolved.is_dir() else Path("/").resolve(strict=False)
+
+
 def get_executor_config() -> ExecutorConfig:
     """Return the executor config bound to the current execution context."""
     config = current_role_config()
@@ -65,12 +71,7 @@ def get_executor_config() -> ExecutorConfig:
 
 def resolve_executor_config(settings: Settings) -> ExecutorConfig:
     """Snapshot executor-owned authority from user-facing settings."""
-    configured_default = settings.default_workdir.resolve(strict=False)
-    default_workdir = (
-        configured_default
-        if configured_default.is_dir()
-        else Path("/").resolve(strict=False)
-    )
+    default_workdir = effective_default_workdir(settings.default_workdir)
     return ExecutorConfig(
         state_dir=settings.state_dir.resolve(strict=False),
         default_workdir=default_workdir,

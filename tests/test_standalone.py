@@ -126,7 +126,6 @@ def test_standalone_resolves_distinct_role_authority(tmp_path: Path) -> None:
         / "control"
     )
     assert "default_workdir" not in resolved.control
-    assert "allow_full_control" not in resolved.control
     assert "shell_executable" not in resolved.control
 
     assert resolved.executor["default_workdir"] == str(

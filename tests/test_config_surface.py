@@ -271,22 +271,6 @@ def test_relative_env_and_cli_paths_remain_invocation_relative(
     ).default_workdir == (tmp_path / "cli-workspace")
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["WORKGATE_WORKSPACE_ROOT", "WORKGATE_ALLOW_FULL_CONTROL"],
-)
-def test_removed_executor_environment_settings_fail_explicitly(
-    monkeypatch: pytest.MonkeyPatch,
-    name: str,
-) -> None:
-    monkeypatch.setenv(name, "/legacy" if name.endswith("ROOT") else "true")
-
-    with pytest.raises(
-        ValueError, match="Removed executor environment settings"
-    ):
-        load_settings()
-
-
 def test_role_scoped_load_ignores_foreign_yaml_and_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

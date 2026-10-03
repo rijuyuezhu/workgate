@@ -6,6 +6,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...config.executor import effective_default_workdir
 from ...schemas.result_models.search import (
     GlobSearchOutput,
     GrepDisplayLine,
@@ -79,7 +80,7 @@ class SearchPathAccess:
         """Resolve one path relative to the executor default."""
         return resolve_path(
             path,
-            base=self.default_workdir,
+            base=effective_default_workdir(self.default_workdir),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,
@@ -105,7 +106,11 @@ class SearchPathAccess:
 
     def display(self, path: Path, *, workdir: str | None = None) -> str:
         """Render one resolved path relative to its operation workdir."""
-        base = self.default_workdir if workdir is None else Path(workdir)
+        base = (
+            effective_default_workdir(self.default_workdir)
+            if workdir is None
+            else Path(workdir)
+        )
         return relative_display_from_base(path, base)
 
 

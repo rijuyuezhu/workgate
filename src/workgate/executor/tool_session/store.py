@@ -1,4 +1,4 @@
-"""Durable state for explicit agent/workspace sessions and grounding snapshots."""
+"""Durable state for execution sessions and grounding snapshots."""
 
 import hashlib
 import threading
@@ -57,7 +57,7 @@ ACTIVE_JOB_STATUSES = _ACTIVE_JOB_STATUSES
 
 
 class SessionPathResolver(Protocol):
-    """Resolve one path against an explicitly owned workspace policy."""
+    """Resolve one path through the executor-owned path resolver."""
 
     def __call__(
         self,

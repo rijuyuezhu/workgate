@@ -11,13 +11,13 @@ Workgate has two roles:
 - **control** owns owner identity, public APIs/UI, executor trust and presence,
   public session identity/binding, orchestration, control-owned integrations,
   payload/share artifacts, audit, and restart-critical product state;
-- **executor** owns machine reality: workspace paths, files/search, shell and
-  Python execution, PTYs, persistent shells, background jobs, grounding state,
-  machine-local integrations, and executor-local policy/secrets.
+- **executor** owns machine reality: working directories, files/search, shell
+  and Python execution, PTYs, persistent shells, background jobs, grounding
+  state, machine-local integrations, and executor-local policy/secrets.
 
 The boundary is about machine authority, not whether a process may use its own
 private filesystem. Control may read/write its own config, state, data, runtime,
-payload, audit, and secret storage. It must not gain arbitrary executor workspace,
+payload, audit, and secret storage. It must not gain arbitrary executor filesystem,
 shell, PTY, or process authority.
 
 Standalone mode still runs two OS processes and uses the real loopback executor

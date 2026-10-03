@@ -108,7 +108,6 @@ def test_control_subcommand_parses_control_owned_runtime_settings():
     assert args.ui_enabled is False
     assert args.max_todos == 17
     assert not hasattr(args, "default_workdir")
-    assert not hasattr(args, "allow_full_control")
 
 
 def test_legacy_server_command_is_not_registered():

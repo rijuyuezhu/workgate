@@ -1,6 +1,6 @@
 # Executors
 
-Executors are the machines that own Workgate workspaces, files, shells, jobs,
+Executors are the machines that own working directories, files, shells, jobs,
 PTYs, and machine-local integrations. They connect outbound to one control
 endpoint; no inbound Workgate port is required on the executor.
 

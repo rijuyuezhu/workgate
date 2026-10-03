@@ -1,4 +1,4 @@
-"""Provide workspace-aware UTF-8 file operations with path containment and bounded output."""
+"""Provide session-aware UTF-8 file operations with bounded output."""
 
 import codecs
 import contextlib
@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditContextOutput,
@@ -72,7 +72,7 @@ def _resolve_file_path(
 ) -> Path:
     """Resolve a path relative to the session workdir or executor default."""
     base = (
-        config.default_workdir
+        effective_default_workdir(config.default_workdir)
         if binding is None
         else Path(binding.workdir).resolve(strict=False)
     )
@@ -92,7 +92,7 @@ def _display_file(
 ) -> str:
     """Render a path relative to its operation workdir when possible."""
     base = (
-        config.default_workdir
+        effective_default_workdir(config.default_workdir)
         if binding is None
         else Path(binding.workdir).resolve(strict=False)
     )

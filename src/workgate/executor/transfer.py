@@ -27,7 +27,7 @@ from pydantic import (
     model_validator,
 )
 
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..protocol.transfer import (
     DEFAULT_TRANSFER_CHUNK_BYTES,
     normalize_chunk_size,
@@ -143,14 +143,16 @@ def _policy_path(
 ) -> Path:
     return resolve_path(
         path,
-        base=context.config.default_workdir,
+        base=effective_default_workdir(context.config.default_workdir),
         must_exist=must_exist,
         follow_final_symlink=follow_final_symlink,
     )
 
 
 def _display(path: Path, context: TransferContext) -> str:
-    return relative_display_from_base(path, context.config.default_workdir)
+    return relative_display_from_base(
+        path, effective_default_workdir(context.config.default_workdir)
+    )
 
 
 def _display_transfer_path(
@@ -168,7 +170,7 @@ def _display_transfer_path(
     elif workdir is not None:
         base = _policy_path(context, workdir, must_exist=True)
     else:
-        base = context.config.default_workdir
+        base = effective_default_workdir(context.config.default_workdir)
     return relative_display_from_base(path, base)
 
 
@@ -258,7 +260,7 @@ def _resolve_temp_path(
     """Resolve a transfer scratch path under the configured temp directory."""
     raw = Path(os.path.expandvars(os.path.expanduser(str(path))))
     if not raw.is_absolute():
-        raw = context.config.default_workdir / raw
+        raw = effective_default_workdir(context.config.default_workdir) / raw
     resolved = raw.resolve(strict=False)
     base = _scratch_dir(context).resolve()
     try:
@@ -321,7 +323,7 @@ def transfer_stat(
     workdir: str | None = None,
     context: TransferContext,
 ) -> TransferStatOutput:
-    """Return transfer metadata for one workspace or session path."""
+    """Return transfer metadata for one default- or session-anchored path."""
     source = _resolve_transfer_path(
         path,
         must_exist=True,
@@ -1947,7 +1949,7 @@ def transfer_alloc_temp_path(
     session_id: str | None = None,
     context: TransferContext,
 ) -> TransferAllocTempPathOutput:
-    """Allocate a safe temporary workspace path for transfer scratch data."""
+    """Allocate a confined temporary path for transfer scratch data."""
     _ = session_id
     _prune_transfer_scratch(context)
     safe_suffix = (

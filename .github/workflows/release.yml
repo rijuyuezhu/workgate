@@ -308,7 +308,7 @@ jobs:
           Pair an executor in another terminal, then run it:
 
             ./workgate executor connect http://127.0.0.1:8765
-            ./workgate executor run --workspace-root /path/to/workspace
+            ./workgate executor run --default-workdir /path/to/workspace
 
           POSIX persistent shells require tmux on the executor host.
 

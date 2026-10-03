@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..config.role_config import use_role_config
 from ..persistence import use_state_store
 from ..protocol.executor import (
@@ -353,7 +353,7 @@ def build_executor_runtime(
     ) -> Path:
         return resolve_path(
             path,
-            base=config.default_workdir,
+            base=effective_default_workdir(config.default_workdir),
             must_exist=must_exist,
             allow_missing_parent=allow_missing_parent,
             follow_final_symlink=follow_final_symlink,

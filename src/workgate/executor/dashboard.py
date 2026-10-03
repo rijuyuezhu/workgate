@@ -4,7 +4,7 @@ import math
 import time
 from typing import Any
 
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..telemetry.system import local_system_snapshot
 from ..version import version_info
 
@@ -45,8 +45,9 @@ def _machine_alerts(
 
 def dashboard_snapshot(config: ExecutorConfig) -> dict[str, Any]:
     """Return machine-local dashboard data without control-owned Audit state."""
-    system = local_system_snapshot(config.default_workdir)
-    alerts = _machine_alerts(system, str(config.default_workdir))
+    default_workdir = effective_default_workdir(config.default_workdir)
+    system = local_system_snapshot(default_workdir)
+    alerts = _machine_alerts(system, str(default_workdir))
     highest = str(alerts[0].get("severity") or "") if alerts else ""
     health = (
         "critical"

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import __version__
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..schemas.result_models.session import (
     SessionCapabilitiesEnvironment,
     SessionEnvironment,
@@ -263,7 +263,9 @@ def collect_executor_session_environment(
     return SessionEnvironment(
         runtime=_runtime_environment(),
         workspace=SessionWorkspaceEnvironment(
-            default_workdir=str(config.default_workdir),
+            default_workdir=str(
+                effective_default_workdir(config.default_workdir)
+            ),
             workdir=workdir,
         ),
         tools=tools,

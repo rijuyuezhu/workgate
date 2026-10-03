@@ -92,12 +92,11 @@ When OAuth authentication is enabled, protected MCP and REST routes authenticate
 
 ## Filesystem authority
 
-Workgate does not add a workspace sandbox on top of the executor process.
+Executor filesystem authority is the executor OS account's permissions.
 `default_workdir` and each execution session's workdir are relative-path
-anchors only; explicit absolute paths may address anything the executor OS
-account can access. Use a dedicated account, VM, filesystem permissions, mounts,
-or another operating-system isolation boundary when stronger confinement is
-required.
+anchors only; explicit absolute paths may address anything that account can
+access. Use a dedicated account, VM, filesystem permissions, mounts, or another
+operating-system isolation boundary when stronger confinement is required.
 
 ## Bounded command containment
 
@@ -219,11 +218,11 @@ Executor machine policy and machine-local integration secrets remain on the exec
 
 Managed executor services are local CLI-only host administration; there is no MCP tool for installing, starting, stopping, or removing them. Service definitions contain only the runtime command and local paths, never the executor bearer. The managed service reads a private snapshot of executor machine-policy settings, while the paired executor profile remains separate and survives reinstall or uninstall. Lifecycle status treats Workgate upgrades and policy-snapshot drift as stale so the operator can refresh with `install-service`.
 
-Structured browser automation is executor-owned and requires the separate `browser:use` OAuth scope plus the executor-advertised `browser.v1` capability. Browser contexts are ephemeral and session-owned; teardown closes them before confirming executor-side absence. Navigation is limited to HTTP(S) and `about:blank`, while screenshots must resolve inside the owning session workspace and never overwrite an existing file.
+Structured browser automation is executor-owned and requires the separate `browser:use` OAuth scope plus the executor-advertised `browser.v1` capability. Browser contexts are ephemeral and session-owned; teardown closes them before confirming executor-side absence. Navigation is limited to HTTP(S) and `about:blank`. Relative screenshot paths resolve from the owning session workdir, absolute paths may use any location accessible to the executor OS account, and screenshots never overwrite an existing file.
 
 Snapshots, screenshots, and error buffers are bounded. Actions target snapshot refs rather than arbitrary selectors. Audit keeps coarse browser/action metadata while omitting page bodies, element text, page titles, backend diagnostics, and entered values; URLs are reduced to origins. Persistent profile/storage-state reuse and arbitrary Playwright scripts are not exposed.
 
-Logs from the executor process can contain tool diagnostics, workspace paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
+Logs from the executor process can contain tool diagnostics, filesystem paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
 
 ## Embedded native UI payloads
 

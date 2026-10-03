@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from workgate.config.executor import resolve_executor_config
+from workgate.config.executor import (
+    effective_default_workdir,
+    resolve_executor_config,
+)
 from workgate.config.settings import (
     Settings,
     initialize_runtime_directories,
@@ -101,6 +104,17 @@ def test_loading_settings_does_not_create_runtime_directories(tmp_path):
     assert resolve_executor_config(settings).default_workdir == Path(
         "/"
     ).resolve(strict=False)
+
+
+def test_effective_default_workdir_tracks_live_directory(
+    tmp_path: Path,
+) -> None:
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    assert effective_default_workdir(workdir) == workdir.resolve()
+
+    workdir.rmdir()
+    assert effective_default_workdir(workdir) == Path("/").resolve(strict=False)
 
 
 def test_settings_rejects_non_mapping_config(tmp_path):

@@ -41,8 +41,8 @@ want a stable default independent of the service manager's working directory.
 
 ## Application-owned paths
 
-Workgate keeps application data separate from executor workspaces. Linux
-defaults are:
+Workgate keeps application data separate from executor working directories.
+Linux defaults are:
 
 | Lifetime | Default | Examples |
 | --- | --- | --- |

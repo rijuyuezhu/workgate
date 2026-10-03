@@ -121,6 +121,25 @@ async def test_executor_session_create_uses_effective_default_workdir(
 
 
 @pytest.mark.asyncio
+async def test_executor_session_create_falls_back_when_default_disappears(
+    tmp_path: Path,
+) -> None:
+    service = _real_service(tmp_path)
+    service._config.default_workdir.rmdir()
+
+    result = await service.create(
+        "sess_0000000000000000000004",
+        workdir=None,
+        label=None,
+    )
+
+    root = str(Path("/").resolve(strict=False))
+    assert result.workdir == root
+    assert result.default_workdir == root
+    assert result.environment.workspace.default_workdir == root
+
+
+@pytest.mark.asyncio
 async def test_executor_session_terminate_is_idempotent_when_already_absent(
     tmp_path: Path,
 ) -> None:

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..audit import audit
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..errors import (
     ShellExecutableNotFoundError,
     process_start_not_found_error,
@@ -464,7 +464,7 @@ async def run_shell(
     """Execute a shell command under explicit executor-owned policy."""
     resolved_cwd = resolve_path(
         cwd,
-        base=config.default_workdir,
+        base=effective_default_workdir(config.default_workdir),
         must_exist=True,
     )
     start = time.time()
@@ -537,7 +537,9 @@ async def run_shell(
         exit_code=proc.returncode if proc is not None else None,
         timed_out=timed_out,
         duration_ms=duration_ms,
-        cwd=relative_display_from_base(resolved_cwd, config.default_workdir),
+        cwd=relative_display_from_base(
+            resolved_cwd, effective_default_workdir(config.default_workdir)
+        ),
         command=command,
         stdout=stdout,
         stderr=stderr,
@@ -619,7 +621,7 @@ async def _run_exec(
     command = _shell_join_argv(argv)
     resolved_cwd = resolve_path(
         cwd,
-        base=config.default_workdir,
+        base=effective_default_workdir(config.default_workdir),
         must_exist=True,
     )
     start = time.time()
@@ -686,7 +688,9 @@ async def _run_exec(
         exit_code=proc.returncode if proc is not None else None,
         timed_out=timed_out,
         duration_ms=duration_ms,
-        cwd=relative_display_from_base(resolved_cwd, config.default_workdir),
+        cwd=relative_display_from_base(
+            resolved_cwd, effective_default_workdir(config.default_workdir)
+        ),
         command=command,
         stdout=stdout_b.decode(errors="replace"),
         stderr=stderr_b.decode(errors="replace"),
@@ -833,7 +837,7 @@ async def _start_persistent_shell_locked(
         )
     resolved_cwd = resolve_path(
         cwd,
-        base=config.default_workdir,
+        base=effective_default_workdir(config.default_workdir),
         must_exist=True,
     )
     active_shell_ids = await authoritative_persistent_shell_ids_execute(

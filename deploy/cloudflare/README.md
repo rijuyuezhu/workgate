@@ -80,13 +80,15 @@ the Durable Object actor.
 ## Pair an executor
 
 ```bash
-workgate executor connect https://<your-worker-host> \
-  --name laptop \
-  --workspace-root /path/to/workspace
+workgate executor connect https://<your-worker-host> --name laptop
 ```
 
 Open the printed `/pair` URL, enter the owner token and short user code, and
-approve the request. Then run the executor normally with `workgate executor run`.
+approve the request. Then start the executor with its preferred default:
+
+```bash
+workgate executor run --default-workdir /path/to/workspace
+```
 
 ## MCP
 

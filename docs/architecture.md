@@ -57,7 +57,7 @@ General rules:
 - Control delivery adapters may compose public tools, OAuth, executor trust and
   routing, shared HTTP infrastructure, control-owned integrations, and UI route
   contributions. They must not import executor implementation modules or read
-  executor workspace/path/command/machine policy.
+  executor filesystem/command/machine policy.
 - `http` must not import control delivery adapters or Human UI implementations.
 - UI core must not import control delivery adapters. `ui/http` may depend on UI
   core and explicit control-side adapter seams.
@@ -86,7 +86,7 @@ commands are not compatibility aliases.
 
 Global `--version` remains an argparse version action. Settings flags follow
 the role that owns them: `workgate control --mode mcp` exposes control
-settings, while workspace and machine-policy flags belong to
+settings, while working-directory and machine-policy flags belong to
 `workgate executor ...`.
 
 `workgate standalone` accepts one user-facing configuration for convenience,
@@ -109,9 +109,10 @@ control process.
 
 `ControlRuntime` and `ExecutorRuntime` each expose a frozen role-specific
 configuration snapshot. Control owns server/auth/UI/state/admission policy,
-while executor owns workspace, path/command policy, machine concurrency, and
-executable paths. Normal post-composition runtime code reads those role-owned
-views rather than re-reading the ambient monolithic `Settings` adapter.
+while executor owns working-directory, filesystem/command policy, machine
+concurrency, and executable paths. Normal post-composition runtime code reads
+those role-owned views rather than re-reading the ambient monolithic `Settings`
+adapter.
 
 `ControlRuntime` also owns one `ControlState` backed by the same synchronous
 `StateStore` used by the existing durable domains. It restores executor
@@ -256,7 +257,7 @@ The `tools` package owns public tool declarations, schemas/adapters, metadata, a
 
 Machine implementations do not live under `tools`: filesystem/search/shell/job/PTY/local-integration behavior belongs under `executor`. Shared tool machinery must therefore remain independent of executor implementation modules.
 
-## `executor/tool_session`: machine workspace-session state
+## `executor/tool_session`: machine execution-session state
 
 `executor/tool_session` owns durable executor-side session metadata, grounding snapshots, machine-session admission, persistent-shell resource ownership, and retention helpers. Control separately owns the public session identity/binding/lifecycle projection; both sides use the same opaque `session_id` but do not share one physical session store.
 
@@ -456,7 +457,7 @@ Rejected ownership alternatives:
 ## Executor machine-state ownership
 
 Executor-owned machine state is physically colocated with executor authority.
-`executor/tool_session/` owns workspace-session records, grounding snapshots,
+`executor/tool_session/` owns execution-session records, grounding snapshots,
 path resolution, and persistent-shell resource ownership. `executor/jobs/` owns
 shell-backed job lifecycle and the durable subprocess runner. The top-level
 `jobs/` package retains only process-neutral/control-managed job mechanisms.

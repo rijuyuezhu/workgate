@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..protocol.executor import SessionInventorySummary
 from .errors import ExecutorOperationFailure
@@ -137,7 +137,7 @@ class ExecutorSessionService:
             )
 
     def _resolve_workdir(self, workdir: str | None) -> Path:
-        base = self._config.default_workdir
+        base = effective_default_workdir(self._config.default_workdir)
         if workdir is None:
             return base
         resolved = resolve_path(

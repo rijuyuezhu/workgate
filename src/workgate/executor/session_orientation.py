@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from ..config.executor import ExecutorConfig
+from ..config.executor import ExecutorConfig, effective_default_workdir
 from ..schemas.result_models.session import GitSessionInfo, SessionStartOutput
 from .environment import collect_executor_session_environment
 from .tool_session.store import AgentSession, ToolSessionStore
@@ -62,7 +62,7 @@ def _relative_display(path: Path, default_workdir: Path) -> str:
 
 def _instruction_files(config: ExecutorConfig, workdir: Path) -> list[str]:
     """Discover project instructions from the workdir through filesystem ancestors."""
-    display_base = config.default_workdir
+    display_base = effective_default_workdir(config.default_workdir)
     found: list[str] = []
     current = workdir.resolve(strict=False)
     while True:
@@ -87,7 +87,7 @@ def session_output(
         created_at=session.created_at,
         updated_at=session.updated_at,
         label=session.label,
-        default_workdir=str(config.default_workdir),
+        default_workdir=str(effective_default_workdir(config.default_workdir)),
         git=_git_info(config, workdir),
         instruction_files=_instruction_files(config, workdir),
         environment=collect_executor_session_environment(

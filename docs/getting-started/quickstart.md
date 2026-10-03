@@ -67,7 +67,7 @@ command prints the path to that PIN rather than the secret itself.
 Connect a local MCP client to the endpoint above, then try:
 
 ```text
-Start a session in my configured workspace, inspect the repository and its
+Start a session in my configured default workdir, inspect the repository and its
 instruction files, then summarize the environment and Git status. Do not change
 files yet.
 ```
