@@ -96,7 +96,7 @@ class ControlToolRouter:
                 "dst_session_id": str(args["dst_session_id"]),
                 "dst_path": str(args["dst_path"]),
                 "kind": args.get("kind", "auto"),
-                "overwrite": bool(args.get("overwrite", True)),
+                "overwrite": bool(args.get("overwrite", False)),
                 "chunk_size": args.get("chunk_size"),
             }
             if bool(args.get("background", False)):

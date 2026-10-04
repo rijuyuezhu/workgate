@@ -80,7 +80,9 @@ SessionCopyKindArg = Annotated[
 ]
 SessionCopyOverwriteArg = Annotated[
     bool,
-    Field(description="Whether an existing destination may be replaced."),
+    Field(
+        description="Whether an existing destination may be replaced. Defaults to false; set true explicitly to replace it."
+    ),
 ]
 SessionCopyChunkSizeArg = Annotated[
     int | None,

@@ -15,6 +15,7 @@ from workgate.control.session_copy import (
     ControlSessionCopyService,
 )
 from workgate.control.state import ControlSessionRecord
+from workgate.control.tool_routing import ControlToolRouter
 from workgate.persistence import FileStateStore
 from workgate.protocol.executor import ExecutorResult
 from workgate.protocol.ids import (
@@ -1250,3 +1251,60 @@ def test_managed_retry_availability_follows_feature_checkpoint(tmp_path):
             owner_job_id,
             (str(checkpoint.source_session_id),),
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_public_session_copy_router_defaults_overwrite_false(
+    background: bool,
+) -> None:
+    class CopyService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def copy(self, **kwargs):
+            self.calls.append(("copy", kwargs))
+            return {"ok": True}
+
+        async def start_background(self, **kwargs):
+            self.calls.append(("background", kwargs))
+            return {"ok": True}
+
+    copy_service = CopyService()
+    router = ControlToolRouter(
+        sessions=object(),  # type: ignore[arg-type]
+        session_copy=copy_service,  # type: ignore[arg-type]
+        jobs=object(),  # type: ignore[arg-type]
+        downloads=object(),  # type: ignore[arg-type]
+        executors=object(),  # type: ignore[arg-type]
+        tasks=object(),  # type: ignore[arg-type]
+        audit=object(),  # type: ignore[arg-type]
+        agent_bridge=object(),  # type: ignore[arg-type]
+    )
+
+    result = await router.invoke(
+        "session_copy",
+        {
+            "src_session_id": "session_src",
+            "src_path": "source",
+            "dst_session_id": "session_dst",
+            "dst_path": "destination",
+            "background": background,
+        },
+    )
+
+    assert result == {"ok": True}
+    assert copy_service.calls == [
+        (
+            "background" if background else "copy",
+            {
+                "src_session_id": "session_src",
+                "src_path": "source",
+                "dst_session_id": "session_dst",
+                "dst_path": "destination",
+                "kind": "auto",
+                "overwrite": False,
+                "chunk_size": None,
+            },
+        )
+    ]

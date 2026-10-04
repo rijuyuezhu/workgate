@@ -97,6 +97,22 @@ async def test_mcp_tool_surface_is_stable(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_copy_defaults_to_no_overwrite(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("WORKGATE_MODE", "mcp")
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    tools = {tool.name: tool for tool in await build_mcp().list_tools()}
+    overwrite = tools["session_copy"].inputSchema["properties"]["overwrite"]
+
+    assert overwrite["default"] is False
+    assert "set true explicitly" in overwrite["description"]
+
+
+@pytest.mark.asyncio
 async def test_browser_actions_are_structured_and_bounded(
     tmp_path, monkeypatch
 ):
