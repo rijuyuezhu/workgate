@@ -1,12 +1,8 @@
 """Public fresh-machine executor bootstrap routes."""
 
-import importlib.metadata as importlib_metadata
-import json
 import re
 import shlex
-import subprocess
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 import httpx
 from starlette.requests import Request
@@ -15,8 +11,8 @@ from starlette.routing import BaseRoute, Route
 
 from .. import __version__
 
-EXECUTOR_BOOTSTRAP_PATH = "/executor/v1/bootstrap"
-EXECUTOR_BOOTSTRAP_MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
+_BOOTSTRAP_PATH = "/executor/v1/bootstrap"
+_MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 _CHECKSUM_MAX_BYTES = 4 * 1024
 _ARCHIVE_CHUNK_BYTES = 64 * 1024
 _RELEASE_REPOSITORY = "rijuyuezhu/workgate"
@@ -31,12 +27,8 @@ _SUPPORTED_TARGETS = frozenset(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-class ExecutorBootstrapUnavailable(RuntimeError):
+class _BootstrapUnavailable(RuntimeError):
     """Raised when this runtime cannot safely distribute a matching executor."""
-
-
-def _release_tag() -> str:
-    return f"v{__version__}"
 
 
 def _archive_name(target: str) -> str:
@@ -50,149 +42,18 @@ def _release_asset_url(target: str, *, checksum: bool = False) -> str:
     name = f"workgate-{target}.sha256" if checksum else archive_name
     return (
         f"https://github.com/{_RELEASE_REPOSITORY}/releases/download/"
-        f"{_release_tag()}/{name}"
+        f"v{__version__}/{name}"
     )
 
 
-def _source_checkout_root() -> Path | None:
-    """Return the Workgate source checkout containing this module, if any."""
-    module = Path(__file__).resolve()
-    relative = Path("src/workgate/control/executor_bootstrap.py")
-    for parent in module.parents:
-        candidate = parent / relative
-        if (parent / ".git").exists() and candidate.resolve() == module:
-            return parent
-    return None
-
-
-def _ensure_direct_install_matches_release() -> None:
-    """Reject direct package installs that cannot prove matching release provenance."""
-    try:
-        distribution = importlib_metadata.distribution("workgate")
-    except importlib_metadata.PackageNotFoundError:
-        return
-    raw = distribution.read_text("direct_url.json")
-    if raw is None:
-        return
-    try:
-        payload = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable because package provenance is invalid"
-        ) from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("url"), str):
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable because package provenance is invalid"
-        )
-
-    url = str(payload["url"]).rstrip("/")
-    tag = _release_tag()
-    repository = f"https://github.com/{_RELEASE_REPOSITORY}"
-    vcs = payload.get("vcs_info")
-    if isinstance(vcs, dict):
-        normalized = url.removesuffix(".git")
-        if (
-            normalized == repository
-            and vcs.get("vcs") == "git"
-            and vcs.get("requested_revision") == tag
-        ):
-            return
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable from an unpinned development "
-            f"package install; expected {repository}@{tag}"
-        )
-
-    allowed_prefixes = (
-        f"{repository}/releases/download/{tag}/",
-        f"{repository}/archive/refs/tags/{tag}.",
-        f"{repository}/archive/{tag}.",
-    )
-    if any(url.startswith(prefix) for prefix in allowed_prefixes):
-        return
-    raise ExecutorBootstrapUnavailable(
-        "executor bootstrap is unavailable because this direct package install "
-        "cannot prove matching release provenance"
-    )
-
-
-def _ensure_release_matches_runtime() -> None:
-    """Fail closed when a source checkout is not the release it would serve."""
-    root = _source_checkout_root()
-    if root is None:
-        _ensure_direct_install_matches_release()
-        return
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        release = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "rev-parse",
-                f"{_release_tag()}^{{commit}}",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable because this source checkout "
-            "cannot verify its matching release tag"
-        ) from exc
-    if head != release:
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable from an untagged development "
-            f"checkout; expected {_release_tag()}"
-        )
-    try:
-        source_status = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-                "--",
-                "src/workgate",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable because this source checkout "
-            "cannot verify its release contents"
-        ) from exc
-    if source_status:
-        raise ExecutorBootstrapUnavailable(
-            "executor bootstrap is unavailable from a modified release checkout"
-        )
-
-
-def _parse_checksum(payload: str, target: str) -> str:
-    archive_name = _archive_name(target)
+def _parse_checksum(payload: str) -> str:
     fields = payload.strip().split()
-    if len(fields) != 2:
-        raise ExecutorBootstrapUnavailable(
-            f"executor bootstrap checksum is invalid for {target}"
-        )
-    digest, name = fields
+    if not fields:
+        raise _BootstrapUnavailable("executor bootstrap checksum is invalid")
+    digest = fields[0]
     digest = digest.lower()
-    if name.lstrip("*") != archive_name or _SHA256_RE.fullmatch(digest) is None:
-        raise ExecutorBootstrapUnavailable(
-            f"executor bootstrap checksum is invalid for {target}"
-        )
+    if _SHA256_RE.fullmatch(digest) is None:
+        raise _BootstrapUnavailable("executor bootstrap checksum is invalid")
     return digest
 
 
@@ -207,7 +68,7 @@ async def _fetch_checksum(target: str) -> str:
         ) as response,
     ):
         if response.status_code != 200:
-            raise ExecutorBootstrapUnavailable(
+            raise _BootstrapUnavailable(
                 f"executor bootstrap checksum is unavailable for {target}"
             )
         async for chunk in response.aiter_bytes(
@@ -215,16 +76,16 @@ async def _fetch_checksum(target: str) -> str:
         ):
             payload.extend(chunk)
             if len(payload) > _CHECKSUM_MAX_BYTES:
-                raise ExecutorBootstrapUnavailable(
+                raise _BootstrapUnavailable(
                     f"executor bootstrap checksum is too large for {target}"
                 )
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ExecutorBootstrapUnavailable(
-            f"executor bootstrap checksum is invalid for {target}"
+        raise _BootstrapUnavailable(
+            "executor bootstrap checksum is invalid"
         ) from exc
-    return _parse_checksum(text, target)
+    return _parse_checksum(text)
 
 
 async def _archive_stream(target: str) -> AsyncIterator[bytes]:
@@ -238,15 +99,15 @@ async def _archive_stream(target: str) -> AsyncIterator[bytes]:
         ) as response,
     ):
         if response.status_code != 200:
-            raise ExecutorBootstrapUnavailable(
+            raise _BootstrapUnavailable(
                 f"executor bootstrap runtime is unavailable for {target}"
             )
         async for chunk in response.aiter_bytes(
             chunk_size=_ARCHIVE_CHUNK_BYTES
         ):
             total += len(chunk)
-            if total > EXECUTOR_BOOTSTRAP_MAX_ARCHIVE_BYTES:
-                raise ExecutorBootstrapUnavailable(
+            if total > _MAX_ARCHIVE_BYTES:
+                raise _BootstrapUnavailable(
                     "executor bootstrap runtime exceeds the size limit "
                     f"for {target}"
                 )
@@ -256,7 +117,7 @@ async def _archive_stream(target: str) -> AsyncIterator[bytes]:
 def bootstrap_script(base_url: str) -> str:
     """Return the bootstrap script that composes the existing executor CLI."""
     control = base_url.rstrip("/")
-    artifact_root = control + EXECUTOR_BOOTSTRAP_PATH
+    artifact_root = control + _BOOTSTRAP_PATH
     template = r"""#!/usr/bin/env bash
 set -euo pipefail
 umask 077
@@ -269,7 +130,6 @@ NAME=""
 DEFAULT_WORKDIR=""
 PERSIST=0
 RUNTIME_PUBLISHED=0
-RUNTIME_HAD_PREVIOUS=0
 RUNTIME_DIR=""
 PREVIOUS=""
 
@@ -307,7 +167,7 @@ cleanup() {
   status=$?
   if [ "$status" -ne 0 ] && [ "$RUNTIME_PUBLISHED" = "1" ]; then
     rm -f "$RUNTIME_DIR/workgate"
-    if [ "$RUNTIME_HAD_PREVIOUS" = "1" ] && [ -f "$PREVIOUS" ]; then
+    if [ -f "$PREVIOUS" ]; then
       mv -f "$PREVIOUS" "$RUNTIME_DIR/workgate"
     fi
   fi
@@ -317,20 +177,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-CHECKSUM_TEXT="$(curl -fsSL --max-filesize 4096 "$CHECKSUM_URL")"
-EXPECTED_SHA256="$(printf '%s\n' "$CHECKSUM_TEXT" | awk '{print $1}')"
-EXPECTED_NAME="$(printf '%s\n' "$CHECKSUM_TEXT" | awk '{print $2}')"
-EXPECTED_NAME="${EXPECTED_NAME#\*}"
+EXPECTED_SHA256="$(curl -fsSL --max-filesize 4096 "$CHECKSUM_URL" | tr -d '[:space:]')"
 if [[ ! "$EXPECTED_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "invalid executor runtime checksum" >&2
   exit 1
 fi
 EXPECTED_SHA256="$(printf '%s' "$EXPECTED_SHA256" | tr 'A-F' 'a-f')"
-if [ "$EXPECTED_NAME" != "workgate-$TARGET.tar.gz" ]; then
-  echo "executor runtime checksum names the wrong archive" >&2
-  exit 1
-fi
-
 ARCHIVE="$TMPDIR/workgate.tar.gz"
 curl -fL --progress-bar --max-filesize "$MAX_ARCHIVE_BYTES" \
   "$ARCHIVE_URL" -o "$ARCHIVE"
@@ -361,7 +213,16 @@ if [ "$("$STAGED" --version)" != "workgate $VERSION" ]; then
   exit 1
 fi
 
-RUNTIME="$STAGED"
+CONNECT_ARGS=(executor connect "$CONTROL")
+RUN_ARGS=(executor run)
+INSTALL_ARGS=(executor install-service)
+if [ -n "$NAME" ]; then CONNECT_ARGS+=(--name "$NAME"); fi
+if [ -n "$DEFAULT_WORKDIR" ]; then
+  RUN_ARGS+=(--default-workdir "$DEFAULT_WORKDIR")
+  INSTALL_ARGS+=(--default-workdir "$DEFAULT_WORKDIR")
+fi
+
+"$STAGED" "${CONNECT_ARGS[@]}"
 if [ "$PERSIST" = "1" ]; then
   if [ "$(uname -s)" = "Darwin" ]; then
     RUNTIME_DIR="$HOME/Library/Application Support/workgate/executor-bootstrap"
@@ -372,38 +233,21 @@ if [ "$PERSIST" = "1" ]; then
   chmod 700 "$RUNTIME_DIR"
   NEXT="$RUNTIME_DIR/.workgate.next.$$"
   PREVIOUS="$RUNTIME_DIR/.workgate.previous.$$"
-  rm -f "$NEXT" "$PREVIOUS"
   cp "$STAGED" "$NEXT"
   chmod 700 "$NEXT"
   if [ -f "$RUNTIME_DIR/workgate" ]; then
     mv "$RUNTIME_DIR/workgate" "$PREVIOUS"
-    RUNTIME_HAD_PREVIOUS=1
   fi
   mv "$NEXT" "$RUNTIME_DIR/workgate"
   RUNTIME_PUBLISHED=1
-  RUNTIME="$RUNTIME_DIR/workgate"
-fi
-
-CONNECT_ARGS=(executor connect "$CONTROL")
-RUN_ARGS=(executor run)
-INSTALL_ARGS=(executor install-service)
-if [ -n "$NAME" ]; then CONNECT_ARGS+=(--name "$NAME"); fi
-if [ -n "$DEFAULT_WORKDIR" ]; then
-  CONNECT_ARGS+=(--default-workdir "$DEFAULT_WORKDIR")
-  RUN_ARGS+=(--default-workdir "$DEFAULT_WORKDIR")
-  INSTALL_ARGS+=(--default-workdir "$DEFAULT_WORKDIR")
-fi
-
-"$RUNTIME" "${CONNECT_ARGS[@]}"
-if [ "$PERSIST" = "1" ]; then
-  "$RUNTIME" "${INSTALL_ARGS[@]}"
+  "$RUNTIME_DIR/workgate" "${INSTALL_ARGS[@]}"
   RUNTIME_PUBLISHED=0
   rm -f "$PREVIOUS"
   echo "Workgate executor installed and started."
-  echo "Management: $RUNTIME executor status"
+  echo "Management: $RUNTIME_DIR/workgate executor status"
   exit 0
 fi
-"$RUNTIME" "${RUN_ARGS[@]}"
+"$STAGED" "${RUN_ARGS[@]}"
 """
     return (
         template.replace("__CONTROL__", shlex.quote(control))
@@ -411,19 +255,13 @@ fi
         .replace("__VERSION__", shlex.quote(__version__))
         .replace(
             "__MAX_ARCHIVE_BYTES__",
-            str(EXECUTOR_BOOTSTRAP_MAX_ARCHIVE_BYTES),
+            str(_MAX_ARCHIVE_BYTES),
         )
     )
 
 
 def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
     """Return public routes for release-backed executor bootstrap."""
-    try:
-        _ensure_release_matches_runtime()
-    except ExecutorBootstrapUnavailable as exc:
-        provenance_error = str(exc)
-    else:
-        provenance_error = None
 
     async def script(_request: Request) -> Response:
         return PlainTextResponse(
@@ -435,41 +273,33 @@ def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
     async def checksum(request: Request) -> Response:
         target = request.path_params["target"]
         try:
-            name = _archive_name(target)
+            _archive_name(target)
         except ValueError:
             return Response(status_code=404)
-        if provenance_error is not None:
-            return PlainTextResponse(provenance_error, status_code=503)
         try:
             digest = await _fetch_checksum(target)
-        except (ExecutorBootstrapUnavailable, httpx.HTTPError) as exc:
+        except (_BootstrapUnavailable, httpx.HTTPError) as exc:
             return PlainTextResponse(str(exc), status_code=503)
         return PlainTextResponse(
-            f"{digest}  {name}\n",
+            f"{digest}\n",
             headers={"Cache-Control": "no-store"},
         )
 
     async def archive(request: Request) -> Response:
         target = request.path_params["target"]
         try:
-            name = _archive_name(target)
+            _archive_name(target)
         except ValueError:
             return Response(status_code=404)
-        if provenance_error is not None:
-            return PlainTextResponse(provenance_error, status_code=503)
-        headers = {
-            "Cache-Control": "no-store",
-            "Content-Disposition": f'attachment; filename="{name}"',
-        }
         return StreamingResponse(
             _archive_stream(target),
             media_type="application/gzip",
-            headers=headers,
+            headers={"Cache-Control": "no-store"},
         )
 
-    root = EXECUTOR_BOOTSTRAP_PATH + "/{target:str}"
+    root = _BOOTSTRAP_PATH + "/{target:str}"
     return [
-        Route(EXECUTOR_BOOTSTRAP_PATH, script, methods=["GET"]),
+        Route(_BOOTSTRAP_PATH, script, methods=["GET"]),
         Route(root + "/sha256", checksum, methods=["GET"]),
         Route(root + "/archive", archive, methods=["GET"]),
     ]

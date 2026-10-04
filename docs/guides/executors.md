@@ -28,10 +28,6 @@ Use `--default-workdir /path` only when the executor should start somewhere
 other than its normal default. Re-running bootstrap reuses the existing paired
 identity when it is still valid.
 
-Development checkouts and direct development installs do not serve an older
-release merely because their package version matches it; runtime artifacts are
-available only when the control can establish matching release provenance.
-
 The narrower Cloudflare hosted adapter does not proxy release artifacts; install
 Workgate normally before pairing an executor there.
 
