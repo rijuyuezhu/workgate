@@ -157,26 +157,25 @@ class ControlSessionCoordinator:
 
     async def select_executor(self, executor_id: str | None = None) -> str:
         """Choose only one executor currently eligible for new sessions."""
+        if executor_id is not None:
+            eligible, reasons = await self.executor_session_eligibility(
+                executor_id
+            )
+            if eligible:
+                return executor_id
+            detail = ", ".join(reasons) if reasons else "not eligible"
+            raise RuntimeError(
+                f"executor {executor_id!r} is not currently eligible for sessions: {detail}"
+            )
+
         candidates: list[str] = []
         for record in self._state.snapshot_executors().values():
             candidate = str(record.executor_id)
-            if executor_id is not None and candidate != executor_id:
-                continue
             eligible, _reasons = await self.executor_session_eligibility(
                 candidate
             )
             if eligible:
                 candidates.append(candidate)
-        if executor_id is not None:
-            if candidates == [executor_id]:
-                return executor_id
-            _eligible, reasons = await self.executor_session_eligibility(
-                executor_id
-            )
-            detail = ", ".join(reasons) if reasons else "not eligible"
-            raise RuntimeError(
-                f"executor {executor_id!r} is not currently eligible for sessions: {detail}"
-            )
         if len(candidates) != 1:
             raise RuntimeError(
                 "session_start requires exactly one eligible executor or an explicit "
