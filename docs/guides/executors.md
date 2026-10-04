@@ -4,7 +4,38 @@ Executors are the machines that own working directories, files, shells, jobs,
 PTYs, and machine-local integrations. They connect outbound to one control
 endpoint; no inbound Workgate port is required on the executor.
 
-## Pair an executor
+## Bootstrap a fresh machine
+
+For a supported Linux or macOS machine connecting to a self-hosted Workgate
+control, run the public bootstrap script:
+
+```bash
+curl -fsSL https://control.example/executor/v1/bootstrap | bash -s -- --name gpu1
+```
+
+The script downloads the matching official Workgate release, verifies its
+SHA-256 and version, extracts only the expected `workgate` executable, then
+runs the normal device-code pairing flow. Nothing is pre-authorized: open the
+verification URL printed on the executor and approve the request as usual.
+
+Add `--persist` to install and start the existing native per-user service:
+
+```bash
+curl -fsSL https://control.example/executor/v1/bootstrap | bash -s -- --name gpu1 --persist
+```
+
+Use `--default-workdir /path` only when the executor should start somewhere
+other than its normal default. Re-running bootstrap reuses the existing paired
+identity when it is still valid.
+
+Development checkouts do not serve an older release merely because their
+package version matches it; bootstrap is available only when the control can
+establish matching release provenance.
+
+The narrower Cloudflare hosted adapter does not proxy release artifacts; install
+Workgate normally before pairing an executor there.
+
+## Pair an already-installed executor
 
 Install Workgate on the machine, configure its local machine settings, then run:
 
@@ -43,8 +74,7 @@ upgrade without changing the paired executor identity.
 Linux uses a systemd user service. It is enabled for future user-manager
 sessions; remaining active without a logged-in user depends on the host's
 systemd linger policy, which Workgate does not change. macOS uses a LaunchAgent
-and Windows uses a per-user scheduled task, so both start after that user logs
-in rather than before login. For a dedicated Linux VPS that must start at
+and starts after that user logs in. For a dedicated Linux VPS that must start at
 system boot without a user session, use the system service pattern in
 [VPS deployment](../getting-started/vps.md).
 

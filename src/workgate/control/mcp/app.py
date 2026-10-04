@@ -26,6 +26,7 @@ from ..execution_context import (
     ControlExecutionContextMiddleware,
     control_execution_context,
 )
+from ..executor_bootstrap import executor_bootstrap_routes
 from ..http.executor_admin import executor_admin_routes
 from ..http.executor_routes import executor_routes
 from ..http.stream_routes import terminal_stream_routes
@@ -162,6 +163,7 @@ def _add_public_routes_to_mcp_http_app(
                     runtime.executor_transport,
                     runtime.executor_pairing,
                 ),
+                *executor_bootstrap_routes(active_settings.resolved_base_url),
                 *terminal_stream_routes(
                     runtime.executor_transport, runtime.stream_hub
                 ),
