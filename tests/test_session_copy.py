@@ -49,14 +49,41 @@ async def _paired_sessions(tmp_path, monkeypatch):
     return harness, str(src["session_id"]), str(dst["session_id"])
 
 
+def _record_executor_ops(harness, monkeypatch) -> list[str]:
+    operations: list[str] = []
+    original_call = harness.call
+
+    async def call(executor_id, op, args=None, **kwargs):
+        operations.append(op)
+        return await original_call(executor_id, op, args, **kwargs)
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", call)
+    return operations
+
+
 @pytest.mark.asyncio
-async def test_shared_session_copy_streams_file_on_same_executor(
+async def test_shared_session_copy_keeps_file_bytes_on_same_executor(
     tmp_path, monkeypatch
 ):
     payload = b"abcdef" * 1000
     (tmp_path / "src").mkdir(parents=True)
     (tmp_path / "src" / "payload.bin").write_bytes(payload)
     harness, src_id, dst_id = await _paired_sessions(tmp_path, monkeypatch)
+    operations = _record_executor_ops(harness, monkeypatch)
+    observed_sessions: list[str] = []
+    original_observe = (
+        harness.control.session_coordinator.observe_session_activity
+    )
+
+    def observe_session_activity(session_id: str, **kwargs) -> None:
+        observed_sessions.append(session_id)
+        original_observe(session_id, **kwargs)
+
+    monkeypatch.setattr(
+        harness.control.session_coordinator,
+        "observe_session_activity",
+        observe_session_activity,
+    )
     progress: list[dict[str, Any]] = []
 
     async def report(value: dict[str, Any]) -> None:
@@ -84,6 +111,17 @@ async def test_shared_session_copy_streams_file_on_same_executor(
     assert progress[0]["phase"] == "stat"
     assert progress[-1]["bytes_transferred"] == len(payload)
 
+    assert operations.count("transfer_copy_file") == 1
+    assert not {
+        "transfer_begin_write",
+        "transfer_read_chunk",
+        "transfer_write_chunk",
+        "transfer_finish_write",
+    }.intersection(operations)
+
+    assert src_id in observed_sessions
+    assert dst_id in observed_sessions
+
 
 @pytest.mark.asyncio
 async def test_shared_session_copy_packs_and_unpacks_directory(
@@ -95,6 +133,7 @@ async def test_shared_session_copy_packs_and_unpacks_directory(
     )
     (tmp_path / "src" / "tree" / "data.bin").write_bytes(b"\x00\x01")
     harness, src_id, dst_id = await _paired_sessions(tmp_path, monkeypatch)
+    operations = _record_executor_ops(harness, monkeypatch)
 
     result = await harness.control.session_copy_service.copy(
         src_session_id=src_id,
@@ -115,6 +154,16 @@ async def test_shared_session_copy_packs_and_unpacks_directory(
     assert (
         tmp_path / "dst" / "tree-copy" / "data.bin"
     ).read_bytes() == b"\x00\x01"
+
+    assert operations.count("transfer_pack_dir") == 1
+    assert operations.count("transfer_unpack_archive") == 1
+    assert "transfer_alloc_temp_path" not in operations
+    assert not {
+        "transfer_begin_write",
+        "transfer_read_chunk",
+        "transfer_write_chunk",
+        "transfer_finish_write",
+    }.intersection(operations)
 
 
 @pytest.mark.asyncio
@@ -143,7 +192,7 @@ async def test_shared_session_copy_preserves_destination_when_overwrite_is_false
     (tmp_path / "dst" / "payload.txt").write_text("old", encoding="utf-8")
     harness, src_id, dst_id = await _paired_sessions(tmp_path, monkeypatch)
 
-    with pytest.raises(RuntimeError, match="transfer_begin_write failed"):
+    with pytest.raises(RuntimeError, match="transfer_copy_file failed"):
         await harness.control.session_copy_service.copy(
             src_session_id=src_id,
             src_path="payload.txt",

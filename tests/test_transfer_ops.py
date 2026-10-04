@@ -921,6 +921,46 @@ def test_transfer_copy_file_handles_same_path_and_destination_conflicts(
         )
 
 
+def test_transfer_copy_file_rejects_stale_expected_content_before_publish(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "source.bin").write_bytes(b"new")
+    (root / "dest.bin").write_bytes(b"old")
+
+    with pytest.raises(ValueError, match="source sha256 changed"):
+        transfer_ops.transfer_copy_file(
+            "source.bin",
+            "dest.bin",
+            expected_bytes=3,
+            expected_sha256=hashlib.sha256(b"stale").hexdigest(),
+            context=_context(),
+        )
+
+    assert (root / "dest.bin").read_bytes() == b"old"
+
+
+def test_unpack_rejects_stale_expected_archive_before_publish(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "src").mkdir()
+    (root / "src" / "file.txt").write_text("payload", encoding="utf-8")
+    pack = transfer_pack_dir("src")
+
+    with pytest.raises(ValueError, match="archive sha256 changed"):
+        transfer_unpack_archive(
+            pack.archive_path,
+            "dst",
+            overwrite=True,
+            cleanup_archive=False,
+            expected_archive_bytes=pack.bytes,
+            expected_archive_sha256="0" * 64,
+        )
+
+    assert not (root / "dst").exists()
+
+
 def test_transfer_begin_resume_validates_transaction_contract(
     tmp_path, monkeypatch
 ):

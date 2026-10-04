@@ -28,6 +28,7 @@ from ..schemas.result_models.session import (
 from ..schemas.result_models.transfer import (
     TransferAllocTempPathOutput,
     TransferBeginWriteOutput,
+    TransferCopyFileOutput,
     TransferFinishWriteOutput,
     TransferPackDirOutput,
     TransferReadChunkOutput,
@@ -974,24 +975,58 @@ class ControlSessionCopyService:
     ) -> dict[str, Any]:
         if stat.size is None or stat.sha256 is None:
             raise RuntimeError("source file stat is missing size or sha256")
-        copied = await self._stream_file(
-            src,
-            src_path,
-            dst,
-            dst_path,
-            expected_bytes=stat.size,
-            expected_sha256=stat.sha256,
-            overwrite=overwrite,
+        src_binding = self._binding_snapshot(src)
+        dst_binding = self._binding_snapshot(dst)
+        await self._report(
+            progress,
+            phase="transferring",
+            bytes_transferred=0,
+            total_bytes=stat.size,
+            chunks=0,
             chunk_size=chunk_size,
-            progress=progress,
+        )
+        try:
+            copied = TransferCopyFileOutput.model_validate(
+                await self._call(
+                    src,
+                    "transfer_copy_file",
+                    {
+                        "source_path": src_path,
+                        "destination_path": dst_path,
+                        "overwrite": overwrite,
+                        "chunk_size": chunk_size,
+                        "expected_bytes": stat.size,
+                        "expected_sha256": stat.sha256,
+                        "source_session_id": str(src.session_id),
+                        "destination_session_id": str(dst.session_id),
+                        "source_workdir": src_binding["workdir"],
+                        "destination_workdir": dst_binding["workdir"],
+                    },
+                )
+            )
+        except BaseException:
+            await self._sessions.reconcile_session_activity_after_error(dst)
+            raise
+        self._sessions.observe_session_activity(str(dst.session_id))
+        if not copied.completed:
+            raise RuntimeError("executor-local file copy did not complete")
+        if copied.bytes != stat.size or copied.sha256 != stat.sha256:
+            raise RuntimeError("executor-local file copy integrity mismatch")
+        await self._report(
+            progress,
+            phase="transferring",
+            bytes_transferred=copied.bytes,
+            total_bytes=copied.bytes,
+            chunks=copied.chunks,
+            chunk_size=copied.chunk_size,
         )
         return {
-            "bytes": stat.size,
-            "sha256": stat.sha256,
-            "chunks": copied["chunks"],
-            "chunk_size": chunk_size,
-            "source_path": stat.path,
-            "destination_path": copied["path"],
+            "bytes": copied.bytes,
+            "sha256": copied.sha256,
+            "chunks": copied.chunks,
+            "chunk_size": copied.chunk_size,
+            "source_path": copied.source_path,
+            "destination_path": copied.path,
             "cleanup_errors": [],
         }
 
@@ -1019,56 +1054,56 @@ class ControlSessionCopyService:
                 {"path": src_path, "compression": "gz"},
             )
         )
-        destination_temp: str | None = None
         cleanup_errors: list[str] = []
+        chunks = (
+            0
+            if pack.bytes == 0
+            else (pack.bytes + chunk_size - 1) // chunk_size
+        )
         try:
-            allocated = TransferAllocTempPathOutput.model_validate(
-                await self._call(
-                    dst,
-                    "transfer_alloc_temp_path",
-                    {"suffix": ".tar.gz"},
-                )
-            )
-            destination_temp = allocated.path
-            copied = await self._stream_file(
-                src,
-                pack.archive_path,
-                dst,
-                destination_temp,
-                expected_bytes=pack.bytes,
-                expected_sha256=pack.sha256,
-                overwrite=True,
+            await self._report(
+                progress,
+                phase="transferring",
+                bytes_transferred=0,
+                total_bytes=pack.bytes,
+                chunks=0,
                 chunk_size=chunk_size,
-                source_unbound_temp=True,
-                destination_unbound_temp=True,
-                progress=progress,
+            )
+            await self._report(
+                progress,
+                phase="transferring",
+                bytes_transferred=pack.bytes,
+                total_bytes=pack.bytes,
+                chunks=chunks,
+                chunk_size=chunk_size,
             )
             await self._report(
                 progress,
                 phase="unpacking",
                 bytes_transferred=pack.bytes,
                 total_bytes=pack.bytes,
+                chunks=chunks,
+                chunk_size=chunk_size,
             )
             unpack = TransferUnpackArchiveOutput.model_validate(
                 await self._call(
                     dst,
                     "transfer_unpack_archive",
                     {
-                        "archive_path": destination_temp,
+                        "archive_path": pack.archive_path,
                         "dst_path": dst_path,
                         "overwrite": overwrite,
                         "cleanup_archive": True,
+                        "expected_archive_bytes": pack.bytes,
+                        "expected_archive_sha256": pack.sha256,
                     },
                 )
-            )
-            destination_temp = (
-                None if unpack.archive_deleted else destination_temp
             )
             cleanup_errors.extend(unpack.cleanup_errors)
             return {
                 "archive_bytes": pack.bytes,
                 "archive_sha256": pack.sha256,
-                "chunks": copied["chunks"],
+                "chunks": chunks,
                 "chunk_size": chunk_size,
                 "entries": unpack.entries,
                 "source_path": pack.path,
@@ -1084,120 +1119,6 @@ class ControlSessionCopyService:
                 )
             except Exception as exc:
                 cleanup_errors.append(f"source archive cleanup failed: {exc}")
-            if destination_temp is not None:
-                try:
-                    await self._call(
-                        dst,
-                        "transfer_delete_temp_path",
-                        {"path": destination_temp},
-                    )
-                except Exception as exc:
-                    cleanup_errors.append(
-                        f"destination archive cleanup failed: {exc}"
-                    )
-
-    async def _stream_file(
-        self,
-        src: ControlSessionRecord,
-        src_path: str,
-        dst: ControlSessionRecord,
-        dst_path: str,
-        *,
-        expected_bytes: int,
-        expected_sha256: str,
-        overwrite: bool,
-        chunk_size: int,
-        source_unbound_temp: bool = False,
-        destination_unbound_temp: bool = False,
-        progress: ProgressCallback | None = None,
-    ) -> dict[str, Any]:
-        begin_args: dict[str, JsonValue] = {
-            "path": dst_path,
-            "overwrite": overwrite,
-            "expected_bytes": expected_bytes,
-        }
-        if destination_unbound_temp:
-            begin_args["_workgate_unbound_temp"] = True
-        begin = TransferBeginWriteOutput.model_validate(
-            await self._call(dst, "transfer_begin_write", begin_args)
-        )
-        transfer_id = begin.transfer_id
-        offset = begin.offset
-        chunks = 0
-        await self._report(
-            progress,
-            phase="transferring",
-            bytes_transferred=offset,
-            total_bytes=expected_bytes,
-            chunks=chunks,
-            chunk_size=chunk_size,
-        )
-        try:
-            while offset < expected_bytes:
-                read_args: dict[str, JsonValue] = {
-                    "path": src_path,
-                    "offset": offset,
-                    "chunk_size": chunk_size,
-                }
-                if source_unbound_temp:
-                    read_args["_workgate_unbound_temp"] = True
-                chunk = TransferReadChunkOutput.model_validate(
-                    await self._call(src, "transfer_read_chunk", read_args)
-                )
-                if chunk.offset != offset or chunk.size != expected_bytes:
-                    raise RuntimeError("source changed during session_copy")
-                if chunk.bytes <= 0:
-                    raise RuntimeError(
-                        "source transfer made no forward progress"
-                    )
-                write_args: dict[str, JsonValue] = {
-                    "path": dst_path,
-                    "transfer_id": transfer_id,
-                    "offset": offset,
-                    "data_b64": chunk.data_b64,
-                    "expected_sha256": chunk.sha256,
-                }
-                if destination_unbound_temp:
-                    write_args["_workgate_unbound_temp"] = True
-                await self._call(dst, "transfer_write_chunk", write_args)
-                offset += chunk.bytes
-                chunks += 1
-                await self._report(
-                    progress,
-                    phase="transferring",
-                    bytes_transferred=offset,
-                    total_bytes=expected_bytes,
-                    chunks=chunks,
-                    chunk_size=chunk_size,
-                )
-            finish_args: dict[str, JsonValue] = {
-                "path": dst_path,
-                "transfer_id": transfer_id,
-                "expected_bytes": expected_bytes,
-                "expected_sha256": expected_sha256,
-            }
-            if destination_unbound_temp:
-                finish_args["_workgate_unbound_temp"] = True
-            finished = TransferFinishWriteOutput.model_validate(
-                await self._call(dst, "transfer_finish_write", finish_args)
-            )
-            if not finished.completed or finished.bytes != expected_bytes:
-                raise RuntimeError(
-                    "destination transfer did not commit completely"
-                )
-            if finished.sha256 != expected_sha256:
-                raise RuntimeError("destination transfer sha256 mismatch")
-            return {"path": finished.path, "chunks": chunks}
-        except BaseException:
-            abort_args: dict[str, JsonValue] = {
-                "path": dst_path,
-                "transfer_id": transfer_id,
-            }
-            if destination_unbound_temp:
-                abort_args["_workgate_unbound_temp"] = True
-            with contextlib.suppress(Exception):
-                await self._call(dst, "transfer_abort_write", abort_args)
-            raise
 
     async def _call(
         self,

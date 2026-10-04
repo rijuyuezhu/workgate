@@ -101,9 +101,16 @@ async def test_transfer_composition_preserves_unbound_command_admission(
     class Store:
         def __init__(self) -> None:
             self.admitted: list[str] = []
+            self.admitted_groups: list[tuple[str, ...]] = []
 
         def admit_active_session(self, session_id: str) -> None:
             self.admitted.append(session_id)
+
+        def admit_tool_sessions(
+            self, session_ids: tuple[str, ...]
+        ) -> tuple[Any, ...]:
+            self.admitted_groups.append(session_ids)
+            return ()
 
     store = Store()
     handlers = transfer_composition.build_transfer_handlers(
@@ -212,3 +219,22 @@ async def test_transfer_composition_preserves_unbound_command_admission(
         )
         is None
     )
+
+    store.admitted.clear()
+    store.admitted_groups.clear()
+    assert (
+        await handlers["transfer_copy_file"](
+            {
+                "session_id": "sess-source",
+                "source_session_id": "sess-source",
+                "destination_session_id": "sess-destination",
+                "source_path": "source.bin",
+                "destination_path": "dst.bin",
+                "source_workdir": str(workspace),
+                "destination_workdir": str(workspace),
+            }
+        )
+        == "transfer_copy_file"
+    )
+    assert store.admitted == []
+    assert store.admitted_groups == [("sess-destination", "sess-source")]
