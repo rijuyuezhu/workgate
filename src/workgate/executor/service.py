@@ -839,7 +839,7 @@ class ExecutorServiceManager:
             self._write_metadata(backend, command)
             self._start_windows_task()
 
-        runtime_store.save(runtime_state)
+        runtime_store.service_runtime_state(runtime_state.ownership)
         return self.status()
 
     def _systemd_native_state(self) -> dict[str, str]:
@@ -936,6 +936,7 @@ class ExecutorServiceManager:
             self.launcher_path,
             self.windows_frozen_launcher_path,
             self.metadata_path,
+            self.state_store.layout.executor_runtime_path,
             self.log_path,
         ):
             path.unlink(missing_ok=True)

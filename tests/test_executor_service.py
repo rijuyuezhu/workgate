@@ -17,6 +17,7 @@ from workgate.executor.runtime_update import ExecutorRuntimeStateStore
 from workgate.executor.service import (
     ExecutorServiceManager,
     ExecutorServiceState,
+    ExecutorServiceStatus,
 )
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.executor import ExecutorRuntimeOwnership
@@ -268,6 +269,71 @@ def test_failed_service_install_does_not_grant_control_managed_authority(
         )
 
     assert ExecutorRuntimeStateStore(manager.state_store).load() is None
+
+
+def test_service_install_preserves_update_state_written_during_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "runtime" / "workgate"
+    manager, _profile_value = _paired_manager(
+        tmp_path,
+        system="Linux",
+        executable=executable,
+    )
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/systemctl"
+    )
+    monkeypatch.setattr(runtime_update.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(runtime_update.sys, "executable", str(executable))
+    unit_dir = tmp_path / "manager-config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    runtime_store = ExecutorRuntimeStateStore(manager.state_store)
+
+    def fake_run(
+        command: list[str], **_kwargs
+    ) -> subprocess.CompletedProcess[str]:
+        if command == [
+            "systemctl",
+            "--user",
+            "show",
+            "--property=UnitPath",
+            "--value",
+        ]:
+            return _completed(
+                command, stdout=f'"{unit_dir}" /etc/systemd/user\n'
+            )
+        if command[:3] == ["systemctl", "--user", "restart"]:
+            runtime_store.record_install(
+                ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED
+            )
+            runtime_store.set_update(
+                runtime_update.ExecutorRuntimeUpdateStatus.PENDING,
+                target_version="next-version",
+            )
+        return _completed(command)
+
+    monkeypatch.setattr(manager, "_run", fake_run)
+    monkeypatch.setattr(
+        manager,
+        "status",
+        lambda: ExecutorServiceStatus(
+            backend="systemd",
+            state=ExecutorServiceState.RUNNING,
+            installed=True,
+            running=True,
+        ),
+    )
+
+    manager.install(runtime_ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED)
+
+    state = runtime_store.load()
+    assert state is not None
+    assert state.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
+    assert (
+        state.update_status
+        is runtime_update.ExecutorRuntimeUpdateStatus.PENDING
+    )
+    assert state.update_target_version == "next-version"
 
 
 def test_systemd_install_is_private_idempotent_and_preserves_identity(
@@ -668,6 +734,8 @@ def test_systemd_status_and_uninstall_recover_loaded_orphan(
     manager._write_service_config()
     manager._write_launcher()
     manager._write_metadata("systemd", manager._runtime_command())
+    runtime_store = ExecutorRuntimeStateStore(manager.state_store)
+    runtime_store.record_install(ownership=ExecutorRuntimeOwnership.SOURCE)
     loaded = True
     active = True
     calls: list[list[str]] = []
@@ -710,6 +778,7 @@ def test_systemd_status_and_uninstall_recover_loaded_orphan(
 
     assert removed.state == ExecutorServiceState.NOT_INSTALLED
     assert ExecutorProfileStore(manager.state_store).load() == profile
+    assert runtime_store.load() is None
     assert any(
         command[:3] == ["systemctl", "--user", "stop"] for command in calls
     )
