@@ -1,5 +1,6 @@
 import hashlib
 import os
+import platform
 import subprocess
 import tarfile
 from pathlib import Path
@@ -212,9 +213,26 @@ async def test_archive_proxy_enforces_streaming_size_limit(
         _ = [chunk async for chunk in bootstrap._archive_stream("linux-x86_64")]
 
 
-def _fake_release_archive(tmp_path: Path) -> tuple[Path, str]:
+def _host_bootstrap_target() -> str:
+    system = platform.system()
+    machine = platform.machine().lower()
+    if system == "Linux" and machine in {"x86_64", "amd64"}:
+        return "linux-x86_64"
+    if system == "Linux" and machine in {"aarch64", "arm64"}:
+        return "linux-aarch64"
+    if system == "Darwin" and machine in {"x86_64", "amd64"}:
+        return "macos-x86_64"
+    if system == "Darwin" and machine in {"aarch64", "arm64"}:
+        return "macos-aarch64"
+    pytest.skip("POSIX executor bootstrap is unsupported on this test host")
+
+
+def _fake_release_archive(
+    tmp_path: Path,
+    target: str,
+) -> tuple[Path, str]:
     tree = tmp_path / "archive"
-    runtime = tree / "workgate-linux-x86_64" / "workgate"
+    runtime = tree / f"workgate-{target}" / "workgate"
     runtime.parent.mkdir(parents=True)
     runtime.write_text(
         "#!/usr/bin/env bash\n"
@@ -230,11 +248,11 @@ def _fake_release_archive(tmp_path: Path) -> tuple[Path, str]:
         "exit 0\n"
     )
 
-    archive = tmp_path / "workgate-linux-x86_64.tar.gz"
+    archive = tmp_path / f"workgate-{target}.tar.gz"
     with tarfile.open(archive, "w:gz") as handle:
         handle.add(
             runtime,
-            arcname="workgate-linux-x86_64/workgate",
+            arcname=f"workgate-{target}/workgate",
         )
         escape = tmp_path / "escape-payload"
         escape.write_text("must-not-be-extracted")
@@ -254,7 +272,7 @@ def _fake_curl(tmp_path: Path) -> Path:
         "url = next(a for a in reversed(sys.argv) if a.startswith('http'))\n"
         "if url.endswith('.sha256') or url.endswith('/sha256'):\n"
         "    print(os.environ['BOOTSTRAP_TEST_SHA'] + "
-        "'  workgate-linux-x86_64.tar.gz')\n"
+        "'  ' + os.environ['BOOTSTRAP_TEST_ARCHIVE_NAME'])\n"
         "else:\n"
         "    out = sys.argv[sys.argv.index('-o') + 1]\n"
         "    shutil.copyfile(os.environ['BOOTSTRAP_TEST_ARCHIVE'], out)\n"
@@ -269,7 +287,8 @@ def _run_bootstrap(
     persist: bool,
     fail_install: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    archive, digest = _fake_release_archive(tmp_path)
+    target = _host_bootstrap_target()
+    archive, digest = _fake_release_archive(tmp_path, target)
     bindir = _fake_curl(tmp_path)
     script = tmp_path / "bootstrap.sh"
     script.write_text(bootstrap.bootstrap_script("https://control.example"))
@@ -284,6 +303,7 @@ def _run_bootstrap(
             "BOOTSTRAP_CALLS": str(calls),
             "BOOTSTRAP_FAIL_INSTALL": "1" if fail_install else "0",
             "BOOTSTRAP_TEST_ARCHIVE": str(archive),
+            "BOOTSTRAP_TEST_ARCHIVE_NAME": archive.name,
             "BOOTSTRAP_TEST_SHA": digest,
         }
     )

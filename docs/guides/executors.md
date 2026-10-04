@@ -29,8 +29,8 @@ other than its normal default. Re-running bootstrap reuses the existing paired
 identity when it is still valid.
 
 Development checkouts do not serve an older release merely because their
-package version matches it; bootstrap is available only when the control can
-establish matching release provenance.
+package version matches it; runtime artifacts are available only when the
+control can establish matching release provenance.
 
 The narrower Cloudflare hosted adapter does not proxy release artifacts; install
 Workgate normally before pairing an executor there.
@@ -74,7 +74,8 @@ upgrade without changing the paired executor identity.
 Linux uses a systemd user service. It is enabled for future user-manager
 sessions; remaining active without a logged-in user depends on the host's
 systemd linger policy, which Workgate does not change. macOS uses a LaunchAgent
-and starts after that user logs in. For a dedicated Linux VPS that must start at
+and Windows uses a per-user scheduled task, so both start after that user logs
+in rather than before login. For a dedicated Linux VPS that must start at
 system boot without a user session, use the system service pattern in
 [VPS deployment](../getting-started/vps.md).
 
