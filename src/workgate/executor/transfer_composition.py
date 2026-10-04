@@ -72,8 +72,8 @@ def build_transfer_handlers(
             for value in (source_binding_id, destination_binding_id)
             if value is not None
         }
-        for session_id in sorted(binding_ids):
-            store.admit_active_session(session_id)
+        if binding_ids:
+            store.admit_tool_sessions(tuple(sorted(binding_ids)))
         source_session_id = _transfer_session_id(
             args,
             session_key="source_session_id",
