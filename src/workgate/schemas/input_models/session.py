@@ -93,7 +93,7 @@ SessionCopyChunkSizeArg = Annotated[
 SessionCopyBackgroundArg = Annotated[
     bool,
     Field(
-        description="When true, start a managed background copy and return a job_id immediately. Use the job companion with the source session_id to poll, cancel, or retry it."
+        description="Defaults to true: start a durable managed copy and return a job_id immediately. Use the job companion with the source session_id to poll, cancel, or retry it. Set false explicitly for a synchronous copy subject to the normal tool timeout."
     ),
 ]
 OptionalSessionIdArg = Annotated[

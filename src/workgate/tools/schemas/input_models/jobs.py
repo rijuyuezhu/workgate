@@ -29,7 +29,7 @@ JobIdArg = Annotated[
     str,
     StringConstraints(min_length=1),
     Field(
-        description="Tracked job identifier returned by `bash(async_=true)`, `session_copy(background=true)`, or `job` in the same execution session."
+        description="Tracked job identifier returned by `bash(async_=true)`, default `session_copy`, or `job` in the same execution session."
     ),
 ]
 IncludeFinishedArg = Annotated[

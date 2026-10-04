@@ -327,6 +327,7 @@ async def exercise_session_copy_tool(
             "dst_path": "artifact-copy.bin",
             "kind": "file",
             "chunk_size": 64,
+            "background": False,
         },
     )
     assert file_copy["kind"] == "file"
@@ -349,6 +350,7 @@ async def exercise_session_copy_tool(
             "dst_session_id": dst["session_id"],
             "dst_path": "tree-copy",
             "kind": "dir",
+            "background": False,
         },
     )
     assert dir_copy["kind"] == "dir"

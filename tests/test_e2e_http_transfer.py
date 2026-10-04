@@ -49,6 +49,7 @@ async def test_real_same_executor_large_session_copy(tmp_path: Path) -> None:
                 "dst_path": "destination.bin",
                 "kind": "file",
                 "chunk_size": 64 * 1024,
+                "background": False,
             },
         )
         assert copied["transport"] == "same_executor"
@@ -78,6 +79,7 @@ async def test_real_same_executor_large_session_copy(tmp_path: Path) -> None:
                 "dst_path": "destination-directory",
                 "kind": "dir",
                 "chunk_size": 64 * 1024,
+                "background": False,
             },
         )
         assert directory_copy["transport"] == "same_executor"
@@ -121,6 +123,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "dst_path": "destination.bin",
                 "kind": "file",
                 "chunk_size": 64 * 1024,
+                "background": False,
             },
         )
         assert copied["transport"] == "control_payload"
@@ -151,6 +154,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "dst_path": "destination-directory",
                 "kind": "dir",
                 "chunk_size": 64 * 1024,
+                "background": False,
             },
         )
         assert directory_copy["transport"] == "control_payload"

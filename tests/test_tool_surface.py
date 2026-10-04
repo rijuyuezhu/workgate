@@ -97,7 +97,7 @@ async def test_mcp_tool_surface_is_stable(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_session_copy_defaults_to_no_overwrite(
+async def test_session_copy_public_defaults_are_safe_and_tracked(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("WORKGATE_MODE", "mcp")
@@ -106,10 +106,14 @@ async def test_session_copy_defaults_to_no_overwrite(
     clear_settings_cache()
 
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
-    overwrite = tools["session_copy"].inputSchema["properties"]["overwrite"]
+    properties = tools["session_copy"].inputSchema["properties"]
+    overwrite = properties["overwrite"]
+    background = properties["background"]
 
     assert overwrite["default"] is False
     assert "set true explicitly" in overwrite["description"]
+    assert background["default"] is True
+    assert "Set false explicitly" in background["description"]
 
 
 @pytest.mark.asyncio

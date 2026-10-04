@@ -59,7 +59,7 @@ Browser sessions are ephemeral and do not silently reuse a person's normal brows
 
 ## Copy between sessions
 
-Use `session_copy` to move files or directories between two existing executor-backed sessions. Start both sessions first and name the source and destination clearly; they may be bound to the same executor or different executors. Existing destinations are preserved by default; request `overwrite=true` explicitly when replacement is intended.
+Use `session_copy` to move files or directories between two existing executor-backed sessions. Start both sessions first and name the source and destination clearly; they may be bound to the same executor or different executors. Existing destinations are preserved by default; request `overwrite=true` explicitly when replacement is intended. A copy starts as a durable managed job by default; poll, cancel, or retry its returned `job_id` with `job(session_id=src_session_id, ...)`. Use `background=false` explicitly only when a small copy should complete synchronously under the normal tool timeout.
 
 ```text
 Copy artifacts/report.json from the build session on gpu1 into reports/latest.json in my workstation session, then verify the destination file.

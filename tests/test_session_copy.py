@@ -1254,9 +1254,9 @@ def test_managed_retry_availability_follows_feature_checkpoint(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("background", [False, True])
-async def test_public_session_copy_router_defaults_overwrite_false(
-    background: bool,
+@pytest.mark.parametrize("background", [None, False, True])
+async def test_public_session_copy_router_defaults_are_safe_and_tracked(
+    background: bool | None,
 ) -> None:
     class CopyService:
         def __init__(self) -> None:
@@ -1282,21 +1282,20 @@ async def test_public_session_copy_router_defaults_overwrite_false(
         agent_bridge=object(),  # type: ignore[arg-type]
     )
 
-    result = await router.invoke(
-        "session_copy",
-        {
-            "src_session_id": "session_src",
-            "src_path": "source",
-            "dst_session_id": "session_dst",
-            "dst_path": "destination",
-            "background": background,
-        },
-    )
+    args: dict[str, Any] = {
+        "src_session_id": "session_src",
+        "src_path": "source",
+        "dst_session_id": "session_dst",
+        "dst_path": "destination",
+    }
+    if background is not None:
+        args["background"] = background
+    result = await router.invoke("session_copy", args)
 
     assert result == {"ok": True}
     assert copy_service.calls == [
         (
-            "background" if background else "copy",
+            "copy" if background is False else "background",
             {
                 "src_session_id": "session_src",
                 "src_path": "source",

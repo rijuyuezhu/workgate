@@ -176,7 +176,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     )
     assert "`session_end` ends only that execution context" in mcp.instructions
     assert (
-        "`bash(async_=true)` and background `session_copy` return `job_id`"
+        "`bash(async_=true)` and default `session_copy` return `job_id`"
         in mcp.instructions
     )
     assert "`bash(pty=true)` returns a `shell_id`" in mcp.instructions
