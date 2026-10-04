@@ -331,6 +331,7 @@ def test_protocol_error_taxonomy_is_intentionally_small() -> None:
         "session_not_found",
         "executor_offline",
         "executor_incompatible",
+        "executor_reset",
     }
 
 

@@ -41,6 +41,7 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "browser_snapshot",
         "call_agent_mcp_tool",
         "create_file_link",
+        "executor",
         "job",
         "kill_persistent_shell",
         "list_agent_mcp_tools",

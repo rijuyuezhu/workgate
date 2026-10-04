@@ -229,6 +229,8 @@
               <span id="executor-detail-status" class="muted">Select an executor to inspect it</span>
             </div>
             <div class="executor-detail-actions">
+              <button id="executor-reset" type="button" disabled>Reset queued</button>
+              <button id="executor-drain" type="button" disabled>Drain</button>
               <button id="executor-rename-open" type="button" disabled>Rename</button>
               <button id="executor-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
             </div>
@@ -239,6 +241,10 @@
             <div><dt>Runtime owner</dt><dd id="executor-detail-runtime-owner">—</dd></div>
             <div><dt>Compatibility</dt><dd id="executor-detail-compatibility">—</dd></div>
             <div><dt>Platform</dt><dd id="executor-detail-platform">—</dd></div>
+            <div><dt>Session admission</dt><dd id="executor-detail-admission">—</dd></div>
+            <div><dt>Active sessions</dt><dd id="executor-detail-sessions">—</dd></div>
+            <div><dt>Commands</dt><dd id="executor-detail-commands">—</dd></div>
+            <div><dt>Capabilities</dt><dd id="executor-detail-capabilities">—</dd></div>
             <div><dt>Created</dt><dd id="executor-detail-created">—</dd></div>
             <div><dt>Last seen</dt><dd id="executor-detail-last-seen">—</dd></div>
           </dl>

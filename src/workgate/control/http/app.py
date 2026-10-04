@@ -132,8 +132,7 @@ def build_http_app(
     if runtime is not None:
         app.router.routes.extend(
             executor_admin_routes(
-                runtime.control_state,
-                runtime.executor_transport,
+                runtime.executor_fleet,
                 runtime.executor_pairing,
                 api_prefix=UI_API_PREFIX,
             )

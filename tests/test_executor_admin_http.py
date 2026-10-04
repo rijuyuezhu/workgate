@@ -137,20 +137,35 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
 
             listing = client.get("/api/ui/executors", headers=owner_headers)
             assert listing.status_code == 200
-            rows = listing.json()["data"]["executors"]
-            assert rows == [
-                {
-                    "executor_id": executor_id,
-                    "name": "Laptop",
-                    "created_at": rows[0]["created_at"],
-                    "revoked_at": None,
-                    "online": False,
-                    "last_seen_at": None,
-                    "runtime": None,
-                    "required_workgate_version": __version__,
-                    "runtime_update_required": False,
-                }
+            listing_data = listing.json()["data"]
+            rows = listing_data["executors"]
+            assert len(rows) == 1
+            row = rows[0]
+            assert row["executor_id"] == executor_id
+            assert row["name"] == "Laptop"
+            assert row["created_at"] > 0
+            assert row["trusted"] is True
+            assert row["revoked_at"] is None
+            assert row["draining"] is False
+            assert row["online"] is False
+            assert row["last_seen_at"] is None
+            assert row["runtime"] is None
+            assert row["required_workgate_version"] == __version__
+            assert row["runtime_update_required"] is False
+            assert row["capabilities"] == []
+            assert row["active_sessions"] == 0
+            assert row["queued_commands"] == 0
+            assert row["offered_commands"] == 0
+            assert row["command_limit"] > 0
+            assert row["session_admission"] is False
+            assert row["session_admission_reasons"] == [
+                "offline",
+                "inventory_unavailable",
             ]
+            assert (
+                listing_data["bootstrap"]["pairing_approval"]
+                == "human_required"
+            )
             assert credential not in listing.text
             assert "credential_verifier" not in listing.text
 
@@ -188,6 +203,33 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             assert renamed.status_code == 200
             assert renamed.json()["data"]["name"] == "Desk laptop"
 
+            drained = client.post(
+                "/api/ui/executors/drain",
+                headers=owner_headers,
+                json={"executor_id": executor_id},
+            )
+            assert drained.status_code == 200
+            drained_data = drained.json()["data"]
+            assert drained_data["draining"] is True
+            assert drained_data["session_admission"] is False
+            assert "draining" in drained_data["session_admission_reasons"]
+
+            resumed = client.post(
+                "/api/ui/executors/resume",
+                headers=owner_headers,
+                json={"executor_id": executor_id},
+            )
+            assert resumed.status_code == 200
+            assert resumed.json()["data"]["draining"] is False
+
+            reset = client.post(
+                "/api/ui/executors/reset",
+                headers=owner_headers,
+                json={"executor_id": executor_id},
+            )
+            assert reset.status_code == 200
+            assert reset.json()["data"]["cancelled_queued"] == 0
+
             revoked = client.post(
                 "/api/ui/executors/revoke",
                 headers=owner_headers,
@@ -203,5 +245,57 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
                 headers={"Authorization": f"Bearer {credential}"},
             )
             assert rejected.status_code == 403
+    finally:
+        clear_settings_cache()
+
+
+def test_owner_executor_admin_rejects_invalid_requests(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    settings = get_settings()
+    runtime = build_control_runtime(settings)
+    app = build_http_app(runtime=runtime)
+
+    try:
+        with TestClient(
+            app,
+            base_url="https://control.test",
+            client=("127.0.0.1", 50000),
+        ) as client:
+            owner_headers = {
+                UI_LOCAL_TOKEN_HEADER: get_or_create_ui_local_token()
+            }
+
+            missing_code = client.get(
+                "/api/ui/pair",
+                headers=owner_headers,
+            )
+            assert missing_code.status_code == 400
+            assert missing_code.json()["error"] == "PairingCodeRequired"
+
+            unsupported = client.post(
+                "/api/ui/executors/not-an-action",
+                headers=owner_headers,
+                json={"executor_id": "missing"},
+            )
+            assert unsupported.status_code == 400
+            assert unsupported.json()["error"] == "UnsupportedExecutorAction"
+
+            unknown = client.post(
+                "/api/ui/executors/reset",
+                headers=owner_headers,
+                json={"executor_id": "missing"},
+            )
+            assert unknown.status_code == 404
+            assert unknown.json()["error"] == "ExecutorNotFound"
+
+            malformed = client.post(
+                "/api/ui/executors/rename",
+                headers=owner_headers,
+                json={"executor_id": "missing", "name": ""},
+            )
+            assert malformed.status_code == 400
+            assert malformed.json()["error"] == "InvalidExecutorMutation"
     finally:
         clear_settings_cache()

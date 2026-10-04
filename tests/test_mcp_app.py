@@ -55,13 +55,21 @@ class _EmptyCatalog:
 
 def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
     config = resolve_control_config(settings)
+    state_store = FileStateStore(lambda: config.state_dir)
+    control_state = object()
+    executor_transport = object()
+    executor_pairing = object()
+    session_coordinator = object()
+    executor_fleet = SimpleNamespace()
     return SimpleNamespace(
         config=config,
-        state_store=FileStateStore(lambda: config.state_dir),
+        state_store=state_store,
         tool_catalog=tool_catalog,
-        control_state=object(),
-        executor_transport=object(),
-        executor_pairing=object(),
+        control_state=control_state,
+        executor_transport=executor_transport,
+        executor_pairing=executor_pairing,
+        executor_fleet=executor_fleet,
+        session_coordinator=session_coordinator,
         stream_hub=object(),
     )
 
@@ -260,7 +268,7 @@ def test_mcp_executor_admin_routes_require_auth_and_ui_csrf(tmp_path):
 
     binding_token = "b" * 43
     session_token, _csrf_token, _max_age = issue_ui_session(
-        {"sub": "owner", "scope": "remote:use"},
+        {"sub": "owner", "scope": "executor:use"},
         binding_token,
         base_url,
     )

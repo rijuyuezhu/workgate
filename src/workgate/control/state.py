@@ -36,6 +36,7 @@ class ExecutorTrustRecord(BaseModel):
     credential_verifier: ExecutorCredentialVerifier
     created_at: Timestamp
     revoked_at: Timestamp | None = None
+    draining: bool = False
 
     @model_validator(mode="after")
     def validate_revocation_time(self) -> ExecutorTrustRecord:
@@ -134,6 +135,24 @@ class ControlState:
             if current is None:
                 raise KeyError(executor_id)
             updated = current.model_copy(update={"revoked_at": revoked_at})
+            validated = ExecutorTrustRecord.model_validate(updated.model_dump())
+            candidate = {**self._executors, executor_id: validated}
+            self._write_executors(candidate)
+            self._executors = candidate
+            return validated
+
+    def set_executor_draining(
+        self, executor_id: str, *, draining: bool
+    ) -> ExecutorTrustRecord:
+        """Persist executor session-admission drain state without changing trust."""
+        with self._lock:
+            self._require_started()
+            current = self._executors.get(executor_id)
+            if current is None:
+                raise KeyError(executor_id)
+            if current.revoked_at is not None:
+                raise ValueError(f"executor {executor_id!r} is revoked")
+            updated = current.model_copy(update={"draining": draining})
             validated = ExecutorTrustRecord.model_validate(updated.model_dump())
             candidate = {**self._executors, executor_id: validated}
             self._write_executors(candidate)

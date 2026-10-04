@@ -5,6 +5,7 @@ from ..tools.catalog import ToolCatalog, build_tool_catalog
 from .agent_bridge import ControlAgentBridgeService
 from .audit import ControlAuditService
 from .downloads import ControlDownloadService
+from .executors import ControlExecutorFleetService
 from .jobs import ControlJobService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
@@ -18,6 +19,7 @@ def build_control_tool_catalog(
     session_copy: ControlSessionCopyService,
     jobs: ControlJobService,
     downloads: ControlDownloadService,
+    executors: ControlExecutorFleetService,
     tasks: ControlTaskService,
     audit: ControlAuditService,
 ) -> ToolCatalog:
@@ -28,6 +30,7 @@ def build_control_tool_catalog(
         session_copy,
         jobs,
         downloads,
+        executors,
         tasks,
         audit,
         ControlAgentBridgeService(settings, sessions),

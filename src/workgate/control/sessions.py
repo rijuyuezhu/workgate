@@ -27,7 +27,7 @@ from .executor_transport import (
     ExecutorTransportError,
     abandoned_command_was_offered,
 )
-from .state import ControlSessionRecord, ControlState
+from .state import ControlSessionRecord, ControlState, ExecutorTrustRecord
 
 _CREATE_ABSENT = "session_create_absent"
 _CREATE_UNCONFIRMED = "session_create_unconfirmed"
@@ -102,34 +102,84 @@ class ControlSessionCoordinator:
         self._activity_by_session.clear()
         self._locks.clear()
 
+    async def executor_session_eligibility(
+        self, executor_id: str
+    ) -> tuple[bool, tuple[str, ...]]:
+        """Explain whether one executor may admit a new execution session."""
+        record = self._state.snapshot_executors().get(executor_id)
+        if record is None:
+            return (False, ("unknown",))
+        reasons: list[str] = []
+        if record.revoked_at is not None:
+            reasons.append("revoked")
+        if record.draining:
+            reasons.append("draining")
+        if not await self._transport.is_online(executor_id):
+            reasons.append("offline")
+        queued, offered, command_limit = await self._transport.command_status(
+            executor_id
+        )
+        if queued + offered >= command_limit:
+            reasons.append("command_capacity_full")
+        hello = await self._transport.inventory(executor_id)
+        if hello is None:
+            reasons.append("inventory_unavailable")
+        else:
+            if hello.runtime.workgate_version != __version__:
+                reasons.append("runtime_update_required")
+            if EXECUTOR_CAPABILITY_SESSIONS not in hello.capabilities:
+                reasons.append("sessions_unsupported")
+        return (not reasons, tuple(reasons))
+
+    def executor_active_session_count(self, executor_id: str) -> int:
+        """Return creating or active execution sessions bound to one executor."""
+        return sum(
+            record.status in {"creating", "active"}
+            and str(record.executor_id) == executor_id
+            for record in self._state.snapshot_sessions().values()
+        )
+
+    def session_capacity(self) -> tuple[int, int | None, bool]:
+        """Return current global non-ended session usage and admission capacity."""
+        current = self._nonended_session_count()
+        maximum = self._max_agent_sessions
+        available = maximum is None or current < maximum
+        return (current, maximum, available)
+
+    async def set_executor_draining(
+        self, executor_id: str, *, draining: bool
+    ) -> ExecutorTrustRecord:
+        """Linearize durable drain state with new-session admission."""
+        async with self._capacity_lock:
+            return self._state.set_executor_draining(
+                executor_id, draining=draining
+            )
+
     async def select_executor(self, executor_id: str | None = None) -> str:
-        """Choose only an online, trusted, protocol-compatible session executor."""
+        """Choose only one executor currently eligible for new sessions."""
+        if executor_id is not None:
+            eligible, reasons = await self.executor_session_eligibility(
+                executor_id
+            )
+            if eligible:
+                return executor_id
+            detail = ", ".join(reasons) if reasons else "not eligible"
+            raise RuntimeError(
+                f"executor {executor_id!r} is not currently eligible for sessions: {detail}"
+            )
+
         candidates: list[str] = []
         for record in self._state.snapshot_executors().values():
             candidate = str(record.executor_id)
-            if record.revoked_at is not None:
-                continue
-            if executor_id is not None and candidate != executor_id:
-                continue
-            if not await self._transport.is_online(candidate):
-                continue
-            hello = await self._transport.inventory(candidate)
-            if (
-                hello is None
-                or hello.runtime.workgate_version != __version__
-                or EXECUTOR_CAPABILITY_SESSIONS not in hello.capabilities
-            ):
-                continue
-            candidates.append(candidate)
-        if executor_id is not None:
-            if candidates == [executor_id]:
-                return executor_id
-            raise RuntimeError(
-                f"executor {executor_id!r} is not currently eligible for sessions"
+            eligible, _reasons = await self.executor_session_eligibility(
+                candidate
             )
+            if eligible:
+                candidates.append(candidate)
         if len(candidates) != 1:
             raise RuntimeError(
-                "session_start requires exactly one eligible executor or an explicit executor_id"
+                "session_start requires exactly one eligible executor or an explicit "
+                "executor_id"
             )
         return candidates[0]
 
@@ -141,11 +191,11 @@ class ControlSessionCoordinator:
         executor_id: str | None = None,
         task_id: str | None = None,
     ) -> JsonValue:
-        selected = await self.select_executor(executor_id)
         session_id = str(new_session_id())
         async with self._capacity_lock:
             await self._reap_for_capacity()
             self._require_capacity()
+            selected = await self.select_executor(executor_id)
             now = self._clock()
             record = ControlSessionRecord(
                 session_id=session_id,

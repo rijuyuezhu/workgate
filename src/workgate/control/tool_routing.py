@@ -12,6 +12,7 @@ from ..tools.machine import MACHINE_TOOL_NAMES
 from .agent_bridge import ControlAgentBridgeService
 from .audit import ControlAuditService
 from .downloads import ControlDownloadService
+from .executors import ControlExecutorFleetService
 from .jobs import ControlJobService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
@@ -21,6 +22,7 @@ _MACHINE_TOOL_NAMES = MACHINE_TOOL_NAMES
 _SESSION_CONTROL_TOOLS = frozenset(
     {"session_start", "session_change_workdir", "session_end", "session_copy"}
 )
+_EXECUTOR_CONTROL_TOOLS = frozenset({"executor"})
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
     {"create_file_link", "list_file_links", "revoke_file_link"}
 )
@@ -42,6 +44,7 @@ class ControlToolRouter:
         session_copy: ControlSessionCopyService,
         jobs: ControlJobService,
         downloads: ControlDownloadService,
+        executors: ControlExecutorFleetService,
         tasks: ControlTaskService,
         audit: ControlAuditService,
         agent_bridge: ControlAgentBridgeService,
@@ -50,11 +53,22 @@ class ControlToolRouter:
         self._session_copy = session_copy
         self._jobs = jobs
         self._downloads = downloads
+        self._executors = executors
         self._tasks = tasks
         self._audit = audit
         self._agent_bridge = agent_bridge
 
     async def invoke(self, tool_name: str, args: dict[str, Any]) -> Any:
+        if tool_name == "executor":
+            return await self._executors.execute(
+                action=str(args.get("action", "list")),
+                executor_id=(
+                    None
+                    if args.get("executor_id") is None
+                    else str(args["executor_id"])
+                ),
+                name=None if args.get("name") is None else str(args["name"]),
+            )
         if tool_name == "session_start":
             task_id = args.get("task_id")
             return await self._sessions.start_session(
@@ -237,6 +251,7 @@ def route_control_registry(
         return registry
     route_names = (
         _MACHINE_TOOL_NAMES
+        | _EXECUTOR_CONTROL_TOOLS
         | _SESSION_CONTROL_TOOLS
         | _DOWNLOAD_CONTROL_TOOLS
         | _TASK_CONTROL_TOOLS
@@ -268,6 +283,7 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
     def _route(self, tool: ToolDefinition) -> ToolDefinition:
         if tool.name not in (
             _MACHINE_TOOL_NAMES
+            | _EXECUTOR_CONTROL_TOOLS
             | _SESSION_CONTROL_TOOLS
             | _DOWNLOAD_CONTROL_TOOLS
             | _TASK_CONTROL_TOOLS

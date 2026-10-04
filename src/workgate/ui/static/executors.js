@@ -34,8 +34,11 @@ export function createExecutorsController({
     elements.executorPairOpen.disabled = state.loading;
     const selected = selectedExecutor();
     const mutable = selected && !selected.revoked_at;
+    elements.executorReset.disabled = state.loading || !mutable;
+    elements.executorDrain.disabled = state.loading || !mutable;
     elements.executorRenameOpen.disabled = state.loading || !mutable;
     elements.executorRevokeOpen.disabled = state.loading || !mutable;
+    elements.executorDrain.textContent = selected?.draining ? "Resume" : "Drain";
   }
 
   function renderList() {
@@ -74,9 +77,11 @@ export function createExecutorsController({
       meta.className = "executor-row-meta";
       meta.textContent = executor.revoked_at
         ? "revoked"
-        : executor.online
-          ? "online"
-          : "offline";
+        : executor.draining
+          ? "draining"
+          : executor.online
+            ? "online"
+            : "offline";
       main.append(name, meta);
 
       const version = document.createElement("span");
@@ -102,6 +107,10 @@ export function createExecutorsController({
       elements.executorDetailRuntimeOwner.textContent = "—";
       elements.executorDetailCompatibility.textContent = "—";
       elements.executorDetailPlatform.textContent = "—";
+      elements.executorDetailAdmission.textContent = "—";
+      elements.executorDetailSessions.textContent = "—";
+      elements.executorDetailCommands.textContent = "—";
+      elements.executorDetailCapabilities.textContent = "—";
       elements.executorDetailCreated.textContent = "—";
       elements.executorDetailLastSeen.textContent = "—";
       setControls();
@@ -109,9 +118,11 @@ export function createExecutorsController({
     }
     const status = executor.revoked_at
       ? "revoked"
-      : executor.online
-        ? "online"
-        : "offline";
+      : executor.draining
+        ? "draining"
+        : executor.online
+          ? "online"
+          : "offline";
     elements.executorDetailName.textContent = executor.name || executor.executor_id;
     elements.executorDetailStatus.textContent = status;
     elements.executorDetailId.textContent = executor.executor_id;
@@ -123,6 +134,14 @@ export function createExecutorsController({
         ? "Update required · " + executor.required_workgate_version
         : "Compatible";
     elements.executorDetailPlatform.textContent = executor.runtime?.platform || "Not reported";
+    elements.executorDetailAdmission.textContent = executor.session_admission
+      ? "Eligible"
+      : (executor.session_admission_reasons || []).join(", ") || "Not eligible";
+    elements.executorDetailSessions.textContent = String(executor.active_sessions || 0);
+    elements.executorDetailCommands.textContent =
+      String(executor.queued_commands || 0) + " queued · " + String(executor.offered_commands || 0) + " offered · " + String(executor.command_limit || 0) + " max";
+    elements.executorDetailCapabilities.textContent =
+      (executor.capabilities || []).join(", ") || "None reported";
     elements.executorDetailCreated.textContent = timestamp(executor.created_at, "Unknown");
     elements.executorDetailLastSeen.textContent = timestamp(executor.last_seen_at);
     setControls();
@@ -295,6 +314,31 @@ export function createExecutorsController({
     });
     elements.executorPairDeny.addEventListener("click", () => {
       void pairDecision("deny").catch((error) => {
+        if (error.authenticationRequired) void reloadApp();
+        else elements.executorState.textContent = error instanceof Error ? error.message : String(error);
+      });
+    });
+    async function executorAction(action) {
+      const executor = selectedExecutor();
+      if (!executor || executor.revoked_at) return;
+      await request("/executors/" + action, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ executor_id: executor.executor_id }),
+      });
+      await refresh({ force: true });
+    }
+    elements.executorReset.addEventListener("click", () => {
+      void executorAction("reset").catch((error) => {
+        if (error.authenticationRequired) void reloadApp();
+        else elements.executorState.textContent = error instanceof Error ? error.message : String(error);
+      });
+    });
+    elements.executorDrain.addEventListener("click", () => {
+      const executor = selectedExecutor();
+      if (!executor || executor.revoked_at) return;
+      const action = executor.draining ? "resume" : "drain";
+      void executorAction(action).catch((error) => {
         if (error.authenticationRequired) void reloadApp();
         else elements.executorState.textContent = error instanceof Error ? error.message : String(error);
       });

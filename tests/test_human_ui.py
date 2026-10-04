@@ -197,6 +197,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "export function createExecutorsController" in executors_script.text
     assert "executorDetailRuntimeOwner" in executors_script.text
     assert "executorDetailCompatibility" in executors_script.text
+    assert "executorDetailAdmission" in executors_script.text
+    assert 'executorAction("reset")' in executors_script.text
+    assert '"resume" : "drain"' in executors_script.text
     audit_view_script = client.get("/ui/assets/audit_view.js")
     assert audit_view_script.status_code == 200
     assert audit_view_script.headers["x-content-type-options"] == "nosniff"
@@ -445,7 +448,7 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
         "resource": f"{base_url}/mcp",
         "scope": (
             "shell:read shell:write shell:execute git:write "
-            "file:share remote:use browser:use audit:read audit:full"
+            "file:share executor:use browser:use audit:read audit:full"
         ),
         "registrationEndpoint": "/oauth/register",
         "authorizationEndpoint": "/oauth/authorize",

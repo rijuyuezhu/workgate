@@ -15,6 +15,7 @@ EXPECTED_BUILTIN_REGISTRIES = (
     "audit",
     "browser",
     "downloads",
+    "executor",
     "files",
     "image",
     "jobs",

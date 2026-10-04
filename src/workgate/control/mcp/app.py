@@ -176,8 +176,7 @@ def _add_public_routes_to_mcp_http_app(
     ui_routes, ui_public_routes = human_ui_routes(active_settings)
     executor_admin = (
         executor_admin_routes(
-            runtime.control_state,
-            runtime.executor_transport,
+            runtime.executor_fleet,
             runtime.executor_pairing,
             api_prefix=UI_API_PREFIX,
         )

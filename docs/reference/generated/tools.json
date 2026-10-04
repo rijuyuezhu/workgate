@@ -1,11 +1,11 @@
 {
-  "count": 49,
+  "count": 50,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "49"
+          "code": "50"
         },
         "."
       ],
@@ -578,6 +578,49 @@
             ]
           },
           "Revoke a public file link by its non-secret management id."
+        ]
+      ]
+    },
+    {
+      "body": "Register the compact executor fleet control surface.",
+      "headers": [
+        "Tool",
+        "Parameters",
+        "Description"
+      ],
+      "heading": "Executor",
+      "kind": "table",
+      "rows": [
+        [
+          {
+            "code": "executor"
+          },
+          {
+            "items": [
+              {
+                "description": "Executor fleet discovery or administration action.",
+                "head": {
+                  "code": "action"
+                },
+                "note": "(list / inspect / rename / reset / drain / resume / revoke / bootstrap, optional)"
+              },
+              {
+                "description": "Executor id required by executor-specific actions.",
+                "head": {
+                  "code": "executor_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "New executor display name for action='rename'.",
+                "head": {
+                  "code": "name"
+                },
+                "note": "(string / null, optional)"
+              }
+            ]
+          },
+          "Discover executor choices or perform bounded fleet administration."
         ]
       ]
     },
@@ -2052,7 +2095,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"
@@ -2145,7 +2188,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"
@@ -4022,7 +4065,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"
@@ -4509,6 +4552,406 @@
           "context"
         ],
         "title": "EditLinesOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Discover executor choices or perform bounded fleet administration.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "default": "list",
+            "description": "Executor fleet discovery or administration action.",
+            "enum": [
+              "list",
+              "inspect",
+              "rename",
+              "reset",
+              "drain",
+              "resume",
+              "revoke",
+              "bootstrap"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "executor_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Executor id required by executor-specific actions.",
+            "title": "Executor Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "New executor display name for action='rename'.",
+            "title": "Name"
+          }
+        },
+        "title": "executorArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "executor:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "executor",
+      "outputSchema": {
+        "$defs": {
+          "ExecutorBootstrapRecipe": {
+            "description": "Standard provider-neutral enrollment path.",
+            "properties": {
+              "command": {
+                "title": "Command",
+                "type": "string"
+              },
+              "pairing_approval": {
+                "const": "human_required",
+                "default": "human_required",
+                "title": "Pairing Approval",
+                "type": "string"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "command"
+            ],
+            "title": "ExecutorBootstrapRecipe",
+            "type": "object"
+          },
+          "ExecutorFleetEntry": {
+            "description": "One compact executor discovery row.",
+            "properties": {
+              "active_sessions": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Active Sessions",
+                "type": "integer"
+              },
+              "capabilities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capabilities",
+                "type": "array"
+              },
+              "command_limit": {
+                "minimum": 1,
+                "title": "Command Limit",
+                "type": "integer"
+              },
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "draining": {
+                "default": false,
+                "title": "Draining",
+                "type": "boolean"
+              },
+              "executor_id": {
+                "title": "Executor Id",
+                "type": "string"
+              },
+              "last_seen_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Seen At"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "offered_commands": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Offered Commands",
+                "type": "integer"
+              },
+              "online": {
+                "title": "Online",
+                "type": "boolean"
+              },
+              "queued_commands": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Queued Commands",
+                "type": "integer"
+              },
+              "required_workgate_version": {
+                "title": "Required Workgate Version",
+                "type": "string"
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revoked At"
+              },
+              "runtime": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ExecutorRuntimeSummary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "runtime_update_required": {
+                "title": "Runtime Update Required",
+                "type": "boolean"
+              },
+              "session_admission": {
+                "title": "Session Admission",
+                "type": "boolean"
+              },
+              "session_admission_reasons": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Session Admission Reasons",
+                "type": "array"
+              },
+              "trusted": {
+                "title": "Trusted",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "executor_id",
+              "name",
+              "created_at",
+              "trusted",
+              "online",
+              "required_workgate_version",
+              "runtime_update_required",
+              "command_limit",
+              "session_admission"
+            ],
+            "title": "ExecutorFleetEntry",
+            "type": "object"
+          },
+          "ExecutorRuntimeOwnership": {
+            "description": "Who owns replacement authority for this executor runtime.",
+            "enum": [
+              "control-managed",
+              "self-contained",
+              "external-package",
+              "source",
+              "unknown"
+            ],
+            "title": "ExecutorRuntimeOwnership",
+            "type": "string"
+          },
+          "ExecutorRuntimeSummary": {
+            "additionalProperties": false,
+            "description": "Bounded runtime/build metadata reported during hello.",
+            "properties": {
+              "build": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Build"
+              },
+              "ownership": {
+                "$ref": "#/$defs/ExecutorRuntimeOwnership",
+                "default": "unknown"
+              },
+              "platform": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Platform"
+              },
+              "workgate_version": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Workgate Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "workgate_version"
+            ],
+            "title": "ExecutorRuntimeSummary",
+            "type": "object"
+          },
+          "ExecutorSessionCapacity": {
+            "description": "Global execution-session capacity visible to fleet admission.",
+            "properties": {
+              "available": {
+                "title": "Available",
+                "type": "boolean"
+              },
+              "limit": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Limit"
+              },
+              "used": {
+                "minimum": 0,
+                "title": "Used",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "used",
+              "available"
+            ],
+            "title": "ExecutorSessionCapacity",
+            "type": "object"
+          }
+        },
+        "description": "Compact result for executor discovery/admin actions.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "bootstrap": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ExecutorBootstrapRecipe"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cancelled_queued": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cancelled Queued"
+          },
+          "executor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ExecutorFleetEntry"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "executors": {
+            "items": {
+              "$ref": "#/$defs/ExecutorFleetEntry"
+            },
+            "title": "Executors",
+            "type": "array"
+          },
+          "preserved_offered": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preserved Offered"
+          },
+          "session_capacity": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ExecutorSessionCapacity"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ExecutorFleetOutput",
         "type": "object"
       }
     },
@@ -5601,7 +6044,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"
@@ -5667,7 +6110,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"
@@ -5728,7 +6171,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"
@@ -6631,7 +7074,7 @@
               "shell:execute",
               "git:write",
               "file:share",
-              "remote:use",
+              "executor:use",
               "browser:use",
               "audit:read",
               "audit:full"

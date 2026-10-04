@@ -21,6 +21,7 @@ class ProtocolErrorCode(StrEnum):
     SESSION_NOT_FOUND = "session_not_found"
     EXECUTOR_OFFLINE = "executor_offline"
     EXECUTOR_INCOMPATIBLE = "executor_incompatible"
+    EXECUTOR_RESET = "executor_reset"
 
 
 class ProtocolError(BaseModel):

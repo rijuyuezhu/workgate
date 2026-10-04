@@ -94,6 +94,29 @@ reboots or long periods offline do not require pairing again. If the executor
 was revoked or its credential was replaced, run `executor connect` again and
 complete the owner-approved flow.
 
+## Discover and manage executors
+
+Use the `executor` control tool before `session_start` when more than one
+executor is available or when no executor is currently eligible. With no
+explicit action it returns the paired fleet, including online/trust state,
+runtime/update status, capabilities, active sessions, command load, and the
+reasons each executor can or cannot admit a new session.
+
+`executor(action="inspect", executor_id=...)` returns one detailed row. The
+bounded administrative actions are `rename`, `reset`, `drain`, `resume`, and
+`revoke`. Drain blocks new sessions while existing sessions may finish.
+Reset cancels only queued control commands, preserves already-offered work, and
+does not revoke executor identity.
+
+When no executor can take new work because executor capacity/capability is
+unavailable, the result includes the standard persistent bootstrap recipe.
+Pairing still requires the human owner to approve the device code. Workgate
+does not provision cloud machines itself; an external provider can create a
+machine and then run the same bootstrap recipe.
+
+The Human UI **Executors** page exposes the same inventory and owner actions.
+The `executor:use` OAuth scope protects executor discovery and administration.
+
 ## Start work on an executor
 
 When several executors are online, choose the intended one when starting a
@@ -105,9 +128,10 @@ sessions on different executors.
 
 ## Revoke or replace trust
 
-Use **Executors** in the Human UI to revoke a machine. To deliberately replace
-its credential, run `workgate executor connect CONTROL_URL` on that machine
-and approve the replacement.
+Use **Executors** in the Human UI or `executor(action="revoke", ...)` to revoke
+a machine. To deliberately replace its credential, run
+`workgate executor connect CONTROL_URL` on that machine and approve the
+replacement.
 
 For protocol and trust details, see
 [Control/executor architecture](../architecture/control-executor.md) and
