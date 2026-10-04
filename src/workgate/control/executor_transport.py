@@ -470,6 +470,50 @@ class ExecutorTransport:
         async with channel.lock:
             return len(channel.pending)
 
+    async def command_status(self, executor_id: str) -> tuple[int, int, int]:
+        """Return queued, offered, and maximum retained command counts."""
+        channel = self._channels.get(executor_id)
+        if channel is None:
+            return (0, 0, self._max_pending_commands)
+        async with channel.lock:
+            queued = sum(
+                item.state == "queued" for item in channel.pending.values()
+            )
+            offered = sum(
+                item.state == "offered" for item in channel.pending.values()
+            )
+            return (queued, offered, self._max_pending_commands)
+
+    async def reset_queued(self, executor_id: str) -> tuple[int, int]:
+        """Cancel queued commands while preserving already-offered operations."""
+        self._require_running()
+        channel = self._channel(executor_id)
+        async with channel.lock:
+            self._require_target_trusted(executor_id)
+            queued_ids = tuple(
+                command_id
+                for command_id, item in channel.pending.items()
+                if item.state == "queued"
+            )
+            for command_id in queued_ids:
+                pending = channel.pending.pop(command_id, None)
+                if pending is None:
+                    continue
+                with contextlib.suppress(ValueError):
+                    channel.queue.remove(command_id)
+                if not pending.future.done():
+                    pending.future.set_exception(
+                        ExecutorTransportError(
+                            ProtocolErrorCode.EXECUTOR_RESET,
+                            "queued executor command was reset by an owner action",
+                            delivery_state="queued",
+                        )
+                    )
+            offered = sum(
+                item.state == "offered" for item in channel.pending.values()
+            )
+            return (len(queued_ids), offered)
+
     async def inventory(self, executor_id: str) -> ExecutorHelloRequest | None:
         """Return the latest complete process-local reconnect inventory."""
         channel = self._channels.get(executor_id)

@@ -116,7 +116,7 @@ Each active control-managed job acquires an owner-private liveness lease before 
 
 Raw PTY/ConPTY access is equivalent to interactive shell control with the server
 or selected executor account. Browser terminal WebSockets therefore require both
-`shell:read` and `shell:execute`, plus `remote:use` for remote machines; the
+`shell:read` and `shell:execute`, plus `executor:use` when controlling a selected executor; the
 private loopback OpenTUI token is never accepted from a browser. Executor bridges
 use an opaque control-only capability and allowlisted executor RPCs rather than
 exposing an executor credential or direct WebSocket.

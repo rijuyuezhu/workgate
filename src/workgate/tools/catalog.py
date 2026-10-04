@@ -10,6 +10,7 @@ from .registry.agent import AgentBridgeToolRegistry
 from .registry.audit import AuditToolRegistry
 from .registry.browser import BrowserToolRegistry
 from .registry.downloads import DownloadToolRegistry
+from .registry.executor import ExecutorToolRegistry
 from .registry.files import FileToolRegistry
 from .registry.image import ImageToolRegistry
 from .registry.jobs import JobToolRegistry
@@ -33,6 +34,7 @@ BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
     ("audit", AuditToolRegistry),
     ("browser", BrowserToolRegistry),
     ("downloads", DownloadToolRegistry),
+    ("executor", ExecutorToolRegistry),
     ("files", FileToolRegistry),
     ("image", ImageToolRegistry),
     ("jobs", JobToolRegistry),

@@ -96,6 +96,10 @@ class FakeTransport:
     async def inventory(self, executor_id: str):
         return self.hellos.get(executor_id)
 
+    async def command_status(self, executor_id: str) -> tuple[int, int, int]:
+        del executor_id
+        return (0, 0, 64)
+
     async def call(
         self,
         executor_id: str,

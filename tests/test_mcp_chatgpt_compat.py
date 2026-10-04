@@ -71,7 +71,7 @@ def test_oauth_supported_scopes_include_feature_scopes():
         "shell:execute",
         "git:write",
         "file:share",
-        "remote:use",
+        "executor:use",
         "browser:use",
         "audit:read",
         "audit:full",

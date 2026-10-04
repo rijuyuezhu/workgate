@@ -1,6 +1,5 @@
 """Authenticated owner administration for final executors and pairing."""
 
-import time
 from typing import Any
 
 from fastapi import HTTPException
@@ -9,18 +8,16 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
-from ... import __version__
 from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
-from ...oauth.core.scopes import SCOPE_REMOTE_USE
+from ...oauth.core.scopes import SCOPE_EXECUTOR_USE
 from ...protocol.pairing import PairApprovalRequest
-from ..executor_transport import ExecutorTransport
+from ..executors import ControlExecutorFleetService, ExecutorNotFoundError
 from ..pairing import (
     ExecutorPairingError,
     ExecutorPairingService,
     PairingAttemptView,
 )
-from ..state import ControlState, ExecutorTrustRecord
 
 
 class _RenameExecutorBody(BaseModel):
@@ -53,7 +50,7 @@ def _json_error(error: str, message: str, *, status_code: int) -> JSONResponse:
 
 def _require_executor_admin_scope() -> None:
     try:
-        require_oauth_scopes((SCOPE_REMOTE_USE,))
+        require_oauth_scopes((SCOPE_EXECUTOR_USE,))
     except MissingOAuthScopeError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
@@ -75,35 +72,8 @@ def _pairing_view(view: PairingAttemptView) -> dict[str, Any]:
     }
 
 
-async def _executor_row(
-    record: ExecutorTrustRecord, transport: ExecutorTransport
-) -> dict[str, Any]:
-    inventory = await transport.inventory(record.executor_id)
-    runtime_version = (
-        None if inventory is None else inventory.runtime.workgate_version
-    )
-    return {
-        "executor_id": record.executor_id,
-        "name": record.name,
-        "created_at": record.created_at,
-        "revoked_at": record.revoked_at,
-        "online": False
-        if record.revoked_at is not None
-        else await transport.is_online(record.executor_id),
-        "last_seen_at": await transport.last_seen_at(record.executor_id),
-        "runtime": None
-        if inventory is None
-        else inventory.runtime.model_dump(mode="json"),
-        "required_workgate_version": __version__,
-        "runtime_update_required": (
-            runtime_version is not None and runtime_version != __version__
-        ),
-    }
-
-
 def executor_admin_routes(
-    state: ControlState,
-    transport: ExecutorTransport,
+    fleet: ControlExecutorFleetService,
     pairing: ExecutorPairingService,
     *,
     api_prefix: str,
@@ -157,12 +127,20 @@ def executor_admin_routes(
 
     async def executors(_request: Request) -> Response:
         _require_executor_admin_scope()
-        records = sorted(
-            state.snapshot_executors().values(),
-            key=lambda record: (record.name.casefold(), record.executor_id),
+        result = await fleet.list()
+        return _json_ok(
+            {
+                "executors": [
+                    entry.model_dump(mode="json") for entry in result.executors
+                ],
+                "session_capacity": None
+                if result.session_capacity is None
+                else result.session_capacity.model_dump(mode="json"),
+                "bootstrap": None
+                if result.bootstrap is None
+                else result.bootstrap.model_dump(mode="json"),
+            }
         )
-        rows = [await _executor_row(record, transport) for record in records]
-        return _json_ok({"executors": rows})
 
     async def executor_action(request: Request) -> Response:
         _require_executor_admin_scope()
@@ -171,40 +149,47 @@ def executor_admin_routes(
             raw = await request.json()
             if action == "rename":
                 body = _RenameExecutorBody.model_validate(raw)
-                record = await transport.rename_executor(
-                    body.executor_id, name=body.name
-                )
-                audit(
-                    "executor_renamed",
-                    executor_id=record.executor_id,
-                    name=record.name,
+                result = await fleet.execute(
+                    action="rename",
+                    executor_id=body.executor_id,
+                    name=body.name,
                 )
                 return _json_ok(
-                    await _executor_row(record, transport),
+                    None
+                    if result.executor is None
+                    else result.executor.model_dump(mode="json"),
                     "Executor renamed",
                 )
-            if action == "revoke":
+            if action in {"reset", "drain", "resume", "revoke"}:
                 body = _RevokeExecutorBody.model_validate(raw)
-                record = await transport.revoke_executor(
-                    body.executor_id,
-                    revoked_at=time.time(),
+                result = await fleet.execute(
+                    action=action,
+                    executor_id=body.executor_id,
                 )
-                await pairing.clear_executor_delivery(record.executor_id)
-                audit("executor_revoked", executor_id=record.executor_id)
-                return _json_ok(
-                    await _executor_row(record, transport),
-                    "Executor revoked",
+                data = (
+                    {}
+                    if result.executor is None
+                    else result.executor.model_dump(mode="json")
                 )
+                if result.cancelled_queued is not None:
+                    data["cancelled_queued"] = result.cancelled_queued
+                if result.preserved_offered is not None:
+                    data["preserved_offered"] = result.preserved_offered
+                return _json_ok(data, f"Executor {action} complete")
             return _json_error(
                 "UnsupportedExecutorAction",
                 f"Unsupported executor action: {action}",
                 status_code=400,
             )
-        except KeyError:
+        except KeyError, ExecutorNotFoundError:
             return _json_error(
                 "ExecutorNotFound", "Executor does not exist", status_code=404
             )
         except ValidationError as exc:
+            return _json_error(
+                "InvalidExecutorMutation", str(exc), status_code=400
+            )
+        except ValueError as exc:
             return _json_error(
                 "InvalidExecutorMutation", str(exc), status_code=400
             )

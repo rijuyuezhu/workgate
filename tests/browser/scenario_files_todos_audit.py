@@ -518,7 +518,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     full_token = harness.api_token
     assert isinstance(full_token, str) and full_token
-    read_only_token = harness.issue_token("audit:read shell:read remote:use")
+    read_only_token = harness.issue_token("audit:read shell:read executor:use")
     harness.set_token(read_only_token)
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")

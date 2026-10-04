@@ -46,6 +46,7 @@ LOCAL_MCP_TOOL_NAMES = {
     "glob_search",
     "write_file",
     "edit_lines",
+    "executor",
     "hashline_edit",
     "apply_patch",
     "delete_file_or_dir",
@@ -130,6 +131,7 @@ async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
         "workspace_snapshot",
         "workspace_task_control",
         "workspace_end",
+        "executor",
     }
 
 
@@ -144,6 +146,7 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
     identityless_allowlist = {
         "audit_tail",
+        "executor",
         "session_start",
         "task",
         "version",

@@ -14,6 +14,7 @@ from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .audit import ControlAuditService
 from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
+from .executors import ControlExecutorFleetService
 from .jobs import ControlJobService
 from .pairing import ExecutorPairingService
 from .session_copy import ControlSessionCopyService
@@ -38,6 +39,8 @@ class ControlRuntime:
     """Process-local ordinary RPC queues, presence, polls, and result waiters."""
     executor_pairing: ExecutorPairingService
     """Process-local device-code pairing attempts and transient credential delivery."""
+    executor_fleet: ControlExecutorFleetService
+    """Canonical executor discovery/admin composition over trust and live state."""
     session_coordinator: ControlSessionCoordinator
     """Control authority for execution-session lifecycle and executor routing."""
     session_copy_service: ControlSessionCopyService
@@ -179,6 +182,13 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         agent_session_retention_s=config.agent_session_retention_s,
         task_session_admitter=task_service.admit_session_attachment,
     )
+    executor_fleet = ControlExecutorFleetService(
+        control_state,
+        executor_transport,
+        session_coordinator,
+        executor_pairing,
+        config,
+    )
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
         executor_transport,
@@ -237,6 +247,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         control_state=control_state,
         executor_transport=executor_transport,
         executor_pairing=executor_pairing,
+        executor_fleet=executor_fleet,
         session_coordinator=session_coordinator,
         session_copy_service=session_copy_service,
         download_service=download_service,
@@ -253,6 +264,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
             session_copy_service,
             job_service,
             download_service,
+            executor_fleet,
             task_service,
             audit_service,
         ),
