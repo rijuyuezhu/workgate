@@ -289,6 +289,20 @@ def _host_bootstrap_target() -> str:
     pytest.skip("POSIX executor bootstrap is unsupported on this test host")
 
 
+def _persistent_runtime_dir(tmp_path: Path) -> Path:
+    target = _host_bootstrap_target()
+    if target.startswith("macos-"):
+        return (
+            tmp_path
+            / "home"
+            / "Library"
+            / "Application Support"
+            / "workgate"
+            / "executor-bootstrap"
+        )
+    return tmp_path / "data" / "workgate" / "executor-bootstrap"
+
+
 def _fake_release_archive(
     tmp_path: Path,
     target: str,
@@ -403,7 +417,7 @@ def test_bootstrap_script_composes_pairing_and_persistent_service(
         ),
         "executor install-service --default-workdir /srv/work",
     ]
-    runtime = tmp_path / "data" / "workgate" / "executor-bootstrap" / "workgate"
+    runtime = _persistent_runtime_dir(tmp_path) / "workgate"
     assert runtime.is_file()
     assert not (tmp_path.parent / "bootstrap-escape").exists()
 
@@ -411,7 +425,7 @@ def test_bootstrap_script_composes_pairing_and_persistent_service(
 def test_bootstrap_script_rolls_back_runtime_when_service_install_fails(
     tmp_path: Path,
 ) -> None:
-    runtime_dir = tmp_path / "data" / "workgate" / "executor-bootstrap"
+    runtime_dir = _persistent_runtime_dir(tmp_path)
     runtime_dir.mkdir(parents=True)
     runtime = runtime_dir / "workgate"
     runtime.write_text("old-runtime")
@@ -441,4 +455,4 @@ def test_nonpersistent_bootstrap_runs_foreground_without_installing(
         ),
         "executor run --default-workdir /srv/work",
     ]
-    assert not (tmp_path / "data" / "workgate").exists()
+    assert not _persistent_runtime_dir(tmp_path).exists()
