@@ -120,6 +120,14 @@ After pairing, executor requests authenticate with the long-lived bearer. The
 bearer determines `executor_id`; ordinary request bodies do not repeat it merely
 for authentication.
 
+Protocol v1 currently admits machine work only when the executor's Workgate
+version exactly matches control. Hello still publishes inventory and returns the
+required version so skew is diagnosable, but control immediately rejects queued
+or new work while allowing already-offered commands to submit their results.
+A bootstrap-managed service may move either forward or backward to the exact
+control release through the verified bootstrap artifact path. Package-managed
+and source runtimes remain externally owned and must be updated by their owner.
+
 ### Hello inventory and presence
 
 Hello carries a **complete** thin inventory by contract:

@@ -20,6 +20,7 @@ class ProtocolErrorCode(StrEnum):
     OPERATION_UNSUPPORTED = "operation_unsupported"
     SESSION_NOT_FOUND = "session_not_found"
     EXECUTOR_OFFLINE = "executor_offline"
+    EXECUTOR_INCOMPATIBLE = "executor_incompatible"
 
 
 class ProtocolError(BaseModel):

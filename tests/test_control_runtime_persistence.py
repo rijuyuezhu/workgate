@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from workgate import __version__
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings
 from workgate.control.executor_transport import ExecutorTransportClosedError
@@ -89,7 +90,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
     await first.executor_transport.hello(
         credential,
         ExecutorHelloRequest(
-            runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            runtime=ExecutorRuntimeSummary(workgate_version=__version__),
             default_workdir="/workspace",
             sessions=(),
             shells=(),
@@ -126,7 +127,7 @@ async def test_control_runtime_restores_only_durable_product_facts(
         assert await second.executor_transport.inventory(executor_id) is None
 
         reconnect = ExecutorHelloRequest(
-            runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            runtime=ExecutorRuntimeSummary(workgate_version=__version__),
             default_workdir="/workspace",
             capabilities=("session",),
             sessions=(
@@ -240,7 +241,7 @@ async def test_control_backup_copy_restores_trust_session_and_oauth_secret(
         )
 
         hello = ExecutorHelloRequest(
-            runtime=ExecutorRuntimeSummary(workgate_version="test"),
+            runtime=ExecutorRuntimeSummary(workgate_version=__version__),
             default_workdir="/workspace",
             sessions=(
                 SessionInventorySummary(
@@ -269,7 +270,7 @@ async def test_executor_trust_survives_seven_day_control_shutdown(
     executor_id = new_executor_id()
     credential = new_executor_credential()
     hello = ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         default_workdir="/workspace",
         sessions=(),
         shells=(),
@@ -393,7 +394,7 @@ async def test_authenticated_hello_does_not_wait_for_post_hello_executor_rpc(
         reconcile_abandonments,
     )
     hello = ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         default_workdir="/workspace",
         sessions=(),
         shells=(),

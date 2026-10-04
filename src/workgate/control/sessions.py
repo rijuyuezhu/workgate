@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import JsonValue
 
+from .. import __version__
 from ..errors import BrowserUnavailableError, exception_from_tool_error
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
@@ -115,6 +116,7 @@ class ControlSessionCoordinator:
             hello = await self._transport.inventory(candidate)
             if (
                 hello is None
+                or hello.runtime.workgate_version != __version__
                 or EXECUTOR_CAPABILITY_SESSIONS not in hello.capabilities
             ):
                 continue

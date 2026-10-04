@@ -5,6 +5,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from workgate import __version__
 from workgate.config.settings import Settings
 from workgate.control.executor_transport import ExecutorTransport
 from workgate.control.http.app import build_http_app
@@ -52,7 +53,7 @@ def _transport(tmp_path: Path) -> tuple[ExecutorTransport, str, str]:
 
 def _hello_payload() -> dict[str, object]:
     return ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         default_workdir="/workspace",
         sessions=(),
         shells=(),
@@ -82,6 +83,8 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
         "heartbeat_interval_s": 10,
         "offline_after_s": 30,
         "poll_timeout_s": 1,
+        "required_workgate_version": __version__,
+        "runtime_update_required": False,
     }
     assert (
         client.post("/executor/v1/heartbeat", headers=headers).status_code

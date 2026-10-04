@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from workgate import __version__
 from workgate.protocol.credentials import (
     executor_credential_is_trusted,
     executor_credential_verifier,
@@ -241,6 +242,8 @@ def test_hello_timing_requires_offline_threshold_after_heartbeat() -> None:
         heartbeat_interval_s=15,
         offline_after_s=60,
         poll_timeout_s=30,
+        required_workgate_version=__version__,
+        runtime_update_required=False,
     )
 
     with pytest.raises(ValidationError):
@@ -248,6 +251,8 @@ def test_hello_timing_requires_offline_threshold_after_heartbeat() -> None:
             heartbeat_interval_s=30,
             offline_after_s=30,
             poll_timeout_s=30,
+            required_workgate_version=__version__,
+            runtime_update_required=False,
         )
 
 
@@ -325,6 +330,7 @@ def test_protocol_error_taxonomy_is_intentionally_small() -> None:
         "operation_unsupported",
         "session_not_found",
         "executor_offline",
+        "executor_incompatible",
     }
 
 

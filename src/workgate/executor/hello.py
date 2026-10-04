@@ -8,6 +8,7 @@ from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
+    ExecutorRuntimeOwnership,
     ExecutorRuntimeSummary,
     JobInventorySummary,
     SessionInventorySummary,
@@ -23,12 +24,14 @@ def build_executor_hello(
     sessions: tuple[SessionInventorySummary, ...] = (),
     shells: tuple[ShellInventorySummary, ...] = (),
     jobs: tuple[JobInventorySummary, ...] = (),
+    runtime_ownership: ExecutorRuntimeOwnership = ExecutorRuntimeOwnership.UNKNOWN,
 ) -> ExecutorHelloRequest:
     """Return one complete inventory of executor-owned resources."""
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(
             workgate_version=__version__,
             platform=platform.system()[:128] or None,
+            ownership=runtime_ownership,
         ),
         capabilities=(
             EXECUTOR_CAPABILITY_SESSIONS,

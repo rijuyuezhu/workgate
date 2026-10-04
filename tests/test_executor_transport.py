@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from workgate import __version__
 from workgate.control.executor_transport import (
     ExecutorTransport,
     ExecutorTransportClosedError,
@@ -36,7 +37,7 @@ class _Clock:
 
 def _hello() -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=("shell",),
         default_workdir="/workspace",
         sessions=(),
@@ -108,6 +109,77 @@ async def test_hello_heartbeat_and_presence_are_process_local(
     assert await transport.is_online(executor_id)
     clock.value += 2
     assert not await transport.is_online(executor_id)
+
+
+@pytest.mark.asyncio
+async def test_version_mismatch_is_visible_and_fences_new_work(
+    tmp_path: Path,
+) -> None:
+    transport, _, executor_id, credential = _running_transport(tmp_path)
+    mismatched = _hello().model_copy(
+        update={"runtime": ExecutorRuntimeSummary(workgate_version="0.0.0")}
+    )
+
+    policy = await transport.hello(credential, mismatched)
+
+    assert policy.required_workgate_version == __version__
+    assert policy.runtime_update_required is True
+    assert await transport.is_online(executor_id)
+    assert await transport.inventory(executor_id) == mismatched
+
+    with pytest.raises(ExecutorTransportError) as call_error:
+        await transport.call(executor_id, "shell.run", {"command": "true"})
+    assert (
+        call_error.value.error.code is ProtocolErrorCode.EXECUTOR_INCOMPATIBLE
+    )
+
+    with pytest.raises(ExecutorTransportError) as poll_error:
+        await transport.poll(credential)
+    assert (
+        poll_error.value.error.code is ProtocolErrorCode.EXECUTOR_INCOMPATIBLE
+    )
+
+
+@pytest.mark.asyncio
+async def test_version_mismatch_fails_queued_work_but_keeps_offered_result_path(
+    tmp_path: Path,
+) -> None:
+    transport, _, executor_id, credential = _running_transport(tmp_path)
+    await transport.hello(credential, _hello())
+
+    queued = asyncio.create_task(
+        transport.call(executor_id, "shell.run", {"command": "queued"})
+    )
+    await asyncio.sleep(0)
+    assert await transport.pending_count(executor_id) == 1
+
+    mismatched = _hello().model_copy(
+        update={"runtime": ExecutorRuntimeSummary(workgate_version="0.0.0")}
+    )
+    await transport.hello(credential, mismatched)
+
+    with pytest.raises(ExecutorTransportError) as queued_error:
+        await queued
+    assert (
+        queued_error.value.error.code is ProtocolErrorCode.EXECUTOR_INCOMPATIBLE
+    )
+    assert queued_error.value.delivery_state == "queued"
+    assert await transport.pending_count(executor_id) == 0
+
+    await transport.hello(credential, _hello())
+    offered_call = asyncio.create_task(
+        transport.call(executor_id, "shell.run", {"command": "offered"})
+    )
+    await asyncio.sleep(0)
+    command = await transport.poll(credential)
+    assert command is not None
+
+    await transport.hello(credential, mismatched)
+    result = ExecutorResult(id=command.id, ok=True, result={"done": True})
+    await transport.submit_result(credential, result)
+
+    assert await offered_call == result
+    assert await transport.pending_count(executor_id) == 0
 
 
 @pytest.mark.asyncio

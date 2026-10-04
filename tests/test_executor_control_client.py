@@ -3,6 +3,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
+from workgate import __version__
 from workgate.executor.control_client import (
     ExecutorControlClient,
     ExecutorControlError,
@@ -33,7 +34,7 @@ def _profile() -> ExecutorProfile:
 
 def _hello() -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         default_workdir="/workspace",
         sessions=(),
         shells=(),
@@ -108,6 +109,8 @@ async def test_executor_control_client_uses_v2_paths_and_persisted_bearer() -> (
                     "heartbeat_interval_s": 10,
                     "offline_after_s": 30,
                     "poll_timeout_s": 25,
+                    "required_workgate_version": __version__,
+                    "runtime_update_required": False,
                 },
             )
         if request.url.path == EXECUTOR_POLL_PATH:

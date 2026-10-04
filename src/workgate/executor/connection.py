@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import random
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from typing import Any, Protocol
 
 from pydantic import JsonValue, TypeAdapter
@@ -55,6 +56,19 @@ type HelloFactory = Callable[
     [], ExecutorHelloRequest | Awaitable[ExecutorHelloRequest]
 ]
 type Sleep = Callable[[float], Awaitable[None]]
+
+
+class RuntimePolicyAction(StrEnum):
+    """Connection action selected after control runtime policy is known."""
+
+    CONTINUE = "continue"
+    RESTART = "restart"
+    BLOCK = "block"
+
+
+type RuntimePolicyHandler = Callable[
+    [ExecutorHelloResponse], Awaitable[RuntimePolicyAction]
+]
 type _CommandOrderKey = tuple[str, str]
 
 
@@ -141,6 +155,7 @@ class ExecutorConnection:
         hello_factory: HelloFactory,
         execute: CommandExecutor,
         max_concurrent_commands: int,
+        runtime_policy_handler: RuntimePolicyHandler | None = None,
         sleep: Sleep = asyncio.sleep,
         random_value: Callable[[], float] = random.random,
     ) -> None:
@@ -150,6 +165,7 @@ class ExecutorConnection:
         self._hello_factory = hello_factory
         self._execute = execute
         self._max_concurrent_commands = max_concurrent_commands
+        self._runtime_policy_handler = runtime_policy_handler
         self._sleep = sleep
         self._random_value = random_value
         self._stop = asyncio.Event()
@@ -161,6 +177,7 @@ class ExecutorConnection:
             _CommandOrderKey, asyncio.Future[None]
         ] = {}
         self._main_task: asyncio.Task[None] | None = None
+        self._restart_requested = False
 
     @classmethod
     def from_client(
@@ -170,6 +187,7 @@ class ExecutorConnection:
         hello_factory: HelloFactory,
         execute: CommandExecutor,
         max_concurrent_commands: int,
+        runtime_policy_handler: RuntimePolicyHandler | None = None,
     ) -> ExecutorConnection:
         """Construct the normal production connection without extra abstractions."""
         return cls(
@@ -177,6 +195,7 @@ class ExecutorConnection:
             hello_factory=hello_factory,
             execute=execute,
             max_concurrent_commands=max_concurrent_commands,
+            runtime_policy_handler=runtime_policy_handler,
         )
 
     @property
@@ -186,6 +205,10 @@ class ExecutorConnection:
     @property
     def active_command_count(self) -> int:
         return len(self._command_tasks)
+
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
 
     def start(self) -> None:
         if self._main_task is not None:
@@ -212,6 +235,21 @@ class ExecutorConnection:
                 if inspect.isawaitable(hello):
                     hello = await hello
                 policy = await self._client.hello(hello)
+                handler = self._runtime_policy_handler
+                if handler is not None:
+                    if policy.runtime_update_required:
+                        await self._wait_for_active_commands()
+                    action = await handler(policy)
+                    if action is RuntimePolicyAction.RESTART:
+                        self._restart_requested = True
+                        self._owner_action_error = ExecutorOwnerActionRequired(
+                            "executor runtime updated; restart required"
+                        )
+                        self._owner_action.set()
+                        break
+                    if action is RuntimePolicyAction.BLOCK:
+                        await self._stop.wait()
+                        break
                 await self._run_connected(
                     policy, delivery_progress=delivery_progress
                 )
@@ -349,6 +387,15 @@ class ExecutorConnection:
             await asyncio.gather(
                 *(asyncio.shield(completion) for completion in pending)
             )
+
+    async def _wait_for_active_commands(self) -> None:
+        """Wait for previously offered commands before mutating this runtime."""
+        while self._command_tasks:
+            done, _ = await asyncio.wait(
+                tuple(self._command_tasks), return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                task.result()
 
     async def _wait_for_capacity(self) -> None:
         while len(self._command_tasks) >= self._max_concurrent_commands:
