@@ -99,7 +99,7 @@ class ControlToolRouter:
                 "overwrite": bool(args.get("overwrite", False)),
                 "chunk_size": args.get("chunk_size"),
             }
-            if bool(args.get("background", False)):
+            if bool(args.get("background", True)):
                 return await self._session_copy.start_background(**copy_args)
             return await self._session_copy.copy(**copy_args)
         if tool_name == "job":

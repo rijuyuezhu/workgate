@@ -144,7 +144,6 @@ async def test_same_machine_execution_crosses_loopback_and_never_falls_back(
                     "src_path": "executor-only.txt",
                     "dst_session_id": dst_session_id,
                     "dst_path": "copied-in-background.txt",
-                    "background": True,
                 },
             )
         )
