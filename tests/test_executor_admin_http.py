@@ -247,3 +247,55 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             assert rejected.status_code == 403
     finally:
         clear_settings_cache()
+
+
+def test_owner_executor_admin_rejects_invalid_requests(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    settings = get_settings()
+    runtime = build_control_runtime(settings)
+    app = build_http_app(runtime=runtime)
+
+    try:
+        with TestClient(
+            app,
+            base_url="https://control.test",
+            client=("127.0.0.1", 50000),
+        ) as client:
+            owner_headers = {
+                UI_LOCAL_TOKEN_HEADER: get_or_create_ui_local_token()
+            }
+
+            missing_code = client.get(
+                "/api/ui/pair",
+                headers=owner_headers,
+            )
+            assert missing_code.status_code == 400
+            assert missing_code.json()["error"] == "PairingCodeRequired"
+
+            unsupported = client.post(
+                "/api/ui/executors/not-an-action",
+                headers=owner_headers,
+                json={"executor_id": "missing"},
+            )
+            assert unsupported.status_code == 400
+            assert unsupported.json()["error"] == "UnsupportedExecutorAction"
+
+            unknown = client.post(
+                "/api/ui/executors/reset",
+                headers=owner_headers,
+                json={"executor_id": "missing"},
+            )
+            assert unknown.status_code == 404
+            assert unknown.json()["error"] == "ExecutorNotFound"
+
+            malformed = client.post(
+                "/api/ui/executors/rename",
+                headers=owner_headers,
+                json={"executor_id": "missing", "name": ""},
+            )
+            assert malformed.status_code == 400
+            assert malformed.json()["error"] == "InvalidExecutorMutation"
+    finally:
+        clear_settings_cache()
