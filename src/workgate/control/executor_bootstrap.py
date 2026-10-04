@@ -18,6 +18,7 @@ from .. import __version__
 EXECUTOR_BOOTSTRAP_PATH = "/executor/v1/bootstrap"
 EXECUTOR_BOOTSTRAP_MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 _CHECKSUM_MAX_BYTES = 4 * 1024
+_ARCHIVE_CHUNK_BYTES = 64 * 1024
 _RELEASE_REPOSITORY = "rijuyuezhu/workgate"
 _SUPPORTED_TARGETS = frozenset(
     {
@@ -209,7 +210,9 @@ async def _fetch_checksum(target: str) -> str:
             raise ExecutorBootstrapUnavailable(
                 f"executor bootstrap checksum is unavailable for {target}"
             )
-        async for chunk in response.aiter_bytes():
+        async for chunk in response.aiter_bytes(
+            chunk_size=_CHECKSUM_MAX_BYTES + 1
+        ):
             payload.extend(chunk)
             if len(payload) > _CHECKSUM_MAX_BYTES:
                 raise ExecutorBootstrapUnavailable(
@@ -238,7 +241,9 @@ async def _archive_stream(target: str) -> AsyncIterator[bytes]:
             raise ExecutorBootstrapUnavailable(
                 f"executor bootstrap runtime is unavailable for {target}"
             )
-        async for chunk in response.aiter_bytes():
+        async for chunk in response.aiter_bytes(
+            chunk_size=_ARCHIVE_CHUNK_BYTES
+        ):
             total += len(chunk)
             if total > EXECUTOR_BOOTSTRAP_MAX_ARCHIVE_BYTES:
                 raise ExecutorBootstrapUnavailable(
