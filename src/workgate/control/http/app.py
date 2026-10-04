@@ -18,6 +18,7 @@ from ...persistence import FileStateStore
 from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..execution_context import ControlExecutionContextMiddleware
+from ..executor_bootstrap import executor_bootstrap_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from ..server import run_uvicorn
 from .errors import install_error_handlers
@@ -65,6 +66,7 @@ def _install_public_routes(
                 *executor_routes(
                     runtime.executor_transport, runtime.executor_pairing
                 ),
+                *executor_bootstrap_routes(settings.resolved_base_url),
                 *terminal_stream_routes(
                     runtime.executor_transport, runtime.stream_hub
                 ),

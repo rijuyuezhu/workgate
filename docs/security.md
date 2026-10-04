@@ -32,7 +32,11 @@ The HTTP OAuth flow follows the security boundaries required by the [MCP authori
 
 ### Controls implemented
 
-- OAuth bootstrap routes, well-known metadata, health checks, executor pairing endpoints, and tokenized `/download/{token}` file links remain public; MCP and REST tool routes are protected by middleware unless `auth_mode=none` or the explicit localhost bypass applies.
+- OAuth bootstrap routes, well-known metadata, health checks, self-hosted
+  executor bootstrap routes, executor pairing endpoints, and tokenized
+  `/download/{token}` file links remain public; MCP and REST tool routes are
+  protected by middleware unless `auth_mode=none` or the explicit localhost
+  bypass applies.
 - The canonical resource defaults to the `/mcp` endpoint, not merely the origin, so a token for `https://example.com/mcp` is not accepted for every service on `https://example.com`.
 - The authorization request must include `response_type=code`, `client_id`, `redirect_uri`, and `resource`; the `resource` must match this server.
 - Dynamically registered clients bind authorization codes to registered redirect URIs. Token exchange must present the same `client_id`, `redirect_uri`, `resource`, and PKCE verifier.
@@ -211,6 +215,12 @@ Managed-job logs are appended before metadata accounting. If bounded lock retrie
 ## Executor pairing and machine trust
 
 New machines establish trust with `workgate executor connect CONTROL_URL`. Pairing uses a high-entropy device code plus a separate short user code: the owner approves the request through authenticated Human UI, while the issued executor bearer is returned only to the polling executor and is never exposed to the browser. Control-side durable state stores only the credential verifier. The executor atomically saves its private profile before an auth-only credential proof; that proof authenticates without publishing presence or resource inventory. Keep that state directory owner-private and revoke or explicitly replace the credential if it may be compromised.
+
+Fresh-machine bootstrap does not weaken that trust flow. The public bootstrap
+script contains no executor credential or approval token. It pins the matching
+release artifact by target and SHA-256, extracts only the expected Workgate
+executable, verifies its reported version, and then invokes the same
+`executor connect` flow.
 
 Executor trust does not expire merely because the machine is suspended, rebooted, or offline for a long time. Temporary transport failures reconnect with the same saved credential. Trust ends only through explicit revoke/replacement, loss/reset of the control trust state, loss of the local executor profile, or a deliberate incompatible trust migration.
 

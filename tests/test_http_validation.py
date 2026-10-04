@@ -112,6 +112,10 @@ def test_http_app_exposes_oauth_public_routes(tmp_path, monkeypatch):
     assert resource_metadata.status_code == 200
     assert resource_metadata.json()["resource"] == "https://example.com/mcp"
 
+    executor_bootstrap = client.get("/executor/v1/bootstrap")
+    assert executor_bootstrap.status_code == 200
+    assert "executor connect" in executor_bootstrap.text
+
 
 def test_http_localhost_bypass_is_opt_in(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
