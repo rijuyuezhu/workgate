@@ -1,6 +1,7 @@
 """Public fresh-machine executor bootstrap routes."""
 
-import asyncio
+import importlib.metadata as importlib_metadata
+import json
 import re
 import shlex
 import subprocess
@@ -63,10 +64,61 @@ def _source_checkout_root() -> Path | None:
     return None
 
 
+def _ensure_direct_install_matches_release() -> None:
+    """Reject direct package installs that cannot prove matching release provenance."""
+    try:
+        distribution = importlib_metadata.distribution("workgate")
+    except importlib_metadata.PackageNotFoundError:
+        return
+    raw = distribution.read_text("direct_url.json")
+    if raw is None:
+        return
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ExecutorBootstrapUnavailable(
+            "executor bootstrap is unavailable because package provenance is invalid"
+        ) from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("url"), str):
+        raise ExecutorBootstrapUnavailable(
+            "executor bootstrap is unavailable because package provenance is invalid"
+        )
+
+    url = str(payload["url"]).rstrip("/")
+    tag = _release_tag()
+    repository = f"https://github.com/{_RELEASE_REPOSITORY}"
+    vcs = payload.get("vcs_info")
+    if isinstance(vcs, dict):
+        normalized = url.removesuffix(".git")
+        if (
+            normalized == repository
+            and vcs.get("vcs") == "git"
+            and vcs.get("requested_revision") == tag
+        ):
+            return
+        raise ExecutorBootstrapUnavailable(
+            "executor bootstrap is unavailable from an unpinned development "
+            f"package install; expected {repository}@{tag}"
+        )
+
+    allowed_prefixes = (
+        f"{repository}/releases/download/{tag}/",
+        f"{repository}/archive/refs/tags/{tag}.",
+        f"{repository}/archive/{tag}.",
+    )
+    if any(url.startswith(prefix) for prefix in allowed_prefixes):
+        return
+    raise ExecutorBootstrapUnavailable(
+        "executor bootstrap is unavailable because this direct package install "
+        "cannot prove matching release provenance"
+    )
+
+
 def _ensure_release_matches_runtime() -> None:
     """Fail closed when a source checkout is not the release it would serve."""
     root = _source_checkout_root()
     if root is None:
+        _ensure_direct_install_matches_release()
         return
     try:
         head = subprocess.run(
@@ -361,6 +413,12 @@ fi
 
 def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
     """Return public routes for release-backed executor bootstrap."""
+    try:
+        _ensure_release_matches_runtime()
+    except ExecutorBootstrapUnavailable as exc:
+        provenance_error = str(exc)
+    else:
+        provenance_error = None
 
     async def script(_request: Request) -> Response:
         return PlainTextResponse(
@@ -373,10 +431,12 @@ def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
         target = request.path_params["target"]
         try:
             name = _archive_name(target)
-            await asyncio.to_thread(_ensure_release_matches_runtime)
-            digest = await _fetch_checksum(target)
         except ValueError:
             return Response(status_code=404)
+        if provenance_error is not None:
+            return PlainTextResponse(provenance_error, status_code=503)
+        try:
+            digest = await _fetch_checksum(target)
         except (ExecutorBootstrapUnavailable, httpx.HTTPError) as exc:
             return PlainTextResponse(str(exc), status_code=503)
         return PlainTextResponse(
@@ -388,11 +448,10 @@ def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
         target = request.path_params["target"]
         try:
             name = _archive_name(target)
-            await asyncio.to_thread(_ensure_release_matches_runtime)
         except ValueError:
             return Response(status_code=404)
-        except (ExecutorBootstrapUnavailable, httpx.HTTPError) as exc:
-            return PlainTextResponse(str(exc), status_code=503)
+        if provenance_error is not None:
+            return PlainTextResponse(provenance_error, status_code=503)
         headers = {
             "Cache-Control": "no-store",
             "Content-Disposition": f'attachment; filename="{name}"',

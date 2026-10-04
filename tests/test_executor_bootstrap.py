@@ -4,6 +4,7 @@ import platform
 import subprocess
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -188,6 +189,67 @@ def test_source_checkout_detection_ignores_unrelated_parent_repository(
     monkeypatch.setattr(bootstrap, "__file__", str(installed))
 
     assert bootstrap._source_checkout_root() is None
+
+
+def test_direct_vcs_install_must_be_pinned_to_matching_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    distribution = SimpleNamespace(
+        read_text=lambda _name: (
+            '{"url":"https://github.com/rijuyuezhu/workgate.git",'
+            '"vcs_info":{"vcs":"git","requested_revision":"main"}}'
+        )
+    )
+    monkeypatch.setattr(
+        bootstrap.importlib_metadata,
+        "distribution",
+        lambda _name: distribution,
+    )
+
+    with pytest.raises(
+        bootstrap.ExecutorBootstrapUnavailable,
+        match="unpinned development package install",
+    ):
+        bootstrap._ensure_direct_install_matches_release()
+
+
+def test_direct_vcs_install_accepts_matching_release_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    distribution = SimpleNamespace(
+        read_text=lambda _name: (
+            '{"url":"https://github.com/rijuyuezhu/workgate.git",'
+            f'"vcs_info":{{"vcs":"git","requested_revision":"v{__version__}"}}}}'
+        )
+    )
+    monkeypatch.setattr(
+        bootstrap.importlib_metadata,
+        "distribution",
+        lambda _name: distribution,
+    )
+
+    bootstrap._ensure_direct_install_matches_release()
+
+
+def test_local_direct_install_cannot_serve_release_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    distribution = SimpleNamespace(
+        read_text=lambda _name: (
+            '{"url":"file:///tmp/workgate.whl","archive_info":{}}'
+        )
+    )
+    monkeypatch.setattr(
+        bootstrap.importlib_metadata,
+        "distribution",
+        lambda _name: distribution,
+    )
+
+    with pytest.raises(
+        bootstrap.ExecutorBootstrapUnavailable,
+        match="cannot prove matching release provenance",
+    ):
+        bootstrap._ensure_direct_install_matches_release()
 
 
 @pytest.mark.asyncio

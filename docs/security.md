@@ -220,8 +220,8 @@ Fresh-machine bootstrap does not weaken that trust flow. The public bootstrap
 script contains no executor credential or approval token. It pins the matching
 release artifact by target and SHA-256, extracts only the expected Workgate
 executable, verifies its reported version, and then invokes the same
-`executor connect` flow. Development checkouts without matching release
-provenance fail closed instead of serving an older artifact.
+`executor connect` flow. Development checkouts and direct installs without
+matching release provenance fail closed instead of serving an older artifact.
 
 Executor trust does not expire merely because the machine is suspended, rebooted, or offline for a long time. Temporary transport failures reconnect with the same saved credential. Trust ends only through explicit revoke/replacement, loss/reset of the control trust state, loss of the local executor profile, or a deliberate incompatible trust migration.
 
