@@ -85,7 +85,9 @@ async def test_run_requires_paired_executor(
         executor_cli, "settings_from_args", fake_settings_from_args
     )
     monkeypatch.setattr(
-        executor_cli, "build_executor_runtime", lambda _config: Runtime()
+        executor_cli,
+        "build_executor_runtime",
+        lambda _config, **_kwargs: Runtime(),
     )
 
     with pytest.raises(RuntimeError, match="executor is not paired"):
@@ -126,7 +128,9 @@ async def test_managed_run_clears_workgate_environment_before_loading_settings(
         executor_cli, "settings_from_args", fake_settings_from_args
     )
     monkeypatch.setattr(
-        executor_cli, "build_executor_runtime", lambda _config: Runtime()
+        executor_cli,
+        "build_executor_runtime",
+        lambda _config, **_kwargs: Runtime(),
     )
 
     with pytest.raises(RuntimeError, match="executor is not paired"):
@@ -157,7 +161,9 @@ async def test_run_raises_owner_action(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
     monkeypatch.setattr(
-        executor_cli, "build_executor_runtime", lambda _config: Runtime()
+        executor_cli,
+        "build_executor_runtime",
+        lambda _config, **_kwargs: Runtime(),
     )
 
     with pytest.raises(RuntimeError, match="executor replaced") as caught:
@@ -314,7 +320,8 @@ def test_service_status_render_omits_optional_fields_for_current_runtime(
     executor_cli._print_service_status(status)
 
     assert capsys.readouterr().out == (
-        "State: stopped\nBackend: test-backend\nRuntime: current\n"
+        "State: stopped\nBackend: test-backend\nRuntime owner: unknown\n"
+        "Runtime: current\n"
     )
 
 
@@ -331,7 +338,7 @@ def test_service_status_render_omits_runtime_when_not_installed(
     executor_cli._print_service_status(status)
 
     assert capsys.readouterr().out == (
-        "State: not-installed\nBackend: test-backend\n"
+        "State: not-installed\nBackend: test-backend\nRuntime owner: unknown\n"
     )
 
 

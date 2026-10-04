@@ -64,8 +64,22 @@ workgate executor status
 ```
 
 The same CLI provides `start`, `stop`, `restart`, `logs`, and
-`uninstall-service`. Reinstalling refreshes the service after a Workgate
-upgrade without changing the paired executor identity.
+`uninstall-service`. Reinstalling refreshes the service without changing the
+paired executor identity.
+
+A service installed by the persistent bootstrap owns its standalone Workgate
+runtime. When control requires a different Workgate version, that executor
+stops accepting new work, finishes already-offered commands, downloads and
+validates the matching control release, then atomically replaces the stable
+runtime. Validation failure leaves the previous runtime untouched. The service
+reconnects with the same executor identity after a successful replacement; a
+failed update stays quiescent instead of retrying in a loop, and
+`workgate executor status` shows the local update state.
+
+Package-manager, Python-package, and source-checkout installations remain
+externally owned. Workgate never rewrites them to satisfy control; update them
+with their owning installation method, then restart or refresh the executor
+service as needed.
 
 Linux uses a systemd user service. It is enabled for future user-manager
 sessions; remaining active without a logged-in user depends on the host's

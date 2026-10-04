@@ -195,6 +195,8 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert executors_script.status_code == 200
     assert executors_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createExecutorsController" in executors_script.text
+    assert "executorDetailRuntimeOwner" in executors_script.text
+    assert "executorDetailCompatibility" in executors_script.text
     audit_view_script = client.get("/ui/assets/audit_view.js")
     assert audit_view_script.status_code == 200
     assert audit_view_script.headers["x-content-type-options"] == "nosniff"

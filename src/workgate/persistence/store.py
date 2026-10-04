@@ -187,6 +187,11 @@ class StateLayout:
         return self.executor_dir / "profile.json"
 
     @property
+    def executor_runtime_path(self) -> Path:
+        """Return executor-local runtime ownership/update state."""
+        return self.executor_dir / "runtime.json"
+
+    @property
     def executor_run_lock_path(self) -> Path:
         """Return the cross-process single-instance executor profile lock."""
         return self.executor_dir / "profile.lock"

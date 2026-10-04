@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 import workgate.control.state as control_state_module
+from workgate import __version__
 from workgate.config.settings import Settings
 from workgate.control.executor_transport import (
     ExecutorTransportClosedError,
@@ -100,7 +101,7 @@ def _hello(session_id: str | None = None) -> ExecutorHelloRequest:
         )
     )
     return ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
         default_workdir="/workspace",
         sessions=sessions,

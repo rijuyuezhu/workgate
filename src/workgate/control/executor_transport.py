@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 from pydantic import JsonValue
 
+from .. import __version__
 from ..protocol.credentials import executor_credential_matches
 from ..protocol.errors import ProtocolError, ProtocolErrorCode
 from ..protocol.executor import (
@@ -216,6 +217,43 @@ class ExecutorTransport:
             and self._clock() - last_activity <= self._offline_after_s
         )
 
+    @staticmethod
+    def _runtime_compatible(channel: _ExecutorChannel) -> bool:
+        return (
+            channel.hello is not None
+            and channel.hello.runtime.workgate_version == __version__
+        )
+
+    @staticmethod
+    def _runtime_incompatible_error(
+        *,
+        delivery_state: Literal["queued", "offered"] | None = None,
+    ) -> ExecutorTransportError:
+        return ExecutorTransportError(
+            ProtocolErrorCode.EXECUTOR_INCOMPATIBLE,
+            f"executor runtime must match Workgate {__version__}",
+            delivery_state=delivery_state,
+        )
+
+    @classmethod
+    def _require_runtime_compatible(cls, channel: _ExecutorChannel) -> None:
+        if not cls._runtime_compatible(channel):
+            raise cls._runtime_incompatible_error()
+
+    @classmethod
+    def _interrupt_queued_incompatible(cls, channel: _ExecutorChannel) -> None:
+        queued = tuple(channel.queue)
+        channel.queue.clear()
+        for command_id in queued:
+            pending = channel.pending.get(command_id)
+            if pending is None or pending.state != "queued":
+                continue
+            channel.pending.pop(command_id, None)
+            if not pending.future.done():
+                pending.future.set_exception(
+                    cls._runtime_incompatible_error(delivery_state="queued")
+                )
+
     async def hello(
         self, credential: str, request: ExecutorHelloRequest
     ) -> ExecutorHelloResponse:
@@ -234,6 +272,8 @@ class ExecutorTransport:
                 channel.poll_token = None
                 channel.wake.set()
             channel.hello = request
+            if request.runtime.workgate_version != __version__:
+                self._interrupt_queued_incompatible(channel)
             self._touch(channel)
         proof_callback = self._authenticated_proof_callback
         if proof_callback is not None:
@@ -245,6 +285,9 @@ class ExecutorTransport:
             heartbeat_interval_s=self._heartbeat_interval_s,
             offline_after_s=self._offline_after_s,
             poll_timeout_s=self._poll_timeout_s,
+            required_workgate_version=__version__,
+            runtime_update_required=request.runtime.workgate_version
+            != __version__,
         )
 
     def authenticate_live_bearer(self, credential: str) -> str:
@@ -279,6 +322,7 @@ class ExecutorTransport:
         poll_token = object()
         async with channel.lock:
             self._reauthenticate(executor_id, credential)
+            self._require_runtime_compatible(channel)
             if channel.poll_token is not None:
                 raise ExecutorTransportError(
                     ProtocolErrorCode.EXECUTOR_OVERLOADED,
@@ -343,6 +387,7 @@ class ExecutorTransport:
                     ProtocolErrorCode.EXECUTOR_OFFLINE,
                     "executor is offline",
                 )
+            self._require_runtime_compatible(channel)
             if len(channel.pending) >= self._max_pending_commands:
                 raise ExecutorTransportError(
                     ProtocolErrorCode.EXECUTOR_OVERLOADED,

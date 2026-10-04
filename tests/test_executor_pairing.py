@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from workgate import __version__
 from workgate.control.executor_transport import ExecutorTransport
 from workgate.control.pairing import (
     ExecutorPairingError,
@@ -90,7 +91,7 @@ def _request(*, existing_executor_id: str | None = None) -> PairStartRequest:
 
 def _hello() -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=("shell",),
         default_workdir="/workspace",
         sessions=(),

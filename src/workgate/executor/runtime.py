@@ -15,6 +15,7 @@ from ..protocol.executor import (
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
+    ExecutorRuntimeOwnership,
 )
 from .agent import ExecutorAgentBridgeService
 from .browser import BrowserService
@@ -34,9 +35,14 @@ from .ui_files import UiFilesService
 from .ui_terminals import UiTerminalsService
 
 if TYPE_CHECKING:
-    from ..protocol.executor import ExecutorCommand, ExecutorHelloRequest
-    from .connection import ExecutorConnection
+    from ..protocol.executor import (
+        ExecutorCommand,
+        ExecutorHelloRequest,
+        ExecutorHelloResponse,
+    )
+    from .connection import ExecutorConnection, RuntimePolicyAction
     from .profile import ExecutorProfileStore
+    from .runtime_update import ExecutorRuntimeState, ExecutorRuntimeStateStore
     from .sessions import ExecutorSessionService
 
 
@@ -66,6 +72,12 @@ class ExecutorRuntime:
     """Persistent executor profile store, when configured."""
     browser: BrowserService
     """Executor-owned ephemeral structured browser resources."""
+    runtime_state_store: ExecutorRuntimeStateStore
+    """Small persisted runtime ownership/update authority."""
+    managed_service: bool = False
+    """Whether this process is owned by the native executor service manager."""
+    runtime_ownership: ExecutorRuntimeOwnership | None = None
+    """Install provenance supplied by the managed-service definition."""
     connection: ExecutorConnection | None = field(default=None, init=False)
     """Live control reconnect loop when a profile exists."""
     _terminal_stream_tasks: set[asyncio.Task[None]] = field(
@@ -77,9 +89,23 @@ class ExecutorRuntime:
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
+    def _runtime_state(self) -> ExecutorRuntimeState:
+        from .runtime_update import (
+            ExecutorRuntimeState,
+            detect_runtime_ownership,
+        )
+
+        if self.managed_service:
+            return self.runtime_state_store.service_runtime_state(
+                self.runtime_ownership
+            )
+        return ExecutorRuntimeState(ownership=detect_runtime_ownership())
+
     async def _build_reconnect_hello(self) -> ExecutorHelloRequest:
         """Build one complete authoritative executor resource inventory."""
         from .hello import build_executor_hello
+
+        runtime_state = self._runtime_state()
 
         with (
             use_role_config(self.config),
@@ -100,10 +126,65 @@ class ExecutorRuntime:
                         sessions=sessions,
                         shells=shells,
                         jobs=jobs,
+                        runtime_ownership=runtime_state.ownership,
                     )
         raise ExecutorResourceInventoryUnavailable(
             "session inventory changed while reconnect snapshot was built"
         )
+
+    async def _handle_runtime_policy(
+        self, policy: ExecutorHelloResponse
+    ) -> RuntimePolicyAction:
+        """Apply exact-version policy without mutating externally owned installs."""
+        from ..protocol.executor import ExecutorRuntimeOwnership
+        from .connection import RuntimePolicyAction
+        from .runtime_update import (
+            ExecutorRuntimeUpdateStatus,
+            apply_control_managed_update,
+        )
+
+        state = self._runtime_state()
+        if not policy.runtime_update_required:
+            if self.managed_service:
+                self.runtime_state_store.set_update(
+                    ExecutorRuntimeUpdateStatus.IDLE
+                )
+            return RuntimePolicyAction.CONTINUE
+
+        target = policy.required_workgate_version
+        if state.ownership is not ExecutorRuntimeOwnership.CONTROL_MANAGED:
+            error = RuntimeError(
+                f"control requires Workgate {target}, but runtime ownership is "
+                f"{state.ownership.value}; use the installation owner to update it"
+            )
+            if self.managed_service:
+                self.runtime_state_store.set_update(
+                    ExecutorRuntimeUpdateStatus.REQUIRED,
+                    target_version=target,
+                    detail=str(error),
+                )
+                return RuntimePolicyAction.BLOCK
+            raise error
+        if not self.managed_service:
+            raise RuntimeError(
+                "control-managed updates require the installed executor service"
+            )
+
+        profile_store = self.profile_store
+        if profile_store is None:
+            raise RuntimeError("executor profile store is unavailable")
+        profile = profile_store.load()
+        if profile is None:
+            raise RuntimeError("executor profile is unavailable")
+        try:
+            await apply_control_managed_update(
+                control_url=profile.control_url,
+                target_version=target,
+                store=self.runtime_state_store,
+            )
+        except Exception:
+            return RuntimePolicyAction.BLOCK
+        return RuntimePolicyAction.RESTART
 
     async def start(self) -> None:
         """Start resources owned by this executor runtime."""
@@ -141,6 +222,7 @@ class ExecutorRuntime:
                     hello_factory=self._build_reconnect_hello,
                     execute=self._execute_protocol_command,
                     max_concurrent_commands=self.config.max_concurrent_commands,
+                    runtime_policy_handler=self._handle_runtime_policy,
                 )
                 connection.start()
         except BaseException as exc:
@@ -337,7 +419,11 @@ class ExecutorRuntime:
 
 
 def build_executor_runtime(
-    config: ExecutorConfig, *, enable_control_connection: bool = True
+    config: ExecutorConfig,
+    *,
+    enable_control_connection: bool = True,
+    managed_service: bool = False,
+    runtime_ownership: ExecutorRuntimeOwnership | None = None,
 ) -> ExecutorRuntime:
     """Construct one executor-owned runtime graph."""
     from .standalone_bootstrap import apply_standalone_executor_paths
@@ -372,6 +458,9 @@ def build_executor_runtime(
     shell_service = ShellService(config, services.tool_session_store)
     agent_bridge = ExecutorAgentBridgeService(config)
     browser_service = BrowserService(config, services.tool_session_store)
+    from .runtime_update import ExecutorRuntimeStateStore
+
+    runtime_state_store = ExecutorRuntimeStateStore(services.state_store)
     return ExecutorRuntime(
         config=config,
         services=services,
@@ -402,4 +491,7 @@ def build_executor_runtime(
         ui_terminals=UiTerminalsService(shell_service),
         profile_store=profile_store,
         browser=browser_service,
+        runtime_state_store=runtime_state_store,
+        managed_service=managed_service,
+        runtime_ownership=runtime_ownership,
     )

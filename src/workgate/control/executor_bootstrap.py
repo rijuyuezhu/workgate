@@ -215,7 +215,7 @@ fi
 
 CONNECT_ARGS=(executor connect "$CONTROL")
 RUN_ARGS=(executor run)
-INSTALL_ARGS=(executor install-service)
+INSTALL_ARGS=(executor install-service --runtime-ownership control-managed)
 if [ -n "$NAME" ]; then CONNECT_ARGS+=(--name "$NAME"); fi
 if [ -n "$DEFAULT_WORKDIR" ]; then
   RUN_ARGS+=(--default-workdir "$DEFAULT_WORKDIR")

@@ -1,5 +1,7 @@
 """Executor protocol v1 wire models."""
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .ids import CommandId, SessionId
@@ -20,6 +22,16 @@ SESSION_TERMINATE_OP = "session.terminate"
 SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 
 
+class ExecutorRuntimeOwnership(StrEnum):
+    """Who owns replacement authority for this executor runtime."""
+
+    CONTROL_MANAGED = "control-managed"
+    SELF_CONTAINED = "self-contained"
+    EXTERNAL_PACKAGE = "external-package"
+    SOURCE = "source"
+    UNKNOWN = "unknown"
+
+
 class ExecutorRuntimeSummary(BaseModel):
     """Bounded runtime/build metadata reported during hello."""
 
@@ -28,6 +40,7 @@ class ExecutorRuntimeSummary(BaseModel):
     workgate_version: str = Field(min_length=1, max_length=128)
     build: str | None = Field(default=None, min_length=1, max_length=128)
     platform: str | None = Field(default=None, min_length=1, max_length=128)
+    ownership: ExecutorRuntimeOwnership = ExecutorRuntimeOwnership.UNKNOWN
 
 
 class SessionInventorySummary(BaseModel):
@@ -85,6 +98,8 @@ class ExecutorHelloResponse(BaseModel):
     heartbeat_interval_s: int = Field(gt=0)
     offline_after_s: int = Field(gt=0)
     poll_timeout_s: int = Field(gt=0)
+    required_workgate_version: str = Field(min_length=1, max_length=128)
+    runtime_update_required: bool
 
     @model_validator(mode="after")
     def _offline_threshold_exceeds_heartbeat(self) -> ExecutorHelloResponse:

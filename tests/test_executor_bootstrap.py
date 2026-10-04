@@ -226,7 +226,7 @@ def test_bootstrap_script_composes_pairing_and_persistent_service(
     calls = (tmp_path / "calls").read_text().splitlines()
     assert calls == [
         "executor connect https://control.example --name node-a",
-        "executor install-service --default-workdir /srv/work",
+        "executor install-service --runtime-ownership control-managed --default-workdir /srv/work",
     ]
     runtime = _persistent_runtime_dir(tmp_path) / "workgate"
     assert runtime.is_file()

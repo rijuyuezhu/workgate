@@ -16,7 +16,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -24,12 +24,17 @@ from typing import Any
 from ..app_paths import ensure_private_directory
 from ..config.executor import EXECUTOR_SETTING_NAMES, ExecutorConfig
 from ..persistence import FileStateStore
+from ..protocol.executor import ExecutorRuntimeOwnership
 from ..utils.private_files import (
     atomic_write_private_bytes,
     atomic_write_private_text,
 )
 from ..version import __version__
 from .profile import ExecutorProfileStore
+from .runtime_update import (
+    ExecutorRuntimeStateStore,
+    ExecutorRuntimeUpdateStatus,
+)
 
 _SERVICE_NAME = "workgate-executor"
 _LAUNCHD_LABEL = "com.workgate.executor"
@@ -85,6 +90,14 @@ class ExecutorServiceStatus:
     service_file: str | None = None
     log_path: str | None = None
     runtime_current: bool = False
+    runtime_ownership: ExecutorRuntimeOwnership = (
+        ExecutorRuntimeOwnership.UNKNOWN
+    )
+    runtime_update_status: ExecutorRuntimeUpdateStatus = (
+        ExecutorRuntimeUpdateStatus.IDLE
+    )
+    runtime_update_target_version: str | None = None
+    runtime_update_detail: str | None = None
 
 
 class UnsupportedExecutorServiceError(RuntimeError):
@@ -303,7 +316,9 @@ class ExecutorServiceManager:
         )
         atomic_write_private_text(self.config_path, payload + "\n")
 
-    def _launcher_source(self) -> str:
+    def _launcher_source(
+        self, runtime_ownership: ExecutorRuntimeOwnership
+    ) -> str:
         config_path = str(self.config_path.resolve())
         log_path = str(self.log_path.resolve())
         windows_path = self._managed_windows_path()
@@ -326,7 +341,9 @@ class ExecutorServiceManager:
             "    os.environ['PATH'] = WINDOWS_PATH + (os.pathsep + _existing_path if _existing_path else '')\n\n"
             "def _run() -> None:\n"
             "    from workgate.main import main\n"
-            "    main(['executor', 'run', '--managed-service', '--config', CONFIG_PATH])\n\n"
+            "    main(['executor', 'run', '--managed-service', "
+            f"'--runtime-ownership', {runtime_ownership.value!r}, "
+            "'--config', CONFIG_PATH])\n\n"
             "if os.name == 'nt':\n"
             "    Path(LOG_PATH).parent.mkdir(parents=True, exist_ok=True)\n"
             "    with open(LOG_PATH, 'a', encoding='utf-8', buffering=1) as _log:\n"
@@ -379,10 +396,16 @@ class ExecutorServiceManager:
             ]
         )
 
-    def _write_launcher(self, command: list[str] | None = None) -> None:
+    def _write_launcher(
+        self,
+        command: list[str] | None = None,
+        *,
+        runtime_ownership: ExecutorRuntimeOwnership | None = None,
+    ) -> None:
         frozen = bool(getattr(sys, "frozen", False))
+        ownership = runtime_ownership or self._runtime_ownership()
         if command is None:
-            command = self._runtime_command()
+            command = self._runtime_command(ownership)
         if frozen and self.system == "Windows":
             atomic_write_private_text(
                 self.windows_frozen_launcher_path,
@@ -394,18 +417,35 @@ class ExecutorServiceManager:
         if frozen:
             self.launcher_path.unlink(missing_ok=True)
             return
-        atomic_write_private_text(self.launcher_path, self._launcher_source())
+        atomic_write_private_text(
+            self.launcher_path, self._launcher_source(ownership)
+        )
 
-    def _runtime_command(self) -> list[str]:
+    def _runtime_ownership(self) -> ExecutorRuntimeOwnership:
+        store = ExecutorRuntimeStateStore(self.state_store)
+        state = store.load()
+        return (
+            state.ownership
+            if state is not None
+            else store.install_state().ownership
+        )
+
+    def _runtime_command(
+        self,
+        runtime_ownership: ExecutorRuntimeOwnership | None = None,
+    ) -> list[str]:
         # Preserve a virtualenv/pipx interpreter symlink. Resolving it can escape
         # the environment that actually contains the Workgate installation.
         executable = self.executable.absolute()
+        ownership = runtime_ownership or self._runtime_ownership()
         if getattr(sys, "frozen", False):
             return [
                 str(executable),
                 "executor",
                 "run",
                 "--managed-service",
+                "--runtime-ownership",
+                ownership.value,
                 "--config",
                 str(self.config_path.resolve()),
             ]
@@ -498,11 +538,19 @@ class ExecutorServiceManager:
     def _runtime_current(self) -> bool:
         payload = self._read_metadata()
         expected_settings = _executor_service_settings_digest(self.config)
+        runtime = ExecutorRuntimeStateStore(self.state_store).load()
+        version_current = (
+            runtime is not None
+            and runtime.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
+        ) or (
+            payload is not None
+            and payload.get("workgate_version") == __version__
+        )
         if (
             payload is None
             or payload.get("version") != 3
             or payload.get("backend") != self.backend()
-            or payload.get("workgate_version") != __version__
+            or not version_current
             or payload.get("settings_sha256") != expected_settings
             or self._installed_settings_digest() != expected_settings
             or not self._runtime_launcher_present()
@@ -732,14 +780,23 @@ class ExecutorServiceManager:
             "-Confirm:$false"
         )
 
-    def install(self) -> ExecutorServiceStatus:
+    def install(
+        self,
+        *,
+        runtime_ownership: ExecutorRuntimeOwnership | None = None,
+    ) -> ExecutorServiceStatus:
         """Install or refresh the native per-user service and start it."""
 
         self._ensure_paired()
+        runtime_store = ExecutorRuntimeStateStore(self.state_store)
+        runtime_state = runtime_store.install_state(runtime_ownership)
         backend = self.backend(require_available=True)
         self._write_service_config()
-        command = self._runtime_command()
-        self._write_launcher(command)
+        command = self._runtime_command(runtime_state.ownership)
+        self._write_launcher(
+            command,
+            runtime_ownership=runtime_state.ownership,
+        )
 
         if backend == "systemd":
             service_file = self._write_systemd_unit(
@@ -782,6 +839,7 @@ class ExecutorServiceManager:
             self._write_metadata(backend, command)
             self._start_windows_task()
 
+        runtime_store.save(runtime_state)
         return self.status()
 
     def _systemd_native_state(self) -> dict[str, str]:
@@ -1269,10 +1327,21 @@ class ExecutorServiceManager:
     def status(self) -> ExecutorServiceStatus:
         backend = self.backend()
         if backend == "systemd":
-            return self._systemd_status(self.systemd_unit_path)
-        if backend == "launchd":
-            return self._launchd_status(self.launchd_plist_path)
-        return self._windows_status()
+            status = self._systemd_status(self.systemd_unit_path)
+        elif backend == "launchd":
+            status = self._launchd_status(self.launchd_plist_path)
+        else:
+            status = self._windows_status()
+        runtime = ExecutorRuntimeStateStore(self.state_store).load()
+        if runtime is None:
+            return status
+        return replace(
+            status,
+            runtime_ownership=runtime.ownership,
+            runtime_update_status=runtime.update_status,
+            runtime_update_target_version=runtime.update_target_version,
+            runtime_update_detail=runtime.update_detail,
+        )
 
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""

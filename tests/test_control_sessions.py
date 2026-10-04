@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from workgate import __version__
 from workgate.control.executor_transport import (
     ExecutorTransport,
     ExecutorTransportError,
@@ -60,7 +61,7 @@ def _hello(
     capabilities: tuple[str, ...] = (EXECUTOR_CAPABILITY_SESSIONS,),
 ) -> ExecutorHelloRequest:
     return ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=capabilities,
         default_workdir="/workspace",
         sessions=tuple(
@@ -345,7 +346,7 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
         default_workdir="/workspace",
         sessions=(
@@ -419,7 +420,7 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
     transport.start()
     coordinator = ControlSessionCoordinator(state, transport)
     initial_hello = ExecutorHelloRequest(
-        runtime=ExecutorRuntimeSummary(workgate_version="test"),
+        runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
         default_workdir="/workspace",
         sessions=(

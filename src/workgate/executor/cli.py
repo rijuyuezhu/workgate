@@ -13,6 +13,7 @@ from ..config.executor import EXECUTOR_SETTING_NAMES, resolve_executor_config
 from ..config.settings import initialize_runtime_directories
 from ..persistence import FileStateStore
 from ..protocol.errors import ProtocolErrorCode
+from ..protocol.executor import ExecutorRuntimeOwnership
 from .control_client import ExecutorControlClient, ExecutorControlError
 from .pairing import (
     ExecutorPairingClient,
@@ -111,7 +112,22 @@ async def _run(args: argparse.Namespace) -> None:
                 os.environ.pop(name, None)
     settings = settings_from_args(args)
     initialize_runtime_directories(settings)
-    runtime = build_executor_runtime(resolve_executor_config(settings))
+    managed_service = bool(getattr(args, "managed_service", False))
+    ownership_value = getattr(args, "runtime_ownership", None)
+    runtime_ownership = (
+        None
+        if ownership_value is None
+        else ExecutorRuntimeOwnership(str(ownership_value))
+    )
+    if runtime_ownership is not None and not managed_service:
+        raise RuntimeError(
+            "runtime ownership is only valid for managed services"
+        )
+    runtime = build_executor_runtime(
+        resolve_executor_config(settings),
+        managed_service=managed_service,
+        runtime_ownership=runtime_ownership,
+    )
     async with runtime.lifespan():
         connection = runtime.connection
         if connection is None:
@@ -119,6 +135,8 @@ async def _run(args: argparse.Namespace) -> None:
                 "executor is not paired; run `workgate executor connect <control-url>` first"
             )
         owner_action = await connection.wait_owner_action()
+        if managed_service and connection.restart_requested:
+            return
         raise owner_action
 
 
@@ -147,12 +165,24 @@ def _print_service_status(status: ExecutorServiceStatus) -> None:
         print(f"Service: {status.service_file}")
     if status.log_path:
         print(f"Log: {status.log_path}")
+    print(f"Runtime owner: {status.runtime_ownership.value}")
     if status.state != ExecutorServiceState.NOT_INSTALLED:
         print(
             "Runtime: current"
             if status.runtime_current
             else "Runtime: stale; run `workgate executor install-service` to refresh"
         )
+    if status.runtime_update_status.value != "idle":
+        target = status.runtime_update_target_version or "unknown"
+        print(
+            f"Runtime update: {status.runtime_update_status.value} "
+            f"(target {target})"
+        )
+        if status.runtime_update_detail:
+            print(
+                f"Runtime update detail: "
+                f"{_redact_service_text(status.runtime_update_detail)}"
+            )
     if status.detail:
         print(f"Detail: {_redact_service_text(status.detail)}")
 
@@ -161,7 +191,16 @@ def _run_service_action(args: argparse.Namespace, action: str) -> None:
     try:
         manager = _service_manager(args)
         if action == "install":
-            _print_service_status(manager.install())
+            ownership_value = getattr(args, "runtime_ownership", None)
+            if ownership_value is None:
+                status = manager.install()
+            else:
+                status = manager.install(
+                    runtime_ownership=ExecutorRuntimeOwnership(
+                        str(ownership_value)
+                    )
+                )
+            _print_service_status(status)
             return
         if action == "uninstall":
             _print_service_status(manager.uninstall())
@@ -226,6 +265,12 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    run.add_argument(
+        "--runtime-ownership",
+        choices=[item.value for item in ExecutorRuntimeOwnership],
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     register_config_and_setting_args(
         run,
         setting_names=EXECUTOR_SETTING_NAMES,
@@ -252,6 +297,13 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
     )
     for name, help_text, action in lifecycle:
         parser = actions.add_parser(name, help=help_text)
+        if name == "install-service":
+            parser.add_argument(
+                "--runtime-ownership",
+                choices=[ExecutorRuntimeOwnership.CONTROL_MANAGED.value],
+                default=None,
+                help=argparse.SUPPRESS,
+            )
         register_config_and_setting_args(
             parser,
             setting_names=EXECUTOR_SETTING_NAMES,

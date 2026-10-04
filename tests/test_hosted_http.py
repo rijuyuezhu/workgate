@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import pytest
 
+from workgate import __version__
 from workgate.control.pairing import PairingAttemptView
 from workgate.hosted import (
     HOSTED_HTTP_PATHS,
@@ -1147,7 +1148,7 @@ def test_hosted_pairing_error_status_mapping(
 
 def _hello_payload() -> dict[str, Any]:
     return {
-        "runtime": {"workgate_version": "test"},
+        "runtime": {"workgate_version": __version__},
         "capabilities": ["sessions.v1"],
         "default_workdir": "/workspace",
         "sessions": [],

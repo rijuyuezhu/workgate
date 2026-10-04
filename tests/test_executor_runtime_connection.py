@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import JsonValue
 
+from workgate import __version__
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor.profile import (
@@ -48,6 +49,8 @@ class _FakeControlClient:
             heartbeat_interval_s=30,
             offline_after_s=90,
             poll_timeout_s=25,
+            required_workgate_version=__version__,
+            runtime_update_required=False,
         )
 
     async def heartbeat(self) -> None:

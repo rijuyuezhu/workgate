@@ -3,10 +3,12 @@ import threading
 
 import pytest
 
+from workgate import __version__
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor.connection import (
     ExecutorConnection,
+    RuntimePolicyAction,
     executor_retry_delay,
 )
 from workgate.executor.control_client import ExecutorControlError
@@ -38,6 +40,8 @@ def _policy() -> ExecutorHelloResponse:
         heartbeat_interval_s=1,
         offline_after_s=3,
         poll_timeout_s=1,
+        required_workgate_version=__version__,
+        runtime_update_required=False,
     )
 
 
@@ -46,6 +50,8 @@ def _reconnect_policy() -> ExecutorHelloResponse:
         heartbeat_interval_s=100,
         offline_after_s=300,
         poll_timeout_s=1,
+        required_workgate_version=__version__,
+        runtime_update_required=False,
     )
 
 
@@ -844,3 +850,121 @@ def test_reconnect_backoff_is_exponential_jittered_and_bounded() -> None:
     assert executor_retry_delay(0, 0.5) == 0.5
     assert executor_retry_delay(1, 0.5) == 1.0
     assert executor_retry_delay(20, 0.5) == 30.0
+
+
+@pytest.mark.asyncio
+async def test_runtime_update_waits_for_active_commands_then_requests_restart() -> (
+    None
+):
+    release = asyncio.Event()
+    handler_called = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return ExecutorHelloResponse(
+                heartbeat_interval_s=10,
+                offline_after_s=30,
+                poll_timeout_s=1,
+                required_workgate_version="next-version",
+                runtime_update_required=True,
+            )
+
+        async def heartbeat(self) -> None:
+            raise AssertionError(
+                "heartbeat must not start before runtime policy"
+            )
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            raise AssertionError("poll must not start before runtime policy")
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    async def active_command() -> None:
+        await release.wait()
+
+    async def runtime_policy(
+        _policy: ExecutorHelloResponse,
+    ) -> RuntimePolicyAction:
+        handler_called.set()
+        return RuntimePolicyAction.RESTART
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=2,
+        runtime_policy_handler=runtime_policy,
+    )
+    active = asyncio.create_task(active_command())
+    connection._command_tasks.add(active)
+    active.add_done_callback(connection._command_tasks.discard)
+    connection.start()
+    try:
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not handler_called.is_set()
+
+        release.set()
+        owner_action = await asyncio.wait_for(
+            connection.wait_owner_action(), timeout=0.5
+        )
+
+        assert handler_called.is_set()
+        assert connection.restart_requested is True
+        assert "restart required" in str(owner_action)
+    finally:
+        release.set()
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_blocked_runtime_policy_quiesces_without_requesting_restart() -> (
+    None
+):
+    policy_called = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return ExecutorHelloResponse(
+                heartbeat_interval_s=10,
+                offline_after_s=30,
+                poll_timeout_s=1,
+                required_workgate_version="next-version",
+                runtime_update_required=True,
+            )
+
+        async def heartbeat(self) -> None:
+            raise AssertionError("blocked executor must not heartbeat")
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            raise AssertionError("blocked executor must not poll")
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    async def runtime_policy(
+        _policy: ExecutorHelloResponse,
+    ) -> RuntimePolicyAction:
+        policy_called.set()
+        return RuntimePolicyAction.BLOCK
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        runtime_policy_handler=runtime_policy,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(policy_called.wait(), timeout=0.5)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(connection.wait_owner_action(), timeout=0.05)
+        assert connection.restart_requested is False
+    finally:
+        await connection.aclose()

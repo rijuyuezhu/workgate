@@ -2,6 +2,7 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
+from workgate import __version__
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.runtime import build_control_runtime
@@ -27,7 +28,7 @@ def _configure(monkeypatch, tmp_path: Path) -> None:
 def _hello_payload() -> dict[str, object]:
     return ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(
-            workgate_version="test",
+            workgate_version=__version__,
             platform="linux",
             build="fixture",
         ),
@@ -146,6 +147,8 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
                     "online": False,
                     "last_seen_at": None,
                     "runtime": None,
+                    "required_workgate_version": __version__,
+                    "runtime_update_required": False,
                 }
             ]
             assert credential not in listing.text
@@ -169,10 +172,13 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             assert row["online"] is True
             assert row["last_seen_at"] is not None
             assert row["runtime"] == {
-                "workgate_version": "test",
+                "workgate_version": __version__,
                 "build": "fixture",
                 "platform": "linux",
+                "ownership": "unknown",
             }
+            assert row["required_workgate_version"] == __version__
+            assert row["runtime_update_required"] is False
 
             renamed = client.post(
                 "/api/ui/executors/rename",

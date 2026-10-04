@@ -99,6 +99,8 @@ export function createExecutorsController({
       elements.executorDetailStatus.textContent = "Select an executor to inspect it";
       elements.executorDetailId.textContent = "—";
       elements.executorDetailVersion.textContent = "—";
+      elements.executorDetailRuntimeOwner.textContent = "—";
+      elements.executorDetailCompatibility.textContent = "—";
       elements.executorDetailPlatform.textContent = "—";
       elements.executorDetailCreated.textContent = "—";
       elements.executorDetailLastSeen.textContent = "—";
@@ -114,6 +116,12 @@ export function createExecutorsController({
     elements.executorDetailStatus.textContent = status;
     elements.executorDetailId.textContent = executor.executor_id;
     elements.executorDetailVersion.textContent = executor.runtime?.workgate_version || "Not reported";
+    elements.executorDetailRuntimeOwner.textContent = executor.runtime?.ownership || "Not reported";
+    elements.executorDetailCompatibility.textContent = !executor.runtime
+      ? "Not reported"
+      : executor.runtime_update_required
+        ? "Update required · " + executor.required_workgate_version
+        : "Compatible";
     elements.executorDetailPlatform.textContent = executor.runtime?.platform || "Not reported";
     elements.executorDetailCreated.textContent = timestamp(executor.created_at, "Unknown");
     elements.executorDetailLastSeen.textContent = timestamp(executor.last_seen_at);

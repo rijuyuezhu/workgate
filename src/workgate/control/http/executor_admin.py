@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
+from ... import __version__
 from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_REMOTE_USE
@@ -78,6 +79,9 @@ async def _executor_row(
     record: ExecutorTrustRecord, transport: ExecutorTransport
 ) -> dict[str, Any]:
     inventory = await transport.inventory(record.executor_id)
+    runtime_version = (
+        None if inventory is None else inventory.runtime.workgate_version
+    )
     return {
         "executor_id": record.executor_id,
         "name": record.name,
@@ -90,6 +94,10 @@ async def _executor_row(
         "runtime": None
         if inventory is None
         else inventory.runtime.model_dump(mode="json"),
+        "required_workgate_version": __version__,
+        "runtime_update_required": (
+            runtime_version is not None and runtime_version != __version__
+        ),
     }
 
 
