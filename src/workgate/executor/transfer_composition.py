@@ -65,6 +65,15 @@ def build_transfer_handlers(
         )
 
     async def copy_file(args: dict[str, Any]) -> Any:
+        source_binding_id = args.get("source_session_id")
+        destination_binding_id = args.get("destination_session_id")
+        binding_ids = {
+            str(value)
+            for value in (source_binding_id, destination_binding_id)
+            if value is not None
+        }
+        for session_id in sorted(binding_ids):
+            store.admit_active_session(session_id)
         source_session_id = _transfer_session_id(
             args,
             session_key="source_session_id",
@@ -76,11 +85,10 @@ def build_transfer_handlers(
             workdir_key="destination_workdir",
         )
         command_session_id = args.get("session_id")
-        if command_session_id is not None and str(command_session_id) not in {
-            str(value)
-            for value in (source_session_id, destination_session_id)
-            if value is not None
-        }:
+        if (
+            command_session_id is not None
+            and str(command_session_id) not in binding_ids
+        ):
             _admit_unbound_activity(store, args)
         return await asyncio.to_thread(
             transfer_copy_file,
@@ -88,6 +96,8 @@ def build_transfer_handlers(
             str(args["destination_path"]),
             bool(args.get("overwrite", True)),
             args.get("chunk_size"),
+            expected_bytes=args.get("expected_bytes"),
+            expected_sha256=args.get("expected_sha256"),
             source_session_id=source_session_id,
             destination_session_id=destination_session_id,
             source_workdir=args.get("source_workdir"),
@@ -201,6 +211,8 @@ def build_transfer_handlers(
             bool(args.get("overwrite", True)),
             bool(args.get("cleanup_archive", True)),
             args.get("transfer_id"),
+            expected_archive_bytes=args.get("expected_archive_bytes"),
+            expected_archive_sha256=args.get("expected_archive_sha256"),
             session_id=session_id,
             workdir=args.get("workdir"),
             context=context,

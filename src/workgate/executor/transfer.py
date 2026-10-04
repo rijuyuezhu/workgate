@@ -1201,6 +1201,8 @@ def transfer_copy_file(
     overwrite: bool = True,
     chunk_size: int | None = None,
     *,
+    expected_bytes: int | None = None,
+    expected_sha256: str | None = None,
     source_session_id: str | None = None,
     destination_session_id: str | None = None,
     source_workdir: str | None = None,
@@ -1232,6 +1234,13 @@ def transfer_copy_file(
             if not stat.S_ISREG(source_stat.st_mode):
                 raise ValueError("transfer source path is not a regular file")
             size = int(source_stat.st_size)
+            source_sha256 = _sha256_file(source, limit)
+            if expected_bytes is not None and size != expected_bytes:
+                raise ValueError(
+                    f"source size changed before local copy: expected {expected_bytes}, got {size}"
+                )
+            if expected_sha256 is not None and source_sha256 != expected_sha256:
+                raise ValueError("source sha256 changed before local copy")
             return TransferCopyFileOutput(
                 source_path=_display_user_path(
                     source,
@@ -1246,7 +1255,7 @@ def transfer_copy_file(
                     context=context,
                 ),
                 bytes=size,
-                sha256=_sha256_file(source, limit),
+                sha256=source_sha256,
                 chunks=0 if size == 0 else (size + limit - 1) // limit,
                 chunk_size=limit,
                 completed=True,
@@ -1285,6 +1294,13 @@ def transfer_copy_file(
                 raise ValueError(
                     f"size mismatch: expected {initial_source_stat.st_size}, got {copied}"
                 )
+            if expected_bytes is not None and copied != expected_bytes:
+                raise ValueError(
+                    f"source size changed before local copy: expected {expected_bytes}, got {copied}"
+                )
+            copied_sha256 = digest.hexdigest()
+            if expected_sha256 is not None and copied_sha256 != expected_sha256:
+                raise ValueError("source sha256 changed before local copy")
             if not overwrite and os.path.lexists(destination):
                 raise FileExistsError(str(destination))
             os.replace(temporary, destination)
@@ -1305,7 +1321,7 @@ def transfer_copy_file(
             context=context,
         ),
         bytes=copied,
-        sha256=digest.hexdigest(),
+        sha256=copied_sha256,
         chunks=chunks,
         chunk_size=limit,
         completed=True,
@@ -2344,6 +2360,8 @@ def transfer_unpack_archive(
     cleanup_archive: bool = True,
     transfer_id: str | None = None,
     *,
+    expected_archive_bytes: int | None = None,
+    expected_archive_sha256: str | None = None,
     session_id: str | None = None,
     workdir: str | None = None,
     context: TransferContext,
@@ -2393,6 +2411,11 @@ def transfer_unpack_archive(
     )
     if not archive.is_file():
         raise FileNotFoundError(str(archive))
+    if (
+        expected_archive_bytes is not None
+        and archive.stat().st_size != expected_archive_bytes
+    ):
+        raise ValueError("transfer archive size changed before unpack")
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
         tempfile.mkdtemp(
@@ -2425,6 +2448,17 @@ def transfer_unpack_archive(
                 raise ValueError(
                     f"unsupported archive member type: {member.name}"
                 )
+
+        if (
+            expected_archive_bytes is not None
+            and archive.stat().st_size != expected_archive_bytes
+        ):
+            raise ValueError("transfer archive size changed during unpack")
+        if (
+            expected_archive_sha256 is not None
+            and _sha256_file(archive) != expected_archive_sha256
+        ):
+            raise ValueError("transfer archive sha256 changed before publish")
 
         with path_lock(destination):
             exists = os.path.lexists(destination)

@@ -212,3 +212,20 @@ async def test_transfer_composition_preserves_unbound_command_admission(
         )
         is None
     )
+
+    store.admitted.clear()
+    assert (
+        await handlers["transfer_copy_file"](
+            {
+                "session_id": "sess-source",
+                "source_session_id": "sess-source",
+                "destination_session_id": "sess-destination",
+                "source_path": "source.bin",
+                "destination_path": "dst.bin",
+                "source_workdir": str(workspace),
+                "destination_workdir": str(workspace),
+            }
+        )
+        == "transfer_copy_file"
+    )
+    assert store.admitted == ["sess-destination", "sess-source"]
