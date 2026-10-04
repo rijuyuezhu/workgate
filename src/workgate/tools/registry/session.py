@@ -49,7 +49,7 @@ def _session_change_workdir_description(_context: McpToolContext) -> str:
 
 
 def _session_copy_description(_context: McpToolContext) -> str:
-    return """Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Set background=true to return a managed job owned by src_session_id."""
+    return """Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Existing destinations are preserved unless overwrite=true is explicit. Set background=true to return a managed job owned by src_session_id."""
 
 
 def _session_end_description(_context: McpToolContext) -> str:
@@ -111,7 +111,7 @@ async def session_copy(
     dst_session_id: SessionIdArg,
     dst_path: SessionCopyPathArg,
     kind: SessionCopyKindArg = "auto",
-    overwrite: SessionCopyOverwriteArg = True,
+    overwrite: SessionCopyOverwriteArg = False,
     chunk_size: SessionCopyChunkSizeArg = None,
     background: SessionCopyBackgroundArg = False,
 ) -> SessionCopyOutput | JobStartOutput:
