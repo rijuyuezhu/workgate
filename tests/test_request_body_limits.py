@@ -219,6 +219,50 @@ async def test_actual_body_wins_over_misleading_small_content_length():
 
 
 @pytest.mark.asyncio
+async def test_streaming_bypass_is_exact_put_capability_path():
+    downstream = Starlette(
+        routes=[
+            Route(
+                "/executor/v1/transfer/{capability_id}",
+                _echo_body,
+                methods=["PUT"],
+            )
+        ]
+    )
+    app = RequestBodyLimitMiddleware(
+        downstream,
+        max_bytes=4,
+        streaming_prefixes=("/executor/v1/transfer",),
+    )
+
+    scope = _scope(path="/executor/v1/transfer/xfer_abc")
+    scope["method"] = "PUT"
+    sent, _received = await _invoke(
+        app,
+        [{"type": "http.request", "body": b"12345", "more_body": False}],
+        scope=scope,
+    )
+    status, _headers, payload = _response(sent)
+    assert status == 200
+    assert payload["bytes"] == 5
+
+    for path, method in [
+        ("/executor/v1/transfer/xfer_abc/extra", "PUT"),
+        ("/executor/v1/transfer/xfer_abc", "POST"),
+    ]:
+        scope = _scope(path=path)
+        scope["method"] = method
+        sent, _received = await _invoke(
+            app,
+            [{"type": "http.request", "body": b"12345", "more_body": False}],
+            scope=scope,
+        )
+        status, _headers, payload = _response(sent)
+        assert status == 413
+        assert payload["limit_bytes"] == 4
+
+
+@pytest.mark.asyncio
 async def test_zero_limit_disables_body_middleware():
     app = RequestBodyLimitMiddleware(
         Starlette(routes=[Route("/upload", _echo_body, methods=["POST"])]),

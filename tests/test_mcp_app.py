@@ -70,6 +70,7 @@ def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
         executor_pairing=executor_pairing,
         executor_fleet=executor_fleet,
         session_coordinator=session_coordinator,
+        transfer_gateway=SimpleNamespace(routes=lambda: []),
         stream_hub=object(),
     )
 

@@ -152,6 +152,10 @@ audit_payload_retention_s: 604800
 max_tmp_files: 500
 # Temporary-file byte limit; 0 removes all eligible scratch files during pruning.
 max_tmp_bytes: 50000000
+# Maximum retained bytes admitted for one cross-executor transfer payload.
+max_transfer_payload_bytes: 4294967296
+# Maximum aggregate bytes reserved or retained for cross-executor transfer payloads.
+max_transfer_payload_store_bytes: 17179869184
 # Maximum entries accepted from one transferred archive.
 max_transfer_archive_entries: 100000
 # Maximum declared regular-file bytes accepted while unpacking an archive.

@@ -9168,12 +9168,12 @@
                 "title": "Bytes"
               },
               "chunk_size": {
-                "description": "Chunk size used for binary transfer.",
+                "description": "Logical binary chunk size used by the transfer client.",
                 "title": "Chunk Size",
                 "type": "integer"
               },
               "chunks": {
-                "description": "Number of transfer chunks exchanged.",
+                "description": "Number of logical binary chunks in the transfer payload.",
                 "title": "Chunks",
                 "type": "integer"
               },
@@ -9242,7 +9242,7 @@
                 "description": "Actual executor-level data transport used by the copy operation.",
                 "enum": [
                   "same_executor",
-                  "control_payload"
+                  "resumable_http"
                 ],
                 "title": "Transport",
                 "type": "string"

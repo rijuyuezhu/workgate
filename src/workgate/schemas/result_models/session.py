@@ -263,7 +263,7 @@ class SessionCopyOutput(BaseModel):
     kind: Literal["file", "dir"] = Field(
         description="Resolved copied object kind."
     )
-    transport: Literal["same_executor", "control_payload"] = Field(
+    transport: Literal["same_executor", "resumable_http"] = Field(
         description="Actual executor-level data transport used by the copy operation."
     )
     resumed_bytes: int = Field(
@@ -291,8 +291,12 @@ class SessionCopyOutput(BaseModel):
         default=None,
         description="Transfer archive digest for directory copies.",
     )
-    chunks: int = Field(description="Number of transfer chunks exchanged.")
-    chunk_size: int = Field(description="Chunk size used for binary transfer.")
+    chunks: int = Field(
+        description="Number of logical binary chunks in the transfer payload."
+    )
+    chunk_size: int = Field(
+        description="Logical binary chunk size used by the transfer client."
+    )
     entries: int | None = Field(
         default=None,
         description="Number of directory entries unpacked for directory copies.",

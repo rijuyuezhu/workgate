@@ -1,9 +1,7 @@
 """Control-orchestrated copy between two existing execution sessions."""
 
 import asyncio
-import base64
 import contextlib
-import hashlib
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -31,7 +29,6 @@ from ..schemas.result_models.transfer import (
     TransferCopyFileOutput,
     TransferFinishWriteOutput,
     TransferPackDirOutput,
-    TransferReadChunkOutput,
     TransferStatOutput,
     TransferUnpackArchiveOutput,
 )
@@ -43,6 +40,7 @@ from .session_copy_store import (
 )
 from .sessions import ControlSessionCoordinator
 from .state import ControlSessionRecord
+from .transfer_gateway import ControlTransferGateway
 
 CopyKind = Literal["auto", "file", "dir"]
 ProgressCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -59,10 +57,19 @@ class ControlSessionCopyService:
         transport: ExecutorTransport,
         state_store: StateStore,
         data_dir: Path,
+        *,
+        transfer_gateway: ControlTransferGateway,
+        max_transfer_payload_bytes: int,
+        max_transfer_payload_store_bytes: int,
     ) -> None:
         self._sessions = sessions
         self._transport = transport
         self._payloads = PayloadStore(data_dir)
+        self._transfer_gateway = transfer_gateway
+        self._max_transfer_payload_bytes = int(max_transfer_payload_bytes)
+        self._max_transfer_payload_store_bytes = int(
+            max_transfer_payload_store_bytes
+        )
         self._checkpoints = SessionCopyCheckpointStore(
             state_store, self._payloads
         )
@@ -581,54 +588,59 @@ class ControlSessionCopyService:
         progress: ProgressCallback | None,
         cleanup_errors: list[str],
     ) -> SessionCopyCheckpoint:
+        self._checkpoints.reserve_export(
+            transfer_id=transfer_id,
+            owner_job_id=owner_job_id,
+            payload_size=payload_size,
+            max_payload_bytes=self._max_transfer_payload_bytes,
+            max_store_bytes=self._max_transfer_payload_store_bytes,
+        )
         staging = self._payloads.new_staging_path("transfer")
-        digest = hashlib.sha256()
-        offset = 0
+        lease = self._transfer_gateway.issue_upload(
+            executor_id=str(src.executor_id),
+            transfer_id=transfer_id,
+            staging_path=staging,
+            expected_bytes=payload_size,
+            expected_sha256=payload_sha256,
+        )
         try:
-            with self._payloads.open_private_staging(
-                staging, namespace="transfer"
-            ) as handle:
-                while offset < payload_size:
-                    args: dict[str, JsonValue] = {
-                        "path": export_path,
-                        "offset": offset,
-                        "chunk_size": chunk_size,
-                    }
-                    if source_unbound_temp:
-                        args["_workgate_unbound_temp"] = True
-                    chunk = TransferReadChunkOutput.model_validate(
-                        await self._call(src, "transfer_read_chunk", args)
-                    )
-                    if (
-                        chunk.offset != offset
-                        or chunk.size != payload_size
-                        or chunk.bytes <= 0
-                    ):
-                        raise RuntimeError(
-                            "source changed during session_copy export"
-                        )
-                    raw = base64.b64decode(
-                        chunk.data_b64.encode("ascii"), validate=True
-                    )
-                    if (
-                        len(raw) != chunk.bytes
-                        or hashlib.sha256(raw).hexdigest() != chunk.sha256
-                    ):
-                        raise RuntimeError(
-                            "executor transfer chunk size mismatch"
-                        )
-                    handle.write(raw)
-                    digest.update(raw)
-                    offset += len(raw)
-                    await self._report(
-                        progress,
-                        phase="exporting",
-                        bytes_transferred=offset,
-                        total_bytes=payload_size,
-                        chunk_size=chunk_size,
-                    )
-            if offset != payload_size or digest.hexdigest() != payload_sha256:
-                raise RuntimeError("control payload export integrity mismatch")
+            await self._report(
+                progress,
+                phase="exporting",
+                bytes_transferred=0,
+                total_bytes=payload_size,
+                chunk_size=chunk_size,
+            )
+            uploaded = await self._call(
+                src,
+                "transfer.http_upload",
+                {
+                    "transfer_id": transfer_id,
+                    "path": export_path,
+                    "expected_bytes": payload_size,
+                    "expected_sha256": payload_sha256,
+                    "chunk_size": chunk_size,
+                    "capability_path": lease.path,
+                    "capability_token": lease.token,
+                    "_workgate_unbound_temp": source_unbound_temp,
+                },
+            )
+            uploaded_bytes = (
+                uploaded.get("bytes") if isinstance(uploaded, dict) else None
+            )
+            uploaded_sha256 = (
+                uploaded.get("sha256") if isinstance(uploaded, dict) else None
+            )
+            if (
+                not isinstance(uploaded_bytes, int)
+                or isinstance(uploaded_bytes, bool)
+                or uploaded_bytes != payload_size
+                or not isinstance(uploaded_sha256, str)
+                or uploaded_sha256 != payload_sha256
+            ):
+                raise RuntimeError(
+                    "executor raw transfer upload acknowledgement is invalid"
+                )
             checkpoint = self._checkpoints.commit_export(
                 checkpoint={
                     "transfer_id": transfer_id,
@@ -659,6 +671,7 @@ class ControlSessionCopyService:
             )
             return checkpoint
         finally:
+            self._transfer_gateway.revoke(lease.capability_id)
             with contextlib.suppress(OSError):
                 staging.unlink(missing_ok=True)
 
@@ -799,12 +812,6 @@ class ControlSessionCopyService:
         unbound_temp: bool,
         progress: ProgressCallback | None,
     ) -> dict[str, Any]:
-        handle, _payload_path = self._payloads.open_payload(
-            checkpoint.payload_id,
-            namespace="transfer",
-            size=checkpoint.payload_size,
-            sha256=checkpoint.payload_sha256,
-        )
         begin_args: dict[str, JsonValue] = {
             "path": import_path,
             "overwrite": True if unbound_temp else checkpoint.overwrite,
@@ -814,56 +821,74 @@ class ControlSessionCopyService:
         }
         if unbound_temp:
             begin_args["_workgate_unbound_temp"] = True
-        try:
-            begin = TransferBeginWriteOutput.model_validate(
-                await self._call(dst, "transfer_begin_write", begin_args)
-            )
-            if begin.offset < 0 or begin.offset > checkpoint.payload_size:
+        begin = TransferBeginWriteOutput.model_validate(
+            await self._call(dst, "transfer_begin_write", begin_args)
+        )
+        if begin.offset < 0 or begin.offset > checkpoint.payload_size:
+            raise RuntimeError("destination transfer resume offset is invalid")
+        resumed_bytes = begin.offset
+        if begin.completed:
+            if (
+                begin.offset != checkpoint.payload_size
+                or begin.sha256 != checkpoint.payload_sha256
+            ):
                 raise RuntimeError(
-                    "destination transfer resume offset is invalid"
+                    "destination transfer receipt integrity mismatch"
                 )
-            resumed_bytes = begin.offset
-            if begin.completed:
-                if (
-                    begin.offset != checkpoint.payload_size
-                    or begin.sha256 != checkpoint.payload_sha256
-                ):
-                    raise RuntimeError(
-                        "destination transfer receipt integrity mismatch"
-                    )
-                return {"path": begin.path, "resumed_bytes": resumed_bytes}
+            return {"path": begin.path, "resumed_bytes": resumed_bytes}
 
-            offset = begin.offset
-            handle.seek(offset)
-            while offset < checkpoint.payload_size:
-                raw = handle.read(
-                    min(checkpoint.chunk_size, checkpoint.payload_size - offset)
-                )
-                if not raw:
-                    raise RuntimeError(
-                        "control payload made no forward progress"
-                    )
-                write_args: dict[str, JsonValue] = {
-                    "path": import_path,
+        await self._report(
+            progress,
+            phase="importing",
+            bytes_transferred=begin.offset,
+            total_bytes=checkpoint.payload_size,
+            chunk_size=checkpoint.chunk_size,
+            resumed_bytes=resumed_bytes,
+        )
+        lease = self._transfer_gateway.issue_download(
+            executor_id=str(dst.executor_id),
+            transfer_id=checkpoint.transfer_id,
+            payload_id=str(checkpoint.payload_id),
+            expected_bytes=checkpoint.payload_size,
+            expected_sha256=checkpoint.payload_sha256,
+            offset=begin.offset,
+        )
+        try:
+            downloaded = await self._call(
+                dst,
+                "transfer.http_download",
+                {
                     "transfer_id": begin.transfer_id,
-                    "offset": offset,
-                    "data_b64": base64.b64encode(raw).decode("ascii"),
-                    "expected_sha256": hashlib.sha256(raw).hexdigest(),
-                }
-                if unbound_temp:
-                    write_args["_workgate_unbound_temp"] = True
-                await self._call(dst, "transfer_write_chunk", write_args)
-                offset += len(raw)
-                await self._report(
-                    progress,
-                    phase="importing",
-                    bytes_transferred=offset,
-                    total_bytes=checkpoint.payload_size,
-                    chunk_size=checkpoint.chunk_size,
-                    resumed_bytes=resumed_bytes,
-                )
+                    "path": import_path,
+                    "expected_bytes": checkpoint.payload_size,
+                    "chunk_size": checkpoint.chunk_size,
+                    "offset": begin.offset,
+                    "capability_path": lease.path,
+                    "capability_token": lease.token,
+                    "_workgate_unbound_temp": unbound_temp,
+                },
+            )
         finally:
-            handle.close()
+            self._transfer_gateway.revoke(lease.capability_id)
+        downloaded_offset = (
+            downloaded.get("offset") if isinstance(downloaded, dict) else None
+        )
+        if (
+            not isinstance(downloaded_offset, int)
+            or isinstance(downloaded_offset, bool)
+            or downloaded_offset != checkpoint.payload_size
+        ):
+            raise RuntimeError(
+                "executor raw transfer download acknowledgement is invalid"
+            )
+        await self._report(
+            progress,
+            phase="importing",
+            bytes_transferred=checkpoint.payload_size,
+            total_bytes=checkpoint.payload_size,
+            chunk_size=checkpoint.chunk_size,
+            resumed_bytes=resumed_bytes,
+        )
 
         finish_args: dict[str, JsonValue] = {
             "path": import_path,
@@ -1201,7 +1226,7 @@ class ControlSessionCopyService:
         destination_binding = ControlSessionCopyService._binding_snapshot(dst)
         return SessionCopyOutput(
             kind=kind,
-            transport="same_executor" if same_executor else "control_payload",
+            transport="same_executor" if same_executor else "resumable_http",
             resumed_bytes=int(metrics.get("resumed_bytes", 0)),
             source=SessionCopyEndpoint(
                 session_id=str(src.session_id),

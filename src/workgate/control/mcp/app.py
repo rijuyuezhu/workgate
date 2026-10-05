@@ -18,6 +18,7 @@ from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
 from ...persistence import FileStateStore
+from ...protocol.executor import EXECUTOR_TRANSFER_PREFIX
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import McpToolContext
 from ...tools.metadata import install_tool_safety_annotations
@@ -164,6 +165,7 @@ def _add_public_routes_to_mcp_http_app(
                     runtime.executor_pairing,
                 ),
                 *executor_bootstrap_routes(active_settings.resolved_base_url),
+                *runtime.transfer_gateway.routes(),
                 *terminal_stream_routes(
                     runtime.executor_transport, runtime.stream_hub
                 ),
@@ -226,7 +228,11 @@ def _build_authenticated_mcp_http_app(
             mcp_path=mcp_path,
         )
     install_request_body_limit(
-        app, max_bytes=active_settings.max_http_request_bytes
+        app,
+        max_bytes=active_settings.max_http_request_bytes,
+        streaming_prefixes=(
+            (EXECUTOR_TRANSFER_PREFIX,) if runtime is not None else ()
+        ),
     )
     if active_settings.auth_mode != "none":
         app.add_middleware(AuthMiddleware, public_routes=public_routes)
