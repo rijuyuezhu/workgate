@@ -290,6 +290,127 @@ async def test_executor_raw_download_rejects_http_error(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_executor_raw_download_interruption_resumes_with_new_capability(
+    tmp_path, monkeypatch
+):
+    workspace, config, store, profile, payloads, gateway, app = _runtime(
+        tmp_path
+    )
+    destination = workspace / "destination"
+    destination.mkdir()
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=destination)
+    data = (b"interrupted-download-" * 100_000) + b"tail"
+    sha256 = hashlib.sha256(data).hexdigest()
+    transfer_id = "copy_" + "i" * 22
+    context = TransferContext(config, store)
+    begin = transfer_begin_write(
+        "destination.bin",
+        expected_bytes=len(data),
+        transfer_id=transfer_id,
+        session_id=session_id,
+        context=context,
+    )
+    prefix = data[:131_072]
+
+    class InterruptedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield prefix
+            raise httpx.ReadError("simulated interrupted download")
+
+    def interrupted_client(_profile: ExecutorProfile) -> httpx.AsyncClient:
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                headers={
+                    "content-length": str(len(data)),
+                    "x-workgate-transfer-offset": "0",
+                },
+                stream=InterruptedStream(),
+            )
+        )
+        return httpx.AsyncClient(
+            transport=transport,
+            base_url=profile.control_url,
+        )
+
+    monkeypatch.setattr(transfer_http, "_client", interrupted_client)
+    with pytest.raises(RuntimeError, match="control transfer download failed"):
+        await transfer_http.download_from_control(
+            profile,
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "destination.bin",
+                "transfer_id": begin.transfer_id,
+                "expected_bytes": len(data),
+                "offset": 0,
+                "chunk_size": len(prefix),
+                "capability_path": "/executor/v1/transfer/interrupted",
+                "capability_token": "first-token",
+            },
+        )
+
+    resumed = transfer_begin_write(
+        "destination.bin",
+        expected_bytes=len(data),
+        transfer_id=transfer_id,
+        session_id=session_id,
+        context=context,
+    )
+    assert resumed.offset == len(prefix)
+
+    staging = payloads.new_staging_path("transfer")
+    with payloads.open_private_staging(staging, namespace="transfer") as handle:
+        handle.write(data)
+    payload = payloads.commit_staging(
+        staging,
+        namespace="transfer",
+        size=len(data),
+        sha256=sha256,
+    )
+    lease = gateway.issue_download(
+        executor_id=str(profile.executor_id),
+        transfer_id=transfer_id,
+        payload_id=str(payload.payload_id),
+        expected_bytes=len(data),
+        expected_sha256=sha256,
+        offset=resumed.offset,
+    )
+    _patch_client(monkeypatch, app)
+
+    result = await transfer_http.download_from_control(
+        profile,
+        config,
+        store,
+        {
+            "session_id": session_id,
+            "path": "destination.bin",
+            "transfer_id": transfer_id,
+            "expected_bytes": len(data),
+            "offset": resumed.offset,
+            "chunk_size": len(prefix),
+            "capability_path": lease.path,
+            "capability_token": lease.token,
+        },
+    )
+    finished = transfer_finish_write(
+        "destination.bin",
+        transfer_id,
+        expected_bytes=len(data),
+        expected_sha256=sha256,
+        session_id=session_id,
+        context=context,
+    )
+
+    assert result["offset"] == len(data)
+    assert result["bytes"] == len(data) - len(prefix)
+    assert finished.completed is True
+    assert (destination / "destination.bin").read_bytes() == data
+
+
+@pytest.mark.asyncio
 async def test_executor_raw_download_resumes_existing_transaction(
     tmp_path, monkeypatch
 ):
