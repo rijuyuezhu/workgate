@@ -175,7 +175,10 @@ class ControlSessionCopyService:
                 )
             if src.executor_id != dst.executor_id:
                 try:
-                    resolved_kind, metrics = await self._copy_cross_executor(
+                    (
+                        resolved_kind,
+                        metrics,
+                    ) = await self._copy_cross_executor_via_control(
                         src,
                         src_path=src_path,
                         dst=dst,
@@ -195,6 +198,7 @@ class ControlSessionCopyService:
                         dst_path,
                         resolved_kind,
                         metrics,
+                        transport="control_relay",
                     )
                 finally:
                     if owner_job_id is None:
@@ -253,6 +257,7 @@ class ControlSessionCopyService:
                 dst_path,
                 resolved_kind,
                 metrics,
+                transport="same_executor",
             )
 
     async def start_background(
@@ -456,7 +461,7 @@ class ControlSessionCopyService:
         )
         return result.model_dump(mode="json")
 
-    async def _copy_cross_executor(
+    async def _copy_cross_executor_via_control(
         self,
         src: ControlSessionRecord,
         *,
@@ -471,6 +476,7 @@ class ControlSessionCopyService:
         owner_job_id: str | None,
         checkpoint: SessionCopyCheckpoint | None,
     ) -> tuple[Literal["file", "dir"], dict[str, Any]]:
+        """Run the durable control-retained fallback route for a cross-executor copy."""
         current = checkpoint
         if current is None:
             await self._report(
@@ -1220,13 +1226,15 @@ class ControlSessionCopyService:
         dst_path: str,
         kind: Literal["file", "dir"],
         metrics: dict[str, Any],
+        *,
+        transport: Literal["same_executor", "control_relay"],
     ) -> SessionCopyOutput:
         same_executor = src.executor_id == dst.executor_id
         source_binding = ControlSessionCopyService._binding_snapshot(src)
         destination_binding = ControlSessionCopyService._binding_snapshot(dst)
         return SessionCopyOutput(
             kind=kind,
-            transport="same_executor" if same_executor else "resumable_http",
+            transport=transport,
             resumed_bytes=int(metrics.get("resumed_bytes", 0)),
             source=SessionCopyEndpoint(
                 session_id=str(src.session_id),

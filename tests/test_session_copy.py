@@ -594,7 +594,7 @@ def _checkpoint_service(
 
 
 @pytest.mark.asyncio
-async def test_cross_executor_retry_uses_resumable_http_with_source_offline(
+async def test_cross_executor_retry_uses_control_relay_with_source_offline(
     tmp_path,
 ):
     payload = b"durable-control-payload"
@@ -634,7 +634,7 @@ async def test_cross_executor_retry_uses_resumable_http_with_source_offline(
     for _op, args, session_id, _timeout_s in import_calls:
         assert "workdir" not in args
         assert session_id == str(checkpoint.destination_session_id)
-    assert result.transport == "resumable_http"
+    assert result.transport == "control_relay"
     assert result.bytes == len(payload)
     assert result.sha256 == hashlib.sha256(payload).hexdigest()
     imported = service._checkpoints.load(checkpoint.transfer_id)
@@ -696,7 +696,7 @@ async def test_cross_executor_import_resumes_after_control_service_restart(
         transfer_id=checkpoint.transfer_id,
     )
 
-    assert result.transport == "resumable_http"
+    assert result.transport == "control_relay"
     assert result.bytes == len(payload)
     assert transport.data == payload
     assert "transfer.http_download" in transport.calls
@@ -1078,7 +1078,7 @@ async def test_cross_executor_first_file_copy_uses_raw_http(tmp_path):
     )
 
     assert result.kind == "file"
-    assert result.transport == "resumable_http"
+    assert result.transport == "control_relay"
     assert result.bytes == len(payload)
     assert result.sha256 == hashlib.sha256(payload).hexdigest()
     assert bytes(transport.destination) == payload
@@ -1120,7 +1120,7 @@ async def test_cross_executor_first_directory_copy_uses_raw_http(
     )
 
     assert result.kind == "dir"
-    assert result.transport == "resumable_http"
+    assert result.transport == "control_relay"
     assert result.archive_bytes == len(archive)
     assert result.archive_sha256 == hashlib.sha256(archive).hexdigest()
     assert result.entries == 3
@@ -1186,7 +1186,7 @@ async def test_managed_copy_handler_replays_durable_payload_and_reports_progress
         return session_copy_module.SessionCopyOutput.model_validate(
             {
                 "kind": "file",
-                "transport": "resumable_http",
+                "transport": "control_relay",
                 "resumed_bytes": 3,
                 "source": {
                     "session_id": source_id,
@@ -1250,7 +1250,7 @@ async def test_managed_copy_handler_replays_durable_payload_and_reports_progress
     assert context.logs[-1].startswith("copy completed:")
     assert context.progress[-1]["phase"] == "completed"
     assert context.progress[-1]["resumed_bytes"] == 3
-    assert result["transport"] == "resumable_http"
+    assert result["transport"] == "control_relay"
 
 
 @pytest.mark.asyncio

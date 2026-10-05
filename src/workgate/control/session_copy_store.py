@@ -35,7 +35,7 @@ _Sha256 = Annotated[
 
 
 class SessionCopyCheckpoint(BaseModel):
-    """Restart-critical facts for one cross-executor transfer only."""
+    """Restart-critical facts for one durable control-retained transfer."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
 

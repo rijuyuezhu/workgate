@@ -263,8 +263,8 @@ class SessionCopyOutput(BaseModel):
     kind: Literal["file", "dir"] = Field(
         description="Resolved copied object kind."
     )
-    transport: Literal["same_executor", "resumable_http"] = Field(
-        description="Actual executor-level data transport used by the copy operation."
+    transport: Literal["same_executor", "control_relay"] = Field(
+        description="Actual data route selected for the copy operation."
     )
     resumed_bytes: int = Field(
         default=0,

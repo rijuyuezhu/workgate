@@ -9239,10 +9239,10 @@
                 "description": "Source copy endpoint."
               },
               "transport": {
-                "description": "Actual executor-level data transport used by the copy operation.",
+                "description": "Actual data route selected for the copy operation.",
                 "enum": [
                   "same_executor",
-                  "resumable_http"
+                  "control_relay"
                 ],
                 "title": "Transport",
                 "type": "string"

@@ -126,7 +126,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "background": False,
             },
         )
-        assert copied["transport"] == "resumable_http"
+        assert copied["transport"] == "control_relay"
         assert copied["relation"]["route"] == "different_executors"
         assert copied["relation"]["same_executor"] is False
         assert copied["source"]["executor_id"] == source_executor.executor_id
@@ -157,7 +157,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "background": False,
             },
         )
-        assert directory_copy["transport"] == "resumable_http"
+        assert directory_copy["transport"] == "control_relay"
         assert directory_copy["relation"]["route"] == "different_executors"
         assert directory_copy["chunks"] > 1
         assert (
