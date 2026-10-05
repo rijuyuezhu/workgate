@@ -35,9 +35,18 @@ class _OversizedRequest:
 class RequestBodyLimitMiddleware:
     """Reject HTTP bodies that exceed one configured byte budget."""
 
-    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_bytes: int,
+        streaming_prefixes: tuple[str, ...] = (),
+    ) -> None:
         self.app = app
         self.max_bytes = max(0, int(max_bytes))
+        self.streaming_prefixes = tuple(
+            prefix.rstrip("/") for prefix in streaming_prefixes if prefix
+        )
 
     @staticmethod
     def _declared_lengths(scope: Scope) -> tuple[int, ...]:
@@ -144,6 +153,17 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        path = str(scope.get("path") or "")
+        method = str(scope.get("method") or "").upper()
+        if method == "PUT" and any(
+            path.startswith(prefix + "/")
+            and "/" not in path[len(prefix) + 1 :]
+            and bool(path[len(prefix) + 1 :])
+            for prefix in self.streaming_prefixes
+        ):
+            await self.app(scope, receive, send)
+            return
+
         declared_lengths = self._declared_lengths(scope)
         declared = max(declared_lengths, default=None)
         if declared is not None and declared > self.max_bytes:
@@ -169,6 +189,15 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, self._replay_receive(buffered, receive), send)
 
 
-def install_request_body_limit(app: Any, *, max_bytes: int) -> None:
-    """Install the shared request-body middleware on a Starlette-compatible app."""
-    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=max_bytes)
+def install_request_body_limit(
+    app: Any,
+    *,
+    max_bytes: int,
+    streaming_prefixes: tuple[str, ...] = (),
+) -> None:
+    """Install bounded buffering, except for explicitly streaming private routes."""
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=max_bytes,
+        streaming_prefixes=streaming_prefixes,
+    )

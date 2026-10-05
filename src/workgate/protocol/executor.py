@@ -13,6 +13,8 @@ EXECUTOR_VALIDATE_PATH = "/executor/v1/validate"
 EXECUTOR_HEARTBEAT_PATH = "/executor/v1/heartbeat"
 EXECUTOR_POLL_PATH = "/executor/v1/poll"
 EXECUTOR_RESULT_PATH = "/executor/v1/result"
+EXECUTOR_TRANSFER_PREFIX = "/executor/v1/transfer"
+EXECUTOR_TRANSFER_TOKEN_HEADER = "x-workgate-transfer-token"
 EXECUTOR_CAPABILITY_SESSIONS = "sessions.v1"
 EXECUTOR_CAPABILITY_BROWSER = "browser.v1"
 

@@ -234,6 +234,10 @@ class Settings(BaseSettings):
     """Temporary-file count limit; 0 removes all eligible scratch files during pruning."""
     max_tmp_bytes: _NonNegativeInt = 50_000_000
     """Temporary-file byte limit; 0 removes all eligible scratch files during pruning."""
+    max_transfer_payload_bytes: _PositiveInt = 4 * 1024 * 1024 * 1024
+    """Maximum retained bytes admitted for one cross-executor transfer payload."""
+    max_transfer_payload_store_bytes: _PositiveInt = 16 * 1024 * 1024 * 1024
+    """Maximum aggregate bytes reserved or retained for cross-executor transfer payloads."""
     max_transfer_archive_entries: _PositiveInt = 100_000
     """Maximum entries accepted from one transferred archive."""
     max_transfer_unpacked_bytes: _PositiveInt = 10_000_000_000
@@ -401,6 +405,14 @@ class Settings(BaseSettings):
         if self.max_audit_payload_bytes > self.max_audit_payload_store_bytes:
             raise ValueError(
                 "max_audit_payload_bytes must not exceed max_audit_payload_store_bytes"
+            )
+        if (
+            self.max_transfer_payload_bytes
+            > self.max_transfer_payload_store_bytes
+        ):
+            raise ValueError(
+                "max_transfer_payload_bytes must not exceed "
+                "max_transfer_payload_store_bytes"
             )
         return self
 

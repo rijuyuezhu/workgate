@@ -53,6 +53,8 @@ class ControlConfig(SharedRoleConfig):
     max_http_request_bytes: int
     max_todos: int
     max_todo_bytes: int
+    max_transfer_payload_bytes: int
+    max_transfer_payload_store_bytes: int
 
     file_download_enabled: bool
     file_download_default_ttl_s: int
@@ -134,6 +136,8 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         audit_payload_retention_s=settings.audit_payload_retention_s,
         max_todos=settings.max_todos,
         max_todo_bytes=settings.max_todo_bytes,
+        max_transfer_payload_bytes=settings.max_transfer_payload_bytes,
+        max_transfer_payload_store_bytes=settings.max_transfer_payload_store_bytes,
         file_download_enabled=settings.file_download_enabled,
         file_download_default_ttl_s=settings.file_download_default_ttl_s,
         file_download_max_ttl_s=settings.file_download_max_ttl_s,

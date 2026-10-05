@@ -1,10 +1,15 @@
 import hashlib
+import os
+import time
 from pathlib import Path
 
 import pytest
 
 from workgate.control.payload_store import PayloadStore
-from workgate.control.session_copy_store import SessionCopyCheckpointStore
+from workgate.control.session_copy_store import (
+    SessionCopyCheckpointStore,
+    TransferPayloadCapacityError,
+)
 from workgate.persistence import FileStateStore
 from workgate.protocol.ids import new_executor_id, new_session_id
 
@@ -25,6 +30,13 @@ def _commit_checkpoint(
     staging = payloads.new_staging_path("transfer")
     with payloads.open_private_staging(staging, namespace="transfer") as handle:
         handle.write(data)
+    checkpoints.reserve_export(
+        transfer_id=transfer_id,
+        owner_job_id=None,
+        payload_size=len(data),
+        max_payload_bytes=max(1, len(data)),
+        max_store_bytes=max(1, len(data)),
+    )
     checkpoint = checkpoints.commit_export(
         checkpoint={
             "transfer_id": transfer_id,
@@ -46,6 +58,130 @@ def _commit_checkpoint(
         payload_sha256=hashlib.sha256(data).hexdigest(),
     )
     return state, payloads, checkpoints, checkpoint
+
+
+def test_transfer_payload_reservation_enforces_per_transfer_and_store_limits(
+    tmp_path,
+):
+    _state, _payloads, checkpoints = _stores(tmp_path)
+    first = "copy_" + "r" * 22
+    second = "copy_" + "s" * 22
+
+    with pytest.raises(TransferPayloadCapacityError, match="per-transfer"):
+        checkpoints.reserve_export(
+            transfer_id=first,
+            owner_job_id=None,
+            payload_size=11,
+            max_payload_bytes=10,
+            max_store_bytes=100,
+        )
+
+    checkpoints.reserve_export(
+        transfer_id=first,
+        owner_job_id=None,
+        payload_size=7,
+        max_payload_bytes=10,
+        max_store_bytes=10,
+    )
+    with pytest.raises(TransferPayloadCapacityError, match="capacity"):
+        checkpoints.reserve_export(
+            transfer_id=second,
+            owner_job_id=None,
+            payload_size=4,
+            max_payload_bytes=10,
+            max_store_bytes=10,
+        )
+
+
+def test_transfer_payload_reservation_survives_store_reconstruction(tmp_path):
+    state, payloads, checkpoints = _stores(tmp_path)
+    transfer_id = "copy_" + "t" * 22
+    checkpoints.reserve_export(
+        transfer_id=transfer_id,
+        owner_job_id=None,
+        payload_size=9,
+        max_payload_bytes=10,
+        max_store_bytes=10,
+    )
+
+    restored = SessionCopyCheckpointStore(state, payloads)
+    with pytest.raises(TransferPayloadCapacityError, match="capacity"):
+        restored.reserve_export(
+            transfer_id="copy_" + "u" * 22,
+            owner_job_id=None,
+            payload_size=2,
+            max_payload_bytes=10,
+            max_store_bytes=10,
+        )
+
+
+def test_transfer_payload_commit_converts_reservation_without_double_counting(
+    tmp_path,
+):
+    state, payloads, checkpoints, checkpoint = _commit_checkpoint(
+        tmp_path, data=b"1234567"
+    )
+    restored = SessionCopyCheckpointStore(state, payloads)
+    with pytest.raises(TransferPayloadCapacityError, match="capacity"):
+        restored.reserve_export(
+            transfer_id="copy_" + "v" * 22,
+            owner_job_id=None,
+            payload_size=1,
+            max_payload_bytes=8,
+            max_store_bytes=7,
+        )
+
+    checkpoints.prepare_abandonment(checkpoint.transfer_id)
+    checkpoints.remove(checkpoint.transfer_id)
+    restored.reserve_export(
+        transfer_id="copy_" + "w" * 22,
+        owner_job_id=None,
+        payload_size=7,
+        max_payload_bytes=7,
+        max_store_bytes=7,
+    )
+
+
+def test_prepare_abandonment_releases_uncommitted_reservation(tmp_path):
+    _state, _payloads, checkpoints = _stores(tmp_path)
+    transfer_id = "copy_" + "x" * 22
+    checkpoints.reserve_export(
+        transfer_id=transfer_id,
+        owner_job_id=None,
+        payload_size=5,
+        max_payload_bytes=5,
+        max_store_bytes=5,
+    )
+
+    assert checkpoints.prepare_abandonment(transfer_id) is None
+
+    checkpoints.reserve_export(
+        transfer_id="copy_" + "y" * 22,
+        owner_job_id=None,
+        payload_size=5,
+        max_payload_bytes=5,
+        max_store_bytes=5,
+    )
+
+
+def test_checkpoint_gc_prunes_only_stale_transfer_staging(
+    tmp_path, monkeypatch
+):
+    _state, payloads, checkpoints = _stores(tmp_path)
+    stale = payloads.new_staging_path("transfer")
+    fresh = payloads.new_staging_path("transfer")
+    for path in (stale, fresh):
+        with payloads.open_private_staging(
+            path, namespace="transfer"
+        ) as handle:
+            handle.write(b"partial")
+    now = time.time()
+    os.utime(stale, (now - 7200, now - 7200))
+
+    checkpoints.prepare_abandonments()
+
+    assert not stale.exists()
+    assert fresh.exists()
 
 
 def test_corrupt_checkpoint_store_fails_closed_without_payload_cleanup(
@@ -100,6 +236,14 @@ def test_failed_export_checkpoint_write_leaves_collectable_orphan(
     staging = payloads.new_staging_path("transfer")
     with payloads.open_private_staging(staging, namespace="transfer") as handle:
         handle.write(data)
+    transfer_id = "copy_" + "b" * 22
+    checkpoints.reserve_export(
+        transfer_id=transfer_id,
+        owner_job_id=None,
+        payload_size=len(data),
+        max_payload_bytes=len(data),
+        max_store_bytes=len(data),
+    )
     real_write_json = state.write_json
 
     def fail_write(path, value):
@@ -111,7 +255,7 @@ def test_failed_export_checkpoint_write_leaves_collectable_orphan(
     with pytest.raises(OSError, match="export checkpoint failure"):
         checkpoints.commit_export(
             checkpoint={
-                "transfer_id": "copy_" + "b" * 22,
+                "transfer_id": transfer_id,
                 "owner_job_id": None,
                 "source_session_id": str(new_session_id()),
                 "source_executor_id": str(new_executor_id()),

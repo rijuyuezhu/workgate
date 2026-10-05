@@ -1381,6 +1381,46 @@
         ],
         [
           {
+            "code": "max_transfer_payload_bytes"
+          },
+          {
+            "lines": [
+              {
+                "code": "--max-transfer-payload-bytes"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_MAX_TRANSFER_PAYLOAD_BYTES"
+          },
+          "integer",
+          {
+            "code": "4294967296"
+          },
+          "Maximum retained bytes admitted for one cross-executor transfer payload."
+        ],
+        [
+          {
+            "code": "max_transfer_payload_store_bytes"
+          },
+          {
+            "lines": [
+              {
+                "code": "--max-transfer-payload-store-bytes"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_MAX_TRANSFER_PAYLOAD_STORE_BYTES"
+          },
+          "integer",
+          {
+            "code": "17179869184"
+          },
+          "Maximum aggregate bytes reserved or retained for cross-executor transfer payloads."
+        ],
+        [
+          {
             "code": "max_transfer_archive_entries"
           },
           {
@@ -2725,6 +2765,32 @@
       "description": "Temporary-file byte limit; 0 removes all eligible scratch files during pruning.",
       "env": "WORKGATE_MAX_TMP_BYTES",
       "name": "max_tmp_bytes",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--max-transfer-payload-bytes",
+      "default": 4294967296,
+      "default_display": "4294967296",
+      "description": "Maximum retained bytes admitted for one cross-executor transfer payload.",
+      "env": "WORKGATE_MAX_TRANSFER_PAYLOAD_BYTES",
+      "name": "max_transfer_payload_bytes",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--max-transfer-payload-store-bytes",
+      "default": 17179869184,
+      "default_display": "17179869184",
+      "description": "Maximum aggregate bytes reserved or retained for cross-executor transfer payloads.",
+      "env": "WORKGATE_MAX_TRANSFER_PAYLOAD_STORE_BYTES",
+      "name": "max_transfer_payload_store_bytes",
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",

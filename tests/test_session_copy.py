@@ -1,8 +1,8 @@
 import asyncio
-import base64
 import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,10 +10,12 @@ import pytest
 import workgate.control.session_copy as session_copy_module
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.control.payload_store import PayloadStore
 from workgate.control.session_copy import (
     SESSION_COPY_MANAGED_KIND,
     ControlSessionCopyService,
 )
+from workgate.control.session_copy_store import TransferPayloadCapacityError
 from workgate.control.state import ControlSessionRecord
 from workgate.control.tool_routing import ControlToolRouter
 from workgate.persistence import FileStateStore
@@ -337,12 +339,103 @@ class _CheckpointSessions:
         return self.availability
 
 
+class _RawGatewayStub:
+    def __init__(self, data_dir: Path, *, upload_bytes: bytes = b"") -> None:
+        self.payloads = PayloadStore(data_dir)
+        self.upload_bytes = upload_bytes
+        self.upload_staging: Path | None = None
+        self.upload_expected_bytes = 0
+        self.upload_expected_sha256 = ""
+        self.download_payload_id: str | None = None
+        self.download_expected_bytes = 0
+        self.download_expected_sha256 = ""
+        self.download_offset = 0
+
+    def issue_upload(
+        self,
+        *,
+        executor_id: str,
+        transfer_id: str,
+        staging_path: Path,
+        expected_bytes: int,
+        expected_sha256: str,
+    ):
+        _ = (executor_id, transfer_id)
+        self.upload_staging = staging_path
+        self.upload_expected_bytes = expected_bytes
+        self.upload_expected_sha256 = expected_sha256
+        return SimpleNamespace(
+            capability_id="xfer_upload",
+            path="/executor/v1/transfer/xfer_upload",
+            token="upload-token",
+        )
+
+    def issue_download(
+        self,
+        *,
+        executor_id: str,
+        transfer_id: str,
+        payload_id: str,
+        expected_bytes: int,
+        expected_sha256: str,
+        offset: int,
+    ):
+        _ = (executor_id, transfer_id)
+        self.download_payload_id = payload_id
+        self.download_expected_bytes = expected_bytes
+        self.download_expected_sha256 = expected_sha256
+        self.download_offset = offset
+        return SimpleNamespace(
+            capability_id="xfer_download",
+            path="/executor/v1/transfer/xfer_download",
+            token="download-token",
+        )
+
+    def revoke(self, capability_id: str) -> None:
+        _ = capability_id
+
+    def complete_upload(self) -> dict[str, Any]:
+        staging = self.upload_staging
+        assert staging is not None
+        raw = self.upload_bytes
+        digest = hashlib.sha256(raw).hexdigest()
+        if (
+            len(raw) != self.upload_expected_bytes
+            or digest != self.upload_expected_sha256
+        ):
+            raise RuntimeError("raw upload integrity mismatch")
+        with self.payloads.open_private_staging(
+            staging, namespace="transfer"
+        ) as handle:
+            handle.write(raw)
+        return {"bytes": len(raw), "sha256": digest}
+
+    def download_bytes(self) -> bytes:
+        payload_id = self.download_payload_id
+        assert payload_id is not None
+        handle, _path = self.payloads.open_payload(
+            payload_id,
+            namespace="transfer",
+            size=self.download_expected_bytes,
+            sha256=self.download_expected_sha256,
+        )
+        try:
+            handle.seek(self.download_offset)
+            return handle.read()
+        finally:
+            handle.close()
+
+
 class _DestinationOnlyTransport:
     def __init__(
-        self, source_executor_id: str, destination_executor_id: str
+        self,
+        source_executor_id: str,
+        destination_executor_id: str,
+        gateway: _RawGatewayStub,
     ) -> None:
         self.source_executor_id = source_executor_id
         self.destination_executor_id = destination_executor_id
+        self.gateway = gateway
         self.calls: list[str] = []
         self.call_details: list[
             tuple[str, dict[str, Any], str | None, float | None]
@@ -382,17 +475,13 @@ class _DestinationOnlyTransport:
                 "completed": False,
                 "sha256": None,
             }
-        elif op == "transfer_write_chunk":
-            raw = base64.b64decode(str(values["data_b64"]))
+        elif op == "transfer.http_download":
             assert int(values["offset"]) == len(self.data)
-            assert hashlib.sha256(raw).hexdigest() == values["expected_sha256"]
+            raw = self.gateway.download_bytes()
             self.data.extend(raw)
             result = {
-                "path": str(values["path"]),
-                "temp_path": ".temporary",
-                "offset": int(values["offset"]),
+                "offset": len(self.data),
                 "bytes": len(raw),
-                "sha256": hashlib.sha256(raw).hexdigest(),
             }
         elif op == "transfer_finish_write":
             result = {
@@ -446,8 +535,9 @@ def _checkpoint_service(
         updated_at=1.0,
     )
     sessions = _CheckpointSessions((source, destination))
+    gateway = _RawGatewayStub(tmp_path / "data")
     transport = _DestinationOnlyTransport(
-        source_executor_id, destination_executor_id
+        source_executor_id, destination_executor_id, gateway
     )
     state_store = FileStateStore(lambda: tmp_path / "state")
     if owner_job_id is not None:
@@ -463,6 +553,9 @@ def _checkpoint_service(
         transport,  # type: ignore[arg-type]
         state_store,
         tmp_path / "data",
+        transfer_gateway=gateway,  # type: ignore[arg-type]
+        max_transfer_payload_bytes=10_000_000,
+        max_transfer_payload_store_bytes=10_000_000,
     )
     transfer_id = "copy_" + "a" * 22
     staging = service._payloads.new_staging_path("transfer")
@@ -470,6 +563,13 @@ def _checkpoint_service(
         staging, namespace="transfer"
     ) as handle:
         handle.write(payload)
+    service._checkpoints.reserve_export(
+        transfer_id=transfer_id,
+        owner_job_id=owner_job_id,
+        payload_size=len(payload),
+        max_payload_bytes=10_000_000,
+        max_store_bytes=10_000_000,
+    )
     checkpoint = service._checkpoints.commit_export(
         checkpoint={
             "transfer_id": transfer_id,
@@ -494,7 +594,7 @@ def _checkpoint_service(
 
 
 @pytest.mark.asyncio
-async def test_cross_executor_retry_uses_control_payload_with_source_offline(
+async def test_cross_executor_retry_uses_control_relay_with_source_offline(
     tmp_path,
 ):
     payload = b"durable-control-payload"
@@ -526,7 +626,7 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
         if detail[0]
         in {
             "transfer_begin_write",
-            "transfer_write_chunk",
+            "transfer.http_download",
             "transfer_finish_write",
         }
     ]
@@ -534,7 +634,7 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
     for _op, args, session_id, _timeout_s in import_calls:
         assert "workdir" not in args
         assert session_id == str(checkpoint.destination_session_id)
-    assert result.transport == "control_payload"
+    assert result.transport == "control_relay"
     assert result.bytes == len(payload)
     assert result.sha256 == hashlib.sha256(payload).hexdigest()
     imported = service._checkpoints.load(checkpoint.transfer_id)
@@ -557,6 +657,51 @@ async def test_cross_executor_retry_uses_control_payload_with_source_offline(
     assert service._checkpoints.load(checkpoint.transfer_id) is None
     assert not payload_path.exists()
     assert "transfer_abandon_import" in transport.calls
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_import_resumes_after_control_service_restart(
+    tmp_path,
+):
+    payload = b"restart-after-export"
+    service, sessions, _transport, checkpoint, state_store = (
+        _checkpoint_service(tmp_path, payload)
+    )
+    await service.aclose()
+
+    gateway = _RawGatewayStub(tmp_path / "data")
+    transport = _DestinationOnlyTransport(
+        str(checkpoint.source_executor_id),
+        str(checkpoint.destination_executor_id),
+        gateway,
+    )
+    restored = ControlSessionCopyService(
+        sessions,  # type: ignore[arg-type]
+        transport,  # type: ignore[arg-type]
+        state_store,
+        tmp_path / "data",
+        transfer_gateway=gateway,  # type: ignore[arg-type]
+        max_transfer_payload_bytes=10_000_000,
+        max_transfer_payload_store_bytes=10_000_000,
+    )
+
+    result = await restored.copy(
+        src_session_id=str(checkpoint.source_session_id),
+        src_path=checkpoint.source_path,
+        dst_session_id=str(checkpoint.destination_session_id),
+        dst_path=checkpoint.destination_path,
+        kind="file",
+        overwrite=True,
+        chunk_size=checkpoint.chunk_size,
+        transfer_id=checkpoint.transfer_id,
+    )
+
+    assert result.transport == "control_relay"
+    assert result.bytes == len(payload)
+    assert transport.data == payload
+    assert "transfer.http_download" in transport.calls
+    assert "transfer.http_upload" not in transport.calls
+    await restored.aclose()
 
 
 @pytest.mark.asyncio
@@ -681,7 +826,7 @@ async def test_abandonment_keeps_tombstone_until_executor_confirms_safe_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_corrupt_control_payload_fails_before_destination_side_effect(
+async def test_corrupt_control_payload_fails_without_destination_publish(
     tmp_path,
 ):
     service, _sessions, transport, checkpoint, _state_store = (
@@ -704,7 +849,11 @@ async def test_corrupt_control_payload_fails_before_destination_side_effect(
             transfer_id=checkpoint.transfer_id,
         )
 
-    assert transport.calls == []
+    assert transport.data == b""
+    assert transport.calls == [
+        "transfer_begin_write",
+        "transfer.http_download",
+    ]
 
 
 class _FirstExportTransport:
@@ -712,6 +861,7 @@ class _FirstExportTransport:
         self,
         source_executor_id: str,
         destination_executor_id: str,
+        gateway: _RawGatewayStub,
         *,
         source_kind: str,
         payload: bytes,
@@ -719,6 +869,7 @@ class _FirstExportTransport:
     ) -> None:
         self.source_executor_id = source_executor_id
         self.destination_executor_id = destination_executor_id
+        self.gateway = gateway
         self.source_kind = source_kind
         self.payload = payload
         self.archive = archive
@@ -765,23 +916,8 @@ class _FirstExportTransport:
                     "sha256": hashlib.sha256(self.archive).hexdigest(),
                     "compression": "gz",
                 }
-            elif op == "transfer_read_chunk":
-                source = (
-                    self.payload if self.source_kind == "file" else self.archive
-                )
-                assert source is not None
-                offset = int(values["offset"])
-                chunk_size = int(values["chunk_size"])
-                raw = source[offset : offset + chunk_size]
-                result = {
-                    "path": str(values["path"]),
-                    "offset": offset,
-                    "bytes": len(raw),
-                    "size": len(source),
-                    "eof": offset + len(raw) >= len(source),
-                    "sha256": hashlib.sha256(raw).hexdigest(),
-                    "data_b64": base64.b64encode(raw).decode("ascii"),
-                }
+            elif op == "transfer.http_upload":
+                result = self.gateway.complete_upload()
             elif op == "transfer_delete_temp_path":
                 result = {"path": str(values["path"]), "deleted": True}
             else:
@@ -802,19 +938,13 @@ class _FirstExportTransport:
                     "completed": False,
                     "sha256": None,
                 }
-            elif op == "transfer_write_chunk":
-                raw = base64.b64decode(str(values["data_b64"]))
+            elif op == "transfer.http_download":
                 assert int(values["offset"]) == len(self.destination)
-                assert (
-                    hashlib.sha256(raw).hexdigest() == values["expected_sha256"]
-                )
+                raw = self.gateway.download_bytes()
                 self.destination.extend(raw)
                 result = {
-                    "path": str(values["path"]),
-                    "temp_path": ".temporary",
-                    "offset": int(values["offset"]),
+                    "offset": len(self.destination),
                     "bytes": len(raw),
-                    "sha256": hashlib.sha256(raw).hexdigest(),
                 }
             elif op == "transfer_finish_write":
                 result = {
@@ -850,6 +980,8 @@ def _fresh_cross_executor_service(
     source_kind: str,
     payload: bytes,
     archive: bytes | None = None,
+    max_payload_bytes: int = 10_000_000,
+    max_store_bytes: int = 10_000_000,
 ):
     source_executor_id = str(new_executor_id())
     destination_executor_id = str(new_executor_id())
@@ -870,9 +1002,14 @@ def _fresh_cross_executor_service(
         updated_at=1.0,
     )
     sessions = _CheckpointSessions((source, destination))
+    gateway = _RawGatewayStub(
+        tmp_path / "data",
+        upload_bytes=payload if source_kind == "file" else (archive or b""),
+    )
     transport = _FirstExportTransport(
         source_executor_id,
         destination_executor_id,
+        gateway,
         source_kind=source_kind,
         payload=payload,
         archive=archive,
@@ -883,12 +1020,41 @@ def _fresh_cross_executor_service(
         transport,  # type: ignore[arg-type]
         state_store,
         tmp_path / "data",
+        transfer_gateway=gateway,  # type: ignore[arg-type]
+        max_transfer_payload_bytes=max_payload_bytes,
+        max_transfer_payload_store_bytes=max_store_bytes,
     )
     return service, source, destination, transport
 
 
 @pytest.mark.asyncio
-async def test_cross_executor_first_file_copy_exports_control_payload(tmp_path):
+async def test_cross_executor_payload_limit_rejects_before_raw_upload(tmp_path):
+    payload = b"payload-too-large"
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        max_payload_bytes=len(payload) - 1,
+        max_store_bytes=10_000_000,
+    )
+
+    with pytest.raises(TransferPayloadCapacityError, match="per-transfer"):
+        await service.copy(
+            src_session_id=str(source.session_id),
+            src_path="source.bin",
+            dst_session_id=str(destination.session_id),
+            dst_path="destination.bin",
+            kind="file",
+        )
+
+    operations = [op for _executor_id, op in transport.calls]
+    assert "transfer_stat" in operations
+    assert "transfer.http_upload" not in operations
+    assert "transfer.http_download" not in operations
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_first_file_copy_uses_raw_http(tmp_path):
     payload = b"first-export-file" * 5
     service, source, destination, transport = _fresh_cross_executor_service(
         tmp_path,
@@ -912,7 +1078,7 @@ async def test_cross_executor_first_file_copy_exports_control_payload(tmp_path):
     )
 
     assert result.kind == "file"
-    assert result.transport == "control_payload"
+    assert result.transport == "control_relay"
     assert result.bytes == len(payload)
     assert result.sha256 == hashlib.sha256(payload).hexdigest()
     assert bytes(transport.destination) == payload
@@ -920,6 +1086,11 @@ async def test_cross_executor_first_file_copy_exports_control_payload(tmp_path):
     assert any(row["phase"] == "exporting" for row in progress)
     assert any(row["phase"] == "exported" for row in progress)
     assert any(row["phase"] == "importing" for row in progress)
+    operations = [op for _executor_id, op in transport.calls]
+    assert "transfer.http_upload" in operations
+    assert "transfer.http_download" in operations
+    assert "transfer_read_chunk" not in operations
+    assert "transfer_write_chunk" not in operations
     assert (
         list(service._payloads.directory("transfer").glob("payload_*.bin"))
         == []
@@ -927,7 +1098,7 @@ async def test_cross_executor_first_file_copy_exports_control_payload(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cross_executor_first_directory_copy_exports_archive_payload(
+async def test_cross_executor_first_directory_copy_uses_raw_http(
     tmp_path,
 ):
     archive = b"opaque-archive-bytes" * 4
@@ -949,7 +1120,7 @@ async def test_cross_executor_first_directory_copy_exports_archive_payload(
     )
 
     assert result.kind == "dir"
-    assert result.transport == "control_payload"
+    assert result.transport == "control_relay"
     assert result.archive_bytes == len(archive)
     assert result.archive_sha256 == hashlib.sha256(archive).hexdigest()
     assert result.entries == 3
@@ -960,6 +1131,8 @@ async def test_cross_executor_first_directory_copy_exports_archive_payload(
         if executor == str(source.executor_id)
     ]
     assert "transfer_pack_dir" in source_ops
+    assert "transfer.http_upload" in source_ops
+    assert "transfer_read_chunk" not in source_ops
     assert "transfer_delete_temp_path" in source_ops
     destination_ops = [
         op
@@ -967,6 +1140,8 @@ async def test_cross_executor_first_directory_copy_exports_archive_payload(
         if executor == str(destination.executor_id)
     ]
     assert "transfer_alloc_temp_path" in destination_ops
+    assert "transfer.http_download" in destination_ops
+    assert "transfer_write_chunk" not in destination_ops
     assert "transfer_unpack_archive" in destination_ops
     assert "transfer_release_receipts" in destination_ops
 
@@ -1011,7 +1186,7 @@ async def test_managed_copy_handler_replays_durable_payload_and_reports_progress
         return session_copy_module.SessionCopyOutput.model_validate(
             {
                 "kind": "file",
-                "transport": "control_payload",
+                "transport": "control_relay",
                 "resumed_bytes": 3,
                 "source": {
                     "session_id": source_id,
@@ -1075,7 +1250,7 @@ async def test_managed_copy_handler_replays_durable_payload_and_reports_progress
     assert context.logs[-1].startswith("copy completed:")
     assert context.progress[-1]["phase"] == "completed"
     assert context.progress[-1]["resumed_bytes"] == 3
-    assert result["transport"] == "control_payload"
+    assert result["transport"] == "control_relay"
 
 
 @pytest.mark.asyncio
@@ -1117,26 +1292,16 @@ async def test_cross_executor_directory_records_source_cleanup_failure(
 
 
 @pytest.mark.asyncio
-async def test_cross_executor_export_rejects_changed_source_chunk(tmp_path):
+async def test_cross_executor_export_rejects_changed_raw_upload(tmp_path):
     payload = b"source-bytes"
     service, source, destination, transport = _fresh_cross_executor_service(
         tmp_path,
         source_kind="file",
         payload=payload,
     )
-    real_call = transport.call
+    service._transfer_gateway.upload_bytes = payload + b"-changed"  # type: ignore[attr-defined]
 
-    async def changed_chunk(executor_id: str, op: str, args=None, **kwargs):
-        result = await real_call(executor_id, op, args, **kwargs)
-        if (
-            executor_id == str(source.executor_id)
-            and op == "transfer_read_chunk"
-        ):
-            result.result["offset"] = int(result.result["offset"]) + 1  # type: ignore[index]
-        return result
-
-    transport.call = changed_chunk  # type: ignore[method-assign]
-    with pytest.raises(RuntimeError, match="source changed"):
+    with pytest.raises(RuntimeError, match="raw upload integrity mismatch"):
         await service.copy(
             src_session_id=str(source.session_id),
             src_path="source.bin",
@@ -1144,7 +1309,12 @@ async def test_cross_executor_export_rejects_changed_source_chunk(tmp_path):
             dst_path="dest.bin",
             chunk_size=4,
         )
+
     assert transport.destination == b""
+    operations = [op for _executor_id, op in transport.calls]
+    assert "transfer.http_upload" in operations
+    assert "transfer_read_chunk" not in operations
+    assert "transfer_write_chunk" not in operations
 
 
 @pytest.mark.asyncio

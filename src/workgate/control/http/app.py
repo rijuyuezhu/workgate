@@ -15,6 +15,7 @@ from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
 from ...oauth.http.routes import oauth_public_routes
 from ...persistence import FileStateStore
+from ...protocol.executor import EXECUTOR_TRANSFER_PREFIX
 from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..execution_context import ControlExecutionContextMiddleware
@@ -67,6 +68,7 @@ def _install_public_routes(
                     runtime.executor_transport, runtime.executor_pairing
                 ),
                 *executor_bootstrap_routes(settings.resolved_base_url),
+                *runtime.transfer_gateway.routes(),
                 *terminal_stream_routes(
                     runtime.executor_transport, runtime.stream_hub
                 ),
@@ -137,7 +139,13 @@ def build_http_app(
                 api_prefix=UI_API_PREFIX,
             )
         )
-    install_request_body_limit(app, max_bytes=settings.max_http_request_bytes)
+    install_request_body_limit(
+        app,
+        max_bytes=settings.max_http_request_bytes,
+        streaming_prefixes=(
+            (EXECUTOR_TRANSFER_PREFIX,) if runtime is not None else ()
+        ),
+    )
     if settings.auth_mode != "none":
         app.add_middleware(AuthMiddleware, public_routes=public_routes)
     install_tool_cache_control_middleware(app)

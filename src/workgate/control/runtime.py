@@ -17,12 +17,14 @@ from .executor_transport import ExecutorTransport
 from .executors import ControlExecutorFleetService
 from .jobs import ControlJobService
 from .pairing import ExecutorPairingService
+from .payload_store import PayloadStore
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
 from .streams import ControlStreamHub
 from .task_state import ControlTaskService
 from .tool_composition import build_control_tool_catalog
+from .transfer_gateway import ControlTransferGateway
 
 
 @dataclass
@@ -45,6 +47,8 @@ class ControlRuntime:
     """Control authority for execution-session lifecycle and executor routing."""
     session_copy_service: ControlSessionCopyService
     """Control orchestration for copies between existing execution sessions."""
+    transfer_gateway: ControlTransferGateway
+    """Process-local raw-byte capabilities bound to trusted executors."""
     download_service: ControlDownloadService
     """Control-owned public file-link snapshots sourced through executor RPC."""
     job_service: ControlJobService
@@ -104,6 +108,8 @@ class ControlRuntime:
             with suppress(BaseException):
                 await self.session_copy_service.aclose()
             with suppress(BaseException):
+                self.transfer_gateway.close()
+            with suppress(BaseException):
                 await self.executor_pairing.aclose()
             with suppress(BaseException):
                 await self.session_coordinator.aclose()
@@ -135,6 +141,10 @@ class ControlRuntime:
         await close_async(self.human_ui_runtime.aclose)
         await close_async(self.oauth_state.aclose)
         await close_async(self.session_copy_service.aclose)
+        try:
+            self.transfer_gateway.close()
+        except BaseException as exc:
+            errors.append(exc)
         await close_async(self.executor_pairing.aclose)
         await close_async(self.session_coordinator.aclose)
         await close_async(self.executor_transport.aclose)
@@ -189,11 +199,17 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         executor_pairing,
         config,
     )
+    transfer_gateway = ControlTransferGateway(
+        executor_transport, PayloadStore(config.data_dir)
+    )
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
         executor_transport,
         state_store,
         config.data_dir,
+        transfer_gateway=transfer_gateway,
+        max_transfer_payload_bytes=config.max_transfer_payload_bytes,
+        max_transfer_payload_store_bytes=config.max_transfer_payload_store_bytes,
     )
 
     async def authenticated_proof(executor_id: str, credential: str) -> None:
@@ -250,6 +266,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         executor_fleet=executor_fleet,
         session_coordinator=session_coordinator,
         session_copy_service=session_copy_service,
+        transfer_gateway=transfer_gateway,
         download_service=download_service,
         job_service=job_service,
         task_service=task_service,

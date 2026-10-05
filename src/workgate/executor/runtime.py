@@ -369,6 +369,29 @@ class ExecutorRuntime:
         args = dict(command.args)
         if command.session_id is not None:
             args.setdefault("session_id", command.session_id)
+        if command.op in {"transfer.http_upload", "transfer.http_download"}:
+            profile_store = self.profile_store
+            profile = None if profile_store is None else profile_store.load()
+            if profile is None:
+                raise RuntimeError(
+                    "raw transfer requires a paired executor profile"
+                )
+            from .transfer_http import (
+                download_from_control,
+                upload_to_control,
+            )
+
+            handler = (
+                upload_to_control
+                if command.op == "transfer.http_upload"
+                else download_from_control
+            )
+            return await handler(
+                profile,
+                self.config,
+                self.services.tool_session_store,
+                args,
+            )
         return await self.dispatcher.execute(command.op, args)
 
     def _terminal_stream_done(self, task: asyncio.Task[None]) -> None:

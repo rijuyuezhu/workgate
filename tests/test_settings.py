@@ -173,6 +173,29 @@ def test_resolved_base_url_brackets_ipv6_host():
     assert settings.resolved_base_url == "http://[::1]:9999"
 
 
+def test_load_settings_rejects_unknown_selected_setting():
+    with pytest.raises(ValueError, match="Unknown Settings names"):
+        load_settings(setting_names={"not_a_setting"})
+
+
+def test_load_settings_rejects_foreign_role_default():
+    with pytest.raises(ValueError, match="role defaults are not owned"):
+        load_settings(
+            setting_names={"host"},
+            default_overrides={"port": 9999},
+        )
+
+
+def test_transfer_payload_limit_must_not_exceed_store_limit():
+    with pytest.raises(ValueError, match="max_transfer_payload_bytes"):
+        load_settings(
+            overrides={
+                "max_transfer_payload_bytes": 2_048,
+                "max_transfer_payload_store_bytes": 1_024,
+            }
+        )
+
+
 def test_audit_payload_limits_must_be_nested():
     for overrides, message in (
         (
