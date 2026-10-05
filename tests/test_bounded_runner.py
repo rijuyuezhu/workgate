@@ -1277,6 +1277,61 @@ def test_macos_launchd_reaps_setsid_escape(tmp_path):
         pytest.fail("setsid descendant escaped launchd cleanup")
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires macOS launchd containment"
+)
+def test_macos_launchd_ignores_unrelated_zombie():
+    holder_code = (
+        "import subprocess,sys,time; "
+        "child=subprocess.Popen([sys.executable,'-c','pass']); "
+        "print(child.pid, flush=True); "
+        "time.sleep(30)"
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", holder_code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        zombie_pid = int(holder.stdout.readline())
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if bounded_runner._macos_zombie_states({zombie_pid}) == {
+                zombie_pid: True
+            }:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("helper process did not leave a zombie child")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "workgate.executor.bounded_runner",
+                "--shell",
+                "/bin/sh",
+                "--command",
+                "true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+    finally:
+        holder.terminate()
+        try:
+            holder.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.wait(timeout=2)
+
+
 def test_bounded_runner_argparse_handler_exits_with_result(monkeypatch):
     monkeypatch.setattr(
         bounded_runner, "run_bounded_command", lambda shell, command: 7
@@ -1491,6 +1546,187 @@ def test_macos_libproc_enumerates_uid_and_reads_coalition(monkeypatch):
     assert bounded_runner._macos_process_coalition_ids(111) == (1111, 2111)
 
 
+def test_macos_zombie_states_batches_ps_and_reports_states(monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, "11 Z\n12 S\n", "")
+
+    monkeypatch.setattr(bounded_runner.subprocess, "run", fake_run)
+
+    assert bounded_runner._macos_zombie_states({12, 11}) == {
+        11: True,
+        12: False,
+    }
+    assert calls == [
+        (
+            [
+                str(bounded_runner.MACOS_PS_PATH),
+                "-p",
+                "11,12",
+                "-o",
+                "pid=,state=",
+            ],
+            {
+                "capture_output": True,
+                "text": True,
+                "timeout": bounded_runner.MACOS_PROCESS_STATE_TIMEOUT_S,
+                "check": False,
+            },
+        )
+    ]
+
+
+def test_macos_zombie_states_skips_ps_without_candidate_pids(monkeypatch):
+    def unexpected_run(*_args, **_kwargs):
+        pytest.fail("ps should not run without candidate pids")
+
+    monkeypatch.setattr(bounded_runner.subprocess, "run", unexpected_run)
+
+    assert bounded_runner._macos_zombie_states(set()) == {}
+    assert bounded_runner._macos_zombie_states({0, -1}) == {}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError(),
+        subprocess.TimeoutExpired(["/bin/ps"], 0.1),
+    ],
+)
+def test_macos_zombie_states_fails_closed_when_ps_is_unavailable(
+    error,
+    monkeypatch,
+):
+    def fake_run(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(bounded_runner.subprocess, "run", fake_run)
+
+    assert bounded_runner._macos_zombie_states({11}) is None
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        (2, ""),
+        (0, "malformed\n"),
+        (0, "not-a-pid Z\n"),
+        (0, "99 Z\n"),
+        (0, "11 Z\n11 Z\n"),
+    ],
+)
+def test_macos_zombie_states_fails_closed_on_untrusted_ps_output(
+    returncode,
+    stdout,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        bounded_runner.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(
+            args, returncode, stdout, ""
+        ),
+    )
+
+    assert bounded_runner._macos_zombie_states({11}) is None
+
+
+def test_macos_zombie_states_fails_closed_when_missing_pid_is_uninspectable(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        bounded_runner.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(args, 1, "", ""),
+    )
+
+    def fake_kill(_pid, sig):
+        assert sig == 0
+        raise PermissionError
+
+    monkeypatch.setattr(bounded_runner.os, "kill", fake_kill)
+
+    assert bounded_runner._macos_zombie_states({11}) is None
+
+
+def test_macos_zombie_states_omits_processes_that_exit_during_query(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        bounded_runner.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(args, 1, "", ""),
+    )
+
+    def fake_kill(_pid, sig):
+        assert sig == 0
+        raise ProcessLookupError
+
+    monkeypatch.setattr(bounded_runner.os, "kill", fake_kill)
+
+    assert bounded_runner._macos_zombie_states({11, 12}) == {}
+
+
+def test_macos_zombie_states_fails_closed_for_unreported_live_process(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        bounded_runner.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(args, 1, "", ""),
+    )
+    monkeypatch.setattr(bounded_runner.os, "kill", lambda _pid, _sig: None)
+
+    assert bounded_runner._macos_zombie_states({11}) is None
+
+
+def test_macos_matching_coalition_ignores_zombie_processes(monkeypatch):
+    current = os.getpid()
+    monkeypatch.setattr(
+        bounded_runner, "_macos_uid_pids", lambda: [current, 11, 12]
+    )
+    monkeypatch.setattr(
+        bounded_runner,
+        "_macos_process_coalition_ids",
+        lambda pid: {11: (77, 1), 12: None}[pid],
+    )
+    monkeypatch.setattr(bounded_runner.os, "kill", lambda _pid, _sig: None)
+    monkeypatch.setattr(
+        bounded_runner,
+        "_macos_zombie_states",
+        lambda pids: {pid: True for pid in pids},
+    )
+
+    assert bounded_runner._macos_matching_coalition_pids((77, 9)) == {11}
+
+
+@pytest.mark.parametrize(
+    "zombie_states",
+    [None, {11: False}],
+)
+def test_macos_matching_coalition_fails_closed_for_unreadable_live_process(
+    monkeypatch,
+    zombie_states,
+):
+    current = os.getpid()
+    monkeypatch.setattr(
+        bounded_runner, "_macos_uid_pids", lambda: [current, 11]
+    )
+    monkeypatch.setattr(
+        bounded_runner, "_macos_process_coalition_ids", lambda _pid: None
+    )
+    monkeypatch.setattr(bounded_runner.os, "kill", lambda _pid, _sig: None)
+    monkeypatch.setattr(
+        bounded_runner,
+        "_macos_zombie_states",
+        lambda _pids: zombie_states,
+    )
+
+    assert bounded_runner._macos_matching_coalition_pids((77, 9)) is None
+
+
 def test_macos_matching_coalition_ignores_exited_processes(monkeypatch):
     current = os.getpid()
     monkeypatch.setattr(
@@ -1559,6 +1795,7 @@ def test_launchctl_operations_reserve_outer_cleanup_headroom(monkeypatch):
             + bounded_runner.LAUNCHD_CLEANUP_GRACE_S
             + bounded_runner.MACOS_TERMINATE_GRACE_S
             + bounded_runner.MACOS_KILL_GRACE_S
+            + 2 * bounded_runner.MACOS_PROCESS_STATE_TIMEOUT_S
         )
         < 5.0
     )
