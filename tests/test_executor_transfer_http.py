@@ -177,6 +177,119 @@ async def test_executor_raw_download_rejects_invalid_resume_offset_before_http(
 
 
 @pytest.mark.asyncio
+async def test_executor_raw_upload_rejects_http_error(tmp_path, monkeypatch):
+    workspace, config, store, profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+    data = b"upload-error"
+    (workspace / "source.bin").write_bytes(data)
+
+    def client(_profile: ExecutorProfile) -> httpx.AsyncClient:
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(503, json={"error": "unavailable"})
+        )
+        return httpx.AsyncClient(
+            transport=transport,
+            base_url=profile.control_url,
+        )
+
+    monkeypatch.setattr(transfer_http, "_client", client)
+    with pytest.raises(RuntimeError, match="rejected with HTTP 503"):
+        await transfer_http.upload_to_control(
+            profile,
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "source.bin",
+                "expected_bytes": len(data),
+                "expected_sha256": hashlib.sha256(data).hexdigest(),
+                "capability_path": "/executor/v1/transfer/test",
+                "capability_token": "test-token",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_executor_raw_upload_rejects_invalid_ack(tmp_path, monkeypatch):
+    workspace, config, store, profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+    data = b"upload-ack"
+    (workspace / "source.bin").write_bytes(data)
+
+    def client(_profile: ExecutorProfile) -> httpx.AsyncClient:
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "bytes": len(data) - 1,
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                },
+            )
+        )
+        return httpx.AsyncClient(
+            transport=transport,
+            base_url=profile.control_url,
+        )
+
+    monkeypatch.setattr(transfer_http, "_client", client)
+    with pytest.raises(RuntimeError, match="acknowledgement is invalid"):
+        await transfer_http.upload_to_control(
+            profile,
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "source.bin",
+                "expected_bytes": len(data),
+                "expected_sha256": hashlib.sha256(data).hexdigest(),
+                "capability_path": "/executor/v1/transfer/test",
+                "capability_token": "test-token",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_executor_raw_download_rejects_http_error(tmp_path, monkeypatch):
+    workspace, config, store, profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+
+    def client(_profile: ExecutorProfile) -> httpx.AsyncClient:
+        transport = httpx.MockTransport(
+            lambda _request: httpx.Response(503, content=b"unavailable")
+        )
+        return httpx.AsyncClient(
+            transport=transport,
+            base_url=profile.control_url,
+        )
+
+    monkeypatch.setattr(transfer_http, "_client", client)
+    with pytest.raises(RuntimeError, match="rejected with HTTP 503"):
+        await transfer_http.download_from_control(
+            profile,
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "destination.bin",
+                "transfer_id": "copy_" + "y" * 22,
+                "expected_bytes": 0,
+                "offset": 0,
+                "capability_path": "/executor/v1/transfer/test",
+                "capability_token": "test-token",
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_executor_raw_download_resumes_existing_transaction(
     tmp_path, monkeypatch
 ):
