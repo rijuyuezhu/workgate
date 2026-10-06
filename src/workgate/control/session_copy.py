@@ -2,9 +2,11 @@
 
 import asyncio
 import contextlib
+import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import Any, Literal, cast
 
@@ -33,6 +35,7 @@ from ..schemas.result_models.transfer import (
     TransferUnpackArchiveOutput,
 )
 from .executor_transport import ExecutorTransport
+from .object_store_transfer import S3ObjectTransferService
 from .payload_store import PayloadStore
 from .session_copy_store import (
     SessionCopyCheckpoint,
@@ -46,6 +49,24 @@ CopyKind = Literal["auto", "file", "dir"]
 ProgressCallback = Callable[[dict[str, Any]], Awaitable[None]]
 SESSION_COPY_MANAGED_KIND = "session-copy"
 _ABANDONMENT_RPC_TIMEOUT_S = 30.0
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedCrossExecutorSource:
+    kind: Literal["file", "dir"]
+    transfer_path: str
+    source_resolved_path: str
+    payload_size: int
+    payload_sha256: str
+    unbound_temp: bool
+    cleanup_path: str | None = None
+
+
+class _ObjectStoreRouteUnavailable(RuntimeError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class ControlSessionCopyService:
@@ -59,6 +80,7 @@ class ControlSessionCopyService:
         data_dir: Path,
         *,
         transfer_gateway: ControlTransferGateway,
+        object_store: S3ObjectTransferService,
         max_transfer_payload_bytes: int,
         max_transfer_payload_store_bytes: int,
     ) -> None:
@@ -66,6 +88,7 @@ class ControlSessionCopyService:
         self._transport = transport
         self._payloads = PayloadStore(data_dir)
         self._transfer_gateway = transfer_gateway
+        self._object_store = object_store
         self._max_transfer_payload_bytes = int(max_transfer_payload_bytes)
         self._max_transfer_payload_store_bytes = int(
             max_transfer_payload_store_bytes
@@ -87,6 +110,12 @@ class ControlSessionCopyService:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._abandonment_tasks.clear()
         self._abandonment_rerun.clear()
+
+    async def reconcile_object_store_orphans(self) -> None:
+        """Retry cleanup for temporary object-store keys left by prior attempts."""
+        errors = await self._object_store.reconcile_orphans()
+        for error in errors:
+            logger.warning("%s", error)
 
     def schedule_reconcile_abandonments(self, *, executor_id: str) -> None:
         """Run post-hello cleanup without blocking the hello response/poll startup."""
@@ -134,6 +163,7 @@ class ControlSessionCopyService:
         owner_job_id: str | None = None,
     ) -> SessionCopyOutput:
         chunk_bytes = normalize_chunk_size(chunk_size)
+        await self.reconcile_object_store_orphans()
         await self.reconcile_abandonments()
         active_transfer_id = transfer_id or (
             "copy_" + secrets.token_urlsafe(16)
@@ -178,7 +208,8 @@ class ControlSessionCopyService:
                     (
                         resolved_kind,
                         metrics,
-                    ) = await self._copy_cross_executor_via_control(
+                        selected_route,
+                    ) = await self._copy_cross_executor(
                         src,
                         src_path=src_path,
                         dst=dst,
@@ -198,7 +229,7 @@ class ControlSessionCopyService:
                         dst_path,
                         resolved_kind,
                         metrics,
-                        transport="control_relay",
+                        transport=selected_route,
                     )
                 finally:
                     if owner_job_id is None:
@@ -461,7 +492,83 @@ class ControlSessionCopyService:
         )
         return result.model_dump(mode="json")
 
-    async def _copy_cross_executor_via_control(
+    async def _prepare_cross_executor_source(
+        self,
+        src: ControlSessionRecord,
+        *,
+        src_path: str,
+        kind: CopyKind,
+        progress: ProgressCallback | None,
+    ) -> _PreparedCrossExecutorSource:
+        await self._report(
+            progress,
+            phase="stat",
+            bytes_transferred=0,
+            total_bytes=0,
+        )
+        stat = TransferStatOutput.model_validate(
+            await self._call(
+                src,
+                "transfer_stat",
+                {"path": src_path, "sha256": kind != "dir"},
+            )
+        )
+        resolved_kind = self._resolve_kind(kind, stat)
+        if resolved_kind == "file":
+            if stat.size is None or stat.sha256 is None:
+                raise RuntimeError("source file stat is missing size or sha256")
+            return _PreparedCrossExecutorSource(
+                kind="file",
+                transfer_path=src_path,
+                source_resolved_path=stat.path,
+                payload_size=stat.size,
+                payload_sha256=stat.sha256,
+                unbound_temp=False,
+            )
+
+        await self._report(
+            progress,
+            phase="packing",
+            bytes_transferred=0,
+            total_bytes=0,
+        )
+        pack = TransferPackDirOutput.model_validate(
+            await self._call(
+                src,
+                "transfer_pack_dir",
+                {"path": src_path, "compression": "gz"},
+            )
+        )
+        return _PreparedCrossExecutorSource(
+            kind="dir",
+            transfer_path=pack.archive_path,
+            source_resolved_path=pack.path,
+            payload_size=pack.bytes,
+            payload_sha256=pack.sha256,
+            unbound_temp=True,
+            cleanup_path=pack.archive_path,
+        )
+
+    async def _cleanup_prepared_cross_executor_source(
+        self,
+        src: ControlSessionRecord,
+        prepared: _PreparedCrossExecutorSource,
+        cleanup_errors: list[str],
+    ) -> None:
+        if prepared.cleanup_path is None:
+            return
+        try:
+            await self._call(
+                src,
+                "transfer_delete_temp_path",
+                {"path": prepared.cleanup_path},
+            )
+        except Exception as exc:
+            cleanup_errors.append(
+                f"source archive cleanup failed: {type(exc).__name__}"
+            )
+
+    async def _copy_cross_executor(
         self,
         src: ControlSessionRecord,
         *,
@@ -475,98 +582,518 @@ class ControlSessionCopyService:
         transfer_id: str,
         owner_job_id: str | None,
         checkpoint: SessionCopyCheckpoint | None,
-    ) -> tuple[Literal["file", "dir"], dict[str, Any]]:
-        """Run the durable control-retained fallback route for a cross-executor copy."""
-        current = checkpoint
-        if current is None:
-            await self._report(
-                progress,
-                phase="stat",
-                bytes_transferred=0,
-                total_bytes=0,
+    ) -> tuple[
+        Literal["file", "dir"],
+        dict[str, Any],
+        Literal["object_store", "control_relay"],
+    ]:
+        if checkpoint is not None:
+            (
+                resolved_kind,
+                metrics,
+            ) = await self._copy_cross_executor_via_control(
+                src,
+                src_path=src_path,
+                dst=dst,
+                dst_path=dst_path,
+                overwrite=overwrite,
+                chunk_size=chunk_size,
+                progress=progress,
+                transfer_id=transfer_id,
+                owner_job_id=owner_job_id,
+                checkpoint=checkpoint,
+                prepared=None,
+                cleanup_errors=[],
             )
-            stat = TransferStatOutput.model_validate(
-                await self._call(
-                    src,
-                    "transfer_stat",
-                    {"path": src_path, "sha256": kind != "dir"},
-                )
-            )
-            resolved_kind = self._resolve_kind(kind, stat)
-            cleanup_errors: list[str] = []
-            if resolved_kind == "file":
-                if stat.size is None or stat.sha256 is None:
-                    raise RuntimeError(
-                        "source file stat is missing size or sha256"
-                    )
-                current = await self._export_payload(
-                    src,
-                    export_path=src_path,
-                    source_resolved_path=stat.path,
-                    payload_size=stat.size,
-                    payload_sha256=stat.sha256,
-                    source_unbound_temp=False,
-                    src_path=src_path,
-                    dst=dst,
-                    dst_path=dst_path,
-                    kind="file",
-                    overwrite=overwrite,
-                    chunk_size=chunk_size,
-                    transfer_id=transfer_id,
-                    owner_job_id=owner_job_id,
-                    progress=progress,
-                    cleanup_errors=cleanup_errors,
-                )
-            else:
-                await self._report(
-                    progress,
-                    phase="packing",
-                    bytes_transferred=0,
-                    total_bytes=0,
-                )
-                pack = TransferPackDirOutput.model_validate(
-                    await self._call(
-                        src,
-                        "transfer_pack_dir",
-                        {"path": src_path, "compression": "gz"},
-                    )
-                )
+            return resolved_kind, metrics, "control_relay"
+
+        prepared = await self._prepare_cross_executor_source(
+            src,
+            src_path=src_path,
+            kind=kind,
+            progress=progress,
+        )
+        cleanup_errors: list[str] = []
+        fallbacks: list[str] = []
+        selected_kind: Literal["file", "dir"]
+        selected_metrics: dict[str, Any]
+        selected_route: Literal["object_store", "control_relay"]
+        try:
+            if self._object_store.enabled:
                 try:
-                    current = await self._export_payload(
-                        src,
-                        export_path=pack.archive_path,
-                        source_resolved_path=pack.path,
-                        payload_size=pack.bytes,
-                        payload_sha256=pack.sha256,
-                        source_unbound_temp=True,
-                        src_path=src_path,
-                        dst=dst,
-                        dst_path=dst_path,
-                        kind="dir",
-                        overwrite=overwrite,
-                        chunk_size=chunk_size,
-                        transfer_id=transfer_id,
-                        owner_job_id=owner_job_id,
-                        progress=progress,
+                    selected_metrics = (
+                        await self._copy_cross_executor_via_object_store(
+                            src,
+                            prepared=prepared,
+                            dst=dst,
+                            dst_path=dst_path,
+                            overwrite=overwrite,
+                            chunk_size=chunk_size,
+                            progress=progress,
+                            transfer_id=transfer_id,
+                            cleanup_errors=cleanup_errors,
+                        )
+                    )
+                except _ObjectStoreRouteUnavailable as exc:
+                    fallbacks.append(f"object_store:{exc.reason}")
+                else:
+                    selected_kind = prepared.kind
+                    selected_route = "object_store"
+                    selected_metrics["cleanup_errors"] = cleanup_errors
+                    selected_metrics["fallbacks"] = fallbacks
+                    return selected_kind, selected_metrics, selected_route
+
+            (
+                selected_kind,
+                selected_metrics,
+            ) = await self._copy_cross_executor_via_control(
+                src,
+                src_path=src_path,
+                dst=dst,
+                dst_path=dst_path,
+                overwrite=overwrite,
+                chunk_size=chunk_size,
+                progress=progress,
+                transfer_id=transfer_id,
+                owner_job_id=owner_job_id,
+                checkpoint=None,
+                prepared=prepared,
+                cleanup_errors=cleanup_errors,
+            )
+            selected_route = "control_relay"
+            selected_metrics["cleanup_errors"] = cleanup_errors
+            selected_metrics["fallbacks"] = fallbacks
+            return selected_kind, selected_metrics, selected_route
+        finally:
+            await self._cleanup_prepared_cross_executor_source(
+                src, prepared, cleanup_errors
+            )
+            current = self._checkpoints.load(transfer_id)
+            if current is not None and cleanup_errors != current.cleanup_errors:
+                with contextlib.suppress(Exception):
+                    self._checkpoints.update(
+                        transfer_id,
                         cleanup_errors=cleanup_errors,
                     )
-                finally:
+
+    async def _call_object_store_route(
+        self,
+        record: ControlSessionRecord,
+        op: str,
+        args: dict[str, JsonValue],
+        *,
+        stage: str,
+    ) -> JsonValue:
+        result = await self._transport.call(
+            str(record.executor_id),
+            op,
+            args,
+            session_id=str(record.session_id),
+        )
+        if result.ok:
+            self._sessions.observe_session_activity(str(record.session_id))
+            return result.result
+        await self._sessions.reconcile_session_activity_after_error(record)
+        assert result.error is not None
+        if result.error.code == "transfer_route_unavailable":
+            raise _ObjectStoreRouteUnavailable(stage)
+        raise RuntimeError(f"executor {op} failed: {result.error.code}")
+
+    async def _abandon_object_store_import(
+        self,
+        dst: ControlSessionRecord,
+        *,
+        import_path: str,
+        transfer_id: str,
+        kind: Literal["file", "dir"],
+    ) -> None:
+        result = await self._call(
+            dst,
+            "transfer_abandon_import",
+            {
+                "transfer_id": transfer_id,
+                "kind": kind,
+                "import_path": import_path,
+            },
+        )
+        if (
+            not isinstance(result, dict)
+            or result.get("safe_to_forget") is not True
+        ):
+            raise RuntimeError(
+                "executor transfer_abandon_import did not confirm safe cleanup"
+            )
+
+    async def _copy_cross_executor_via_object_store(
+        self,
+        src: ControlSessionRecord,
+        *,
+        prepared: _PreparedCrossExecutorSource,
+        dst: ControlSessionRecord,
+        dst_path: str,
+        overwrite: bool,
+        chunk_size: int,
+        progress: ProgressCallback | None,
+        transfer_id: str,
+        cleanup_errors: list[str],
+    ) -> dict[str, Any]:
+        try:
+            attempt = self._object_store.begin_attempt(transfer_id)
+        except Exception as exc:
+            raise _ObjectStoreRouteUnavailable("setup") from exc
+
+        cleanup_error: str | None = None
+        import_path: str | None = None
+        destination_cleanup_needed = False
+        try:
+            try:
+                put_url = self._object_store.presign_put(attempt)
+            except Exception as exc:
+                raise _ObjectStoreRouteUnavailable("presign_put") from exc
+
+            await self._report(
+                progress,
+                phase="transferring",
+                bytes_transferred=0,
+                total_bytes=prepared.payload_size,
+                chunks=0,
+                chunk_size=chunk_size,
+            )
+            uploaded = await self._call_object_store_route(
+                src,
+                "transfer.url_upload",
+                {
+                    "transfer_id": transfer_id,
+                    "path": prepared.transfer_path,
+                    "expected_bytes": prepared.payload_size,
+                    "expected_sha256": prepared.payload_sha256,
+                    "chunk_size": chunk_size,
+                    "url": put_url,
+                    "_workgate_unbound_temp": prepared.unbound_temp,
+                },
+                stage="upload",
+            )
+            uploaded_bytes = (
+                uploaded.get("bytes") if isinstance(uploaded, dict) else None
+            )
+            uploaded_sha256 = (
+                uploaded.get("sha256") if isinstance(uploaded, dict) else None
+            )
+            if (
+                not isinstance(uploaded_bytes, int)
+                or isinstance(uploaded_bytes, bool)
+                or uploaded_bytes != prepared.payload_size
+                or not isinstance(uploaded_sha256, str)
+                or uploaded_sha256 != prepared.payload_sha256
+            ):
+                raise RuntimeError(
+                    "executor object-store upload acknowledgement is invalid"
+                )
+
+            try:
+                get_url = self._object_store.presign_get(attempt)
+            except Exception as exc:
+                raise _ObjectStoreRouteUnavailable("presign_get") from exc
+
+            unbound_temp = prepared.kind == "dir"
+            if unbound_temp:
+                allocated = TransferAllocTempPathOutput.model_validate(
+                    await self._call(
+                        dst,
+                        "transfer_alloc_temp_path",
+                        {"suffix": ".tar.gz"},
+                    )
+                )
+                import_path = allocated.path
+            else:
+                import_path = dst_path
+
+            begin_args: dict[str, JsonValue] = {
+                "path": import_path,
+                "overwrite": True if unbound_temp else overwrite,
+                "expected_bytes": prepared.payload_size,
+                "transfer_id": transfer_id,
+            }
+            if unbound_temp:
+                begin_args["_workgate_unbound_temp"] = True
+
+            begin = TransferBeginWriteOutput.model_validate(
+                await self._call(dst, "transfer_begin_write", begin_args)
+            )
+            if begin.offset < 0 or begin.offset > prepared.payload_size:
+                raise RuntimeError(
+                    "destination transfer resume offset is invalid"
+                )
+            resumed_bytes = begin.offset
+            destination_cleanup_needed = (
+                prepared.kind == "dir" or not begin.completed
+            )
+
+            if not begin.completed:
+                download_error: _ObjectStoreRouteUnavailable | None = None
+                for attempt_index in range(2):
                     try:
-                        await self._call(
-                            src,
-                            "transfer_delete_temp_path",
-                            {"path": pack.archive_path},
+                        downloaded = await self._call_object_store_route(
+                            dst,
+                            "transfer.url_download",
+                            {
+                                "transfer_id": begin.transfer_id,
+                                "path": import_path,
+                                "expected_bytes": prepared.payload_size,
+                                "chunk_size": chunk_size,
+                                "offset": begin.offset,
+                                "url": get_url,
+                                "_workgate_unbound_temp": unbound_temp,
+                            },
+                            stage="download",
                         )
-                    except Exception as exc:
-                        cleanup_errors.append(
-                            f"source archive cleanup failed: {exc}"
-                        )
-                        if current is not None:
-                            current = self._checkpoints.update(
-                                transfer_id,
-                                cleanup_errors=cleanup_errors,
+                    except _ObjectStoreRouteUnavailable as exc:
+                        download_error = exc
+                        if attempt_index:
+                            break
+                        begin = TransferBeginWriteOutput.model_validate(
+                            await self._call(
+                                dst, "transfer_begin_write", begin_args
                             )
-        assert current is not None
+                        )
+                        resumed_bytes = max(resumed_bytes, begin.offset)
+                        if (
+                            begin.completed
+                            or begin.offset == prepared.payload_size
+                        ):
+                            download_error = None
+                            break
+                        try:
+                            get_url = self._object_store.presign_get(attempt)
+                        except Exception:
+                            download_error = _ObjectStoreRouteUnavailable(
+                                "presign_get"
+                            )
+                            break
+                        continue
+
+                    downloaded_offset = (
+                        downloaded.get("offset")
+                        if isinstance(downloaded, dict)
+                        else None
+                    )
+                    if (
+                        not isinstance(downloaded_offset, int)
+                        or isinstance(downloaded_offset, bool)
+                        or downloaded_offset != prepared.payload_size
+                    ):
+                        raise RuntimeError(
+                            "executor object-store download "
+                            "acknowledgement is invalid"
+                        )
+                    download_error = None
+                    break
+
+                if download_error is not None:
+                    raise download_error
+
+            if begin.completed:
+                if (
+                    begin.offset != prepared.payload_size
+                    or begin.sha256 != prepared.payload_sha256
+                ):
+                    raise RuntimeError(
+                        "destination transfer receipt integrity mismatch"
+                    )
+                destination_path = begin.path
+            else:
+                finish_args: dict[str, JsonValue] = {
+                    "path": import_path,
+                    "transfer_id": begin.transfer_id,
+                    "expected_bytes": prepared.payload_size,
+                    "expected_sha256": prepared.payload_sha256,
+                }
+                if unbound_temp:
+                    finish_args["_workgate_unbound_temp"] = True
+                try:
+                    finished = TransferFinishWriteOutput.model_validate(
+                        await self._call(
+                            dst, "transfer_finish_write", finish_args
+                        )
+                    )
+                except Exception as original:
+                    try:
+                        recovered = TransferBeginWriteOutput.model_validate(
+                            await self._call(
+                                dst, "transfer_begin_write", begin_args
+                            )
+                        )
+                    except Exception:
+                        raise original from None
+                    if (
+                        not recovered.completed
+                        or recovered.offset != prepared.payload_size
+                        or recovered.sha256 != prepared.payload_sha256
+                    ):
+                        raise original from None
+                    destination_path = recovered.path
+                else:
+                    if (
+                        not finished.completed
+                        or finished.bytes != prepared.payload_size
+                        or finished.sha256 != prepared.payload_sha256
+                    ):
+                        raise RuntimeError(
+                            "destination transfer did not commit completely"
+                        )
+                    destination_path = finished.path
+                destination_cleanup_needed = prepared.kind == "dir"
+            if begin.completed:
+                destination_cleanup_needed = prepared.kind == "dir"
+
+            chunks = (
+                0
+                if prepared.payload_size == 0
+                else (prepared.payload_size + chunk_size - 1) // chunk_size
+            )
+            await self._report(
+                progress,
+                phase="transferring",
+                bytes_transferred=prepared.payload_size,
+                total_bytes=prepared.payload_size,
+                chunks=chunks,
+                chunk_size=chunk_size,
+                resumed_bytes=resumed_bytes,
+            )
+
+            entries: int | None = None
+            if prepared.kind == "dir":
+                await self._report(
+                    progress,
+                    phase="unpacking",
+                    bytes_transferred=prepared.payload_size,
+                    total_bytes=prepared.payload_size,
+                    chunks=chunks,
+                    chunk_size=chunk_size,
+                    resumed_bytes=resumed_bytes,
+                )
+                unpack_args: dict[str, JsonValue] = {
+                    "archive_path": import_path,
+                    "dst_path": dst_path,
+                    "overwrite": overwrite,
+                    "cleanup_archive": True,
+                    "transfer_id": transfer_id,
+                    "expected_archive_bytes": prepared.payload_size,
+                    "expected_archive_sha256": prepared.payload_sha256,
+                }
+                try:
+                    unpack_raw = await self._call(
+                        dst, "transfer_unpack_archive", unpack_args
+                    )
+                except Exception:
+                    unpack_raw = await self._call(
+                        dst, "transfer_unpack_archive", unpack_args
+                    )
+                unpack = TransferUnpackArchiveOutput.model_validate(unpack_raw)
+                cleanup_errors.extend(unpack.cleanup_errors)
+                destination_path = unpack.path
+                entries = unpack.entries
+                destination_cleanup_needed = False
+
+            try:
+                await self._call(
+                    dst,
+                    "transfer_release_receipts",
+                    {"transfer_id": transfer_id},
+                )
+            except Exception as exc:
+                cleanup_errors.append(
+                    "destination transfer receipt cleanup failed: "
+                    f"{type(exc).__name__}"
+                )
+
+            base = {
+                "chunks": chunks,
+                "chunk_size": chunk_size,
+                "source_path": prepared.source_resolved_path,
+                "destination_path": destination_path,
+                "cleanup_errors": cleanup_errors,
+                "resumed_bytes": resumed_bytes,
+            }
+            if prepared.kind == "file":
+                return {
+                    **base,
+                    "bytes": prepared.payload_size,
+                    "sha256": prepared.payload_sha256,
+                }
+            return {
+                **base,
+                "archive_bytes": prepared.payload_size,
+                "archive_sha256": prepared.payload_sha256,
+                "entries": entries,
+            }
+        except _ObjectStoreRouteUnavailable:
+            if destination_cleanup_needed and import_path is not None:
+                await self._abandon_object_store_import(
+                    dst,
+                    import_path=import_path,
+                    transfer_id=transfer_id,
+                    kind=prepared.kind,
+                )
+            raise
+        except Exception:
+            if destination_cleanup_needed and import_path is not None:
+                with contextlib.suppress(Exception):
+                    await self._abandon_object_store_import(
+                        dst,
+                        import_path=import_path,
+                        transfer_id=transfer_id,
+                        kind=prepared.kind,
+                    )
+            raise
+        finally:
+            cleanup_error = await self._object_store.finish_attempt(attempt)
+            if cleanup_error is not None:
+                message = f"object-store cleanup failed ({cleanup_error})"
+                cleanup_errors.append(message)
+                logger.warning("%s", message)
+
+    async def _copy_cross_executor_via_control(
+        self,
+        src: ControlSessionRecord,
+        *,
+        src_path: str,
+        dst: ControlSessionRecord,
+        dst_path: str,
+        overwrite: bool,
+        chunk_size: int,
+        progress: ProgressCallback | None,
+        transfer_id: str,
+        owner_job_id: str | None,
+        checkpoint: SessionCopyCheckpoint | None,
+        prepared: _PreparedCrossExecutorSource | None,
+        cleanup_errors: list[str],
+    ) -> tuple[Literal["file", "dir"], dict[str, Any]]:
+        """Run the durable control-retained fallback route."""
+        current = checkpoint
+        if current is None:
+            if prepared is None:
+                raise RuntimeError(
+                    "control-relay export requires a prepared source"
+                )
+            current = await self._export_payload(
+                src,
+                export_path=prepared.transfer_path,
+                source_resolved_path=prepared.source_resolved_path,
+                payload_size=prepared.payload_size,
+                payload_sha256=prepared.payload_sha256,
+                source_unbound_temp=prepared.unbound_temp,
+                src_path=src_path,
+                dst=dst,
+                dst_path=dst_path,
+                kind=prepared.kind,
+                overwrite=overwrite,
+                chunk_size=chunk_size,
+                transfer_id=transfer_id,
+                owner_job_id=owner_job_id,
+                progress=progress,
+                cleanup_errors=cleanup_errors,
+            )
         metrics = await self._import_checkpoint(
             current,
             dst=dst,
@@ -1227,7 +1754,7 @@ class ControlSessionCopyService:
         kind: Literal["file", "dir"],
         metrics: dict[str, Any],
         *,
-        transport: Literal["same_executor", "control_relay"],
+        transport: Literal["same_executor", "object_store", "control_relay"],
     ) -> SessionCopyOutput:
         same_executor = src.executor_id == dst.executor_id
         source_binding = ControlSessionCopyService._binding_snapshot(src)
@@ -1263,4 +1790,5 @@ class ControlSessionCopyService:
             chunk_size=int(metrics["chunk_size"]),
             entries=metrics.get("entries"),
             cleanup_errors=list(metrics.get("cleanup_errors") or []),
+            fallbacks=list(metrics.get("fallbacks") or []),
         )

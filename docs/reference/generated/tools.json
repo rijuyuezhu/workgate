@@ -9202,6 +9202,14 @@
                 "description": "Number of directory entries unpacked for directory copies.",
                 "title": "Entries"
               },
+              "fallbacks": {
+                "description": "Bounded route failures observed before the selected route succeeded.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Fallbacks",
+                "type": "array"
+              },
               "kind": {
                 "description": "Resolved copied object kind.",
                 "enum": [
@@ -9242,6 +9250,7 @@
                 "description": "Actual data route selected for the copy operation.",
                 "enum": [
                   "same_executor",
+                  "object_store",
                   "control_relay"
                 ],
                 "title": "Transport",

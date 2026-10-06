@@ -392,6 +392,19 @@ class ExecutorRuntime:
                 self.services.tool_session_store,
                 args,
             )
+        if command.op in {"transfer.url_upload", "transfer.url_download"}:
+            from .transfer_http import download_from_url, upload_to_url
+
+            handler = (
+                upload_to_url
+                if command.op == "transfer.url_upload"
+                else download_from_url
+            )
+            return await handler(
+                self.config,
+                self.services.tool_session_store,
+                args,
+            )
         return await self.dispatcher.execute(command.op, args)
 
     def _terminal_stream_done(self, task: asyncio.Task[None]) -> None:

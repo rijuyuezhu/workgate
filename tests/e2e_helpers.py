@@ -404,6 +404,8 @@ async def run_http_process_with_executors(
     mode: str,
     executor_workspaces: tuple[Path, ...],
     agent_bridge_enabled: bool = False,
+    control_overrides: dict[str, Any] | None = None,
+    control_env_overrides: dict[str, str] | None = None,
 ) -> AsyncGenerator[tuple[str, tuple[E2EExecutor, ...]]]:
     """Run final control/executor processes from separate temporary YAML configs."""
     if not executor_workspaces:
@@ -417,20 +419,26 @@ async def run_http_process_with_executors(
     log_dir = tmp_path / f"process-logs-{mode}"
     log_dir.mkdir(parents=True, exist_ok=True)
     process_env = isolated_xdg_env(tmp_path / f"xdg-{mode}")
+    control_env = dict(process_env)
+    if control_env_overrides:
+        control_env.update(control_env_overrides)
 
+    control_values: dict[str, Any] = {
+        "mode": mode,
+        "host": "127.0.0.1",
+        "port": port,
+        "base_url": base_url,
+        "auth_mode": "none",
+        "state_dir": str(control_state_dir),
+        "data_dir": str(control_data_dir),
+        "agent_bridge_enabled": agent_bridge_enabled,
+        "tool_timeout_s": 15,
+    }
+    if control_overrides:
+        control_values.update(control_overrides)
     control_config = write_yaml_config(
         config_dir / "control.yaml",
-        {
-            "mode": mode,
-            "host": "127.0.0.1",
-            "port": port,
-            "base_url": base_url,
-            "auth_mode": "none",
-            "state_dir": str(control_state_dir),
-            "data_dir": str(control_data_dir),
-            "agent_bridge_enabled": agent_bridge_enabled,
-            "tool_timeout_s": 15,
-        },
+        control_values,
     )
 
     executor_specs: list[tuple[E2EExecutor, Path]] = []
@@ -463,7 +471,7 @@ async def run_http_process_with_executors(
     control_stderr = log_dir / "control.stderr.log"
     control_process = start_control_process(
         control_config,
-        env=process_env,
+        env=control_env,
         stdout_path=control_stdout,
         stderr_path=control_stderr,
     )

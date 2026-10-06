@@ -35,6 +35,11 @@ dependencies = [
     "websockets>=16.0",
 ]
 
+[project.optional-dependencies]
+s3 = [
+    "boto3>=1.40,<2",
+]
+
 [dependency-groups]
 dev = [
     "coverage[toml]>=7.15.2",

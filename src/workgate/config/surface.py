@@ -370,6 +370,31 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         metavar="BYTES",
     ),
     SettingSpec(
+        "transfer_object_store_bucket",
+        "Cross-executor transfer",
+        metavar="BUCKET",
+    ),
+    SettingSpec(
+        "transfer_object_store_prefix",
+        "Cross-executor transfer",
+        metavar="PREFIX",
+    ),
+    SettingSpec(
+        "transfer_object_store_region",
+        "Cross-executor transfer",
+        metavar="REGION",
+    ),
+    SettingSpec(
+        "transfer_object_store_endpoint_url",
+        "Cross-executor transfer",
+        metavar="URL",
+    ),
+    SettingSpec(
+        "transfer_object_store_presign_ttl_s",
+        "Cross-executor transfer",
+        metavar="SECONDS",
+    ),
+    SettingSpec(
         "max_transfer_archive_entries",
         "Safety and resource limits",
         metavar="COUNT",

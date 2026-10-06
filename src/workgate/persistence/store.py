@@ -158,6 +158,11 @@ class StateLayout:
         return self.control_dir / "sessions.json"
 
     @property
+    def control_transfer_objects_path(self) -> Path:
+        """Return durable cleanup authority for temporary object-store transfers."""
+        return self.control_dir / "transfer-objects.json"
+
+    @property
     def control_tasks_dir(self) -> Path:
         """Return the directory containing canonical semantic task documents."""
         return self.control_dir / "tasks"

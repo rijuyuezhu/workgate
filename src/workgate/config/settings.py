@@ -238,6 +238,16 @@ class Settings(BaseSettings):
     """Maximum retained bytes admitted for one cross-executor transfer payload."""
     max_transfer_payload_store_bytes: _PositiveInt = 16 * 1024 * 1024 * 1024
     """Maximum aggregate bytes reserved or retained for cross-executor transfer payloads."""
+    transfer_object_store_bucket: str | None = None
+    """S3-compatible bucket enabling the optional object-store transfer route."""
+    transfer_object_store_prefix: str = "workgate"
+    """Object-key prefix used for temporary transfer objects."""
+    transfer_object_store_region: str | None = None
+    """Optional S3-compatible region used by the control-side presigner."""
+    transfer_object_store_endpoint_url: str | None = None
+    """Optional S3-compatible endpoint URL used by the control-side presigner."""
+    transfer_object_store_presign_ttl_s: _PositiveInt = 3600
+    """Lifetime in seconds for object-store presigned PUT/GET URLs."""
     max_transfer_archive_entries: _PositiveInt = 100_000
     """Maximum entries accepted from one transferred archive."""
     max_transfer_unpacked_bytes: _PositiveInt = 10_000_000_000

@@ -186,6 +186,16 @@ executor_pairing_max_pending: 32
 executor_pairing_ttl_s: 600
 
 # Cross-executor transfer.
+# S3-compatible bucket enabling the optional object-store transfer route.
+transfer_object_store_bucket: null
+# Object-key prefix used for temporary transfer objects.
+transfer_object_store_prefix: "workgate"
+# Optional S3-compatible region used by the control-side presigner.
+transfer_object_store_region: null
+# Optional S3-compatible endpoint URL used by the control-side presigner.
+transfer_object_store_endpoint_url: null
+# Lifetime in seconds for object-store presigned PUT/GET URLs.
+transfer_object_store_presign_ttl_s: 3600
 
 # Agent capability bridge.
 # Enable agent capability bridge tools.

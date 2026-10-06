@@ -16,6 +16,7 @@ from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
 from .executors import ControlExecutorFleetService
 from .jobs import ControlJobService
+from .object_store_transfer import S3ObjectTransferService
 from .pairing import ExecutorPairingService
 from .payload_store import PayloadStore
 from .session_copy import ControlSessionCopyService
@@ -87,6 +88,7 @@ class ControlRuntime:
             await self.task_service.migrate_legacy_sessions()
             self.executor_transport.start()
             executor_transport_started = True
+            await self.session_copy_service.reconcile_object_store_orphans()
             await self.managed_jobs_runtime.start()
             managed_jobs_started = True
             self.oauth_state.start()
@@ -202,12 +204,21 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     transfer_gateway = ControlTransferGateway(
         executor_transport, PayloadStore(config.data_dir)
     )
+    object_store = S3ObjectTransferService(
+        state_store,
+        bucket=config.transfer_object_store_bucket,
+        prefix=config.transfer_object_store_prefix,
+        region=config.transfer_object_store_region,
+        endpoint_url=config.transfer_object_store_endpoint_url,
+        presign_ttl_s=config.transfer_object_store_presign_ttl_s,
+    )
     session_copy_service = ControlSessionCopyService(
         session_coordinator,
         executor_transport,
         state_store,
         config.data_dir,
         transfer_gateway=transfer_gateway,
+        object_store=object_store,
         max_transfer_payload_bytes=config.max_transfer_payload_bytes,
         max_transfer_payload_store_bytes=config.max_transfer_payload_store_bytes,
     )
