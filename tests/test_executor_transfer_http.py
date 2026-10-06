@@ -493,83 +493,37 @@ async def test_executor_presigned_upload_sanitizes_http_failure(
 
 
 @pytest.mark.asyncio
-async def test_executor_presigned_download_resumes_transaction_with_range(
+async def test_executor_presigned_download_rejects_partial_resume(
     tmp_path, monkeypatch
 ):
     workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
         tmp_path
     )
-    destination = workspace / "destination"
-    destination.mkdir()
     session_id = str(new_session_id())
-    store.create_session(session_id=session_id, workdir=destination)
-    data = (b"object-download-" * 100_000) + b"tail"
-    sha256 = hashlib.sha256(data).hexdigest()
-    transfer_id = "copy_" + "o" * 22
-    context = TransferContext(config, store)
-    transfer_begin_write(
-        "destination.bin",
-        expected_bytes=len(data),
-        transfer_id=transfer_id,
-        session_id=session_id,
-        context=context,
-    )
-    prefix = data[:131_072]
-    transfer_write_bytes(
-        "destination.bin",
-        transfer_id,
-        0,
-        prefix,
-        hashlib.sha256(prefix).hexdigest(),
-        session_id=session_id,
-        context=context,
-    )
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["range"] == f"bytes={len(prefix)}-"
-        return httpx.Response(
-            206,
-            headers={
-                "content-range": (
-                    f"bytes {len(prefix)}-{len(data) - 1}/{len(data)}"
-                ),
-                "content-length": str(len(data) - len(prefix)),
-            },
-            content=data[len(prefix) :],
-        )
+    store.create_session(session_id=session_id, workdir=workspace)
 
     def client() -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        raise AssertionError("partial object-store resume must not issue HTTP")
 
     monkeypatch.setattr(transfer_http, "_external_client", client)
-    result = await transfer_http.download_from_url(
-        config,
-        store,
-        {
-            "session_id": session_id,
-            "path": "destination.bin",
-            "transfer_id": transfer_id,
-            "expected_bytes": len(data),
-            "offset": len(prefix),
-            "chunk_size": 64 * 1024,
-            "url": "https://storage.test/object?sig=secret",
-        },
-    )
-    finished = transfer_finish_write(
-        "destination.bin",
-        transfer_id,
-        expected_bytes=len(data),
-        expected_sha256=sha256,
-        session_id=session_id,
-        context=context,
-    )
+    with pytest.raises(
+        transfer_http.ExecutorOperationFailure,
+        match="does not resume partial destination writes",
+    ) as exc:
+        await transfer_http.download_from_url(
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "destination.bin",
+                "transfer_id": "copy_" + "o" * 22,
+                "expected_bytes": 10,
+                "offset": 5,
+                "url": "https://storage.test/object?sig=secret",
+            },
+        )
 
-    assert result == {
-        "offset": len(data),
-        "bytes": len(data) - len(prefix),
-    }
-    assert finished.completed is True
-    assert (destination / "destination.bin").read_bytes() == data
+    assert exc.value.code == "transfer_route_unavailable"
 
 
 @pytest.mark.asyncio
@@ -618,46 +572,6 @@ async def test_executor_presigned_download_classifies_truncated_body_as_route_fa
 
     assert exc.value.code == "transfer_route_unavailable"
     assert "secret" not in str(exc.value)
-
-
-@pytest.mark.asyncio
-async def test_executor_presigned_download_rejects_wrong_resume_range(
-    tmp_path, monkeypatch
-):
-    workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
-        tmp_path
-    )
-    session_id = str(new_session_id())
-    store.create_session(session_id=session_id, workdir=workspace)
-
-    def client() -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda _request: httpx.Response(
-                    206,
-                    headers={
-                        "content-range": "bytes 0-4/10",
-                        "content-length": "5",
-                    },
-                    content=b"12345",
-                )
-            )
-        )
-
-    monkeypatch.setattr(transfer_http, "_external_client", client)
-    with pytest.raises(RuntimeError, match="range does not match"):
-        await transfer_http.download_from_url(
-            config,
-            store,
-            {
-                "session_id": session_id,
-                "path": "destination.bin",
-                "transfer_id": "copy_" + "r" * 22,
-                "expected_bytes": 10,
-                "offset": 5,
-                "url": "https://storage.test/object?sig=secret",
-            },
-        )
 
 
 @pytest.mark.asyncio

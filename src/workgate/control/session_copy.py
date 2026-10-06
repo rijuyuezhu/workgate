@@ -35,7 +35,10 @@ from ..schemas.result_models.transfer import (
     TransferUnpackArchiveOutput,
 )
 from .executor_transport import ExecutorTransport
-from .object_store_transfer import S3ObjectTransferService
+from .object_store_transfer import (
+    ObjectStoreRouteUnavailable,
+    S3ObjectTransferService,
+)
 from .payload_store import PayloadStore
 from .session_copy_store import (
     SessionCopyCheckpoint,
@@ -61,12 +64,6 @@ class _PreparedCrossExecutorSource:
     payload_sha256: str
     unbound_temp: bool
     cleanup_path: str | None = None
-
-
-class _ObjectStoreRouteUnavailable(RuntimeError):
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
 
 
 class ControlSessionCopyService:
@@ -163,7 +160,6 @@ class ControlSessionCopyService:
         owner_job_id: str | None = None,
     ) -> SessionCopyOutput:
         chunk_bytes = normalize_chunk_size(chunk_size)
-        await self.reconcile_object_store_orphans()
         await self.reconcile_abandonments()
         active_transfer_id = transfer_id or (
             "copy_" + secrets.token_urlsafe(16)
@@ -587,6 +583,7 @@ class ControlSessionCopyService:
         dict[str, Any],
         Literal["object_store", "control_relay"],
     ]:
+        await self.reconcile_object_store_orphans()
         if checkpoint is not None:
             (
                 resolved_kind,
@@ -634,7 +631,7 @@ class ControlSessionCopyService:
                             cleanup_errors=cleanup_errors,
                         )
                     )
-                except _ObjectStoreRouteUnavailable as exc:
+                except ObjectStoreRouteUnavailable as exc:
                     fallbacks.append(f"object_store:{exc.reason}")
                 else:
                     selected_kind = prepared.kind
@@ -696,7 +693,7 @@ class ControlSessionCopyService:
         await self._sessions.reconcile_session_activity_after_error(record)
         assert result.error is not None
         if result.error.code == "transfer_route_unavailable":
-            raise _ObjectStoreRouteUnavailable(stage)
+            raise ObjectStoreRouteUnavailable(stage)
         raise RuntimeError(f"executor {op} failed: {result.error.code}")
 
     async def _abandon_object_store_import(
@@ -724,6 +721,54 @@ class ControlSessionCopyService:
                 "executor transfer_abandon_import did not confirm safe cleanup"
             )
 
+    async def _finish_write_with_receipt_recovery(
+        self,
+        dst: ControlSessionRecord,
+        *,
+        begin_args: dict[str, JsonValue],
+        finish_args: dict[str, JsonValue],
+        expected_bytes: int,
+        expected_sha256: str,
+    ) -> str:
+        """Commit a destination write, reconciling only a lost finish acknowledgement."""
+        try:
+            finished = TransferFinishWriteOutput.model_validate(
+                await self._call(dst, "transfer_finish_write", finish_args)
+            )
+        except Exception as original:
+            try:
+                recovered = TransferBeginWriteOutput.model_validate(
+                    await self._call(dst, "transfer_begin_write", begin_args)
+                )
+            except Exception:
+                raise original from None
+            if (
+                not recovered.completed
+                or recovered.offset != expected_bytes
+                or recovered.sha256 != expected_sha256
+            ):
+                raise original from None
+            return recovered.path
+        if (
+            not finished.completed
+            or finished.bytes != expected_bytes
+            or finished.sha256 != expected_sha256
+        ):
+            raise RuntimeError("destination transfer did not commit completely")
+        return finished.path
+
+    async def _unpack_with_receipt_recovery(
+        self,
+        dst: ControlSessionRecord,
+        args: dict[str, JsonValue],
+    ) -> TransferUnpackArchiveOutput:
+        """Publish an archive, retrying only to reconcile a lost publish acknowledgement."""
+        try:
+            raw = await self._call(dst, "transfer_unpack_archive", args)
+        except Exception:
+            raw = await self._call(dst, "transfer_unpack_archive", args)
+        return TransferUnpackArchiveOutput.model_validate(raw)
+
     async def _copy_cross_executor_via_object_store(
         self,
         src: ControlSessionRecord,
@@ -737,20 +782,11 @@ class ControlSessionCopyService:
         transfer_id: str,
         cleanup_errors: list[str],
     ) -> dict[str, Any]:
-        try:
-            attempt = self._object_store.begin_attempt(transfer_id)
-        except Exception as exc:
-            raise _ObjectStoreRouteUnavailable("setup") from exc
+        attempt, put_url = self._object_store.begin_attempt(transfer_id)
 
-        cleanup_error: str | None = None
         import_path: str | None = None
         destination_cleanup_needed = False
         try:
-            try:
-                put_url = self._object_store.presign_put(attempt)
-            except Exception as exc:
-                raise _ObjectStoreRouteUnavailable("presign_put") from exc
-
             await self._report(
                 progress,
                 phase="transferring",
@@ -790,11 +826,6 @@ class ControlSessionCopyService:
                     "executor object-store upload acknowledgement is invalid"
                 )
 
-            try:
-                get_url = self._object_store.presign_get(attempt)
-            except Exception as exc:
-                raise _ObjectStoreRouteUnavailable("presign_get") from exc
-
             unbound_temp = prepared.kind == "dir"
             if unbound_temp:
                 allocated = TransferAllocTempPathOutput.model_validate(
@@ -828,69 +859,38 @@ class ControlSessionCopyService:
             destination_cleanup_needed = (
                 prepared.kind == "dir" or not begin.completed
             )
+            if not begin.completed and begin.offset:
+                raise ObjectStoreRouteUnavailable("download")
 
             if not begin.completed:
-                download_error: _ObjectStoreRouteUnavailable | None = None
-                for attempt_index in range(2):
-                    try:
-                        downloaded = await self._call_object_store_route(
-                            dst,
-                            "transfer.url_download",
-                            {
-                                "transfer_id": begin.transfer_id,
-                                "path": import_path,
-                                "expected_bytes": prepared.payload_size,
-                                "chunk_size": chunk_size,
-                                "offset": begin.offset,
-                                "url": get_url,
-                                "_workgate_unbound_temp": unbound_temp,
-                            },
-                            stage="download",
-                        )
-                    except _ObjectStoreRouteUnavailable as exc:
-                        download_error = exc
-                        if attempt_index:
-                            break
-                        begin = TransferBeginWriteOutput.model_validate(
-                            await self._call(
-                                dst, "transfer_begin_write", begin_args
-                            )
-                        )
-                        resumed_bytes = max(resumed_bytes, begin.offset)
-                        if (
-                            begin.completed
-                            or begin.offset == prepared.payload_size
-                        ):
-                            download_error = None
-                            break
-                        try:
-                            get_url = self._object_store.presign_get(attempt)
-                        except Exception:
-                            download_error = _ObjectStoreRouteUnavailable(
-                                "presign_get"
-                            )
-                            break
-                        continue
-
-                    downloaded_offset = (
-                        downloaded.get("offset")
-                        if isinstance(downloaded, dict)
-                        else None
+                get_url = self._object_store.presign_get(attempt)
+                downloaded = await self._call_object_store_route(
+                    dst,
+                    "transfer.url_download",
+                    {
+                        "transfer_id": begin.transfer_id,
+                        "path": import_path,
+                        "expected_bytes": prepared.payload_size,
+                        "chunk_size": chunk_size,
+                        "offset": begin.offset,
+                        "url": get_url,
+                        "_workgate_unbound_temp": unbound_temp,
+                    },
+                    stage="download",
+                )
+                downloaded_offset = (
+                    downloaded.get("offset")
+                    if isinstance(downloaded, dict)
+                    else None
+                )
+                if (
+                    not isinstance(downloaded_offset, int)
+                    or isinstance(downloaded_offset, bool)
+                    or downloaded_offset != prepared.payload_size
+                ):
+                    raise RuntimeError(
+                        "executor object-store download acknowledgement is invalid"
                     )
-                    if (
-                        not isinstance(downloaded_offset, int)
-                        or isinstance(downloaded_offset, bool)
-                        or downloaded_offset != prepared.payload_size
-                    ):
-                        raise RuntimeError(
-                            "executor object-store download "
-                            "acknowledgement is invalid"
-                        )
-                    download_error = None
-                    break
-
-                if download_error is not None:
-                    raise download_error
 
             if begin.completed:
                 if (
@@ -910,38 +910,15 @@ class ControlSessionCopyService:
                 }
                 if unbound_temp:
                     finish_args["_workgate_unbound_temp"] = True
-                try:
-                    finished = TransferFinishWriteOutput.model_validate(
-                        await self._call(
-                            dst, "transfer_finish_write", finish_args
-                        )
+                destination_path = (
+                    await self._finish_write_with_receipt_recovery(
+                        dst,
+                        begin_args=begin_args,
+                        finish_args=finish_args,
+                        expected_bytes=prepared.payload_size,
+                        expected_sha256=prepared.payload_sha256,
                     )
-                except Exception as original:
-                    try:
-                        recovered = TransferBeginWriteOutput.model_validate(
-                            await self._call(
-                                dst, "transfer_begin_write", begin_args
-                            )
-                        )
-                    except Exception:
-                        raise original from None
-                    if (
-                        not recovered.completed
-                        or recovered.offset != prepared.payload_size
-                        or recovered.sha256 != prepared.payload_sha256
-                    ):
-                        raise original from None
-                    destination_path = recovered.path
-                else:
-                    if (
-                        not finished.completed
-                        or finished.bytes != prepared.payload_size
-                        or finished.sha256 != prepared.payload_sha256
-                    ):
-                        raise RuntimeError(
-                            "destination transfer did not commit completely"
-                        )
-                    destination_path = finished.path
+                )
                 destination_cleanup_needed = prepared.kind == "dir"
             if begin.completed:
                 destination_cleanup_needed = prepared.kind == "dir"
@@ -981,15 +958,9 @@ class ControlSessionCopyService:
                     "expected_archive_bytes": prepared.payload_size,
                     "expected_archive_sha256": prepared.payload_sha256,
                 }
-                try:
-                    unpack_raw = await self._call(
-                        dst, "transfer_unpack_archive", unpack_args
-                    )
-                except Exception:
-                    unpack_raw = await self._call(
-                        dst, "transfer_unpack_archive", unpack_args
-                    )
-                unpack = TransferUnpackArchiveOutput.model_validate(unpack_raw)
+                unpack = await self._unpack_with_receipt_recovery(
+                    dst, unpack_args
+                )
                 cleanup_errors.extend(unpack.cleanup_errors)
                 destination_path = unpack.path
                 entries = unpack.entries
@@ -1027,7 +998,7 @@ class ControlSessionCopyService:
                 "archive_sha256": prepared.payload_sha256,
                 "entries": entries,
             }
-        except _ObjectStoreRouteUnavailable:
+        except ObjectStoreRouteUnavailable:
             if destination_cleanup_needed and import_path is not None:
                 await self._abandon_object_store_import(
                     dst,
@@ -1281,17 +1252,7 @@ class ControlSessionCopyService:
             "cleanup_archive": True,
             "transfer_id": current.transfer_id,
         }
-        try:
-            unpack_raw = await self._call(
-                dst, "transfer_unpack_archive", unpack_args
-            )
-        except Exception:
-            # A lost acknowledgement after atomic directory publish is reconciled
-            # by the executor's transfer-specific unpack receipt.
-            unpack_raw = await self._call(
-                dst, "transfer_unpack_archive", unpack_args
-            )
-        unpack = TransferUnpackArchiveOutput.model_validate(unpack_raw)
+        unpack = await self._unpack_with_receipt_recovery(dst, unpack_args)
         cleanup_errors = [
             *current.cleanup_errors,
             *unpack.cleanup_errors,
@@ -1431,32 +1392,14 @@ class ControlSessionCopyService:
         }
         if unbound_temp:
             finish_args["_workgate_unbound_temp"] = True
-        try:
-            finished_raw = await self._call(
-                dst, "transfer_finish_write", finish_args
-            )
-            finished = TransferFinishWriteOutput.model_validate(finished_raw)
-        except Exception as original:
-            try:
-                recovered = TransferBeginWriteOutput.model_validate(
-                    await self._call(dst, "transfer_begin_write", begin_args)
-                )
-            except Exception:
-                raise original from None
-            if (
-                not recovered.completed
-                or recovered.offset != checkpoint.payload_size
-                or recovered.sha256 != checkpoint.payload_sha256
-            ):
-                raise original from None
-            return {"path": recovered.path, "resumed_bytes": resumed_bytes}
-        if (
-            not finished.completed
-            or finished.bytes != checkpoint.payload_size
-            or finished.sha256 != checkpoint.payload_sha256
-        ):
-            raise RuntimeError("destination transfer did not commit completely")
-        return {"path": finished.path, "resumed_bytes": resumed_bytes}
+        path = await self._finish_write_with_receipt_recovery(
+            dst,
+            begin_args=begin_args,
+            finish_args=finish_args,
+            expected_bytes=checkpoint.payload_size,
+            expected_sha256=checkpoint.payload_sha256,
+        )
+        return {"path": path, "resumed_bytes": resumed_bytes}
 
     @staticmethod
     def _checkpoint_metrics(

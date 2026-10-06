@@ -65,7 +65,7 @@ Use `session_copy` to move files or directories between two existing executor-ba
 Copy artifacts/report.json from the build session on gpu1 into reports/latest.json in my workstation session, then verify the destination file.
 ```
 
-The service chooses the supported transfer route. Users normally do not select one. Operators may configure an S3-compatible object store for cross-executor copies; unavailable object-store attempts fall back to the durable control relay.
+The service chooses the supported transfer route. Users normally do not select one. Operators may configure an S3-compatible object store for cross-executor copies; byte-route unavailability can fall back to the durable control relay, while configuration or destination errors remain visible.
 
 ## Work on another executor
 

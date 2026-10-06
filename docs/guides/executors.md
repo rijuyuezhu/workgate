@@ -135,9 +135,11 @@ extra and set `transfer_object_store_bucket`. The optional
 `transfer_object_store_endpoint_url` settings support scoped keys and
 S3-compatible services.
 
-The object-store route is opportunistic. If it cannot complete before destination
-commit, Workgate falls back to the durable control-relay route. Only the durable
-control relay keeps verified bytes on control for source-offline retries.
+The object-store byte route is opportunistic. Network/HTTP transfer failures can
+fall back to the durable control relay before destination commit. Configuration,
+signing, durable-state, and destination transaction errors are reported directly
+instead of being silently bypassed. Only the durable control relay keeps verified
+bytes on control for source-offline retries.
 
 ## Revoke or replace trust
 

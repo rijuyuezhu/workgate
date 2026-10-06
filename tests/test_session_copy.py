@@ -10,7 +10,10 @@ import pytest
 import workgate.control.session_copy as session_copy_module
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.object_store_transfer import S3ObjectTransferService
+from workgate.control.object_store_transfer import (
+    ObjectStoreRouteUnavailable,
+    S3ObjectTransferService,
+)
 from workgate.control.payload_store import PayloadStore
 from workgate.control.session_copy import (
     SESSION_COPY_MANAGED_KIND,
@@ -104,6 +107,17 @@ async def test_shared_session_copy_keeps_file_bytes_on_same_executor(
 
     async def report(value: dict[str, Any]) -> None:
         progress.append(value)
+
+    async def unexpected_object_store_reconcile() -> None:
+        raise AssertionError(
+            "same-executor copy must not touch object-store state"
+        )
+
+    monkeypatch.setattr(
+        harness.control.session_copy_service,
+        "reconcile_object_store_orphans",
+        unexpected_object_store_reconcile,
+    )
 
     result = await harness.control.session_copy_service.copy(
         src_session_id=src_id,
@@ -904,15 +918,12 @@ class _ObjectStoreStub:
         self.begun += 1
         if self.setup_error is not None:
             raise self.setup_error
-        return SimpleNamespace(
+        attempt = SimpleNamespace(
             transfer_id=transfer_id,
             bucket="bucket",
             key=f"transfers/{transfer_id}",
         )
-
-    def presign_put(self, attempt) -> str:
-        _ = attempt
-        return "https://storage.test/upload?sig=secret"
+        return attempt, "https://storage.test/upload?sig=secret"
 
     def presign_get(self, attempt) -> str:
         _ = attempt
@@ -1290,12 +1301,12 @@ async def test_cross_executor_object_store_directory_packs_once(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cross_executor_object_store_setup_failure_falls_back_to_control(
+async def test_cross_executor_object_store_unavailable_falls_back_to_control(
     tmp_path,
 ):
     payload = b"fallback-control"
     object_store = _ObjectStoreStub(
-        setup_error=RuntimeError("object store unavailable")
+        setup_error=ObjectStoreRouteUnavailable("setup", "cleanup pending")
     )
     service, source, destination, transport = _fresh_cross_executor_service(
         tmp_path,
@@ -1324,6 +1335,37 @@ async def test_cross_executor_object_store_setup_failure_falls_back_to_control(
 
 
 @pytest.mark.asyncio
+async def test_cross_executor_object_store_setup_error_does_not_fallback(
+    tmp_path,
+):
+    payload = b"setup-error"
+    object_store = _ObjectStoreStub(
+        setup_error=RuntimeError("cleanup registry is invalid")
+    )
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+    )
+
+    with pytest.raises(RuntimeError, match="cleanup registry is invalid"):
+        await service.copy(
+            src_session_id=str(source.session_id),
+            src_path="source.bin",
+            dst_session_id=str(destination.session_id),
+            dst_path="destination.bin",
+            kind="file",
+            overwrite=True,
+            chunk_size=4,
+        )
+
+    operations = [op for _executor_id, op in transport.calls]
+    assert "transfer.url_upload" not in operations
+    assert "transfer.http_upload" not in operations
+
+
+@pytest.mark.asyncio
 async def test_cross_executor_object_download_failure_aborts_before_control_fallback(
     tmp_path,
 ):
@@ -1334,7 +1376,7 @@ async def test_cross_executor_object_download_failure_aborts_before_control_fall
         source_kind="file",
         payload=payload,
         object_store=object_store,
-        object_download_failures=2,
+        object_download_failures=1,
     )
 
     result = await service.copy(
@@ -1352,7 +1394,7 @@ async def test_cross_executor_object_download_failure_aborts_before_control_fall
     assert len(result.fallbacks) == 1
     assert result.fallbacks == ["object_store:download"]
     assert "do-not-leak" not in repr(result.model_dump())
-    assert operations.count("transfer.url_download") == 2
+    assert operations.count("transfer.url_download") == 1
     assert "transfer_abandon_import" in operations
     assert operations.index("transfer_abandon_import") < operations.index(
         "transfer.http_download"

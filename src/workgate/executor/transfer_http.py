@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import os
-import re
 from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlsplit
@@ -27,7 +26,6 @@ from .transfer import (
 )
 
 _MAX_EXTERNAL_URL_CHARS = 16_384
-_CONTENT_RANGE_RE = re.compile(r"^bytes (\d+)-(\d+)/(\d+|\*)$")
 
 
 def _control_client(profile: ExecutorProfile) -> httpx.AsyncClient:
@@ -257,10 +255,7 @@ async def upload_to_url(
     args: dict[str, Any],
 ) -> dict[str, JsonValue]:
     """Stream one bound source file to a control-issued presigned URL."""
-    try:
-        url = _validate_external_url(args.get("url"))
-    except ValueError as exc:
-        raise _route_unavailable("object-store upload URL is invalid") from exc
+    url = _validate_external_url(args.get("url"))
     (
         handle,
         initial_stat,
@@ -351,56 +346,32 @@ async def download_from_url(
     """Stream one presigned object into an existing transactional write."""
     session_id = str(args["session_id"])
     store.admit_active_session(session_id)
-    try:
-        url = _validate_external_url(args.get("url"))
-    except ValueError as exc:
-        raise _route_unavailable(
-            "object-store download URL is invalid"
-        ) from exc
+    url = _validate_external_url(args.get("url"))
     expected_bytes = int(args["expected_bytes"])
     chunk_size = normalize_chunk_size(args.get("chunk_size"))
     offset = int(args["offset"])
     if offset < 0 or offset > expected_bytes:
         raise ValueError("transfer download offset is invalid")
 
-    headers: dict[str, str] = {}
     if offset:
-        headers["Range"] = f"bytes={offset}-"
+        raise _route_unavailable(
+            "object-store route does not resume partial destination writes"
+        )
     async with _external_client() as client:
         try:
-            async with client.stream("GET", url, headers=headers) as response:
-                if offset:
-                    if response.status_code != 206:
-                        raise _route_unavailable(
-                            "object-store resume requires HTTP 206"
-                        )
-                elif response.status_code not in {200, 206}:
+            async with client.stream("GET", url) as response:
+                if response.status_code != 200:
                     raise _route_unavailable(
                         "object-store download rejected with HTTP "
                         f"{response.status_code}"
                     )
-                if response.status_code == 206:
-                    raw_range = response.headers.get("content-range", "")
-                    matched = _CONTENT_RANGE_RE.fullmatch(raw_range)
-                    if matched is None:
-                        raise _route_unavailable(
-                            "object-store download Content-Range is invalid"
-                        )
-                    start, _end, total = matched.groups()
-                    if int(start) != offset or (
-                        total != "*" and int(total) != expected_bytes
-                    ):
-                        raise _route_unavailable(
-                            "object-store download range does not match "
-                            "the destination transaction"
-                        )
                 try:
                     return await _write_response(
                         response,
                         config=config,
                         store=store,
                         args=args,
-                        offset=offset,
+                        offset=0,
                         expected_bytes=expected_bytes,
                         chunk_size=chunk_size,
                     )

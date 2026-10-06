@@ -4,6 +4,7 @@ import pytest
 
 from workgate.control.object_store_transfer import (
     ObjectStoreDependencyError,
+    ObjectStoreRouteUnavailable,
     S3ObjectTransferService,
 )
 from workgate.persistence import FileStateStore
@@ -52,8 +53,7 @@ async def test_object_store_attempt_presigns_and_removes_cleanup_record(
     state, service = _service(tmp_path, fake)
     transfer_id = "copy_" + "a" * 22
 
-    attempt = service.begin_attempt(transfer_id)
-    put_url = service.presign_put(attempt)
+    attempt, put_url = service.begin_attempt(transfer_id)
     get_url = service.presign_get(attempt)
     assert "signature=secret" in put_url
     assert "signature=secret" in get_url
@@ -81,13 +81,36 @@ async def test_object_store_attempt_presigns_and_removes_cleanup_record(
 async def test_object_store_reconciliation_skips_live_attempt(tmp_path):
     fake = _FakeS3()
     _state, service = _service(tmp_path, fake)
-    attempt = service.begin_attempt("copy_" + "l" * 22)
+    attempt, _put_url = service.begin_attempt("copy_" + "l" * 22)
 
     assert await service.reconcile_orphans() == ()
     assert fake.deleted == []
 
     assert await service.finish_attempt(attempt) is None
     assert len(fake.deleted) == 1
+
+
+@pytest.mark.asyncio
+async def test_object_store_record_cleanup_failure_is_nonfatal(
+    tmp_path, monkeypatch
+):
+    fake = _FakeS3()
+    state, service = _service(tmp_path, fake)
+    transfer_id = "copy_" + "m" * 22
+    attempt, _put_url = service.begin_attempt(transfer_id)
+
+    def fail_remove(_transfer_id: str) -> None:
+        raise OSError("state write failed")
+
+    monkeypatch.setattr(service, "_remove_record", fail_remove)
+
+    assert await service.finish_attempt(attempt) == "OSError"
+    assert fake.deleted == [
+        ("transfer-bucket", f"workgate-test/transfers/{transfer_id}")
+    ]
+    raw = state.read_json(state.layout.control_transfer_objects_path)
+    assert isinstance(raw, dict)
+    assert transfer_id in raw["objects"]
 
 
 @pytest.mark.asyncio
@@ -118,7 +141,7 @@ async def test_object_store_cleanup_failure_remains_retryable(tmp_path):
     failing = _FakeS3(fail_delete=True)
     state, service = _service(tmp_path, failing)
     transfer_id = "copy_" + "c" * 22
-    attempt = service.begin_attempt(transfer_id)
+    attempt, _put_url = service.begin_attempt(transfer_id)
 
     assert await service.finish_attempt(attempt) == "OSError"
     raw = state.read_json(state.layout.control_transfer_objects_path)
@@ -171,10 +194,10 @@ def test_object_store_missing_optional_dependency_persists_nothing(
 async def test_object_store_pending_cleanup_blocks_new_object(tmp_path):
     failing = _FakeS3(fail_delete=True)
     _state, service = _service(tmp_path, failing)
-    first = service.begin_attempt("copy_" + "e" * 22)
+    first, _put_url = service.begin_attempt("copy_" + "e" * 22)
     assert await service.finish_attempt(first) == "OSError"
 
-    with pytest.raises(RuntimeError, match="cleanup is pending"):
+    with pytest.raises(ObjectStoreRouteUnavailable, match="cleanup is pending"):
         service.begin_attempt("copy_" + "f" * 22)
 
 
@@ -182,7 +205,7 @@ async def test_object_store_pending_cleanup_blocks_new_object(tmp_path):
 async def test_object_store_disabled_route_reports_pending_cleanup(tmp_path):
     failing = _FakeS3(fail_delete=True)
     state, service = _service(tmp_path, failing)
-    first = service.begin_attempt("copy_" + "g" * 22)
+    first, _put_url = service.begin_attempt("copy_" + "g" * 22)
     assert await service.finish_attempt(first) == "OSError"
 
     disabled = S3ObjectTransferService(

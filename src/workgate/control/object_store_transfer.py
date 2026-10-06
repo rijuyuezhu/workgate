@@ -28,6 +28,14 @@ class ObjectStoreDependencyError(RuntimeError):
     """Raised when object-store transfer is configured without its optional SDK."""
 
 
+class ObjectStoreRouteUnavailable(RuntimeError):
+    """Raised when the optional object-store route can safely fall back."""
+
+    def __init__(self, reason: str, message: str | None = None) -> None:
+        super().__init__(message or reason)
+        self.reason = reason
+
+
 class ObjectStoreCleanupRecord(BaseModel):
     """Durable authority for deleting one temporary transfer object."""
 
@@ -139,57 +147,53 @@ class S3ObjectTransferService:
         ]
         return "/".join(parts)
 
-    def begin_attempt(self, transfer_id: str) -> ObjectStoreCleanupRecord:
-        """Persist cleanup authority before any executor can upload bytes."""
+    def begin_attempt(
+        self, transfer_id: str
+    ) -> tuple[ObjectStoreCleanupRecord, str]:
+        """Persist cleanup authority and return one short-lived PUT URL."""
         if not self.enabled:
             raise RuntimeError("object-store transfer is not configured")
-        # Resolve the optional dependency before persisting an object that could
-        # not possibly have been uploaded.
-        self._client()
+        client = self._client()
         record = ObjectStoreCleanupRecord(
             transfer_id=str(transfer_id),
             bucket=self._bucket,
             key=self._key(str(transfer_id)),
         )
-        self._active.add(record.transfer_id)
-        try:
-            with self._state_store.transaction(self.path):
-                registry = self._load_unlocked()
-                existing = registry.objects.get(record.transfer_id)
-                inactive = set(registry.objects) - self._active
-                if inactive:
-                    raise RuntimeError(
-                        "object-store cleanup is pending from an earlier transfer"
-                    )
-                if (
-                    existing is None
-                    and len(registry.objects) >= _MAX_CLEANUP_RECORDS
-                ):
-                    raise RuntimeError("object-store cleanup registry is full")
-                if existing is not None and (
-                    existing.bucket != record.bucket
-                    or existing.key != record.key
-                ):
-                    raise RuntimeError(
-                        "object-store transfer cleanup contract changed"
-                    )
-                registry.objects[record.transfer_id] = record
-                self._save_unlocked(registry)
-        except BaseException:
-            self._active.discard(record.transfer_id)
-            raise
-        return record
-
-    def presign_put(self, attempt: ObjectStoreCleanupRecord) -> str:
-        """Return one short-lived PUT URL without exposing storage credentials."""
-        return str(
-            self._client().generate_presigned_url(
-                "put_object",
-                Params={"Bucket": attempt.bucket, "Key": attempt.key},
-                ExpiresIn=self._presign_ttl_s,
-                HttpMethod="PUT",
+        with self._state_store.transaction(self.path):
+            registry = self._load_unlocked()
+            existing = registry.objects.get(record.transfer_id)
+            inactive = set(registry.objects) - self._active
+            if inactive:
+                raise ObjectStoreRouteUnavailable(
+                    "setup",
+                    "object-store cleanup is pending from an earlier transfer",
+                )
+            if (
+                existing is None
+                and len(registry.objects) >= _MAX_CLEANUP_RECORDS
+            ):
+                raise ObjectStoreRouteUnavailable(
+                    "setup",
+                    "object-store cleanup registry is full",
+                )
+            if existing is not None and (
+                existing.bucket != record.bucket or existing.key != record.key
+            ):
+                raise RuntimeError(
+                    "object-store transfer cleanup contract changed"
+                )
+            put_url = str(
+                client.generate_presigned_url(
+                    "put_object",
+                    Params={"Bucket": record.bucket, "Key": record.key},
+                    ExpiresIn=self._presign_ttl_s,
+                    HttpMethod="PUT",
+                )
             )
-        )
+            registry.objects[record.transfer_id] = record
+            self._save_unlocked(registry)
+        self._active.add(record.transfer_id)
+        return record, put_url
 
     def presign_get(self, attempt: ObjectStoreCleanupRecord) -> str:
         """Return one short-lived GET URL without exposing storage credentials."""
@@ -210,36 +214,29 @@ class S3ObjectTransferService:
             self._save_unlocked(registry)
 
     async def _delete(self, record: ObjectStoreCleanupRecord) -> str | None:
-        client = self._client()
-        last_error: str | None = None
-        for attempt in range(3):
-            try:
-                await asyncio.to_thread(
-                    client.delete_object,
-                    Bucket=record.bucket,
-                    Key=record.key,
-                )
-                return None
-            except Exception as exc:
-                last_error = type(exc).__name__
-                if attempt < 2:
-                    await asyncio.sleep(0.05 * (2**attempt))
-        return last_error
+        try:
+            await asyncio.to_thread(
+                self._client().delete_object,
+                Bucket=record.bucket,
+                Key=record.key,
+            )
+        except Exception as exc:
+            return type(exc).__name__
+        return None
 
     async def finish_attempt(
         self, attempt: ObjectStoreCleanupRecord
     ) -> str | None:
         """Best-effort delete one attempted object and release live ownership."""
         try:
-            record = ObjectStoreCleanupRecord(
-                transfer_id=attempt.transfer_id,
-                bucket=attempt.bucket,
-                key=attempt.key,
-            )
-            cleanup_error = await self._delete(record)
-            if cleanup_error is None:
+            cleanup_error = await self._delete(attempt)
+            if cleanup_error is not None:
+                return cleanup_error
+            try:
                 self._remove_record(attempt.transfer_id)
-            return cleanup_error
+            except Exception as exc:
+                return type(exc).__name__
+            return None
         finally:
             self._active.discard(attempt.transfer_id)
 
@@ -261,12 +258,12 @@ class S3ObjectTransferService:
         for transfer_id, record in tuple(registry.objects.items()):
             if transfer_id in active:
                 continue
-            try:
-                cleanup_error = await self._delete(record)
-            except Exception as exc:
-                cleanup_error = type(exc).__name__
+            cleanup_error = await self._delete(record)
             if cleanup_error is None:
-                self._remove_record(transfer_id)
-            else:
+                try:
+                    self._remove_record(transfer_id)
+                except Exception as exc:
+                    cleanup_error = type(exc).__name__
+            if cleanup_error is not None:
                 errors.append(f"object-store cleanup failed ({cleanup_error})")
         return tuple(errors)
