@@ -125,6 +125,7 @@ def _app_meta(
 def _human_ui_links(
     runtime: ControlRuntime,
     *,
+    task_id: str,
     session_id: str,
     executor_id: str,
     workdir: str,
@@ -138,6 +139,7 @@ def _human_ui_links(
 
     def link(view: str, **extra: str | None) -> str:
         params = {
+            "task_id": task_id,
             "session_id": session_id,
             "executor_id": executor_id,
             **{key: value for key, value in extra.items() if value},
@@ -145,7 +147,7 @@ def _human_ui_links(
         return f"{root}?{urlencode(params)}#{view}"
 
     return LiveWorkspaceLinks(
-        sessions=link("sessions"),
+        tasks=link("tasks"),
         files=link("files", workdir=workdir),
         terminals=link("terminals", shell_id=shell_id),
         audit=link("audit"),
@@ -364,6 +366,7 @@ async def live_workspace_snapshot(
         if selected.workdir is not None:
             links = _human_ui_links(
                 runtime,
+                task_id=task_id,
                 session_id=session_id,
                 executor_id=selected.executor_id,
                 workdir=selected.workdir,

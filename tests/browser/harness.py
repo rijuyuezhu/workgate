@@ -637,7 +637,7 @@ class BrowserHarness:
             {
                 "overview": "Overview",
                 "executors": "Executors",
-                "sessions": "Sessions",
+                "tasks": "Tasks",
                 "terminals": "Terminals",
                 "files": "Files",
                 "audit": "Audit",

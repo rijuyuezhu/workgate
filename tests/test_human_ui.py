@@ -102,7 +102,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'class="app-shell"' in index.text
     assert 'class="app-sidebar"' in index.text
     assert 'data-view="overview"' in index.text
-    assert 'data-view="sessions"' in index.text
+    assert 'data-view="tasks"' in index.text
     assert 'data-view="audit"' in index.text
     assert 'data-app-view="overview"' in index.text
     assert 'id="dashboard-panel"' in index.text
@@ -183,7 +183,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'import(assetUrl("executors.js"))' in script.text
     assert 'import(assetUrl("audit_view.js"))' in script.text
     assert 'import(assetUrl("audit.js"))' in script.text
-    assert 'import(assetUrl("sessions.js"))' in script.text
+    assert 'import(assetUrl("tasks.js"))' in script.text
     assert 'import(assetUrl("terminal.js"))' in script.text
     assert 'import(assetUrl("files.js"))' in script.text
     assert "?v=${assetRevision}" in script.text
@@ -208,10 +208,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert audit_script.status_code == 200
     assert audit_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createAuditController" in audit_script.text
-    sessions_script = client.get("/ui/assets/sessions.js")
-    assert sessions_script.status_code == 200
-    assert sessions_script.headers["x-content-type-options"] == "nosniff"
-    assert "export function createSessionsController" in sessions_script.text
+    tasks_script = client.get("/ui/assets/tasks.js")
+    assert tasks_script.status_code == 200
+    assert tasks_script.headers["x-content-type-options"] == "nosniff"
+    assert "export function createTasksController" in tasks_script.text
     terminal_script = client.get("/ui/assets/terminal.js")
     assert terminal_script.status_code == 200
     assert terminal_script.headers["x-content-type-options"] == "nosniff"

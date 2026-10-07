@@ -344,18 +344,20 @@ Python modules and are not imported by executor machine-runtime logic.
 
 The directory contains exactly the browser shell (`index.html`), Human UI styles
 (`web.css`), the bootstrap controller (`web.js`), feature modules such as
-`dashboard.js`, `executors.js`, `audit.js`, `sessions.js`, `terminal.js`,
+`dashboard.js`, `executors.js`, `audit.js`, `tasks.js`, `terminal.js`,
 and `files.js`, plus `audit_view.js`, `opentui_console.js`,
 `syntax_highlight.js`, the vendored xterm bundle and stylesheet, and their
 license notice. Build and architecture gates reject symlinks, Python files,
 unexpected assets, and restoration of the former top-level `ui_static` path.
 
-The browser controller presents execution sessions, their attached task state,
-the Plan/Todo projection, and session-scoped Audit in one Sessions surface.
-Task state is control-owned; the execution session owns executor/workdir binding.
-Ending a session does not finish its task. The separate Global Audit panel retains
-events that are not scoped to one session. The browser never exposes
-executor-internal session identifiers.
+The browser controller presents durable tasks as the primary Tasks surface.
+Task progress and Plan/Todo state remain visible independently of execution
+sessions. Retained execution sessions are shown beneath their task, and selecting
+a session only selects explicit executor/workdir context plus session-scoped Audit;
+the UI never chooses a session implicitly. Ending a session does not finish its
+task, and ended sessions remain available for retained Audit history. Sessions
+without a task are grouped separately. The Global Audit panel retains activity
+that is not scoped to one session.
 
 Rejected ownership alternatives:
 

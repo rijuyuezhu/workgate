@@ -190,13 +190,14 @@ async def test_live_workspace_is_task_first_and_never_selects_session_implicitly
 
     assert selected.links is not None
     links = selected.links.model_dump()
-    for view in ("sessions", "files", "terminals", "audit"):
+    for view in ("tasks", "files", "terminals", "audit"):
         parsed = urlparse(links[view])
         assert parsed.scheme == "https"
         assert parsed.netloc == "workgate.example.test"
         assert parsed.path == "/ui"
         assert parsed.fragment == view
         query = parse_qs(parsed.query)
+        assert query["task_id"] == [task_id]
         assert query["session_id"] == [session_id]
         assert query["executor_id"] == [harness.executor_id]
 

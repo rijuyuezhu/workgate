@@ -46,8 +46,8 @@ from .session import (
     api_ui_session_token,
     ui_request_origin,
 )
-from .session_snapshot import api_session_snapshot
-from .sessions import api_session_action, api_sessions
+from .sessions import api_session_action
+from .tasks import api_tasks
 from .terminals import api_terminal_action, api_terminal_read, api_terminals
 from .todos import api_todos
 
@@ -76,7 +76,7 @@ def _ui_asset_revision() -> str:
         "executors.js",
         "audit_view.js",
         "audit.js",
-        "sessions.js",
+        "tasks.js",
         "terminal.js",
         "files.js",
         "opentui_console.js",
@@ -323,12 +323,7 @@ def human_ui_routes(
         WebSocketRoute(ui_path + "/ws/opentui", ui_opentui_websocket),
         Route(UI_API_PREFIX + "/bootstrap", api_bootstrap, methods=["GET"]),
         Route(UI_API_PREFIX + "/dashboard", api_dashboard, methods=["GET"]),
-        Route(UI_API_PREFIX + "/sessions", api_sessions, methods=["GET"]),
-        Route(
-            UI_API_PREFIX + "/sessions/snapshot",
-            api_session_snapshot,
-            methods=["GET"],
-        ),
+        Route(UI_API_PREFIX + "/tasks", api_tasks, methods=["GET"]),
         Route(
             UI_API_PREFIX + "/sessions/{action}",
             api_session_action,

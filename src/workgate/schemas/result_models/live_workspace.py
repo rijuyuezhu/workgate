@@ -59,9 +59,9 @@ class LiveWorkspaceActivity(BaseModel):
 
 
 class LiveWorkspaceLinks(BaseModel):
-    """Links to fuller authenticated Human UI views for a selected session."""
+    """Links to fuller authenticated Human UI views for a selected task/session."""
 
-    sessions: str
+    tasks: str
     files: str
     terminals: str
     audit: str

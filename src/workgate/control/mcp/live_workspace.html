@@ -375,7 +375,7 @@
     if (!(snapshot.activity || []).length) $("activity").textContent = "No recent activity.";
 
     clear($("links"));
-    const labels = { sessions: "Sessions", files: "Files", terminals: "Terminals", audit: "Audit" };
+    const labels = { tasks: "Tasks", files: "Files", terminals: "Terminals", audit: "Audit" };
     for (const [name, href] of Object.entries(snapshot.links || {})) {
       const anchor = document.createElement("a");
       anchor.className = "action";

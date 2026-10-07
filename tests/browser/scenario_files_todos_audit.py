@@ -1,4 +1,3 @@
-import json
 import time
 from urllib.parse import urlencode
 
@@ -78,6 +77,22 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     assert task["status"] == 200
     task_id = task["payload"]["task_id"]
+    zero_session_task = harness.api(
+        "POST",
+        "/tools/task",
+        body={"action": "create", "label": "zero-session-browser"},
+    )
+    assert zero_session_task["status"] == 200
+    zero_session_task_id = zero_session_task["payload"]["task_id"]
+
+    unattached = harness.api(
+        "POST",
+        "/tools/session_start",
+        body={"workdir": ".", "label": "unattached-browser"},
+    )
+    assert unattached["status"] == 200
+    unattached_session_id = unattached["payload"]["session_id"]
+
     session = harness.api(
         "POST",
         "/tools/session_start",
@@ -99,25 +114,51 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     assert session_shell["payload"]["mode"] == "pty"
     shell_id = str(session_shell["payload"]["result"]["shell_id"])
     harness.track_terminal(harness.executor_id, shell_id)
-    snapshot_forbidden = 0
-
-    def forbid_combined_snapshot(route: Route) -> None:
-        nonlocal snapshot_forbidden
-        snapshot_forbidden += 1
-        route.fulfill(
-            status=403,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "ok": False,
-                    "message": "Missing required OAuth scope: audit:read",
-                }
-            ),
+    page.goto(
+        f"{harness.base_url}/ui?task_id={task_id}&session_id={session_id}#tasks",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    page.locator("#tasks-refresh").click()
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(
+        page.locator(
+            f'#task-list .task-entry[data-task-id="{zero_session_task_id}"]'
         )
+    ).to_be_visible()
+    expect(
+        page.locator(
+            f'#task-list .unattached-session-entry[data-session-id="{unattached_session_id}"]'
+        )
+    ).to_be_visible()
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "true")
 
-    page.route("**/api/ui/sessions/snapshot**", forbid_combined_snapshot)
-    harness.navigate("sessions")
-    page.locator("#session-refresh").click()
+    # Task selection never chooses an execution session implicitly.
+    page.locator(
+        f'#task-list .task-entry[data-task-id="{zero_session_task_id}"]'
+    ).click()
+    expect(page.locator("#session-list .session-entry")).to_have_count(0)
+    expect(page.locator("#session-detail-title")).to_have_text(
+        "No session selected"
+    )
+    page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]').click()
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "false")
+    expect(page.locator("#session-detail-title")).to_have_text(
+        "No session selected"
+    )
+    page.locator(
+        f'#session-list .session-entry[data-session-id="{session_id}"]'
+    ).click()
     expect(
         page.locator(
             f'#session-list .session-entry[data-session-id="{session_id}"]'
@@ -125,8 +166,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     ).to_have_attribute("aria-current", "true")
     expect(page.locator("#todo-state")).to_contain_text("loaded 0 plan steps")
     expect(page.locator("#task-status")).to_have_text("active")
-    assert snapshot_forbidden >= 1
-    page.unroute("**/api/ui/sessions/snapshot**", forbid_combined_snapshot)
+
     reported = harness.api(
         "POST",
         "/tools/task",
@@ -171,29 +211,24 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#task-status")).to_have_text("active")
     expect(page.locator("#todo-add")).to_be_enabled()
 
-    session_entry_box = page.locator(
-        "#session-list .session-entry"
-    ).first.bounding_box()
-    session_detail_box = page.locator(".session-detail-header").bounding_box()
-    assert session_entry_box is not None and session_detail_box is not None
-    assert abs(session_entry_box["y"] - session_detail_box["y"]) < 1
+    task_list_box = page.locator("#task-list").bounding_box()
+    task_workspace_box = page.locator(".tasks-workspace").bounding_box()
+    assert task_list_box is not None and task_workspace_box is not None
+    assert abs(task_list_box["y"] - task_workspace_box["y"]) < 1
 
     availability_override = "missing_on_executor"
 
     def project_session_availability(route: Route) -> None:
-        if "/api/ui/sessions/snapshot" in route.request.url:
-            route.continue_()
-            return
         response = route.fetch()
         payload = response.json()
-        for row in payload.get("data", {}).get("sessions", []):
-            if row.get("session_id") == session_id:
-                row["availability"] = availability_override
-                row["active"] = True
+        for task_row in payload.get("data", {}).get("tasks", []):
+            for row in task_row.get("sessions", []):
+                if row.get("session_id") == session_id:
+                    row["availability"] = availability_override
         route.fulfill(response=response, json=payload)
 
-    page.route("**/api/ui/sessions**", project_session_availability)
-    page.locator("#session-refresh").click()
+    page.route("**/api/ui/tasks", project_session_availability)
+    page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_have_text(
         "Unavailable · missing on executor"
     )
@@ -208,7 +243,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-terminate")).to_be_enabled()
 
     availability_override = "executor_offline"
-    page.locator("#session-refresh").click()
+    page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_have_text(
         "Unavailable · executor offline"
     )
@@ -217,10 +252,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-audit-refresh")).to_be_enabled()
     expect(page.locator("#session-terminate")).to_be_disabled()
 
-    page.unroute("**/api/ui/sessions**", project_session_availability)
-    page.locator("#session-refresh").click()
-    expect(page.locator("#session-detail-status")).to_have_text(
-        "Active · responded within the last 5 hours"
+    page.unroute("**/api/ui/tasks", project_session_availability)
+    page.locator("#tasks-refresh").click()
+    expect(page.locator("#session-detail-status")).to_contain_text(
+        "Available · "
     )
     expect(page.locator("#todo-add")).to_be_enabled()
     expect(page.locator("#session-audit-refresh")).to_be_enabled()
@@ -282,11 +317,11 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     assert audited_link["status"] == 200
 
-    # A Live Workspace deep link must restore one exact logical session across
-    # the existing full Human UI instead of falling back to another executor,
-    # session, workdir, or terminal.
+    # A Live Workspace deep link restores the semantic task first and the
+    # selected execution session only as optional routing context.
     deep_link_query = urlencode(
         {
+            "task_id": task_id,
             "session_id": session_id,
             "executor_id": harness.executor_id,
             "workdir": ".",
@@ -294,12 +329,13 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         }
     )
     page.goto(
-        f"{harness.base_url}/ui?{deep_link_query}#sessions",
+        f"{harness.base_url}/ui?{deep_link_query}#tasks",
         wait_until="domcontentloaded",
     )
     expect(page.locator("#connection-state")).to_have_text("Connected")
-    expect(page.locator("#session-executor")).to_have_value(harness.executor_id)
-    expect(page.locator("#session-include-inactive")).to_be_checked()
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
     expect(
         page.locator(
             f'#session-list .session-entry[data-session-id="{session_id}"]'
@@ -309,23 +345,39 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     def hide_deep_link_session(route: Route) -> None:
         response = route.fetch()
         payload = response.json()
-        rows = payload.get("data", {}).get("sessions", [])
-        payload["data"]["sessions"] = [
-            row for row in rows if row.get("session_id") != session_id
-        ]
-        payload["data"]["count"] = len(payload["data"]["sessions"])
+        for task_row in payload.get("data", {}).get("tasks", []):
+            task_row["sessions"] = [
+                row
+                for row in task_row.get("sessions", [])
+                if row.get("session_id") != session_id
+            ]
         route.fulfill(response=response, json=payload)
 
-    page.route("**/api/ui/sessions?**", hide_deep_link_session)
-    page.locator("#session-refresh").click()
+    page.route("**/api/ui/tasks", hide_deep_link_session)
+    page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-title")).to_have_text(
         "No session selected"
     )
     expect(
         page.locator('#session-list .session-entry[aria-current="true"]')
     ).to_have_count(0)
-    page.unroute("**/api/ui/sessions?**", hide_deep_link_session)
-    page.locator("#session-refresh").click()
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(page.locator("#task-status")).to_have_text("active")
+    page.unroute("**/api/ui/tasks", hide_deep_link_session)
+    page.locator("#tasks-refresh").click()
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "false")
+    expect(page.locator("#session-detail-title")).to_have_text(
+        "No session selected"
+    )
+    page.locator(
+        f'#session-list .session-entry[data-session-id="{session_id}"]'
+    ).click()
     expect(
         page.locator(
             f'#session-list .session-entry[data-session-id="{session_id}"]'
@@ -369,7 +421,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
 
     page.goto(
-        f"{harness.base_url}/ui?{deep_link_query}#sessions",
+        f"{harness.base_url}/ui?{deep_link_query}#tasks",
         wait_until="domcontentloaded",
     )
     expect(page.locator("#connection-state")).to_have_text("Connected")
@@ -389,14 +441,14 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel")
     ).to_have_count(2)
-    session_list_box = page.locator("#session-list").bounding_box()
-    session_workspace_box = page.locator(".session-workspace").bounding_box()
-    assert session_list_box is not None and session_workspace_box is not None
-    session_list_bottom = session_list_box["y"] + session_list_box["height"]
-    session_workspace_bottom = (
-        session_workspace_box["y"] + session_workspace_box["height"]
+    task_list_box = page.locator("#task-list").bounding_box()
+    task_workspace_box = page.locator(".tasks-workspace").bounding_box()
+    assert task_list_box is not None and task_workspace_box is not None
+    task_list_bottom = task_list_box["y"] + task_list_box["height"]
+    task_workspace_bottom = (
+        task_workspace_box["y"] + task_workspace_box["height"]
     )
-    assert abs(session_list_bottom - session_workspace_bottom) < 1
+    assert abs(task_list_bottom - task_workspace_bottom) < 1
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel").nth(0)
     ).to_contain_text("Call request")
@@ -522,7 +574,19 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     harness.set_token(read_only_token)
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
-    harness.navigate("sessions")
+    harness.navigate("tasks")
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "false")
+    page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]').click()
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(page.locator("#session-audit-operation")).to_be_disabled()
+    page.locator(
+        f'#session-list .session-entry[data-session-id="{session_id}"]'
+    ).click()
+    expect(page.locator("#session-audit-operation")).to_be_enabled()
     page.locator("#session-audit-operation").select_option("files")
     page.locator("#session-audit-search").fill("write_file")
     page.locator("#session-audit-refresh").click()
@@ -543,7 +607,15 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     harness.set_token(full_token)
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
-    harness.navigate("sessions")
+    harness.navigate("tasks")
+    page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]').click()
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(page.locator("#session-terminate")).to_be_disabled()
+    page.locator(
+        f'#session-list .session-entry[data-session-id="{session_id}"]'
+    ).click()
     expect(
         page.locator(
             f'#session-list .session-entry[data-session-id="{session_id}"]'
@@ -552,8 +624,16 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#session-terminate").click()
     expect(page.locator("#session-detail-status")).to_contain_text(
-        "Ended · executor confirmed session absence"
+        "Ended · retained history available"
     )
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        )
+    ).to_have_attribute("aria-current", "true")
     blocked = harness.api(
         "POST",
         "/tools/read",
@@ -567,3 +647,8 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         for line in harness.console_errors
         if "400 (Bad Request)" not in line
     ]
+
+    # Keep browser scenarios isolated. The ended session remains a valid
+    # retained Tasks deep link, but the following terminal scenario should
+    # start without inheriting that explicit execution context.
+    page.goto(f"{harness.base_url}/ui#overview", wait_until="domcontentloaded")

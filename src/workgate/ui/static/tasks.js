@@ -1,4 +1,4 @@
-export function createSessionsController({
+export function createTasksController({
   elements,
   request,
   text,
@@ -7,17 +7,16 @@ export function createSessionsController({
   auditTimestamp,
   renderAuditDetailInto,
   renderAuditDetailMessage,
-  initialExecutorId = "",
+  initialTaskId = "",
   initialSessionId = "",
 }) {
   const controllerState = {
-    sessionExecutorId: text(initialExecutorId, ""),
-    sessionExecutorPinned: Boolean(initialExecutorId),
-    todoSessionId: text(initialSessionId, ""),
-    sessionSelectionPinned: Boolean(initialSessionId),
-    todoSessions: [],
-    sessionIncludeInactive: Boolean(initialSessionId),
-    sessionLoading: false,
+    taskId: text(initialTaskId, ""),
+    sessionId: text(initialSessionId, ""),
+    tasks: [],
+    unattachedSessions: [],
+    sessions: [],
+    workspaceLoading: false,
     sessionTerminating: false,
     task: null,
     todoItems: [],
@@ -25,7 +24,6 @@ export function createSessionsController({
     todoMutationBusy: false,
     todoDirty: false,
     todoSequence: 0,
-    sessionExecutorStates: new Map(),
     todoLimits: {
       todos: 1000,
       bytes: 1000000,
@@ -40,11 +38,24 @@ export function createSessionsController({
     sessionAuditLoading: false,
   };
 
-  function selectedSession() {
-    return controllerState.todoSessions.find((session) => session.session_id === controllerState.todoSessionId) || null;
-  }
   function selectedTaskId() {
-    return text(selectedSession() && selectedSession().task_id, "");
+    return text(controllerState.taskId, "");
+  }
+
+  function selectedTaskSummary() {
+    return controllerState.tasks.find((task) => task.task_id === controllerState.taskId) || null;
+  }
+
+  function selectedSession() {
+    return (
+      controllerState.sessions.find(
+        (session) => session.session_id === controllerState.sessionId,
+      ) ||
+      controllerState.unattachedSessions.find(
+        (session) => session.session_id === controllerState.sessionId,
+      ) ||
+      null
+    );
   }
 
   function sessionTimestamp(value) {
@@ -53,7 +64,9 @@ export function createSessionsController({
   }
 
   function sessionTerminated(session = selectedSession()) {
-    return Boolean(session && (session.termination_requested || session.termination_requested_at));
+    return Boolean(
+      session && (session.status === "ended" || session.status === "terminating")
+    );
   }
 
   function sessionAvailability(session = selectedSession()) {
@@ -68,31 +81,26 @@ export function createSessionsController({
     return "";
   }
 
-  function sessionActivityKnown(session = selectedSession()) {
-    return Boolean(session && session.activity_known !== false);
-  }
-
   function sessionActivityTimestamp(session = selectedSession()) {
-    if (!sessionActivityKnown(session)) return "activity time unavailable";
-    return sessionTimestamp(
-      session && session.last_active_at != null ? session.last_active_at : session && session.updated_at,
-    );
+    const value =
+      session && session.last_active_at != null
+        ? session.last_active_at
+        : session && session.updated_at;
+    return value == null ? "activity time unavailable" : sessionTimestamp(value);
   }
 
-  function setTodoControls() {
+  function syncControls() {
     const session = selectedSession();
-    const sessionReady = Boolean(controllerState.todoSessionId && session);
+    const sessionReady = Boolean(controllerState.sessionId && session);
     const taskReady = Boolean(selectedTaskId());
     const executorOffline = sessionAvailability(session) === "executor_offline";
     const taskStatus = text(controllerState.task && controllerState.task.status, "");
     const taskTerminal = taskStatus === "cancelled";
     const taskCompleted = taskStatus === "completed";
     const taskMutable = taskReady && !taskTerminal && !taskCompleted;
-    elements.sessionExecutor.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
-    elements.sessionIncludeInactive.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
-    elements.sessionRefresh.disabled = controllerState.sessionLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
+    elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
-      controllerState.sessionLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
+      controllerState.workspaceLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
     elements.todoRefresh.disabled = controllerState.todoMutationBusy || !taskReady;
     elements.todoAdd.disabled = controllerState.todoMutationBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
     elements.todoSave.disabled = controllerState.todoMutationBusy || !taskMutable || !controllerState.todoDirty;
@@ -110,13 +118,13 @@ export function createSessionsController({
 
   function setTodoMutationBusy(busy) {
     controllerState.todoMutationBusy = busy;
-    setTodoControls();
+    syncControls();
   }
 
   function setTodoDirty(dirty = true) {
     controllerState.todoDirty = dirty;
     if (dirty) elements.todoState.textContent = "Unsaved changes · " + selectedTaskId();
-    setTodoControls();
+    syncControls();
   }
 
   function taskListText(values) {
@@ -136,10 +144,12 @@ export function createSessionsController({
     elements.taskBlockers.textContent = taskListText(progress.blockers);
     elements.taskState.textContent = task
       ? text(task.task_id, "task")
-      : "No semantic task attached to this execution session";
+      : selectedTaskId()
+        ? `Loading ${selectedTaskId()}`
+        : "No semantic task selected";
   }
 
-  function clearSelectedSessionResources(message = "Select a session") {
+  function clearTaskResources(message = "Select a task") {
     controllerState.task = null;
     controllerState.todoItems = [];
     controllerState.todoDirty = false;
@@ -148,29 +158,31 @@ export function createSessionsController({
     renderTodos();
     elements.taskState.textContent = message;
     elements.todoState.textContent = message;
-    resetSessionAuditWorkspace(message);
   }
 
-  function resetTodoWorkspace(executorId = "") {
-    controllerState.sessionExecutorId = executorId;
-    controllerState.todoSessionId = "";
-    controllerState.sessionSelectionPinned = false;
-    controllerState.todoSessions = [];
-    controllerState.sessionLoading = false;
+  function resetWorkspace() {
+    controllerState.taskId = "";
+    controllerState.sessionId = "";
+    controllerState.tasks = [];
+    controllerState.unattachedSessions = [];
+    controllerState.sessions = [];
+    controllerState.workspaceLoading = false;
     controllerState.sessionTerminating = false;
-    elements.sessionExecutor.value = controllerState.sessionExecutorId;
-    elements.sessionIncludeInactive.checked = controllerState.sessionIncludeInactive;
+    elements.taskList.replaceChildren();
+    const taskEmpty = document.createElement("div");
+    taskEmpty.className = "empty-state";
+    taskEmpty.textContent = "Loading tasks…";
+    elements.taskList.append(taskEmpty);
     elements.sessionList.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = "Loading active sessions…";
-    elements.sessionList.append(empty);
-    clearSelectedSessionResources("Select a session");
-    elements.sessionState.textContent = controllerState.sessionExecutorId
-      ? `Not loaded · ${controllerState.sessionExecutorId}`
-      : "Not loaded · all executors";
+    const sessionEmpty = document.createElement("div");
+    sessionEmpty.className = "empty-state";
+    sessionEmpty.textContent = "Select a task to inspect its execution sessions.";
+    elements.sessionList.append(sessionEmpty);
+    clearTaskResources("Select a task");
+    resetSessionAuditWorkspace("Select a session");
+    elements.tasksState.textContent = "Not loaded";
     renderSessionDetail();
-    setTodoControls();
+    syncControls();
   }
 
   function sessionOptionLabel(session) {
@@ -184,294 +196,380 @@ export function createSessionsController({
     const session = selectedSession();
     if (!session) {
       elements.sessionDetailTitle.textContent = "No session selected";
-      elements.sessionDetailStatus.textContent = "Select a session to inspect its state";
+      elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
       elements.sessionDetailId.textContent = "—";
       elements.sessionDetailExecutor.textContent = "—";
       elements.sessionDetailWorkdir.textContent = "—";
       elements.sessionDetailCreated.textContent = "—";
       elements.sessionDetailUpdated.textContent = "—";
-      setTodoControls();
+      syncControls();
       return;
     }
-    const terminated = sessionTerminated(session);
     const finalStatus = text(session.status, "");
     const availability = sessionAvailability(session);
     elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
     elements.sessionDetailStatus.textContent = finalStatus === "ended"
-      ? "Ended · executor confirmed session absence"
+      ? "Ended · retained history available"
       : finalStatus === "terminating"
         ? "Termination in progress · waiting for executor absence"
         : availability === "missing_on_executor"
           ? "Unavailable · missing on executor"
           : availability === "executor_offline"
             ? "Unavailable · executor offline"
-            : terminated
-              ? `Immediate termination requested ${sessionTimestamp(session.termination_requested_at)}`
-              : !sessionActivityKnown(session)
-                ? "Available · activity time unavailable"
-                : session.active === false
-                  ? "Inactive · outside the recent 5 hour window"
-                  : "Active · responded within the last 5 hours";
+            : `Available · ${sessionActivityTimestamp(session)}`;
     elements.sessionDetailId.textContent = text(session.session_id);
     elements.sessionDetailExecutor.textContent = text(session.executor_id);
     elements.sessionDetailWorkdir.textContent = text(session.workdir);
     elements.sessionDetailCreated.textContent = sessionTimestamp(session.created_at);
     elements.sessionDetailUpdated.textContent = sessionTimestamp(session.updated_at);
-    setTodoControls();
+    syncControls();
   }
 
-  function renderTodoSessions(sessions) {
-    controllerState.todoSessions = Array.isArray(sessions) ? sessions : [];
-    if (!controllerState.todoSessions.some((session) => session.session_id === controllerState.todoSessionId)) {
-      if (!controllerState.sessionSelectionPinned) {
-        controllerState.todoSessionId = text(
-          controllerState.todoSessions[0] && controllerState.todoSessions[0].session_id,
-          "",
-        );
-      }
-      clearSelectedSessionResources(
-        selectedSession()
-          ? "Loading selected session"
-          : controllerState.sessionSelectionPinned
-            ? "Requested session is unavailable"
-            : "No sessions available",
-      );
-    }
+  function renderSessions(sessions) {
+    controllerState.sessions = Array.isArray(sessions) ? sessions : [];
     elements.sessionList.replaceChildren();
-    if (!controllerState.todoSessions.length) {
+    if (!controllerState.sessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      const suffix = controllerState.sessionExecutorId ? ` on ${controllerState.sessionExecutorId}` : "";
-      empty.textContent = controllerState.sessionIncludeInactive
-        ? `No execution sessions${suffix}.`
-        : `No sessions active in the last 5 hours${suffix}.`;
+      empty.textContent = selectedTaskId()
+        ? "This task has no retained execution sessions."
+        : controllerState.sessionId
+          ? "Unattached session selected from the task list."
+          : "No retained execution session selected.";
       elements.sessionList.append(empty);
     } else {
-      for (const session of controllerState.todoSessions) {
+      for (const session of controllerState.sessions) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "session-entry";
         button.dataset.sessionId = text(session.session_id, "");
-        button.setAttribute("aria-current", session.session_id === controllerState.todoSessionId ? "true" : "false");
+        button.setAttribute(
+          "aria-current",
+          session.session_id === controllerState.sessionId ? "true" : "false",
+        );
         const title = document.createElement("strong");
         title.textContent = sessionOptionLabel(session);
         const meta = document.createElement("span");
-        meta.className = sessionTerminated(session) ? "session-entry-meta session-entry-terminated" : "session-entry-meta";
+        meta.className = sessionTerminated(session)
+          ? "session-entry-meta session-entry-terminated"
+          : "session-entry-meta";
         const unavailable = sessionUnavailableLabel(session);
-        meta.textContent = sessionTerminated(session)
-          ? "termination requested"
-          : unavailable
-            ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
-            : !sessionActivityKnown(session)
-              ? "available · activity time unavailable"
-              : session.active === false
-                ? `inactive · ${sessionActivityTimestamp(session)}`
-                : `active · ${sessionActivityTimestamp(session)}`;
+        meta.textContent = session.status === "ended"
+          ? `ended · ${sessionTimestamp(session.updated_at)}`
+          : session.status === "terminating"
+            ? `terminating · ${sessionTimestamp(session.updated_at)}`
+            : unavailable
+              ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
+              : `available · ${sessionActivityTimestamp(session)}`;
         button.append(title, meta);
-        button.addEventListener("click", () => void selectTodoSession(session.session_id));
+        button.addEventListener(
+          "click",
+          () => void selectSession(session.session_id),
+        );
         elements.sessionList.append(button);
       }
     }
     renderSessionDetail();
-    setTodoControls();
+    syncControls();
   }
 
-  function sessionSnapshotPath() {
-    const params = new URLSearchParams({
-      session_id: controllerState.todoSessionId,
-      limit: elements.sessionAuditLimit.value || "300",
-      sort: elements.sessionAuditSort.value || "desc",
-    });
-    if (controllerState.sessionAuditSelectedId) params.set("selected_id", controllerState.sessionAuditSelectedId);
-    if (elements.sessionAuditOperation.value) params.set("operation", elements.sessionAuditOperation.value);
-    if (elements.sessionAuditSearch.value.trim()) params.set("search", elements.sessionAuditSearch.value.trim());
-    return `/sessions/snapshot?${params.toString()}`;
+  function taskOptionLabel(task) {
+    return text(
+      task && task.label,
+      text(task && task.objective, text(task && task.task_id, "task")),
+    );
   }
 
-  async function refreshSelectedSessionResourcesIndependently() {
-    const results = await Promise.allSettled([
-      refreshTodos({ force: true }),
-      refreshSessionAudit(),
-    ]);
-    for (const result of results) {
-      if (result.status === "rejected" && result.reason?.authenticationRequired) throw result.reason;
+  function taskMeta(task) {
+    const sessions = Array.isArray(task && task.sessions) ? task.sessions : [];
+    const count = sessions.length;
+    return `${text(task && task.status, "unknown")} · ${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
+  }
+
+  function renderTaskList() {
+    elements.taskList.replaceChildren();
+    if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No retained tasks or unattached sessions.";
+      elements.taskList.append(empty);
+      return;
     }
-    return results;
+    for (const task of controllerState.tasks) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "session-entry task-entry";
+      button.dataset.taskId = text(task.task_id, "");
+      button.setAttribute(
+        "aria-current",
+        task.task_id === controllerState.taskId ? "true" : "false",
+      );
+      const title = document.createElement("strong");
+      title.textContent = taskOptionLabel(task);
+      const meta = document.createElement("span");
+      meta.className = "session-entry-meta";
+      meta.textContent = taskMeta(task);
+      button.append(title, meta);
+      button.addEventListener("click", () => void selectTask(task.task_id));
+      elements.taskList.append(button);
+    }
+    if (!controllerState.unattachedSessions.length) return;
+    const label = document.createElement("div");
+    label.className = "session-group-label";
+    label.textContent = "Unattached sessions";
+    elements.taskList.append(label);
+    for (const session of controllerState.unattachedSessions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "session-entry unattached-session-entry";
+      button.dataset.sessionId = text(session.session_id, "");
+      button.setAttribute(
+        "aria-current",
+        !selectedTaskId() && session.session_id === controllerState.sessionId
+          ? "true"
+          : "false",
+      );
+      const title = document.createElement("strong");
+      title.textContent = sessionOptionLabel(session);
+      const meta = document.createElement("span");
+      meta.className = "session-entry-meta";
+      meta.textContent = session.status === "ended"
+        ? `ended · ${sessionTimestamp(session.updated_at)}`
+        : `${sessionUnavailableLabel(session) || text(session.status, "session")} · ${sessionTimestamp(session.updated_at)}`;
+      button.append(title, meta);
+      button.addEventListener(
+        "click",
+        () => void selectUnattachedSession(session.session_id),
+      );
+      elements.taskList.append(button);
+    }
   }
 
-  async function refreshSelectedSessionResources() {
-    if (!controllerState.todoSessionId) return null;
-    const todoRequestGeneration = ++controllerState.todoGeneration;
-    const auditRequestGeneration = ++controllerState.sessionAuditGeneration;
-    const requestedSession = controllerState.todoSessionId;
-    const previousSelection = controllerState.sessionAuditSelectedId;
-    controllerState.sessionAuditLoading = true;
-    elements.todoState.textContent = `Loading ${requestedSession}`;
-    elements.sessionAuditState.textContent = `Loading ${requestedSession}`;
-    setTodoControls();
-    try {
-      const payload = await request(sessionSnapshotPath());
+  function syncDeepLink() {
+    if (document.body.dataset.activeView !== "tasks") return;
+    const url = new URL(globalThis.location.href);
+    if (selectedTaskId()) url.searchParams.set("task_id", selectedTaskId());
+    else url.searchParams.delete("task_id");
+    if (controllerState.sessionId) {
+      url.searchParams.set("session_id", controllerState.sessionId);
+    } else {
+      url.searchParams.delete("session_id");
+    }
+    globalThis.history.replaceState(
+      {},
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }
+
+  function applyInventory(payload) {
+    controllerState.tasks = Array.isArray(payload && payload.tasks)
+      ? payload.tasks
+      : [];
+    controllerState.unattachedSessions = Array.isArray(
+      payload && payload.unattached_sessions,
+    )
+      ? payload.unattached_sessions
+      : [];
+
+    let selectedTask = selectedTaskSummary();
+    if (!selectedTask && !controllerState.taskId && controllerState.sessionId) {
+      selectedTask =
+        controllerState.tasks.find(
+          (task) =>
+            Array.isArray(task.sessions) &&
+            task.sessions.some(
+              (session) => session.session_id === controllerState.sessionId,
+            ),
+        ) || null;
+      controllerState.taskId = selectedTask
+        ? text(selectedTask.task_id, "")
+        : "";
+    }
+    if (!selectedTask && controllerState.taskId) {
+      controllerState.taskId = "";
+      controllerState.sessionId = "";
+    }
+
+    if (selectedTask) {
+      controllerState.sessions = Array.isArray(selectedTask.sessions)
+        ? selectedTask.sessions
+        : [];
       if (
-        todoRequestGeneration !== controllerState.todoGeneration ||
-        auditRequestGeneration !== controllerState.sessionAuditGeneration ||
-        requestedSession !== controllerState.todoSessionId
-      ) return null;
-      applyTodoPayload(payload, requestedSession);
-      if (!payload.audit || typeof payload.audit !== "object") {
-        throw new Error("Session snapshot returned malformed Audit state");
+        !controllerState.sessions.some(
+          (session) => session.session_id === controllerState.sessionId,
+        )
+      ) {
+        controllerState.sessionId = "";
       }
-      applySessionAuditPayload(payload.audit, requestedSession, previousSelection);
+    } else {
+      controllerState.taskId = "";
+      controllerState.sessions = [];
+      if (
+        !controllerState.unattachedSessions.some(
+          (session) => session.session_id === controllerState.sessionId,
+        )
+      ) {
+        controllerState.sessionId = "";
+      }
+    }
+
+    renderTaskList();
+    renderSessions(controllerState.sessions);
+    syncDeepLink();
+  }
+
+  async function selectTask(next) {
+    if (
+      !next ||
+      next === controllerState.taskId ||
+      controllerState.todoMutationBusy ||
+      controllerState.workspaceLoading
+    ) return;
+    if (
+      controllerState.todoDirty &&
+      !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
+    ) return;
+
+    controllerState.taskId = next;
+    const task = selectedTaskSummary();
+    controllerState.sessions = Array.isArray(task && task.sessions)
+      ? task.sessions
+      : [];
+    controllerState.sessionId = "";
+    controllerState.todoDirty = false;
+    clearTaskResources("Loading selected task");
+    resetSessionAuditWorkspace(
+      controllerState.sessionId
+        ? "Loading selected session"
+        : "No execution session selected",
+    );
+    renderTaskList();
+    renderSessions(controllerState.sessions);
+    syncDeepLink();
+    await refreshTodos({ force: true });
+    if (controllerState.sessionId) await refreshSessionAudit();
+  }
+
+  async function selectUnattachedSession(next) {
+    if (
+      !next ||
+      controllerState.todoMutationBusy ||
+      controllerState.workspaceLoading
+    ) return;
+    if (
+      controllerState.todoDirty &&
+      !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
+    ) return;
+
+    controllerState.taskId = "";
+    controllerState.sessionId = next;
+    controllerState.sessions = [];
+    clearTaskResources(
+      "No semantic task attached to this execution session",
+    );
+    resetSessionAuditWorkspace("Loading selected session");
+    renderTaskList();
+    renderSessions(controllerState.sessions);
+    syncDeepLink();
+    await refreshSessionAudit();
+  }
+
+  async function selectSession(next) {
+    if (
+      !next ||
+      next === controllerState.sessionId ||
+      controllerState.workspaceLoading
+    ) return;
+    controllerState.sessionId = next;
+    controllerState.sessionAuditSelectedId = "";
+    resetSessionAuditWorkspace("Loading selected session");
+    renderTaskList();
+    renderSessions(controllerState.sessions);
+    syncDeepLink();
+    await refreshSessionAudit();
+  }
+
+  async function refreshWorkspace() {
+    controllerState.workspaceLoading = true;
+    syncControls();
+    elements.tasksState.textContent = "Loading tasks";
+    const previousTask = selectedTaskId();
+    try {
+      const payload = await request("/tasks");
+      applyInventory(payload);
+      const count = Number.isInteger(payload.count)
+        ? payload.count
+        : controllerState.tasks.length;
+      const unattached = Number.isInteger(payload.unattached_count)
+        ? payload.unattached_count
+        : controllerState.unattachedSessions.length;
+      elements.tasksState.textContent =
+        `${count} retained task${count === 1 ? "" : "s"} · ` +
+        `${unattached} unattached session${unattached === 1 ? "" : "s"}`;
+
+      if (!selectedTaskId()) {
+        clearTaskResources(
+          previousTask
+            ? "Selected task is no longer retained"
+            : controllerState.sessionId
+              ? "No semantic task attached to this execution session"
+              : "Select a task",
+        );
+      } else if (
+        !controllerState.todoDirty &&
+        !controllerState.todoMutationBusy
+      ) {
+        await refreshTodos({ force: true });
+      }
+
+      if (controllerState.sessionId) {
+        await refreshSessionAudit();
+      } else {
+        resetSessionAuditWorkspace("No execution session selected");
+      }
       return payload;
     } catch (error) {
-      if (
-        todoRequestGeneration !== controllerState.todoGeneration ||
-        auditRequestGeneration !== controllerState.sessionAuditGeneration ||
-        requestedSession !== controllerState.todoSessionId
-      ) return null;
-      if (error?.status === 403) {
-        controllerState.sessionAuditLoading = false;
-        setTodoControls();
-        return await refreshSelectedSessionResourcesIndependently();
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      elements.todoState.textContent = message;
-      controllerState.sessionAuditEntries = [];
-      controllerState.sessionAuditSelectedId = "";
-      renderSessionAuditList();
-      elements.sessionAuditState.textContent = message;
+      elements.tasksState.textContent =
+        error instanceof Error ? error.message : String(error);
       if (error?.authenticationRequired) throw error;
       return null;
     } finally {
-      if (auditRequestGeneration === controllerState.sessionAuditGeneration) {
-        controllerState.sessionAuditLoading = false;
-      }
-      setTodoControls();
+      controllerState.workspaceLoading = false;
+      syncControls();
     }
-  }
-
-  async function selectTodoSession(next) {
-    if (!next || next === controllerState.todoSessionId || controllerState.todoMutationBusy || controllerState.sessionLoading) return;
-    if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) return;
-    controllerState.sessionSelectionPinned = false;
-    controllerState.todoSessionId = next;
-    clearSelectedSessionResources("Loading selected session");
-    renderTodoSessions(controllerState.todoSessions);
-    await refreshSelectedSessionResources();
-  }
-
-  async function refreshTodoSessions() {
-    const requestedExecutor = controllerState.sessionExecutorId;
-    const previousSession = controllerState.todoSessionId;
-    controllerState.sessionLoading = true;
-    setTodoControls();
-    elements.sessionState.textContent = requestedExecutor
-      ? `Loading sessions on ${requestedExecutor}`
-      : "Loading sessions";
-    try {
-      const params = new URLSearchParams();
-      if (requestedExecutor) params.set("executor_id", requestedExecutor);
-      if (controllerState.sessionIncludeInactive) params.set("include_inactive", "true");
-      const payload = await request(`/sessions?${params.toString()}`);
-      if (requestedExecutor !== controllerState.sessionExecutorId) return null;
-      renderTodoSessions(payload.sessions);
-      elements.sessionState.textContent = `${payload.count || 0} ${controllerState.sessionIncludeInactive ? "total" : "active"} sessions${requestedExecutor ? ` · ${requestedExecutor}` : ""}`;
-      if (!controllerState.todoSessionId) {
-        clearSelectedSessionResources(requestedExecutor ? `No execution sessions on ${requestedExecutor}` : "No execution sessions");
-      }
-      else if (controllerState.todoSessionId !== previousSession) clearSelectedSessionResources("Loading selected session");
-      return payload;
-    } catch (error) {
-      if (requestedExecutor !== controllerState.sessionExecutorId) return null;
-      renderTodoSessions([]);
-      elements.sessionState.textContent = error instanceof Error ? error.message : String(error);
-      throw error;
-    } finally {
-      if (requestedExecutor === controllerState.sessionExecutorId) {
-        controllerState.sessionLoading = false;
-        setTodoControls();
-      }
-    }
-  }
-
-  async function refreshTodoContext() {
-    await refreshTodoSessions();
-    if (!controllerState.todoSessionId || !selectedSession()) return null;
-    await refreshSelectedSessionResources();
-    return selectedSession();
-  }
-
-  function renderSessionExecutors(targets) {
-    const available = Array.isArray(targets) ? targets : [];
-    controllerState.sessionExecutorStates = new Map();
-    elements.sessionIncludeInactive.checked = controllerState.sessionIncludeInactive;
-    elements.sessionExecutor.replaceChildren();
-    const all = document.createElement("option");
-    all.value = "";
-    all.textContent = "All executors";
-    all.selected = controllerState.sessionExecutorId === "";
-    elements.sessionExecutor.append(all);
-    let currentPresent = controllerState.sessionExecutorId === "";
-    for (const executor of available) {
-      const executorId = text(executor.executor_id, "");
-      if (!executorId) continue;
-      const state = text(executor.status, "offline");
-      controllerState.sessionExecutorStates.set(executorId, state);
-      const option = document.createElement("option");
-      option.value = executorId;
-      const label = text(executor.name, executorId);
-      option.textContent = state === "online" ? label : `${label} (${state})`;
-      option.selected = executorId === controllerState.sessionExecutorId;
-      if (option.selected) currentPresent = true;
-      elements.sessionExecutor.append(option);
-    }
-    if (!currentPresent && !controllerState.todoDirty && !controllerState.todoMutationBusy) {
-      if (controllerState.sessionExecutorPinned && controllerState.sessionExecutorId) {
-        const option = document.createElement("option");
-        option.value = controllerState.sessionExecutorId;
-        option.textContent = `${controllerState.sessionExecutorId} (unavailable)`;
-        option.disabled = true;
-        option.selected = true;
-        elements.sessionExecutor.append(option);
-        elements.sessionExecutor.value = controllerState.sessionExecutorId;
-        elements.sessionState.textContent = `Executor unavailable · ${controllerState.sessionExecutorId}`;
-        setTodoControls();
-        return;
-      }
-      resetTodoWorkspace("");
-      void refreshTodoContext();
-      return;
-    }
-    elements.sessionExecutor.value = controllerState.sessionExecutorId;
-    setTodoControls();
   }
 
   async function terminateSelectedSession() {
     const session = selectedSession();
-    if (!session || sessionTerminated(session) || controllerState.sessionTerminating) return;
+    if (
+      !session ||
+      sessionTerminated(session) ||
+      controllerState.sessionTerminating
+    ) return;
     const label = sessionOptionLabel(session);
-    if (!globalThis.confirm(`Immediately terminate ${label}? Any later model tool call for this session will be told to stop all work.`)) return;
+    if (
+      !globalThis.confirm(
+        `Immediately terminate ${label}? Any later model tool call for this session will be told to stop all work.`,
+      )
+    ) return;
     controllerState.sessionTerminating = true;
-    setTodoControls();
-    elements.sessionState.textContent = `Requesting immediate termination for ${session.session_id}`;
+    syncControls();
+    elements.tasksState.textContent =
+      `Requesting immediate termination for ${session.session_id}`;
     try {
-      const payload = await request("/sessions/terminate", {
+      await request("/sessions/terminate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: session.session_id }),
       });
-      const updated = payload && payload.session ? payload.session : null;
-      if (updated) {
-        controllerState.todoSessions = controllerState.todoSessions.map((item) => item.session_id === updated.session_id ? updated : item);
-      }
-      renderTodoSessions(controllerState.todoSessions);
-      elements.sessionState.textContent = updated && updated.status === "ended"
-        ? `${session.session_id} ended`
-        : `${session.session_id} marked for immediate termination`;
+      await refreshWorkspace();
     } catch (error) {
-      elements.sessionState.textContent = error instanceof Error ? error.message : String(error);
+      elements.tasksState.textContent =
+        error instanceof Error ? error.message : String(error);
     } finally {
       controllerState.sessionTerminating = false;
-      setTodoControls();
+      syncControls();
     }
   }
 
@@ -539,7 +637,7 @@ export function createSessionsController({
       empty.className = "empty-state";
       empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this task.";
       elements.todoList.append(empty);
-      setTodoControls();
+      syncControls();
       return;
     }
 
@@ -599,7 +697,7 @@ export function createSessionsController({
       );
       elements.todoList.append(row);
     }
-    setTodoControls();
+    syncControls();
   }
 
   function newTodoId() {
@@ -650,7 +748,7 @@ export function createSessionsController({
     if (!requestedTask || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
     const generation = ++controllerState.todoGeneration;
     elements.todoState.textContent = "Loading " + requestedTask;
-    setTodoControls();
+    syncControls();
     try {
       const payload = await request(todoQuery());
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return null;
@@ -661,7 +759,7 @@ export function createSessionsController({
       elements.todoState.textContent = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
-      if (generation === controllerState.todoGeneration) setTodoControls();
+      if (generation === controllerState.todoGeneration) syncControls();
     }
   }
 
@@ -699,7 +797,7 @@ export function createSessionsController({
   function clearSessionAuditDetail(message = "Select a session Audit record.") {
     controllerState.sessionAuditDetailGeneration += 1;
     elements.sessionAuditDetailTitle.textContent = "No record selected";
-    elements.sessionAuditDetailMeta.textContent = controllerState.todoSessionId || "Control Audit";
+    elements.sessionAuditDetailMeta.textContent = controllerState.sessionId || "Control Audit";
     renderAuditDetailMessage(elements.sessionAuditDetailBody, message);
   }
 
@@ -716,7 +814,7 @@ export function createSessionsController({
     elements.sessionAuditSummary.textContent = "0 entries";
     elements.sessionAuditState.textContent = message;
     clearSessionAuditDetail();
-    setTodoControls();
+    syncControls();
   }
 
   function renderSessionAuditList() {
@@ -724,8 +822,8 @@ export function createSessionsController({
     if (!controllerState.sessionAuditEntries.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = controllerState.todoSessionId
-        ? `No Audit records match for ${controllerState.todoSessionId}.`
+      empty.textContent = controllerState.sessionId
+        ? `No Audit records match for ${controllerState.sessionId}.`
         : "Select a session to load its Audit records.";
       elements.sessionAuditList.append(empty);
       clearSessionAuditDetail("No matching session Audit record is available.");
@@ -774,7 +872,7 @@ export function createSessionsController({
   function sessionAuditQueryPath() {
     const params = new URLSearchParams({
       scope: "session",
-      session: controllerState.todoSessionId,
+      session: controllerState.sessionId,
       limit: elements.sessionAuditLimit.value || "300",
       sort: elements.sessionAuditSort.value || "desc",
       include_selected: "true",
@@ -786,12 +884,12 @@ export function createSessionsController({
   }
 
   async function loadSessionAuditDetail(entryId) {
-    if (!entryId || !controllerState.todoSessionId) {
+    if (!entryId || !controllerState.sessionId) {
       clearSessionAuditDetail();
       return null;
     }
     const generation = ++controllerState.sessionAuditDetailGeneration;
-    const requestedSession = controllerState.todoSessionId;
+    const requestedSession = controllerState.sessionId;
     elements.sessionAuditDetailTitle.textContent = auditEntryTitle(
       controllerState.sessionAuditEntries.find((entry) => entry.id === entryId) || {},
     );
@@ -806,7 +904,7 @@ export function createSessionsController({
       const payload = await request(`/audit/detail?${params.toString()}`);
       if (
         generation !== controllerState.sessionAuditDetailGeneration ||
-        requestedSession !== controllerState.todoSessionId ||
+        requestedSession !== controllerState.sessionId ||
         entryId !== controllerState.sessionAuditSelectedId
       ) return null;
       const entry = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
@@ -816,7 +914,7 @@ export function createSessionsController({
     } catch (error) {
       if (
         generation !== controllerState.sessionAuditDetailGeneration ||
-        requestedSession !== controllerState.todoSessionId ||
+        requestedSession !== controllerState.sessionId ||
         entryId !== controllerState.sessionAuditSelectedId
       ) return null;
       elements.sessionAuditDetailMeta.textContent = "Details unavailable";
@@ -829,25 +927,25 @@ export function createSessionsController({
   }
 
   async function refreshSessionAudit() {
-    if (controllerState.sessionAuditLoading || !controllerState.todoSessionId) return null;
+    if (controllerState.sessionAuditLoading || !controllerState.sessionId) return null;
     const generation = ++controllerState.sessionAuditGeneration;
-    const requestedSession = controllerState.todoSessionId;
+    const requestedSession = controllerState.sessionId;
     const previousSelection = controllerState.sessionAuditSelectedId;
     controllerState.sessionAuditLoading = true;
-    setTodoControls();
+    syncControls();
     elements.sessionAuditState.textContent = `Loading ${requestedSession}`;
     try {
       const payload = await request(sessionAuditQueryPath());
       if (
         generation !== controllerState.sessionAuditGeneration ||
-        requestedSession !== controllerState.todoSessionId
+        requestedSession !== controllerState.sessionId
       ) return null;
       applySessionAuditPayload(payload, requestedSession, previousSelection);
       return payload;
     } catch (error) {
       if (
         generation !== controllerState.sessionAuditGeneration ||
-        requestedSession !== controllerState.todoSessionId
+        requestedSession !== controllerState.sessionId
       ) return null;
       controllerState.sessionAuditEntries = [];
       controllerState.sessionAuditSelectedId = "";
@@ -857,7 +955,7 @@ export function createSessionsController({
     } finally {
       if (generation === controllerState.sessionAuditGeneration) {
         controllerState.sessionAuditLoading = false;
-        setTodoControls();
+        syncControls();
       }
     }
   }
@@ -868,40 +966,24 @@ export function createSessionsController({
   }
 
   function bind() {
-    elements.sessionExecutor.addEventListener("change", () => {
-      if (controllerState.todoMutationBusy || controllerState.sessionLoading || controllerState.sessionTerminating) return;
-      const next = elements.sessionExecutor.value;
-      if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) {
-        elements.sessionExecutor.value = controllerState.sessionExecutorId;
-        return;
-      }
-      controllerState.sessionExecutorPinned = false;
-      resetTodoWorkspace(next);
-      void refreshTodoContext();
+    elements.tasksRefresh.addEventListener("click", () => {
+      if (controllerState.workspaceLoading || controllerState.sessionTerminating) return;
+      void refreshWorkspace();
     });
-    elements.sessionIncludeInactive.addEventListener("change", () => {
-      if (controllerState.sessionLoading || controllerState.sessionTerminating) return;
-      if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) {
-        elements.sessionIncludeInactive.checked = controllerState.sessionIncludeInactive;
-        return;
-      }
-      controllerState.sessionIncludeInactive = elements.sessionIncludeInactive.checked;
-      controllerState.todoDirty = false;
-      void refreshTodoContext();
-    });
-    elements.sessionRefresh.addEventListener("click", () => {
-      if (controllerState.sessionLoading || controllerState.sessionTerminating) return;
-      if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) return;
-      controllerState.todoDirty = false;
-      void refreshTodoContext();
-    });
-    elements.sessionTerminate.addEventListener("click", () => void terminateSelectedSession());
+    elements.sessionTerminate.addEventListener(
+      "click",
+      () => void terminateSelectedSession(),
+    );
 
     elements.sessionAuditFilterForm.addEventListener("submit", (event) => {
       event.preventDefault();
       void refreshSessionAudit();
     });
-    for (const control of [elements.sessionAuditOperation, elements.sessionAuditSort, elements.sessionAuditLimit]) {
+    for (const control of [
+      elements.sessionAuditOperation,
+      elements.sessionAuditSort,
+      elements.sessionAuditLimit,
+    ]) {
       control.addEventListener("change", () => void refreshSessionAudit());
     }
 
@@ -909,19 +991,20 @@ export function createSessionsController({
     elements.todoAdd.addEventListener("click", addTodo);
     elements.todoSave.addEventListener("click", () => void saveTodos());
     elements.todoRefresh.addEventListener("click", () => {
-      if (controllerState.todoMutationBusy || !controllerState.todoSessionId) return;
-      if (controllerState.todoDirty && !globalThis.confirm(`Discard unsaved changes in ${controllerState.todoSessionId}?`)) return;
+      if (controllerState.todoMutationBusy || !selectedTaskId()) return;
+      if (
+        controllerState.todoDirty &&
+        !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
+      ) return;
       controllerState.todoDirty = false;
       void refreshTodos({ force: true });
     });
-
   }
 
   return {
     bind,
     invalidate,
-    refresh: refreshTodoContext,
-    renderExecutors: renderSessionExecutors,
-    reset: resetTodoWorkspace,
+    refresh: refreshWorkspace,
+    reset: resetWorkspace,
   };
 }

@@ -82,53 +82,6 @@ async def test_todos_require_explicit_task_and_return_metadata(
 
 
 @pytest.mark.asyncio
-async def test_session_snapshot_projects_attached_task(tmp_path, monkeypatch):
-    client, _harness, task_id, session_id = await _client_with_task(
-        monkeypatch, tmp_path
-    )
-
-    response = client.get(
-        "/api/ui/sessions/snapshot", params={"session_id": session_id}
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["session_id"] == session_id
-    assert data["session"]["task_id"] == task_id
-    assert data["task_id"] == task_id
-    assert data["task"]["task_id"] == task_id
-    assert "revision" not in data
-
-
-@pytest.mark.asyncio
-async def test_session_snapshot_without_task_has_no_task_state(
-    tmp_path, monkeypatch
-):
-    _configure(monkeypatch, tmp_path)
-    (tmp_path / "project").mkdir(parents=True, exist_ok=True)
-    app, harness = build_paired_http_app(get_settings())
-    started = await harness.control.session_coordinator.start_session(
-        workdir="project",
-        executor_id=harness.executor_id,
-    )
-    assert isinstance(started, dict)
-    session_id = str(started["session_id"])
-    client = TestClient(app, base_url=BASE_URL, client=("203.0.113.14", 50005))
-
-    response = client.get(
-        "/api/ui/sessions/snapshot", params={"session_id": session_id}
-    )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["session_id"] == session_id
-    assert data["task_id"] is None
-    assert data["task"] is None
-    assert data["todos"] == []
-    assert "revision" not in data
-
-
-@pytest.mark.asyncio
 async def test_todos_write_read_and_replace(tmp_path, monkeypatch):
     client, _harness, task_id, _session_id = await _client_with_task(
         monkeypatch, tmp_path
@@ -319,3 +272,81 @@ async def test_todo_oauth_scopes_are_task_scopes_only(tmp_path, monkeypatch):
     assert denied_write.status_code == 403
     assert SCOPE_SHELL_WRITE in denied_write.text
     assert writable.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_task_inventory_groups_retained_and_unattached_sessions(
+    tmp_path, monkeypatch
+):
+    _configure(monkeypatch, tmp_path)
+    (tmp_path / "project").mkdir(parents=True, exist_ok=True)
+    app, harness = build_paired_http_app(get_settings())
+    service = harness.control.task_service
+
+    zero = await service.create_task(label="zero-session")
+    multi = await service.create_task(label="multi-session")
+    first = await harness.control.session_coordinator.start_session(
+        workdir="project",
+        label="first",
+        executor_id=harness.executor_id,
+        task_id=multi.task_id,
+    )
+    second = await harness.control.session_coordinator.start_session(
+        workdir="project",
+        label="second",
+        executor_id=harness.executor_id,
+        task_id=multi.task_id,
+    )
+    unattached = await harness.control.session_coordinator.start_session(
+        workdir="project",
+        label="unattached",
+        executor_id=harness.executor_id,
+    )
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    assert isinstance(unattached, dict)
+    first_id = str(first["session_id"])
+    second_id = str(second["session_id"])
+    unattached_id = str(unattached["session_id"])
+    await harness.control.session_coordinator.end_session(first_id)
+
+    client = TestClient(app, base_url=BASE_URL, client=("203.0.113.14", 50005))
+    response = client.get("/api/ui/tasks")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    by_id = {row["task_id"]: row for row in data["tasks"]}
+    assert zero.task_id in by_id
+    assert by_id[zero.task_id]["sessions"] == []
+    assert [row["session_id"] for row in by_id[multi.task_id]["sessions"]] == [
+        first_id,
+        second_id,
+    ]
+    ended = by_id[multi.task_id]["sessions"][0]
+    assert ended["status"] == "ended"
+    assert ended["availability"] == "ended"
+    assert [row["session_id"] for row in data["unattached_sessions"]] == [
+        unattached_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_task_inventory_keeps_task_visible_after_all_sessions_end(
+    tmp_path, monkeypatch
+):
+    client, harness, task_id, session_id = await _client_with_task(
+        monkeypatch, tmp_path
+    )
+    await harness.control.session_coordinator.end_session(session_id)
+
+    response = client.get("/api/ui/tasks")
+
+    assert response.status_code == 200
+    task = next(
+        row
+        for row in response.json()["data"]["tasks"]
+        if row["task_id"] == task_id
+    )
+    assert task["status"] == "active"
+    assert task["sessions"][0]["session_id"] == session_id
+    assert task["sessions"][0]["status"] == "ended"
