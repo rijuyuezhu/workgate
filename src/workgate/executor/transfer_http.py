@@ -69,6 +69,13 @@ def _route_unavailable(message: str) -> ExecutorOperationFailure:
     return ExecutorOperationFailure("transfer_route_unavailable", message)
 
 
+def _external_status_error(action: str, status_code: int) -> RuntimeError:
+    message = f"object-store {action} rejected with HTTP {status_code}"
+    if status_code in {408, 429} or status_code >= 500:
+        return _route_unavailable(message)
+    return RuntimeError(message)
+
+
 class _ResponseStreamError(RuntimeError):
     """The remote byte response cannot satisfy the expected transfer framing."""
 
@@ -281,9 +288,7 @@ async def upload_to_url(
                 f"object-store upload failed: {type(exc).__name__}"
             ) from exc
     if not 200 <= response.status_code < 300:
-        raise _route_unavailable(
-            f"object-store upload rejected with HTTP {response.status_code}"
-        )
+        raise _external_status_error("upload", response.status_code)
     return {"bytes": expected_bytes, "sha256": expected_sha256}
 
 
@@ -361,9 +366,8 @@ async def download_from_url(
         try:
             async with client.stream("GET", url) as response:
                 if response.status_code != 200:
-                    raise _route_unavailable(
-                        "object-store download rejected with HTTP "
-                        f"{response.status_code}"
+                    raise _external_status_error(
+                        "download", response.status_code
                     )
                 try:
                     return await _write_response(

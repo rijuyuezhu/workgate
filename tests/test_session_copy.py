@@ -964,7 +964,7 @@ async def test_durable_control_checkpoint_skips_configured_object_store(
     assert sessions.require_available == (
         str(checkpoint.destination_session_id),
     )
-    assert object_store.reconciled == 1
+    assert object_store.reconciled == 0
     assert object_store.begun == 0
     assert object_store.finished == 0
     assert "transfer.http_download" in transport.calls

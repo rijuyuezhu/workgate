@@ -583,7 +583,6 @@ class ControlSessionCopyService:
         dict[str, Any],
         Literal["object_store", "control_relay"],
     ]:
-        await self.reconcile_object_store_orphans()
         if checkpoint is not None:
             (
                 resolved_kind,
@@ -603,6 +602,9 @@ class ControlSessionCopyService:
                 cleanup_errors=[],
             )
             return resolved_kind, metrics, "control_relay"
+
+        if self._object_store.enabled:
+            await self.reconcile_object_store_orphans()
 
         prepared = await self._prepare_cross_executor_source(
             src,

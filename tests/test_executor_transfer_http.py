@@ -454,9 +454,13 @@ async def test_executor_presigned_upload_streams_source_without_url_leak(
     assert seen["body"] == data
 
 
+@pytest.mark.parametrize(
+    ("status_code", "route_unavailable"),
+    [(503, True), (403, False)],
+)
 @pytest.mark.asyncio
-async def test_executor_presigned_upload_sanitizes_http_failure(
-    tmp_path, monkeypatch
+async def test_executor_presigned_upload_classifies_http_failure(
+    tmp_path, monkeypatch, status_code, route_unavailable
 ):
     workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
         tmp_path
@@ -470,12 +474,14 @@ async def test_executor_presigned_upload_sanitizes_http_failure(
     def client() -> httpx.AsyncClient:
         return httpx.AsyncClient(
             transport=httpx.MockTransport(
-                lambda _request: httpx.Response(503, content=b"unavailable")
+                lambda _request: httpx.Response(
+                    status_code, content=b"unavailable"
+                )
             )
         )
 
     monkeypatch.setattr(transfer_http, "_external_client", client)
-    with pytest.raises(RuntimeError, match="HTTP 503") as exc:
+    with pytest.raises(RuntimeError, match=f"HTTP {status_code}") as exc:
         await transfer_http.upload_to_url(
             config,
             store,
@@ -490,6 +496,11 @@ async def test_executor_presigned_upload_sanitizes_http_failure(
 
     assert "do-not-log" not in str(exc.value)
     assert "storage.test" not in str(exc.value)
+    if route_unavailable:
+        assert isinstance(exc.value, transfer_http.ExecutorOperationFailure)
+        assert exc.value.code == "transfer_route_unavailable"
+    else:
+        assert not isinstance(exc.value, transfer_http.ExecutorOperationFailure)
 
 
 @pytest.mark.asyncio
