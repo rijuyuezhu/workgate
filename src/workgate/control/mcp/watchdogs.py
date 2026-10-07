@@ -53,6 +53,14 @@ def _mcp_tool_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     return {}
 
 
+def _mcp_tool_is_app_only(tool: Any) -> bool:
+    meta = getattr(tool, "meta", None)
+    if not isinstance(meta, dict):
+        return False
+    ui = meta.get("ui")
+    return isinstance(ui, dict) and ui.get("visibility") == ["app"]
+
+
 def _mcp_tool_audit_watchdog_wrapper(
     original: Callable[..., Awaitable[Any]],
     tool_name: str,
@@ -60,6 +68,8 @@ def _mcp_tool_audit_watchdog_wrapper(
     state_store: StateStore,
     oauth_state: OAuthState | None,
     managed_jobs_runtime: ManagedJobsRuntime | None,
+    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None,
 ) -> AuditedMcpToolFn:
     """Return a wrapper that audits every MCP tool call and enforces the tool timeout."""
 
@@ -87,6 +97,8 @@ def _mcp_tool_audit_watchdog_wrapper(
         )
         timeout_s = tool_timeout_s(tool_name)
         try:
+            if agent_activity_observer is not None and task_ids:
+                await agent_activity_observer(task_ids)
             with audit_call_context(call_id, session_ids, task_ids):
                 result = await asyncio.wait_for(
                     original(*args, **kwargs), timeout=timeout_s
@@ -175,6 +187,8 @@ def install_mcp_tool_watchdogs(
     *,
     oauth_state: OAuthState | None = None,
     managed_jobs_runtime: ManagedJobsRuntime | None = None,
+    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None = None,
 ) -> None:
     """Wrap MCP tools under the explicit control execution context."""
     cast(Any, mcp)._workgate_install_tool_watchdogs = lambda target: (
@@ -184,11 +198,15 @@ def install_mcp_tool_watchdogs(
             state_store,
             oauth_state=oauth_state,
             managed_jobs_runtime=managed_jobs_runtime,
+            agent_activity_observer=agent_activity_observer,
         )
     )
     for tool in mcp._tool_manager._tools.values():
         if getattr(tool.fn, "__workgate_audit_watchdog__", False):
             continue
+        observer = (
+            None if _mcp_tool_is_app_only(tool) else agent_activity_observer
+        )
         tool.fn = _mcp_tool_audit_watchdog_wrapper(
             tool.fn,
             tool.name,
@@ -196,4 +214,5 @@ def install_mcp_tool_watchdogs(
             state_store,
             oauth_state,
             managed_jobs_runtime,
+            observer,
         )

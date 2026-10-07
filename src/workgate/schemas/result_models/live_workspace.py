@@ -67,6 +67,31 @@ class LiveWorkspaceLinks(BaseModel):
     audit: str
 
 
+class LiveWorkspaceContinuation(BaseModel):
+    """Bounded automatic-continuation state for the displayed task."""
+
+    eligible: bool
+    pending: bool
+    pending_expires_at: float | None = None
+    attempt_count: int
+    max_attempts: int
+    due_at: float
+    exhausted: bool
+
+
+class LiveWorkspaceContinuationResult(BaseModel):
+    """Result of one private Live Workspace continuation handshake step."""
+
+    action: Literal["claim", "validate", "report"]
+    task: TaskOutput
+    continuation: LiveWorkspaceContinuation
+    claim_id: str | None = None
+    claimed: bool | None = None
+    valid: bool | None = None
+    reported: bool | None = None
+    accepted: bool | None = None
+
+
 class LiveWorkspaceSnapshot(BaseModel):
     """Task view with its execution-session attachments."""
 
@@ -81,6 +106,7 @@ class LiveWorkspaceSnapshot(BaseModel):
         Literal["block", "resume", "cancel", "next_instruction"]
     ] = Field(default_factory=list)
     task_controls_message: str | None = None
+    continuation: LiveWorkspaceContinuation
     jobs: list[LiveWorkspaceJob] = Field(default_factory=list)
     jobs_message: str | None = None
     shells: list[LiveWorkspaceShell] = Field(default_factory=list)

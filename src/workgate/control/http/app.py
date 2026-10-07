@@ -127,7 +127,15 @@ def build_http_app(
     install_error_handlers(app)
     install_tools_timeout_middleware(app, catalog)
     public_routes = _install_public_routes(app, settings, runtime=runtime)
-    register_http_tool_routes(app, catalog)
+    register_http_tool_routes(
+        app,
+        catalog,
+        agent_activity_observer=(
+            None
+            if runtime is None or getattr(runtime, "task_service", None) is None
+            else runtime.task_service.observe_agent_activity
+        ),
+    )
     ui_routes, ui_public_routes = human_ui_routes(settings)
     app.router.routes.extend(ui_routes)
     public_routes.extend(ui_public_routes)

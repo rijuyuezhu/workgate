@@ -1,6 +1,7 @@
 """HTTP transport invocation helpers for routed tools."""
 
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ...audit import (
@@ -18,6 +19,8 @@ async def call_http_tool(
     args: dict[str, Any] | None = None,
     *,
     handler: ToolHandler,
+    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None = None,
 ) -> Any:
     """Invoke one explicitly routed control handler and audit the REST call."""
     payload = args or {}
@@ -30,6 +33,8 @@ async def call_http_tool(
         input=payload,
     )
     try:
+        if agent_activity_observer is not None and task_ids:
+            await agent_activity_observer(task_ids)
         with audit_call_context(call_id, session_ids, task_ids):
             result = await handler(payload)
     except BaseException as exc:

@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import secrets
 import time
 from collections.abc import Callable
 from typing import Any, Literal
@@ -44,6 +45,24 @@ _STEP_CONTENT_MAX_BYTES = 16_384
 _STEP_LABEL_MAX_BYTES = 64
 _TASK_HISTORY_LIMIT_PER_PRINCIPAL = 256
 _TASK_TERMINAL_RETENTION_S = 30 * 24 * 60 * 60
+_CONTINUATION_IDLE_S = 15 * 60
+_CONTINUATION_MAX_ATTEMPTS = 10
+_CONTINUATION_PENDING_TTL_S = 5 * 60
+_CONTINUATION_FAILURE_BACKOFF_S = 5 * 60
+_CONTINUATION_STORAGE_OVERHEAD_BYTES = 4096
+
+
+class _TaskContinuation(BaseModel):
+    """Private durable automatic-continuation state for one semantic task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    last_agent_activity: float | None = None
+    attempt_count: int = Field(default=0, ge=0)
+    pending_claim_id: str | None = None
+    pending_since: float | None = None
+    reserved: bool = False
+    retry_after: float | None = None
 
 
 class _StoredTask(BaseModel):
@@ -55,6 +74,7 @@ class _StoredTask(BaseModel):
     task_id: TaskId
     subject: str = Field(min_length=1, max_length=512)
     document: TaskDocument
+    continuation: _TaskContinuation = Field(default_factory=_TaskContinuation)
 
 
 class ControlTaskService:
@@ -78,6 +98,12 @@ class ControlTaskService:
 
     def _path(self, task_id: str):
         return self._store.layout.control_task_path(task_id)
+
+    @property
+    def _stored_task_max_bytes(self) -> int:
+        return (
+            self._settings.max_todo_bytes + _CONTINUATION_STORAGE_OVERHEAD_BYTES
+        )
 
     def _legacy_path(self, session_id: str):
         return self._store.layout.control_task_state_path(session_id)
@@ -257,7 +283,7 @@ class ControlTaskService:
 
     def _read_stored_unlocked(self, task_id: str) -> _StoredTask:
         value = self._store.read_json(
-            self._path(task_id), max_bytes=self._settings.max_todo_bytes
+            self._path(task_id), max_bytes=self._stored_task_max_bytes
         )
         if value is None:
             raise ValueError(f"unknown task_id {task_id!r}")
@@ -291,7 +317,8 @@ class ControlTaskService:
 
     def _persist_stored(self, path: Any, stored: _StoredTask) -> None:
         data = stored.model_dump(mode="json")
-        encoded_bytes = len(
+        continuation = data.pop("continuation")
+        user_bytes = len(
             json.dumps(
                 data,
                 ensure_ascii=False,
@@ -300,10 +327,29 @@ class ControlTaskService:
                 sort_keys=True,
             ).encode("utf-8")
         )
-        if encoded_bytes > self._settings.max_todo_bytes:
+        if user_bytes > self._settings.max_todo_bytes:
             raise ValueError(
-                f"Refusing to write {encoded_bytes} task bytes; "
+                f"Refusing to write {user_bytes} task bytes; "
                 f"max is {self._settings.max_todo_bytes}"
+            )
+        if stored.continuation != _TaskContinuation():
+            data["continuation"] = continuation
+        total_bytes = len(
+            json.dumps(
+                data,
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        if (
+            total_bytes
+            > self._settings.max_todo_bytes
+            + _CONTINUATION_STORAGE_OVERHEAD_BYTES
+        ):
+            raise ValueError(
+                "Refusing oversized private task continuation state"
             )
         self._store.write_json(path, data)
 
@@ -365,7 +411,18 @@ class ControlTaskService:
             document = current.document.model_copy(deep=True)
             changed_fields, step_changes = mutate(document)
             document.updated_at = time.time()
-            stored = current.model_copy(update={"document": document})
+            continuation = current.continuation.model_copy(deep=True)
+            if (
+                continuation.pending_claim_id is not None
+                and not continuation.reserved
+            ):
+                self._clear_continuation_claim(continuation)
+            stored = current.model_copy(
+                update={
+                    "document": document,
+                    "continuation": continuation,
+                }
+            )
             self._persist_stored(path, stored)
         session_ids = self._session_ids(task_id)
         self._audit_mutation(
@@ -392,6 +449,286 @@ class ControlTaskService:
             mutate,
         )
 
+    @staticmethod
+    def _continuation_unfinished(document: TaskDocument) -> bool:
+        return bool(document.plan.steps) and any(
+            step.status not in {"completed", "skipped"}
+            for step in document.plan.steps
+        )
+
+    @staticmethod
+    def _clear_continuation_claim(
+        continuation: _TaskContinuation,
+    ) -> None:
+        continuation.pending_claim_id = None
+        continuation.pending_since = None
+        continuation.reserved = False
+
+    @classmethod
+    def _continuation_last_activity(cls, stored: _StoredTask) -> float:
+        observed = stored.continuation.last_agent_activity
+        return max(
+            float(stored.document.updated_at),
+            float(observed) if observed is not None else 0.0,
+        )
+
+    @classmethod
+    def _continuation_state(
+        cls,
+        stored: _StoredTask,
+        *,
+        now: float,
+    ) -> dict[str, Any]:
+        continuation = stored.continuation
+        last_activity = cls._continuation_last_activity(stored)
+        due_at = last_activity + _CONTINUATION_IDLE_S
+        if continuation.retry_after is not None:
+            due_at = max(due_at, continuation.retry_after)
+        exhausted = continuation.attempt_count >= _CONTINUATION_MAX_ATTEMPTS
+        unfinished = cls._continuation_unfinished(stored.document)
+        eligible = (
+            stored.document.status == "active"
+            and unfinished
+            and not exhausted
+            and continuation.pending_claim_id is None
+            and now >= due_at
+        )
+        return {
+            "eligible": eligible,
+            "pending": continuation.pending_claim_id is not None,
+            "pending_expires_at": (
+                continuation.pending_since + _CONTINUATION_PENDING_TTL_S
+                if continuation.pending_since is not None
+                else None
+            ),
+            "attempt_count": continuation.attempt_count,
+            "max_attempts": _CONTINUATION_MAX_ATTEMPTS,
+            "due_at": due_at,
+            "exhausted": exhausted,
+        }
+
+    def _expire_continuation_claim(
+        self,
+        stored: _StoredTask,
+        *,
+        now: float,
+    ) -> bool:
+        continuation = stored.continuation
+        if (
+            continuation.pending_claim_id is None
+            or continuation.pending_since is None
+            or now - continuation.pending_since < _CONTINUATION_PENDING_TTL_S
+        ):
+            return False
+        self._clear_continuation_claim(continuation)
+        return True
+
+    def _observe_agent_activity_sync(
+        self,
+        task_ids: tuple[str, ...],
+        observed_at: float,
+    ) -> None:
+        for task_id in dict.fromkeys(task_ids):
+            path = self._path(task_id)
+            with self._store.transaction(path):
+                stored = self._read_stored_unlocked(task_id)
+                continuation = stored.continuation.model_copy(deep=True)
+                previous = continuation.last_agent_activity
+                if previous is not None and observed_at <= previous:
+                    continue
+                continuation.last_agent_activity = observed_at
+                if (
+                    continuation.pending_claim_id is not None
+                    and not continuation.reserved
+                ):
+                    self._clear_continuation_claim(continuation)
+                updated = stored.model_copy(
+                    update={"continuation": continuation}
+                )
+                self._persist_stored(path, updated)
+
+    async def observe_agent_activity(
+        self,
+        task_ids: tuple[str, ...],
+        *,
+        observed_at: float | None = None,
+    ) -> None:
+        """Persist task-scoped agent activity without changing semantic task state."""
+        if not task_ids:
+            return
+        timestamp = time.time() if observed_at is None else float(observed_at)
+        await asyncio.to_thread(
+            self._observe_agent_activity_sync,
+            task_ids,
+            timestamp,
+        )
+
+    def _continuation_status_sync(self, task_id: str) -> dict[str, Any]:
+        stored = self._read_stored_unlocked(task_id)
+        return self._continuation_state(stored, now=time.time())
+
+    async def continuation_status(self, task_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._continuation_status_sync, task_id)
+
+    def _claim_continuation_sync(
+        self,
+        task_id: str,
+    ) -> dict[str, Any]:
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            stored = self._read_stored_unlocked(task_id)
+            now = time.time()
+            expired = self._expire_continuation_claim(stored, now=now)
+            continuation = stored.continuation
+            if continuation.pending_claim_id is not None:
+                return {
+                    "claimed": False,
+                    "claim_id": None,
+                    "continuation": self._continuation_state(stored, now=now),
+                    "task": self._task_output(stored),
+                }
+            state = self._continuation_state(stored, now=now)
+            if not state["eligible"]:
+                if expired:
+                    self._persist_stored(path, stored)
+                return {
+                    "claimed": False,
+                    "claim_id": None,
+                    "continuation": state,
+                    "task": self._task_output(stored),
+                }
+            claim_id = f"c_{secrets.token_hex(8)}"
+            continuation.pending_claim_id = claim_id
+            continuation.pending_since = now
+            continuation.reserved = False
+            self._persist_stored(path, stored)
+            return {
+                "claimed": True,
+                "claim_id": claim_id,
+                "continuation": self._continuation_state(stored, now=now),
+                "task": self._task_output(stored),
+            }
+
+    async def claim_continuation(
+        self,
+        task_id: str,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._claim_continuation_sync,
+            task_id,
+        )
+
+    def _validate_continuation_sync(
+        self,
+        task_id: str,
+        claim_id: str,
+    ) -> dict[str, Any]:
+        requested = str(claim_id or "").strip()
+        if not requested:
+            raise ValueError("claim_id is required")
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            stored = self._read_stored_unlocked(task_id)
+            now = time.time()
+            continuation = stored.continuation
+            changed = self._expire_continuation_claim(stored, now=now)
+            valid = bool(
+                continuation.pending_claim_id == requested
+                and stored.document.status == "active"
+                and self._continuation_unfinished(stored.document)
+                and (
+                    continuation.reserved
+                    or continuation.attempt_count < _CONTINUATION_MAX_ATTEMPTS
+                )
+                and now
+                >= self._continuation_last_activity(stored)
+                + _CONTINUATION_IDLE_S
+            )
+            if valid and not continuation.reserved:
+                continuation.attempt_count += 1
+                continuation.reserved = True
+                changed = True
+            elif not valid and continuation.pending_claim_id == requested:
+                self._clear_continuation_claim(continuation)
+                changed = True
+            if changed:
+                self._persist_stored(path, stored)
+            return {
+                "valid": valid,
+                "claim_id": requested if valid else None,
+                "continuation": self._continuation_state(stored, now=now),
+                "task": self._task_output(stored),
+            }
+
+    async def validate_continuation(
+        self,
+        task_id: str,
+        *,
+        claim_id: str,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._validate_continuation_sync,
+            task_id,
+            claim_id,
+        )
+
+    def _report_continuation_sync(
+        self,
+        task_id: str,
+        claim_id: str,
+        *,
+        accepted: bool,
+    ) -> dict[str, Any]:
+        requested = str(claim_id or "").strip()
+        if not requested:
+            raise ValueError("claim_id is required")
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            stored = self._read_stored_unlocked(task_id)
+            now = time.time()
+            continuation = stored.continuation
+            if continuation.pending_claim_id != requested:
+                return {
+                    "reported": False,
+                    "accepted": None,
+                    "continuation": self._continuation_state(stored, now=now),
+                    "task": self._task_output(stored),
+                }
+            if not continuation.reserved:
+                raise ValueError(
+                    "continuation was not reserved for host dispatch"
+                )
+            if accepted:
+                continuation.last_agent_activity = max(
+                    now,
+                    continuation.last_agent_activity or 0.0,
+                )
+                continuation.retry_after = None
+            else:
+                continuation.retry_after = now + _CONTINUATION_FAILURE_BACKOFF_S
+            self._clear_continuation_claim(continuation)
+            self._persist_stored(path, stored)
+            return {
+                "reported": True,
+                "accepted": bool(accepted),
+                "continuation": self._continuation_state(stored, now=now),
+                "task": self._task_output(stored),
+            }
+
+    async def report_continuation(
+        self,
+        task_id: str,
+        *,
+        claim_id: str,
+        accepted: bool,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._report_continuation_sync,
+            task_id,
+            claim_id,
+            accepted=accepted,
+        )
+
     def _iter_subject_tasks(self, subject: str) -> list[_StoredTask]:
         root = self._store.layout.control_tasks_dir
         tasks: list[_StoredTask] = []
@@ -399,7 +736,7 @@ class ControlTaskService:
             if not path.name.startswith("task_") or path.suffix != ".json":
                 continue
             value = self._store.read_json(
-                path, max_bytes=self._settings.max_todo_bytes
+                path, max_bytes=self._stored_task_max_bytes
             )
             if value is None:
                 continue
@@ -428,7 +765,7 @@ class ControlTaskService:
         path = self._path(task_id)
         with self._store.transaction(path):
             value = self._store.read_json(
-                path, max_bytes=self._settings.max_todo_bytes
+                path, max_bytes=self._stored_task_max_bytes
             )
             if value is None:
                 return True
@@ -778,7 +1115,7 @@ class ControlTaskService:
                 if str(record.task_id) == task_id:
                     with self._store.transaction(task_path):
                         stored_value = self._store.read_json(
-                            task_path, max_bytes=self._settings.max_todo_bytes
+                            task_path, max_bytes=self._stored_task_max_bytes
                         )
                         if stored_value is not None:
                             _StoredTask.model_validate(stored_value)
@@ -795,7 +1132,7 @@ class ControlTaskService:
                 )
             with self._store.transaction(task_path):
                 stored_value = self._store.read_json(
-                    task_path, max_bytes=self._settings.max_todo_bytes
+                    task_path, max_bytes=self._stored_task_max_bytes
                 )
                 if stored_value is None:
                     document = self._legacy_document(

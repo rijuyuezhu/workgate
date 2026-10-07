@@ -68,6 +68,15 @@ def _snapshot(*, status: str = "active") -> dict:
         "session": session,
         "task_control_actions": actions,
         "task_controls_message": None,
+        "continuation": {
+            "eligible": False,
+            "pending": False,
+            "pending_expires_at": None,
+            "attempt_count": 0,
+            "max_attempts": 10,
+            "due_at": 4_102_444_800.0,
+            "exhausted": False,
+        },
         "jobs": [
             {
                 "job_id": "job_browser",
@@ -120,12 +129,17 @@ def _mock_host_html(path: Path) -> str:
     initial = _snapshot()
     blocked = _snapshot(status="blocked")
     refreshed = _snapshot(status="blocked")
+    due = _snapshot()
+    due["continuation"]["eligible"] = True
+    due["continuation"]["due_at"] = 1.0
     mock = f"""
 <script>
 window.__liveCalls = [];
 const __initial = {json.dumps(initial)};
 const __blocked = {json.dumps(blocked)};
 const __refreshed = {json.dumps(refreshed)};
+const __due = {json.dumps(due)};
+window.__dueSnapshot = __due;
 function __hostPost(message) {{
   window.postMessage(message, "*");
 }}
@@ -160,12 +174,46 @@ window.addEventListener("message", (event) => {{
     let result;
     if (name === "workspace_task_control") result = {{ content: [], structuredContent: __blocked }};
     else if (name === "workspace_snapshot") result = {{ content: [], structuredContent: __refreshed }};
+    else if (name === "workspace_continuation") {{
+      const continuation = {{ ...__due.continuation }};
+      let structuredContent;
+      if (args.action === "claim") {{
+        continuation.eligible = false;
+        continuation.pending = true;
+        structuredContent = {{
+          action: "claim", task: __due.task, continuation,
+          claim_id: "c_browser_live", claimed: true,
+        }};
+      }} else if (args.action === "validate") {{
+        continuation.eligible = false;
+        continuation.pending = true;
+        continuation.attempt_count = 1;
+        structuredContent = {{
+          action: "validate", task: __due.task, continuation,
+          claim_id: args.claim_id, valid: true,
+        }};
+      }} else {{
+        continuation.eligible = false;
+        continuation.pending = false;
+        continuation.attempt_count = 1;
+        continuation.due_at = 4102444800;
+        structuredContent = {{
+          action: "report", task: __due.task, continuation,
+          reported: true, accepted: args.accepted === true,
+        }};
+      }}
+      result = {{ content: [], structuredContent }};
+    }}
     else if (name === "workspace_end") result = {{ content: [], structuredContent: {{ session_id: args.session_id, ended: true }} }};
     else result = {{ content: [{{ type: "text", text: "unexpected tool " + name }}], isError: true }};
     __hostPost({{ jsonrpc: "2.0", id: message.id, result }});
     return;
   }}
   if (message.method === "ui/open-link") {{
+    __hostPost({{ jsonrpc: "2.0", id: message.id, result: {{}} }});
+    return;
+  }}
+  if (message.method === "ui/message") {{
     __hostPost({{ jsonrpc: "2.0", id: message.id, result: {{}} }});
   }}
 }});
@@ -275,6 +323,93 @@ def run_live_workspace(harness: BrowserHarness) -> None:
         assert calls[0]["args"]["protocolVersion"] == "2026-01-26"
         assert any(
             call.get("name") == "ui/notifications/initialized" for call in calls
+        )
+
+        # An idle active task uses the real MCP Apps host-message path. The
+        # continuation is task-scoped; concrete execution identity must not
+        # leak into the synthetic user turn.
+        page.evaluate(
+            """window.postMessage({
+                jsonrpc: "2.0",
+                method: "ui/notifications/tool-result",
+                params: { content: [], structuredContent: window.__dueSnapshot }
+            }, "*")"""
+        )
+        page.wait_for_function(
+            """window.__liveCalls.some((call) => call.name === "ui/message")"""
+        )
+        calls = page.evaluate("window.__liveCalls")
+        continuation_calls = [
+            call["args"]["arguments"]
+            for call in calls
+            if call.get("name") == "tools/call"
+            and call.get("args", {}).get("name") == "workspace_continuation"
+        ]
+        assert [call["action"] for call in continuation_calls] == [
+            "claim",
+            "validate",
+            "report",
+        ]
+        assert "claim_id" not in continuation_calls[0]
+        assert all(
+            call["task_id"] == "task_browser_live"
+            for call in continuation_calls
+        )
+        host_messages = [
+            call for call in calls if call.get("name") == "ui/message"
+        ]
+        assert len(host_messages) == 1
+        prompt = host_messages[0]["args"]["content"][0]["text"]
+        assert "task_browser_live" in prompt
+        assert "sess_browser_live" not in prompt
+        assert "exec_browser" not in prompt
+        assert "/workspace/demo" not in prompt
+        assert "explicit session_id" in prompt
+        expect(page.locator("#status")).to_have_text(
+            "Automatic task continuation sent to the host."
+        )
+
+        # A freshly opened Workspace must respect another page's durable
+        # pending claim until its server-side TTL expires; it must not need
+        # browser storage to suppress a duplicate host message.
+        continuation_calls_before = len(
+            [
+                call
+                for call in page.evaluate("window.__liveCalls")
+                if call.get("name") == "tools/call"
+                and call.get("args", {}).get("name") == "workspace_continuation"
+            ]
+        )
+        page.evaluate(
+            """(() => {
+                const pending = structuredClone(window.__dueSnapshot);
+                pending.continuation.eligible = false;
+                pending.continuation.pending = true;
+                pending.continuation.pending_expires_at = Date.now() / 1000 + 300;
+                window.postMessage({
+                    jsonrpc: "2.0",
+                    method: "ui/notifications/tool-result",
+                    params: {content: [], structuredContent: pending}
+                }, "*");
+            })()"""
+        )
+        page.wait_for_timeout(100)
+        calls = page.evaluate("window.__liveCalls")
+        assert (
+            len([call for call in calls if call.get("name") == "ui/message"])
+            == 1
+        )
+        assert (
+            len(
+                [
+                    call
+                    for call in calls
+                    if call.get("name") == "tools/call"
+                    and call.get("args", {}).get("name")
+                    == "workspace_continuation"
+                ]
+            )
+            == continuation_calls_before
         )
 
         # The compact App should actually collapse to one column on a phone.

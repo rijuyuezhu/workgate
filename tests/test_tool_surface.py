@@ -62,6 +62,7 @@ LOCAL_MCP_TOOL_NAMES = {
     "view_image",
     "workspace_open",
     "workspace_snapshot",
+    "workspace_continuation",
     "workspace_task_control",
     "workspace_end",
 }
@@ -150,6 +151,7 @@ async def test_stdio_mcp_hides_http_server_backed_tools(tmp_path, monkeypatch):
         "workspace_open",
         "workspace_snapshot",
         "workspace_task_control",
+        "workspace_continuation",
         "workspace_end",
         "executor",
     }
