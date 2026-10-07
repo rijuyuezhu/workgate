@@ -116,10 +116,10 @@ def _snapshot(*, status: str = "active") -> dict:
             }
         ],
         "links": {
-            "sessions": "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser#sessions",
-            "files": "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser&workdir=%2Fworkspace%2Fdemo#files",
-            "terminals": "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser&shell_id=shell_browser#terminals",
-            "audit": "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser#audit",
+            "tasks": "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser#tasks",
+            "files": "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser&workdir=%2Fworkspace%2Fdemo#files",
+            "terminals": "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser&shell_id=shell_browser#terminals",
+            "audit": "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser#audit",
         },
     }
 
@@ -278,21 +278,21 @@ def run_live_workspace(harness: BrowserHarness) -> None:
         expect(page.locator("#jobs")).to_contain_text("pytest")
         expect(page.locator("#shells")).to_contain_text("dev")
         expect(page.locator("#activity")).to_contain_text("tool_call")
-        expect(page.get_by_role("link", name="Sessions")).to_have_attribute(
+        expect(page.get_by_role("link", name="Tasks")).to_have_attribute(
             "href",
-            "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser#sessions",
+            "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser#tasks",
         )
         expect(page.get_by_role("link", name="Files")).to_have_attribute(
             "href",
-            "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser&workdir=%2Fworkspace%2Fdemo#files",
+            "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser&workdir=%2Fworkspace%2Fdemo#files",
         )
         expect(page.get_by_role("link", name="Terminals")).to_have_attribute(
             "href",
-            "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser&shell_id=shell_browser#terminals",
+            "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser&shell_id=shell_browser#terminals",
         )
         expect(page.get_by_role("link", name="Audit")).to_have_attribute(
             "href",
-            "https://workgate.example/ui?session_id=sess_browser_live&executor_id=exec_browser#audit",
+            "https://workgate.example/ui?task_id=task_browser_live&session_id=sess_browser_live&executor_id=exec_browser#audit",
         )
         assert "browser-super-secret" not in page.locator("body").inner_text()
 

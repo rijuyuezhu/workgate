@@ -11493,7 +11493,7 @@
         "type": "object"
       },
       "meta": {
-        "openai/outputTemplate": "ui://workgate/live-workspace-881e4ec46d7e2620.html",
+        "openai/outputTemplate": "ui://workgate/live-workspace-cf35d056e25f2971.html",
         "openai/toolInvocation/invoked": "Live Workspace ready",
         "openai/toolInvocation/invoking": "Opening Live Workspace",
         "openai/widgetAccessible": true,
@@ -11507,9 +11507,9 @@
           }
         ],
         "ui": {
-          "resourceUri": "ui://workgate/live-workspace-881e4ec46d7e2620.html"
+          "resourceUri": "ui://workgate/live-workspace-cf35d056e25f2971.html"
         },
-        "ui/resourceUri": "ui://workgate/live-workspace-881e4ec46d7e2620.html"
+        "ui/resourceUri": "ui://workgate/live-workspace-cf35d056e25f2971.html"
       },
       "name": "workspace_open",
       "outputSchema": {
@@ -11730,7 +11730,7 @@
             "type": "object"
           },
           "LiveWorkspaceLinks": {
-            "description": "Links to fuller authenticated Human UI views for a selected session.",
+            "description": "Links to fuller authenticated Human UI views for a selected task/session.",
             "properties": {
               "audit": {
                 "title": "Audit",
@@ -11740,8 +11740,8 @@
                 "title": "Files",
                 "type": "string"
               },
-              "sessions": {
-                "title": "Sessions",
+              "tasks": {
+                "title": "Tasks",
                 "type": "string"
               },
               "terminals": {
@@ -11750,7 +11750,7 @@
               }
             },
             "required": [
-              "sessions",
+              "tasks",
               "files",
               "terminals",
               "audit"
@@ -12570,7 +12570,7 @@
             "type": "object"
           },
           "LiveWorkspaceLinks": {
-            "description": "Links to fuller authenticated Human UI views for a selected session.",
+            "description": "Links to fuller authenticated Human UI views for a selected task/session.",
             "properties": {
               "audit": {
                 "title": "Audit",
@@ -12580,8 +12580,8 @@
                 "title": "Files",
                 "type": "string"
               },
-              "sessions": {
-                "title": "Sessions",
+              "tasks": {
+                "title": "Tasks",
                 "type": "string"
               },
               "terminals": {
@@ -12590,7 +12590,7 @@
               }
             },
             "required": [
-              "sessions",
+              "tasks",
               "files",
               "terminals",
               "audit"
@@ -13341,7 +13341,7 @@
             "type": "object"
           },
           "LiveWorkspaceLinks": {
-            "description": "Links to fuller authenticated Human UI views for a selected session.",
+            "description": "Links to fuller authenticated Human UI views for a selected task/session.",
             "properties": {
               "audit": {
                 "title": "Audit",
@@ -13351,8 +13351,8 @@
                 "title": "Files",
                 "type": "string"
               },
-              "sessions": {
-                "title": "Sessions",
+              "tasks": {
+                "title": "Tasks",
                 "type": "string"
               },
               "terminals": {
@@ -13361,7 +13361,7 @@
               }
             },
             "required": [
-              "sessions",
+              "tasks",
               "files",
               "terminals",
               "audit"

@@ -25,8 +25,8 @@
         <button class="nav-item" type="button" data-view="executors">
           <span class="nav-index" aria-hidden="true">03</span><span>Executors</span>
         </button>
-        <button class="nav-item" type="button" data-view="sessions">
-          <span class="nav-index" aria-hidden="true">05</span><span>Sessions</span>
+        <button class="nav-item" type="button" data-view="tasks">
+          <span class="nav-index" aria-hidden="true">05</span><span>Tasks</span>
         </button>
         <button class="nav-item" type="button" data-view="terminals">
           <span class="nav-index" aria-hidden="true">06</span><span>Terminals</span>
@@ -393,46 +393,26 @@
       </div>
     </section>
 
-    <section id="session-panel" class="panel session-panel app-view" data-app-view="sessions" hidden>
+    <section id="tasks-panel" class="panel tasks-panel app-view" data-app-view="tasks" hidden>
       <div class="section-heading session-heading">
         <div>
-          <p class="eyebrow">Agent control plane</p>
-          <h2>Sessions</h2>
+          <p class="eyebrow">Durable work</p>
+          <h2>Tasks</h2>
         </div>
         <div class="session-toolbar">
-          <label class="session-control" for="session-executor">
-            <span>Executor</span>
-            <select id="session-executor" name="session-executor"></select>
-          </label>
-          <label class="session-active-toggle"><input id="session-include-inactive" type="checkbox"> Show all sessions</label>
-          <button id="session-refresh" type="button">Refresh</button>
-          <span id="session-state" class="muted">Not loaded</span>
+          <button id="tasks-refresh" type="button">Refresh</button>
+          <span id="tasks-state" class="muted">Not loaded</span>
         </div>
       </div>
-      <div class="session-layout">
-        <nav id="session-list" class="session-list" aria-label="Execution sessions" aria-live="polite">
-          <div class="empty-state">Loading active sessions…</div>
+      <div class="tasks-layout">
+        <nav id="task-list" class="session-list" aria-label="Semantic tasks" aria-live="polite">
+          <div class="empty-state">Loading tasks…</div>
         </nav>
-        <article class="session-workspace">
-          <div class="session-detail-header">
-            <div>
-              <strong id="session-detail-title">No session selected</strong>
-              <span id="session-detail-status" class="muted">Select a session to inspect its state</span>
-            </div>
-            <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
-          </div>
-          <dl class="session-detail-grid">
-            <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
-            <div><dt>Executor ID</dt><dd id="session-detail-executor">—</dd></div>
-            <div><dt>Workdir</dt><dd id="session-detail-workdir">—</dd></div>
-            <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
-            <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
-          </dl>
-
+        <article class="tasks-workspace">
           <section class="session-resource session-task">
             <div class="session-resource-heading">
               <div><p class="eyebrow">Durable task state</p><h3>Progress</h3></div>
-              <span id="task-state" class="muted">Select a session</span>
+              <span id="task-state" class="muted">Select a task</span>
             </div>
             <dl class="session-task-grid">
               <div><dt>Task status</dt><dd id="task-status">—</dd></div>
@@ -447,7 +427,7 @@
           <section class="session-resource session-todos">
             <div class="session-resource-heading">
               <div><p class="eyebrow">Durable task state</p><h3>Plan</h3></div>
-              <span id="todo-state" class="muted">Select a session</span>
+              <span id="todo-state" class="muted">Select a task</span>
             </div>
             <div class="todo-toolbar">
               <label class="todo-control" for="todo-filter">
@@ -468,8 +448,35 @@
               <span>0 total</span><span>0 open</span><span>0 completed</span><span>0 skipped</span>
             </div>
             <div id="todo-list" class="todo-list" aria-live="polite">
-              <div class="empty-state">Select a session with an attached task to load its plan.</div>
+              <div class="empty-state">Select a task to load its plan.</div>
             </div>
+          </section>
+
+          <section class="session-resource session-executions">
+            <div class="session-resource-heading">
+              <div><p class="eyebrow">Execution contexts</p><h3>Sessions</h3></div>
+              <span class="muted">Retained for task history</span>
+            </div>
+            <nav id="session-list" class="task-session-list" aria-label="Execution sessions for selected task" aria-live="polite">
+              <div class="empty-state">Select a task to inspect its execution sessions.</div>
+            </nav>
+          </section>
+
+          <section class="session-resource session-execution-detail">
+            <div class="session-detail-header">
+              <div>
+                <strong id="session-detail-title">No session selected</strong>
+                <span id="session-detail-status" class="muted">Select a retained execution session to inspect it</span>
+              </div>
+              <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
+            </div>
+            <dl class="session-detail-grid">
+              <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
+              <div><dt>Executor ID</dt><dd id="session-detail-executor">—</dd></div>
+              <div><dt>Workdir</dt><dd id="session-detail-workdir">—</dd></div>
+              <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
+              <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
+            </dl>
           </section>
 
           <section class="session-resource session-audit">

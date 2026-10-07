@@ -869,6 +869,22 @@ class ControlTaskService:
             self._create_sync, label=label, objective=objective
         )
 
+    def _list_tasks_sync(self) -> list[TaskOutput]:
+        tasks = self._iter_subject_tasks(self._subject())
+        tasks.sort(
+            key=lambda stored: (
+                stored.document.updated_at,
+                stored.document.created_at,
+                str(stored.task_id),
+            ),
+            reverse=True,
+        )
+        return [self._task_output(stored) for stored in tasks]
+
+    async def list_tasks(self) -> list[TaskOutput]:
+        """Return retained semantic tasks owned by the current principal."""
+        return await asyncio.to_thread(self._list_tasks_sync)
+
     async def read_task(self, task_id: str) -> TaskOutput:
         return await asyncio.to_thread(
             lambda: self._task_output(self._read_stored_unlocked(task_id))

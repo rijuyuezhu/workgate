@@ -84,7 +84,7 @@ def run_opentui_responsive(harness: BrowserHarness) -> None:
     views = {
         "overview": "#dashboard-panel",
         "executors": "#executors-panel",
-        "sessions": "#session-panel",
+        "tasks": "#tasks-panel",
         "terminals": "#terminal-panel",
         "files": "#file-panel",
         "audit": "#audit-panel",

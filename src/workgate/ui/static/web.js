@@ -13,7 +13,7 @@ void (async () => {
     { createAuditController },
     { createTerminalController },
     { createFilesController },
-    { createSessionsController },
+    { createTasksController },
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
     import(assetUrl("executors.js")),
@@ -21,7 +21,7 @@ void (async () => {
     import(assetUrl("audit.js")),
     import(assetUrl("terminal.js")),
     import(assetUrl("files.js")),
-    import(assetUrl("sessions.js")),
+    import(assetUrl("tasks.js")),
   ]);
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
   const oauth = config.oauth && typeof config.oauth === "object" ? config.oauth : null;
@@ -82,9 +82,9 @@ void (async () => {
       title: "Executors",
       description: "Pair, inspect, rename, and revoke final executor identities.",
     },
-    sessions: {
-      title: "Sessions",
-      description: "Inspect execution sessions, attached task state, and scoped Audit records.",
+    tasks: {
+      title: "Tasks",
+      description: "Inspect durable tasks, retained execution sessions, and scoped Audit records.",
     },
     terminals: {
       title: "Terminals",
@@ -267,11 +267,10 @@ void (async () => {
     sessionDetailTitle: document.getElementById("session-detail-title"),
     sessionDetailUpdated: document.getElementById("session-detail-updated"),
     sessionDetailWorkdir: document.getElementById("session-detail-workdir"),
-    sessionIncludeInactive: document.getElementById("session-include-inactive"),
     sessionList: document.getElementById("session-list"),
-    sessionExecutor: document.getElementById("session-executor"),
-    sessionRefresh: document.getElementById("session-refresh"),
-    sessionState: document.getElementById("session-state"),
+    taskList: document.getElementById("task-list"),
+    tasksRefresh: document.getElementById("tasks-refresh"),
+    tasksState: document.getElementById("tasks-state"),
     sessionTerminate: document.getElementById("session-terminate"),
     taskBlockers: document.getElementById("task-blockers"),
     taskFindings: document.getElementById("task-findings"),
@@ -301,6 +300,7 @@ void (async () => {
     return value.slice(0, maxLength);
   }
   const deepLink = Object.freeze({
+    taskId: deepLinkValue("task_id", 128),
     sessionId: deepLinkValue("session_id", 128),
     executorId: deepLinkValue("executor_id", 255),
     workdir: deepLinkValue("workdir", 4096),
@@ -351,7 +351,7 @@ void (async () => {
   });
   files.bind();
 
-  const sessions = createSessionsController({
+  const tasks = createTasksController({
     elements,
     request,
     text,
@@ -360,10 +360,10 @@ void (async () => {
     auditTimestamp,
     renderAuditDetailInto,
     renderAuditDetailMessage,
-    initialExecutorId: deepLink.executorId,
+    initialTaskId: deepLink.taskId,
     initialSessionId: deepLink.sessionId,
   });
-  sessions.bind();
+  tasks.bind();
 
   const dashboard = createDashboardController({
     elements,
@@ -780,7 +780,6 @@ void (async () => {
     dashboard.renderExecutors(executorTargets);
     terminal.renderExecutors(executorTargets);
     files.renderExecutors(executorTargets);
-    sessions.renderExecutors(executorTargets);
     hideAuthentication();
     setConnection("Connected", "online");
   }
@@ -809,11 +808,12 @@ void (async () => {
         files.showMessage("Files unavailable", error instanceof Error ? error.message : String(error));
       }
       try {
-        await sessions.refresh();
+        await tasks.refresh();
       } catch (error) {
         if (error.authenticationRequired) throw error;
-        elements.sessionState.textContent = error instanceof Error ? error.message : "Session list unavailable";
-        elements.todoState.textContent = "Session Todo unavailable";
+        elements.tasksState.textContent =
+          error instanceof Error ? error.message : "Task list unavailable";
+        elements.todoState.textContent = "Plan unavailable";
         elements.sessionAuditState.textContent = "Session Audit unavailable";
       }
       await audit.refresh();
@@ -825,7 +825,7 @@ void (async () => {
         executors.stopPolling();
         dashboard.invalidate();
         files.invalidate();
-        sessions.invalidate();
+        tasks.invalidate();
         audit.invalidate();
 
         dashboard.reset("");
@@ -905,12 +905,12 @@ void (async () => {
     dashboard.reset("");
     executors.reset("Authentication required");
     files.reset("");
-    sessions.reset("");
+    tasks.reset();
     audit.reset();
     elements.terminalState.textContent = "Authentication required";
     elements.dashboardState.textContent = "Authentication required";
     elements.fileState.textContent = "Authentication required";
-    elements.sessionState.textContent = "Authentication required";
+    elements.tasksState.textContent = "Authentication required";
     elements.todoState.textContent = "Authentication required";
     elements.sessionAuditState.textContent = "Authentication required";
     elements.auditState.textContent = "Authentication required";

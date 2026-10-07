@@ -898,7 +898,7 @@ h2 {
   font-size: 0.78rem;
 }
 
-.session-layout {
+.tasks-layout {
   display: grid;
   grid-template-columns: minmax(17rem, 0.28fr) minmax(0, 0.72fr);
   gap: 0.9rem;
@@ -906,7 +906,7 @@ h2 {
 }
 
 .session-list,
-.session-workspace,
+.tasks-workspace,
 .session-resource {
   min-width: 0;
   border: 1px solid rgba(151, 184, 202, 0.12);
@@ -927,6 +927,22 @@ h2 {
     height: 0;
     min-height: 100%;
   }
+}
+
+.task-session-list {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+}
+
+.session-group-label {
+  margin: 0.55rem 0 0.15rem;
+  color: #8297a9;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .session-entry {
@@ -970,7 +986,7 @@ h2 {
   color: #ffc3c3;
 }
 
-.session-workspace {
+.tasks-workspace {
   display: grid;
   align-content: start;
   gap: 0.9rem;
@@ -2071,7 +2087,7 @@ h2 {
   .file-layout,
   .audit-layout,
   .executors-layout,
-  .session-layout {
+  .tasks-layout {
     grid-template-columns: 1fr;
   }
 
