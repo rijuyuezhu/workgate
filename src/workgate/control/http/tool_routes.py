@@ -68,7 +68,13 @@ def install_tools_timeout_middleware(
             )
 
 
-def register_http_tool_routes(app: FastAPI, catalog: ToolCatalog) -> None:
+def register_http_tool_routes(
+    app: FastAPI,
+    catalog: ToolCatalog,
+    *,
+    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None = None,
+) -> None:
     """Register REST tool endpoints from the tool routing table."""
     handlers = catalog.handlers()
     for route in catalog.http_routes():
@@ -76,12 +82,20 @@ def register_http_tool_routes(app: FastAPI, catalog: ToolCatalog) -> None:
             case "GET":
                 handler = handlers[route.tool_name]
                 app.get(route.path)(
-                    _make_get_tool_handler(route.tool_name, handler)
+                    _make_get_tool_handler(
+                        route.tool_name,
+                        handler,
+                        task_activity_observer=task_activity_observer,
+                    )
                 )
             case "POST":
                 handler = handlers[route.tool_name]
                 app.post(route.path)(
-                    _make_post_tool_handler(route.tool_name, handler)
+                    _make_post_tool_handler(
+                        route.tool_name,
+                        handler,
+                        task_activity_observer=task_activity_observer,
+                    )
                 )
             case _:
                 raise ValueError(
@@ -90,19 +104,37 @@ def register_http_tool_routes(app: FastAPI, catalog: ToolCatalog) -> None:
 
 
 def _make_get_tool_handler(
-    tool_name: str, handler: ToolHandler
+    tool_name: str,
+    handler: ToolHandler,
+    *,
+    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None = None,
 ) -> ToolRouteHandler:
     async def get_handler(request: Request) -> Any:
         args = dict(request.query_params)
-        return await call_http_tool(tool_name, args or None, handler=handler)
+        return await call_http_tool(
+            tool_name,
+            args or None,
+            handler=handler,
+            task_activity_observer=task_activity_observer,
+        )
 
     return get_handler
 
 
 def _make_post_tool_handler(
-    tool_name: str, handler: ToolHandler
+    tool_name: str,
+    handler: ToolHandler,
+    *,
+    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None = None,
 ) -> ToolRouteHandler:
     async def post_handler(body: dict[str, Any] | None = None) -> Any:
-        return await call_http_tool(tool_name, body, handler=handler)
+        return await call_http_tool(
+            tool_name,
+            body,
+            handler=handler,
+            task_activity_observer=task_activity_observer,
+        )
 
     return post_handler

@@ -333,3 +333,101 @@ async def test_live_workspace_selected_session_survives_executor_offline(
     assert snapshot.shells == []
     assert snapshot.shells_message is not None
     assert "executor_offline" in snapshot.shells_message
+
+
+@pytest.mark.asyncio
+async def test_live_workspace_continuation_is_task_only_and_bounded(
+    tmp_path, monkeypatch
+):
+    settings = _http_settings(tmp_path, monkeypatch)
+    harness = build_paired_control_harness(settings)
+    task = await harness.control.task_service.create_task(
+        label="continue task", objective="Keep going"
+    )
+    planned = await harness.control.task_service.update_plan(
+        task.task_id,
+        steps=[
+            {
+                "id": "remaining",
+                "content": "finish remaining work",
+                "status": "in_progress",
+            }
+        ],
+    )
+    clock = [planned.updated_at + 901]
+    monkeypatch.setattr(
+        "workgate.control.task_state.time.time", lambda: clock[0]
+    )
+
+    claimed = await live.live_workspace_continuation(
+        harness.control,
+        task_id=task.task_id,
+        action="claim",
+        claim_id="workspace-one",
+    )
+    assert claimed.claimed is True
+    assert claimed.task.task_id == task.task_id
+    assert claimed.task.session_ids == []
+    assert claimed.continuation.pending is True
+
+    competing = await live.live_workspace_continuation(
+        harness.control,
+        task_id=task.task_id,
+        action="claim",
+        claim_id="workspace-two",
+    )
+    assert competing.claimed is False
+
+    validated = await live.live_workspace_continuation(
+        harness.control,
+        task_id=task.task_id,
+        action="validate",
+        claim_id="workspace-one",
+    )
+    assert validated.valid is True
+    assert validated.continuation.attempt_count == 1
+
+    reported = await live.live_workspace_continuation(
+        harness.control,
+        task_id=task.task_id,
+        action="report",
+        claim_id="workspace-one",
+        accepted=False,
+    )
+    assert reported.reported is True
+    assert reported.accepted is False
+    assert reported.continuation.pending is False
+    assert reported.continuation.due_at == clock[0] + 300
+
+
+@pytest.mark.asyncio
+async def test_mcp_task_activity_invalidates_pending_continuation(
+    tmp_path, monkeypatch
+):
+    settings = _http_settings(tmp_path, monkeypatch)
+    harness = build_paired_control_harness(settings)
+    service = harness.control.task_service
+    task = await service.create_task(label="agent activity")
+    planned = await service.update_plan(
+        task.task_id,
+        steps=[{"id": "one", "content": "continue", "status": "in_progress"}],
+    )
+    clock = [planned.updated_at + 901]
+    monkeypatch.setattr(
+        "workgate.control.task_state.time.time", lambda: clock[0]
+    )
+    claimed = await service.claim_continuation(
+        task.task_id, claim_id="pending-before-agent"
+    )
+    assert claimed["claimed"] is True
+
+    clock[0] += 1
+    mcp = build_mcp(runtime=harness.control)
+    await mcp.call_tool("task", {"action": "get", "task_id": task.task_id})
+
+    stale = await service.validate_continuation(
+        task.task_id, claim_id="pending-before-agent"
+    )
+    assert stale["valid"] is False
+    status = await service.continuation_status(task.task_id)
+    assert status["last_agent_activity"] == clock[0]

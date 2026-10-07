@@ -1,11 +1,11 @@
 {
-  "count": 50,
+  "count": 51,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "50"
+          "code": "51"
         },
         "."
       ],
@@ -1937,6 +1937,44 @@
       "heading": "Other",
       "kind": "table",
       "rows": [
+        [
+          {
+            "code": "workspace_continuation"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "accepted"
+                },
+                "note": "(boolean / null, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "action"
+                },
+                "note": "(claim / validate / report, required)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "claim_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Opaque semantic task_id returned by task(action='create').",
+                "head": {
+                  "code": "task_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Advance the bounded task-scoped Live Workspace continuation claim/validate/report handshake."
+        ],
         [
           {
             "code": "workspace_end"
@@ -10901,6 +10939,405 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
+      "description": "Advance the bounded task-scoped Live Workspace continuation claim/validate/report handshake.",
+      "inputSchema": {
+        "properties": {
+          "accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted"
+          },
+          "action": {
+            "enum": [
+              "claim",
+              "validate",
+              "report"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
+          "task_id": {
+            "description": "Opaque semantic task_id returned by task(action='create').",
+            "maxLength": 128,
+            "minLength": 27,
+            "pattern": "^task_[A-Za-z0-9_-]{22,}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "action"
+        ],
+        "title": "workspace_continuationArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
+      "name": "workspace_continuation",
+      "outputSchema": {
+        "$defs": {
+          "LiveWorkspaceContinuation": {
+            "description": "Bounded automatic-continuation state for the displayed task.",
+            "properties": {
+              "attempt_count": {
+                "title": "Attempt Count",
+                "type": "integer"
+              },
+              "due_at": {
+                "title": "Due At",
+                "type": "number"
+              },
+              "eligible": {
+                "title": "Eligible",
+                "type": "boolean"
+              },
+              "exhausted": {
+                "title": "Exhausted",
+                "type": "boolean"
+              },
+              "max_attempts": {
+                "title": "Max Attempts",
+                "type": "integer"
+              },
+              "pending": {
+                "title": "Pending",
+                "type": "boolean"
+              },
+              "pending_expires_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pending Expires At"
+              }
+            },
+            "required": [
+              "eligible",
+              "pending",
+              "attempt_count",
+              "max_attempts",
+              "due_at",
+              "exhausted"
+            ],
+            "title": "LiveWorkspaceContinuation",
+            "type": "object"
+          },
+          "TaskOutput": {
+            "description": "Canonical task state plus its execution-session attachments.",
+            "properties": {
+              "created_at": {
+                "description": "Unix timestamp when the task was created.",
+                "title": "Created At",
+                "type": "number"
+              },
+              "label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional human-readable task label.",
+                "title": "Label"
+              },
+              "objective": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Optional durable task objective.",
+                "title": "Objective"
+              },
+              "plan": {
+                "$ref": "#/$defs/TaskPlan"
+              },
+              "progress": {
+                "$ref": "#/$defs/TaskProgress"
+              },
+              "session_ids": {
+                "description": "Retained execution sessions attached to this task.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Session Ids",
+                "type": "array"
+              },
+              "status": {
+                "default": "active",
+                "description": "Semantic task lifecycle status.",
+                "enum": [
+                  "active",
+                  "blocked",
+                  "completed",
+                  "cancelled"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "Opaque durable semantic task identifier.",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "updated_at": {
+                "description": "Unix timestamp of the latest task mutation.",
+                "title": "Updated At",
+                "type": "number"
+              },
+              "version": {
+                "const": 2,
+                "default": 2,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "created_at",
+              "updated_at",
+              "task_id"
+            ],
+            "title": "TaskOutput",
+            "type": "object"
+          },
+          "TaskPlan": {
+            "description": "Structured task plan.",
+            "properties": {
+              "steps": {
+                "description": "Ordered plan steps with stable IDs.",
+                "items": {
+                  "$ref": "#/$defs/TaskPlanStep"
+                },
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "title": "TaskPlan",
+            "type": "object"
+          },
+          "TaskPlanStep": {
+            "description": "One stable task-plan step.",
+            "properties": {
+              "content": {
+                "description": "Human-readable plan step text.",
+                "title": "Content",
+                "type": "string"
+              },
+              "id": {
+                "description": "Stable caller-visible plan step identifier.",
+                "title": "Id",
+                "type": "string"
+              },
+              "priority": {
+                "default": "medium",
+                "description": "Compatibility priority label retained from Todo state.",
+                "title": "Priority",
+                "type": "string"
+              },
+              "status": {
+                "default": "pending",
+                "description": "Plan step status: pending, in_progress, completed, skipped, or blocked.",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "content"
+            ],
+            "title": "TaskPlanStep",
+            "type": "object"
+          },
+          "TaskProgress": {
+            "description": "Latest durable task progress.",
+            "properties": {
+              "blockers": {
+                "description": "Current blockers preventing or constraining progress.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Blockers",
+                "type": "array"
+              },
+              "findings": {
+                "description": "Current durable findings worth carrying across turns.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Findings",
+                "type": "array"
+              },
+              "next_action": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Recommended next concrete action.",
+                "title": "Next Action"
+              },
+              "summary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Current concise progress summary.",
+                "title": "Summary"
+              }
+            },
+            "title": "TaskProgress",
+            "type": "object"
+          }
+        },
+        "description": "Result of one private Live Workspace continuation handshake step.",
+        "properties": {
+          "accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted"
+          },
+          "action": {
+            "enum": [
+              "claim",
+              "validate",
+              "report"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "claim_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Id"
+          },
+          "claimed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claimed"
+          },
+          "continuation": {
+            "$ref": "#/$defs/LiveWorkspaceContinuation"
+          },
+          "reported": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reported"
+          },
+          "task": {
+            "$ref": "#/$defs/TaskOutput"
+          },
+          "valid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Valid"
+          }
+        },
+        "required": [
+          "action",
+          "task",
+          "continuation"
+        ],
+        "title": "LiveWorkspaceContinuationResult",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
       "description": "End an attached execution session after explicit confirmation.",
       "inputSchema": {
         "properties": {
@@ -11056,7 +11493,7 @@
         "type": "object"
       },
       "meta": {
-        "openai/outputTemplate": "ui://workgate/live-workspace-3052fbae988c2b05.html",
+        "openai/outputTemplate": "ui://workgate/live-workspace-2e09d1e09e2c8c2c.html",
         "openai/toolInvocation/invoked": "Live Workspace ready",
         "openai/toolInvocation/invoking": "Opening Live Workspace",
         "openai/widgetAccessible": true,
@@ -11070,9 +11507,9 @@
           }
         ],
         "ui": {
-          "resourceUri": "ui://workgate/live-workspace-3052fbae988c2b05.html"
+          "resourceUri": "ui://workgate/live-workspace-2e09d1e09e2c8c2c.html"
         },
-        "ui/resourceUri": "ui://workgate/live-workspace-3052fbae988c2b05.html"
+        "ui/resourceUri": "ui://workgate/live-workspace-2e09d1e09e2c8c2c.html"
       },
       "name": "workspace_open",
       "outputSchema": {
@@ -11178,6 +11615,57 @@
               }
             },
             "title": "LiveWorkspaceActivity",
+            "type": "object"
+          },
+          "LiveWorkspaceContinuation": {
+            "description": "Bounded automatic-continuation state for the displayed task.",
+            "properties": {
+              "attempt_count": {
+                "title": "Attempt Count",
+                "type": "integer"
+              },
+              "due_at": {
+                "title": "Due At",
+                "type": "number"
+              },
+              "eligible": {
+                "title": "Eligible",
+                "type": "boolean"
+              },
+              "exhausted": {
+                "title": "Exhausted",
+                "type": "boolean"
+              },
+              "max_attempts": {
+                "title": "Max Attempts",
+                "type": "integer"
+              },
+              "pending": {
+                "title": "Pending",
+                "type": "boolean"
+              },
+              "pending_expires_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pending Expires At"
+              }
+            },
+            "required": [
+              "eligible",
+              "pending",
+              "attempt_count",
+              "max_attempts",
+              "due_at",
+              "exhausted"
+            ],
+            "title": "LiveWorkspaceContinuation",
             "type": "object"
           },
           "LiveWorkspaceJob": {
@@ -11599,6 +12087,9 @@
             "title": "Activity",
             "type": "array"
           },
+          "continuation": {
+            "$ref": "#/$defs/LiveWorkspaceContinuation"
+          },
           "jobs": {
             "items": {
               "$ref": "#/$defs/LiveWorkspaceJob"
@@ -11703,7 +12194,8 @@
           }
         },
         "required": [
-          "task"
+          "task",
+          "continuation"
         ],
         "title": "LiveWorkspaceSnapshot",
         "type": "object"
@@ -11965,6 +12457,57 @@
             "title": "LiveWorkspaceActivity",
             "type": "object"
           },
+          "LiveWorkspaceContinuation": {
+            "description": "Bounded automatic-continuation state for the displayed task.",
+            "properties": {
+              "attempt_count": {
+                "title": "Attempt Count",
+                "type": "integer"
+              },
+              "due_at": {
+                "title": "Due At",
+                "type": "number"
+              },
+              "eligible": {
+                "title": "Eligible",
+                "type": "boolean"
+              },
+              "exhausted": {
+                "title": "Exhausted",
+                "type": "boolean"
+              },
+              "max_attempts": {
+                "title": "Max Attempts",
+                "type": "integer"
+              },
+              "pending": {
+                "title": "Pending",
+                "type": "boolean"
+              },
+              "pending_expires_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pending Expires At"
+              }
+            },
+            "required": [
+              "eligible",
+              "pending",
+              "attempt_count",
+              "max_attempts",
+              "due_at",
+              "exhausted"
+            ],
+            "title": "LiveWorkspaceContinuation",
+            "type": "object"
+          },
           "LiveWorkspaceJob": {
             "description": "Bounded job metadata for one explicitly selected execution session.",
             "properties": {
@@ -12384,6 +12927,9 @@
             "title": "Activity",
             "type": "array"
           },
+          "continuation": {
+            "$ref": "#/$defs/LiveWorkspaceContinuation"
+          },
           "jobs": {
             "items": {
               "$ref": "#/$defs/LiveWorkspaceJob"
@@ -12488,7 +13034,8 @@
           }
         },
         "required": [
-          "task"
+          "task",
+          "continuation"
         ],
         "title": "LiveWorkspaceSnapshot",
         "type": "object"
@@ -12681,6 +13228,57 @@
             "title": "LiveWorkspaceActivity",
             "type": "object"
           },
+          "LiveWorkspaceContinuation": {
+            "description": "Bounded automatic-continuation state for the displayed task.",
+            "properties": {
+              "attempt_count": {
+                "title": "Attempt Count",
+                "type": "integer"
+              },
+              "due_at": {
+                "title": "Due At",
+                "type": "number"
+              },
+              "eligible": {
+                "title": "Eligible",
+                "type": "boolean"
+              },
+              "exhausted": {
+                "title": "Exhausted",
+                "type": "boolean"
+              },
+              "max_attempts": {
+                "title": "Max Attempts",
+                "type": "integer"
+              },
+              "pending": {
+                "title": "Pending",
+                "type": "boolean"
+              },
+              "pending_expires_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Pending Expires At"
+              }
+            },
+            "required": [
+              "eligible",
+              "pending",
+              "attempt_count",
+              "max_attempts",
+              "due_at",
+              "exhausted"
+            ],
+            "title": "LiveWorkspaceContinuation",
+            "type": "object"
+          },
           "LiveWorkspaceJob": {
             "description": "Bounded job metadata for one explicitly selected execution session.",
             "properties": {
@@ -13100,6 +13698,9 @@
             "title": "Activity",
             "type": "array"
           },
+          "continuation": {
+            "$ref": "#/$defs/LiveWorkspaceContinuation"
+          },
           "jobs": {
             "items": {
               "$ref": "#/$defs/LiveWorkspaceJob"
@@ -13204,7 +13805,8 @@
           }
         },
         "required": [
-          "task"
+          "task",
+          "continuation"
         ],
         "title": "LiveWorkspaceSnapshot",
         "type": "object"

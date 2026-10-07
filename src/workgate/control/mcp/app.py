@@ -125,6 +125,11 @@ def build_mcp(
             if runtime is None
             else getattr(runtime, "managed_jobs_runtime", None)
         ),
+        task_activity_observer=(
+            None
+            if runtime is None or getattr(runtime, "task_service", None) is None
+            else runtime.task_service.observe_agent_activity
+        ),
     )
     return mcp
 

@@ -60,6 +60,7 @@ def _mcp_tool_audit_watchdog_wrapper(
     state_store: StateStore,
     oauth_state: OAuthState | None,
     managed_jobs_runtime: ManagedJobsRuntime | None,
+    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]] | None,
 ) -> AuditedMcpToolFn:
     """Return a wrapper that audits every MCP tool call and enforces the tool timeout."""
 
@@ -87,6 +88,12 @@ def _mcp_tool_audit_watchdog_wrapper(
         )
         timeout_s = tool_timeout_s(tool_name)
         try:
+            if (
+                task_activity_observer is not None
+                and task_ids
+                and not tool_name.startswith("workspace_")
+            ):
+                await task_activity_observer(task_ids)
             with audit_call_context(call_id, session_ids, task_ids):
                 result = await asyncio.wait_for(
                     original(*args, **kwargs), timeout=timeout_s
@@ -175,6 +182,8 @@ def install_mcp_tool_watchdogs(
     *,
     oauth_state: OAuthState | None = None,
     managed_jobs_runtime: ManagedJobsRuntime | None = None,
+    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    | None = None,
 ) -> None:
     """Wrap MCP tools under the explicit control execution context."""
     cast(Any, mcp)._workgate_install_tool_watchdogs = lambda target: (
@@ -184,6 +193,7 @@ def install_mcp_tool_watchdogs(
             state_store,
             oauth_state=oauth_state,
             managed_jobs_runtime=managed_jobs_runtime,
+            task_activity_observer=task_activity_observer,
         )
     )
     for tool in mcp._tool_manager._tools.values():
@@ -196,4 +206,5 @@ def install_mcp_tool_watchdogs(
             state_store,
             oauth_state,
             managed_jobs_runtime,
+            task_activity_observer,
         )

@@ -71,6 +71,7 @@
       <div id="blockers-wrap" hidden><strong>Blockers</strong><ul id="blockers"></ul></div>
       <ul id="plan"></ul>
       <p class="muted" id="task-message"></p>
+      <p class="muted" id="continuation-message"></p>
     </div>
 
     <div class="card stack">
@@ -127,6 +128,9 @@
   let boundTaskId = null;
   let standardBridge = null;
   let shuttingDown = false;
+  let continuationBusy = false;
+  let continuationTimer = null;
+  let pendingContinuationReport = null;
 
   function createStandardBridge() {
     let nextId = 1;
@@ -218,12 +222,17 @@
       onToolResult(handler) { toolResultHandlers.add(handler); },
       callTool(name, args) { return request("tools/call", { name, arguments: args }); },
       openLink(url) { return request("ui/open-link", { url }); },
+      sendMessage(params) { return request("ui/message", params); },
     };
   }
 
   function stopLiveWorkspace() {
     if (shuttingDown) return;
     shuttingDown = true;
+    if (continuationTimer !== null) {
+      window.clearInterval(continuationTimer);
+      continuationTimer = null;
+    }
     if (standardBridge) {
       standardBridge.close();
       standardBridge = null;
@@ -316,6 +325,21 @@
     if (!steps.length) $("plan").appendChild(li("No plan steps."));
 
     $("task-message").textContent = snapshot.task_controls_message || "";
+    const continuation = snapshot.continuation || {};
+    if (continuation.exhausted) {
+      $("continuation-message").textContent =
+        "Automatic continuation exhausted (" + continuation.attempt_count + "/" + continuation.max_attempts + ").";
+    } else if (continuation.pending) {
+      $("continuation-message").textContent = "Automatic continuation is being dispatched.";
+    } else if (task.status === "active" && steps.some((step) => !["completed", "skipped"].includes(step.status))) {
+      const dueAt = Number(continuation.due_at || 0);
+      const remaining = Math.max(0, Math.ceil(dueAt - Date.now() / 1000));
+      $("continuation-message").textContent = remaining
+        ? "Automatic continuation eligible after " + Math.ceil(remaining / 60) + " more minute(s) of task inactivity."
+        : "Automatic continuation is eligible while this Workspace remains open.";
+    } else {
+      $("continuation-message").textContent = "";
+    }
     const allowedActions = Array.isArray(snapshot.task_control_actions)
       ? snapshot.task_control_actions
       : [];
@@ -377,6 +401,12 @@
     return true;
   }
 
+  function acceptHostSnapshot(data) {
+    const accepted = render(data);
+    if (accepted) window.setTimeout(() => void maybeContinueTask(), 0);
+    return accepted;
+  }
+
   async function callTool(name, args) {
     if (shuttingDown) throw new Error("Live Workspace is closed.");
     if (window.openai && typeof window.openai.callTool === "function") {
@@ -384,6 +414,165 @@
     }
     if (standardBridge) return payload(await standardBridge.callTool(name, args));
     throw new Error("This host does not expose an MCP App tool bridge.");
+  }
+
+  function boundedText(value, limit) {
+    const textValue = text(value).trim();
+    if (textValue.length <= limit) return textValue;
+    return textValue.slice(0, Math.max(0, limit - 1)) + "…";
+  }
+
+  function continuationMessage(task) {
+    const progress = task.progress || {};
+    const steps = task.plan && Array.isArray(task.plan.steps)
+      ? task.plan.steps.slice(0, 24)
+      : [];
+    const state = {
+      task_id: task.task_id,
+      objective: boundedText(task.objective, 1200),
+      progress: {
+        summary: boundedText(progress.summary, 1600),
+        next_action: boundedText(progress.next_action, 1000),
+        findings: (progress.findings || []).slice(0, 10).map((item) => boundedText(item, 500)),
+        blockers: (progress.blockers || []).slice(0, 10).map((item) => boundedText(item, 500)),
+      },
+      plan: steps.map((step) => ({
+        id: boundedText(step.id, 160),
+        status: boundedText(step.status, 32),
+        content: boundedText(step.content, 500),
+      })),
+    };
+    const serialized = JSON.stringify(state, null, 2);
+    return [
+      "Continue the existing Workgate task " + task.task_id + "; do not restart it or repeat completed/skipped plan steps.",
+      "Refresh authoritative state with task(action=\"get\", task_id=...) before acting if needed.",
+      "This continuation selects only the semantic task. It does not select an execution session, executor, or workdir.",
+      "Any machine-facing operation must still use an explicit session_id from current task state or create an explicitly chosen new session.",
+      "",
+      "Bounded task context:",
+      serialized.slice(0, 12000),
+    ].join("\n");
+  }
+
+  function newClaimId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return "c_" + window.crypto.randomUUID().replaceAll("-", "");
+    }
+    const bytes = new Uint8Array(16);
+    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+      window.crypto.getRandomValues(bytes);
+      return "c_" + Array.from(bytes, (item) => item.toString(16).padStart(2, "0")).join("");
+    }
+    return "c_" + Date.now().toString(36);
+  }
+
+  async function sendContinuationToHost(prompt) {
+    if (window.openai && typeof window.openai.sendFollowUpMessage === "function") {
+      return await window.openai.sendFollowUpMessage({ prompt });
+    }
+    if (standardBridge) {
+      return await standardBridge.sendMessage({
+        role: "user",
+        content: [{ type: "text", text: prompt }],
+      });
+    }
+    throw new Error("This MCP App host does not expose a follow-up message bridge.");
+  }
+
+  function mergeContinuationResult(result) {
+    if (!snapshot || !result) return;
+    if (result.task && result.task.task_id === snapshot.task.task_id) snapshot.task = result.task;
+    if (result.continuation) snapshot.continuation = result.continuation;
+  }
+
+  function taskCanAutoContinue() {
+    if (!snapshot || !snapshot.task || shuttingDown) return false;
+    const task = snapshot.task;
+    if (task.status !== "active") return false;
+    const steps = task.plan && Array.isArray(task.plan.steps) ? task.plan.steps : [];
+    if (!steps.some((step) => !["completed", "skipped"].includes(step.status))) return false;
+    const continuation = snapshot.continuation || {};
+    if (continuation.exhausted) return false;
+    if (continuation.pending) {
+      if (pendingContinuationReport) return true;
+      return Date.now() / 1000 >= Number(continuation.pending_expires_at || Infinity);
+    }
+    return Date.now() / 1000 >= Number(continuation.due_at || Infinity);
+  }
+
+  async function reportPendingContinuation(taskId) {
+    if (!pendingContinuationReport || pendingContinuationReport.accepted === null) return;
+    const pending = pendingContinuationReport;
+    const result = await callTool("workspace_continuation", {
+      task_id: taskId,
+      action: "report",
+      claim_id: pending.claim_id,
+      accepted: pending.accepted,
+    });
+    mergeContinuationResult(result);
+    pendingContinuationReport = null;
+  }
+
+  async function maybeContinueTask() {
+    if (continuationBusy || shuttingDown || !snapshot || !snapshot.task) return;
+    const taskId = snapshot.task.task_id;
+    if (!taskCanAutoContinue() && !pendingContinuationReport) return;
+    continuationBusy = true;
+    try {
+      if (pendingContinuationReport && pendingContinuationReport.accepted !== null) {
+        await reportPendingContinuation(taskId);
+        render(snapshot);
+        return;
+      }
+
+      const claimId = pendingContinuationReport && pendingContinuationReport.claim_id
+        ? pendingContinuationReport.claim_id
+        : newClaimId();
+      pendingContinuationReport = { claim_id: claimId, accepted: null };
+
+      const claimed = await callTool("workspace_continuation", {
+        task_id: taskId,
+        action: "claim",
+        claim_id: claimId,
+      });
+      mergeContinuationResult(claimed);
+      if (!claimed || claimed.claimed !== true || claimed.claim_id !== claimId) {
+        pendingContinuationReport = null;
+        render(snapshot);
+        return;
+      }
+      const validated = await callTool("workspace_continuation", {
+        task_id: taskId,
+        action: "validate",
+        claim_id: claimId,
+      });
+      mergeContinuationResult(validated);
+      if (!validated || validated.valid !== true) {
+        pendingContinuationReport = null;
+        render(snapshot);
+        return;
+      }
+
+      let accepted = false;
+      let failure = null;
+      try {
+        await sendContinuationToHost(continuationMessage(validated.task));
+        accepted = true;
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+      pendingContinuationReport = { claim_id: claimId, accepted };
+      await reportPendingContinuation(taskId);
+      render(snapshot);
+      $("status").textContent = accepted
+        ? "Automatic task continuation sent to the host."
+        : "Automatic continuation was not accepted: " + (failure || "host rejected message");
+    } catch (error) {
+      $("status").textContent =
+        "Automatic continuation failed: " + (error instanceof Error ? error.message : error);
+    } finally {
+      continuationBusy = false;
+    }
   }
 
   async function refresh() {
@@ -448,16 +637,20 @@
 
   async function startHostBridge() {
     if (window.openai && typeof window.openai.callTool === "function") {
-      render(payload(window.openai.toolOutput));
+      acceptHostSnapshot(payload(window.openai.toolOutput));
       window.addEventListener("openai:set_globals", (event) => {
         const globals = event && event.detail && event.detail.globals;
-        if (globals && globals.toolOutput) render(payload(globals.toolOutput));
+        if (globals && globals.toolOutput) {
+          acceptHostSnapshot(payload(globals.toolOutput));
+        }
       });
       return;
     }
 
     standardBridge = createStandardBridge();
-    standardBridge.onToolResult((result) => render(payload(result)));
+    standardBridge.onToolResult((result) => {
+      acceptHostSnapshot(payload(result));
+    });
     try {
       await standardBridge.connect();
       $("status").textContent = "Connected to MCP App host.";
@@ -468,6 +661,7 @@
   }
 
   void startHostBridge();
+  continuationTimer = window.setInterval(() => void maybeContinueTask(), 30000);
   window.addEventListener("beforeunload", stopLiveWorkspace);
 })();
 </script>

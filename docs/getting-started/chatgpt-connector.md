@@ -46,6 +46,8 @@ Use workgate to run pwd in that session and report the output.
 
 When the ChatGPT client supports MCP Apps, create a task and open `workspace_open` with its `task_id`. Pass an attached `session_id` only for session-specific jobs, shells, or Human UI links. Ending that session does not finish the task.
 
+While the Live Workspace stays open, an active task with unfinished plan steps can ask the host to continue it after 15 minutes without task or agent activity. Automatic continuation is bounded to 10 attempts with a 5-minute retry delay after a rejected host dispatch. It resumes the semantic `task_id` only; it never selects an execution session, executor, or workdir, so later machine operations still require an explicit `session_id`. Blocking, cancelling, completing, or finishing/skipping every plan step disables continuation.
+
 ## Common mistakes
 
 - The connector URL omits `/mcp`.

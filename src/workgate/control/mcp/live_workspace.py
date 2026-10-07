@@ -21,6 +21,8 @@ from ...schemas.input_models.session import OptionalSessionIdArg, SessionIdArg
 from ...schemas.input_models.task import TaskIdArg
 from ...schemas.result_models.live_workspace import (
     LiveWorkspaceActivity,
+    LiveWorkspaceContinuation,
+    LiveWorkspaceContinuationResult,
     LiveWorkspaceJob,
     LiveWorkspaceLinks,
     LiveWorkspaceSession,
@@ -42,6 +44,7 @@ _JOB_LIMIT = 24
 _SHELL_LIMIT = 32
 
 TaskAction = Literal["block", "resume", "cancel", "next_instruction"]
+ContinuationAction = Literal["claim", "validate", "report"]
 
 
 def _resource_versioned_uri() -> str:
@@ -368,6 +371,9 @@ async def live_workspace_snapshot(
             )
 
     activity = await _activity_projection(task_id)
+    continuation = LiveWorkspaceContinuation.model_validate(
+        await runtime.task_service.continuation_status(task_id)
+    )
     task_actions, controls_message = _task_control_actions(task)
     return LiveWorkspaceSnapshot(
         task=task,
@@ -375,6 +381,7 @@ async def live_workspace_snapshot(
         session=selected,
         task_control_actions=task_actions,
         task_controls_message=controls_message,
+        continuation=continuation,
         jobs=jobs,
         jobs_message=jobs_message,
         shells=shells,
@@ -421,6 +428,56 @@ async def live_workspace_task_control(
     else:
         raise ValueError(f"unsupported Live Workspace task action: {action}")
     return await live_workspace_snapshot(runtime, task_id, session_id)
+
+
+async def live_workspace_continuation(
+    runtime: ControlRuntime,
+    *,
+    task_id: str,
+    action: ContinuationAction,
+    claim_id: str | None = None,
+    accepted: bool | None = None,
+) -> LiveWorkspaceContinuationResult:
+    """Advance one task-scoped automatic-continuation handshake."""
+
+    if action == "claim":
+        if accepted is not None:
+            raise ValueError("accepted is valid only for action=report")
+        raw = await runtime.task_service.claim_continuation(
+            task_id, claim_id=claim_id
+        )
+    elif action == "validate":
+        if not claim_id:
+            raise ValueError("claim_id is required for action=validate")
+        if accepted is not None:
+            raise ValueError("accepted is valid only for action=report")
+        raw = await runtime.task_service.validate_continuation(
+            task_id, claim_id=claim_id
+        )
+    elif action == "report":
+        if not claim_id:
+            raise ValueError("claim_id is required for action=report")
+        if accepted is None:
+            raise ValueError("accepted is required for action=report")
+        raw = await runtime.task_service.report_continuation(
+            task_id,
+            claim_id=claim_id,
+            accepted=accepted,
+        )
+    else:
+        raise ValueError(f"unsupported continuation action: {action}")
+    return LiveWorkspaceContinuationResult(
+        action=action,
+        task=raw["task"],
+        continuation=LiveWorkspaceContinuation.model_validate(
+            raw["continuation"]
+        ),
+        claim_id=raw.get("claim_id"),
+        claimed=raw.get("claimed"),
+        valid=raw.get("valid"),
+        reported=raw.get("reported"),
+        accepted=raw.get("accepted"),
+    )
 
 
 async def live_workspace_end(
@@ -533,6 +590,30 @@ def register_live_workspace(
             session_id=str(session_id) if session_id is not None else None,
             action=action,
             instruction=instruction,
+        )
+
+    @mcp.tool(
+        description=(
+            "Advance the bounded task-scoped Live Workspace continuation "
+            "claim/validate/report handshake."
+        ),
+        annotations=_mutating_annotations(destructive=False),
+        meta=_app_meta(read_scopes),
+        structured_output=True,
+    )
+    async def workspace_continuation(
+        task_id: TaskIdArg,
+        action: ContinuationAction,
+        claim_id: str | None = None,
+        accepted: bool | None = None,
+    ) -> LiveWorkspaceContinuationResult:
+        require_oauth_scopes(read_scopes)
+        return await live_workspace_continuation(
+            runtime,
+            task_id=str(task_id),
+            action=action,
+            claim_id=claim_id,
+            accepted=accepted,
         )
 
     @mcp.tool(

@@ -74,6 +74,7 @@ _AUDIT_REDACTED_TOOL_PAYLOADS = frozenset(
         "task_plan",
         "read_todos",
         "write_todos",
+        "workspace_continuation",
     }
 )
 
