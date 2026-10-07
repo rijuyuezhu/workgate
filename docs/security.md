@@ -235,6 +235,8 @@ Structured browser automation is executor-owned and requires the separate `brows
 
 Snapshots, screenshots, and error buffers are bounded. Actions target snapshot refs rather than arbitrary selectors. Audit keeps coarse browser/action metadata while omitting page bodies, element text, page titles, backend diagnostics, and entered values; URLs are reduced to origins. Persistent profile/storage-state reuse and arbitrary Playwright scripts are not exposed.
 
+Native desktop automation is separately authorized by `gui:use` and additionally requires the bound executor to advertise `gui.v1`. GUI observations are executor-local, short-lived, single-use for actions, and owned by the explicit Workgate session. Screenshots and accessibility metadata are bounded; coordinate actions are window-relative and rejected when the observed window geometry changes. GUI tool Audit records retain only lifecycle/identity metadata: window, element, screenshot, and action payloads are redacted. The control plane never falls back to its own desktop or another executor. Linux and macOS native backends are supported; Windows native GUI automation is not.
+
 Logs from the executor process can contain tool diagnostics, filesystem paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
 
 ## Embedded native UI payloads

@@ -21,6 +21,20 @@ def test_coverage_paths_canonicalize_managed_runtime_sources() -> None:
     assert "*/runtimes/*/workgate" in paths
 
 
+def test_coverage_omits_only_native_gui_platform_adapters() -> None:
+    config = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    omit = config["tool"]["coverage"]["report"]["omit"]
+
+    assert omit == [
+        "*/workgate/executor/gui/linux.py",
+        "*/workgate/executor/gui/linux_atspi_helper.py",
+        "*/workgate/executor/gui/linux_portal.py",
+        "*/workgate/executor/gui/macos.py",
+    ]
+
+
 def _entry(percent: float, statements: int = 10) -> dict[str, Any]:
     return {
         "summary": {

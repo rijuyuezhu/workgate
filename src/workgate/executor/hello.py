@@ -6,6 +6,7 @@ from .. import __version__
 from ..config.executor import ExecutorConfig
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
+    EXECUTOR_CAPABILITY_GUI,
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
     ExecutorRuntimeOwnership,
@@ -15,6 +16,7 @@ from ..protocol.executor import (
     ShellInventorySummary,
 )
 from .browser import browser_capability_available
+from .gui import gui_capability_available
 from .path import resolve_default_workdir
 
 
@@ -40,6 +42,7 @@ def build_executor_hello(
                 if browser_capability_available()
                 else ()
             ),
+            *((EXECUTOR_CAPABILITY_GUI,) if gui_capability_available() else ()),
         ),
         default_workdir=str(resolve_default_workdir(config.default_workdir)),
         sessions=sessions,

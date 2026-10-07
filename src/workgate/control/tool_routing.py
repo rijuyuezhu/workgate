@@ -233,7 +233,7 @@ class ControlToolRouter:
                 session_id=str(args["session_id"]), link_id=str(args["link_id"])
             )
         result = await self._sessions.call_session_tool(tool_name, args)
-        if tool_name == "view_image":
+        if tool_name in {"view_image", "gui_state"}:
             return CallToolResult.model_validate(result)
         return result
 

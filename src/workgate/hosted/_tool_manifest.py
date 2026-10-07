@@ -2215,6 +2215,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "title": "Conpty",
               "type": "boolean"
             },
+            "gui": {
+              "description": "Whether native desktop GUI automation is available on this executor.",
+              "title": "Gui",
+              "type": "boolean"
+            },
             "raw_pty": {
               "description": "Whether a raw persistent-terminal backend is available.",
               "title": "Raw Pty",
@@ -2224,7 +2229,8 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "required": [
             "raw_pty",
             "conpty",
-            "browser"
+            "browser",
+            "gui"
           ],
           "title": "SessionCapabilitiesEnvironment",
           "type": "object"
@@ -2736,6 +2742,11 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
               "title": "Conpty",
               "type": "boolean"
             },
+            "gui": {
+              "description": "Whether native desktop GUI automation is available on this executor.",
+              "title": "Gui",
+              "type": "boolean"
+            },
             "raw_pty": {
               "description": "Whether a raw persistent-terminal backend is available.",
               "title": "Raw Pty",
@@ -2745,7 +2756,8 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
           "required": [
             "raw_pty",
             "conpty",
-            "browser"
+            "browser",
+            "gui"
           ],
           "title": "SessionCapabilitiesEnvironment",
           "type": "object"

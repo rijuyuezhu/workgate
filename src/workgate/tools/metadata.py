@@ -41,6 +41,9 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "browser_snapshot",
         "call_agent_mcp_tool",
         "create_file_link",
+        "gui_action",
+        "gui_list",
+        "gui_state",
         "executor",
         "job",
         "kill_persistent_shell",
@@ -59,6 +62,7 @@ _OPEN_WORLD_TOOL_PREFIXES = ("agent_mcp__",)
 _NON_DESTRUCTIVE_MUTATION_TOOL_NAMES = frozenset(
     {
         "create_file_link",
+        "gui_state",
         "resize_persistent_shell",
         "session_change_workdir",
         "session_start",

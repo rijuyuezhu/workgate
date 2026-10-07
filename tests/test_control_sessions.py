@@ -16,7 +16,7 @@ from workgate.control.state import (
     ControlState,
     ExecutorTrustRecord,
 )
-from workgate.errors import BrowserUnavailableError
+from workgate.errors import BrowserUnavailableError, GuiUnavailableError
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import (
     executor_credential_verifier,
@@ -25,6 +25,7 @@ from workgate.protocol.credentials import (
 from workgate.protocol.errors import ProtocolErrorCode
 from workgate.protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
+    EXECUTOR_CAPABILITY_GUI,
     EXECUTOR_CAPABILITY_SESSIONS,
     ExecutorHelloRequest,
     ExecutorResult,
@@ -563,6 +564,38 @@ async def test_browser_tools_require_bound_executor_capability(
         },
     )
     assert transport.calls[-1][1] == "browser_snapshot"
+
+
+@pytest.mark.asyncio
+async def test_gui_tools_require_bound_executor_capability(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(_active_record(executor_id, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello((session_id, "/workspace/project"))
+    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+
+    with pytest.raises(
+        GuiUnavailableError, match="GUI automation is unavailable"
+    ):
+        await coordinator.call_session_tool(
+            "gui_list", {"session_id": session_id}
+        )
+    assert transport.calls == []
+
+    transport.hellos[executor_id] = _hello(
+        (session_id, "/workspace/project"),
+        capabilities=(EXECUTOR_CAPABILITY_SESSIONS, EXECUTOR_CAPABILITY_GUI),
+    )
+    await coordinator.call_session_tool("gui_list", {"session_id": session_id})
+    assert transport.calls[-1][0] == executor_id
+    assert transport.calls[-1][1] == "gui_list"
+    assert transport.calls[-1][3] == session_id
 
 
 @pytest.mark.asyncio

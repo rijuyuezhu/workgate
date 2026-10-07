@@ -84,6 +84,9 @@ class SessionCapabilitiesEnvironment(BaseModel):
     browser: bool = Field(
         description="Whether structured Playwright browser automation is available on this executor."
     )
+    gui: bool = Field(
+        description="Whether native desktop GUI automation is available on this executor."
+    )
 
 
 class SessionLimits(BaseModel):

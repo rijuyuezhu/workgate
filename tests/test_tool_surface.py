@@ -44,6 +44,9 @@ LOCAL_MCP_TOOL_NAMES = {
     "list_files",
     "tree_view",
     "glob_search",
+    "gui_action",
+    "gui_list",
+    "gui_state",
     "write_file",
     "edit_lines",
     "executor",
@@ -1053,7 +1056,12 @@ async def test_mcp_tools_have_matching_http_routes_and_handlers(
     )
     internal_transfer_handlers = set(transfer_registry.http_handlers())
 
-    assert route_tool_names == mcp_tool_names - {"view_image"}
+    assert route_tool_names == mcp_tool_names - {
+        "gui_action",
+        "gui_list",
+        "gui_state",
+        "view_image",
+    }
     assert handler_tool_names == mcp_tool_names | internal_transfer_handlers
 
 

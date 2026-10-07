@@ -190,15 +190,22 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
     monkeypatch.setattr(env_ops, "_collect_tools", lambda _config: tools)
     monkeypatch.setattr(env_ops, "conpty_available", lambda: False)
     monkeypatch.setattr(env_ops, "browser_capability_available", lambda: False)
+    monkeypatch.setattr(env_ops, "gui_capability_available", lambda: False)
 
     environment = env_ops.collect_executor_session_environment(config)
     payload = environment.model_dump(mode="json")
 
     assert environment.capabilities.raw_pty is True
     assert environment.capabilities.browser is False
+    assert environment.capabilities.gui is False
     assert environment.limits.max_jobs == 17
     assert environment.limits.max_search_results == 23
-    assert set(payload["capabilities"]) == {"raw_pty", "conpty", "browser"}
+    assert set(payload["capabilities"]) == {
+        "raw_pty",
+        "conpty",
+        "browser",
+        "gui",
+    }
     assert "authentication_mode" not in payload["limits"]
     assert "max_agent_sessions" not in payload["limits"]
     for control_only in (

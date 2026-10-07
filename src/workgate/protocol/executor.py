@@ -17,6 +17,7 @@ EXECUTOR_TRANSFER_PREFIX = "/executor/v1/transfer"
 EXECUTOR_TRANSFER_TOKEN_HEADER = "x-workgate-transfer-token"
 EXECUTOR_CAPABILITY_SESSIONS = "sessions.v1"
 EXECUTOR_CAPABILITY_BROWSER = "browser.v1"
+EXECUTOR_CAPABILITY_GUI = "gui.v1"
 
 SESSION_CREATE_OP = "session.create"
 SESSION_LOOKUP_OP = "session.lookup"

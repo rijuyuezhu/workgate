@@ -6,6 +6,7 @@ from workgate.config.settings import Settings
 from workgate.executor.hello import build_executor_hello
 from workgate.protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
+    EXECUTOR_CAPABILITY_GUI,
     EXECUTOR_CAPABILITY_SESSIONS,
     JobInventorySummary,
     SessionInventorySummary,
@@ -19,6 +20,7 @@ def test_executor_hello_reports_complete_current_v1_namespace(
     monkeypatch.setattr(
         hello_ops, "browser_capability_available", lambda: False
     )
+    monkeypatch.setattr(hello_ops, "gui_capability_available", lambda: False)
     config = resolve_executor_config(Settings(default_workdir=tmp_path))
 
     hello = hello_ops.build_executor_hello(config)
@@ -37,6 +39,7 @@ def test_executor_hello_carries_supplied_resource_inventory(
     monkeypatch.setattr(
         hello_ops, "browser_capability_available", lambda: False
     )
+    monkeypatch.setattr(hello_ops, "gui_capability_available", lambda: False)
     config = resolve_executor_config(Settings(default_workdir=tmp_path))
     session_id = "sess_0000000000000000000001"
     sessions = (
@@ -67,6 +70,7 @@ def test_executor_hello_advertises_browser_only_when_usable(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(hello_ops, "browser_capability_available", lambda: True)
+    monkeypatch.setattr(hello_ops, "gui_capability_available", lambda: False)
     config = resolve_executor_config(Settings(default_workdir=tmp_path))
 
     hello = hello_ops.build_executor_hello(config)
@@ -74,6 +78,23 @@ def test_executor_hello_advertises_browser_only_when_usable(
     assert hello.capabilities == (
         EXECUTOR_CAPABILITY_SESSIONS,
         EXECUTOR_CAPABILITY_BROWSER,
+    )
+
+
+def test_executor_hello_advertises_gui_only_when_usable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        hello_ops, "browser_capability_available", lambda: False
+    )
+    monkeypatch.setattr(hello_ops, "gui_capability_available", lambda: True)
+    config = resolve_executor_config(Settings(default_workdir=tmp_path))
+
+    hello = hello_ops.build_executor_hello(config)
+
+    assert hello.capabilities == (
+        EXECUTOR_CAPABILITY_SESSIONS,
+        EXECUTOR_CAPABILITY_GUI,
     )
 
 

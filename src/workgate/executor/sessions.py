@@ -16,6 +16,7 @@ from .tool_session.store import ToolSessionStore, UnknownAgentSessionError
 
 if TYPE_CHECKING:
     from .browser import BrowserService
+    from .gui import GuiService
 
 
 class ExecutorSessionService:
@@ -27,11 +28,13 @@ class ExecutorSessionService:
         store: ToolSessionStore,
         shell: ShellService,
         browser: BrowserService | None = None,
+        gui: GuiService | None = None,
     ) -> None:
         self._config = config
         self._store = store
         self._shell = shell
         self._browser = browser
+        self._gui = gui
 
     def inventory(self) -> tuple[SessionInventorySummary, ...]:
         """Return the complete final-session inventory for hello reconciliation."""
@@ -87,6 +90,8 @@ class ExecutorSessionService:
                     if self._browser is None
                     else await self._browser.close_owned(session_id)
                 )
+                if self._gui is not None:
+                    await self._gui.discard_owner(session_id)
                 stopped_jobs = await self._stop_owned_jobs(session_id)
                 stopped_shells = await self._shell.stop_owned(session_id)
                 self._store.end_session(session_id)

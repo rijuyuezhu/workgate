@@ -73,6 +73,7 @@ def test_oauth_supported_scopes_include_feature_scopes():
         "file:share",
         "executor:use",
         "browser:use",
+        "gui:use",
         "audit:read",
         "audit:full",
     ]
@@ -224,6 +225,9 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     assert tool_oauth_scopes("browser_session") == ["browser:use"]
     assert tool_oauth_scopes("browser_snapshot") == ["browser:use"]
     assert tool_oauth_scopes("browser_act") == ["browser:use"]
+    assert tool_oauth_scopes("gui_list") == ["gui:use"]
+    assert tool_oauth_scopes("gui_state") == ["gui:use"]
+    assert tool_oauth_scopes("gui_action") == ["gui:use"]
     assert all(tool.outputSchema is not None for tool in tools.values())
     bash_schema = tools["bash"].outputSchema
     assert bash_schema is not None
@@ -664,7 +668,23 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
             open_world=False,
         )
 
-    for name in set(tools) - read_only_tool_names:
+    _assert_tool_annotations(
+        tools["gui_list"],
+        read_only=True,
+        destructive=False,
+        idempotent=True,
+        open_world=True,
+    )
+    _assert_tool_annotations(
+        tools["gui_state"],
+        read_only=False,
+        destructive=False,
+        idempotent=False,
+        open_world=True,
+    )
+
+    classified = read_only_tool_names | {"gui_list", "gui_state"}
+    for name in set(tools) - classified:
         annotations = tools[name].annotations
         assert annotations is not None, name
         assert annotations.readOnlyHint is False, name
