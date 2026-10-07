@@ -73,7 +73,7 @@ def _patch_client(monkeypatch, app):
             follow_redirects=False,
         )
 
-    monkeypatch.setattr(transfer_http, "_client", client)
+    monkeypatch.setattr(transfer_http, "_control_client", client)
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ async def test_executor_raw_upload_rejects_http_error(tmp_path, monkeypatch):
             base_url=profile.control_url,
         )
 
-    monkeypatch.setattr(transfer_http, "_client", client)
+    monkeypatch.setattr(transfer_http, "_control_client", client)
     with pytest.raises(RuntimeError, match="rejected with HTTP 503"):
         await transfer_http.upload_to_control(
             profile,
@@ -237,7 +237,7 @@ async def test_executor_raw_upload_rejects_invalid_ack(tmp_path, monkeypatch):
             base_url=profile.control_url,
         )
 
-    monkeypatch.setattr(transfer_http, "_client", client)
+    monkeypatch.setattr(transfer_http, "_control_client", client)
     with pytest.raises(RuntimeError, match="acknowledgement is invalid"):
         await transfer_http.upload_to_control(
             profile,
@@ -271,7 +271,7 @@ async def test_executor_raw_download_rejects_http_error(tmp_path, monkeypatch):
             base_url=profile.control_url,
         )
 
-    monkeypatch.setattr(transfer_http, "_client", client)
+    monkeypatch.setattr(transfer_http, "_control_client", client)
     with pytest.raises(RuntimeError, match="rejected with HTTP 503"):
         await transfer_http.download_from_control(
             profile,
@@ -334,7 +334,7 @@ async def test_executor_raw_download_interruption_resumes_with_new_capability(
             base_url=profile.control_url,
         )
 
-    monkeypatch.setattr(transfer_http, "_client", interrupted_client)
+    monkeypatch.setattr(transfer_http, "_control_client", interrupted_client)
     with pytest.raises(RuntimeError, match="control transfer download failed"):
         await transfer_http.download_from_control(
             profile,
@@ -408,6 +408,181 @@ async def test_executor_raw_download_interruption_resumes_with_new_capability(
     assert result["bytes"] == len(data) - len(prefix)
     assert finished.completed is True
     assert (destination / "destination.bin").read_bytes() == data
+
+
+@pytest.mark.asyncio
+async def test_executor_presigned_upload_streams_source_without_url_leak(
+    tmp_path, monkeypatch
+):
+    workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+    data = (b"object-upload-" * 100_000) + b"tail"
+    (workspace / "source.bin").write_bytes(data)
+    signed_url = "https://storage.test/object?X-Amz-Signature=secret"
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = await request.aread()
+        return httpx.Response(200)
+
+    def client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(transfer_http, "_external_client", client)
+    result = await transfer_http.upload_to_url(
+        config,
+        store,
+        {
+            "session_id": session_id,
+            "path": "source.bin",
+            "expected_bytes": len(data),
+            "expected_sha256": hashlib.sha256(data).hexdigest(),
+            "chunk_size": 128 * 1024,
+            "url": signed_url,
+        },
+    )
+
+    assert result == {
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    assert seen["url"] == signed_url
+    assert seen["body"] == data
+
+
+@pytest.mark.parametrize(
+    ("status_code", "route_unavailable"),
+    [(503, True), (403, False)],
+)
+@pytest.mark.asyncio
+async def test_executor_presigned_upload_classifies_http_failure(
+    tmp_path, monkeypatch, status_code, route_unavailable
+):
+    workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+    data = b"secret-url-error"
+    (workspace / "source.bin").write_bytes(data)
+    signed_url = "https://storage.test/object?X-Amz-Signature=do-not-log"
+
+    def client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    status_code, content=b"unavailable"
+                )
+            )
+        )
+
+    monkeypatch.setattr(transfer_http, "_external_client", client)
+    with pytest.raises(RuntimeError, match=f"HTTP {status_code}") as exc:
+        await transfer_http.upload_to_url(
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "source.bin",
+                "expected_bytes": len(data),
+                "expected_sha256": hashlib.sha256(data).hexdigest(),
+                "url": signed_url,
+            },
+        )
+
+    assert "do-not-log" not in str(exc.value)
+    assert "storage.test" not in str(exc.value)
+    if route_unavailable:
+        assert isinstance(exc.value, transfer_http.ExecutorOperationFailure)
+        assert exc.value.code == "transfer_route_unavailable"
+    else:
+        assert not isinstance(exc.value, transfer_http.ExecutorOperationFailure)
+
+
+@pytest.mark.asyncio
+async def test_executor_presigned_download_rejects_partial_resume(
+    tmp_path, monkeypatch
+):
+    workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+
+    def client() -> httpx.AsyncClient:
+        raise AssertionError("partial object-store resume must not issue HTTP")
+
+    monkeypatch.setattr(transfer_http, "_external_client", client)
+    with pytest.raises(
+        transfer_http.ExecutorOperationFailure,
+        match="does not resume partial destination writes",
+    ) as exc:
+        await transfer_http.download_from_url(
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "destination.bin",
+                "transfer_id": "copy_" + "o" * 22,
+                "expected_bytes": 10,
+                "offset": 5,
+                "url": "https://storage.test/object?sig=secret",
+            },
+        )
+
+    assert exc.value.code == "transfer_route_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_executor_presigned_download_classifies_truncated_body_as_route_failure(
+    tmp_path, monkeypatch
+):
+    workspace, config, store, _profile, _payloads, _gateway, _app = _runtime(
+        tmp_path
+    )
+    session_id = str(new_session_id())
+    store.create_session(session_id=session_id, workdir=workspace)
+    transfer_id = "copy_" + "t" * 22
+    context = TransferContext(config, store)
+    transfer_begin_write(
+        "destination.bin",
+        expected_bytes=10,
+        transfer_id=transfer_id,
+        session_id=session_id,
+        context=context,
+    )
+
+    def client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, content=b"12345")
+            )
+        )
+
+    monkeypatch.setattr(transfer_http, "_external_client", client)
+    with pytest.raises(
+        transfer_http.ExecutorOperationFailure,
+        match="external transfer download",
+    ) as exc:
+        await transfer_http.download_from_url(
+            config,
+            store,
+            {
+                "session_id": session_id,
+                "path": "destination.bin",
+                "transfer_id": transfer_id,
+                "expected_bytes": 10,
+                "offset": 0,
+                "url": "https://storage.test/object?sig=secret",
+            },
+        )
+
+    assert exc.value.code == "transfer_route_unavailable"
+    assert "secret" not in str(exc.value)
 
 
 @pytest.mark.asyncio

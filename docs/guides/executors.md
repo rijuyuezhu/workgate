@@ -124,7 +124,22 @@ session. After that, normal file, search, shell, job, Todo, and Audit operations
 follow the session's executor binding.
 
 Use `session_copy` to copy data between two existing sessions, including
-sessions on different executors.
+sessions on different executors. Workgate chooses the data route automatically.
+
+### Optional object-store route
+
+For large cross-executor transfers, control can use an S3-compatible bucket so
+payload bytes do not traverse control. Install Workgate on control with the `s3`
+extra and set `transfer_object_store_bucket`. The optional
+`transfer_object_store_prefix`, `transfer_object_store_region`, and
+`transfer_object_store_endpoint_url` settings support scoped keys and
+S3-compatible services.
+
+The object-store byte route is opportunistic. Network/HTTP transfer failures can
+fall back to the durable control relay before destination commit. Configuration,
+signing, durable-state, and destination transaction errors are reported directly
+instead of being silently bypassed. Only the durable control relay keeps verified
+bytes on control for source-offline retries.
 
 ## Revoke or replace trust
 

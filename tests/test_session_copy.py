@@ -10,6 +10,10 @@ import pytest
 import workgate.control.session_copy as session_copy_module
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.control.object_store_transfer import (
+    ObjectStoreRouteUnavailable,
+    S3ObjectTransferService,
+)
 from workgate.control.payload_store import PayloadStore
 from workgate.control.session_copy import (
     SESSION_COPY_MANAGED_KIND,
@@ -19,13 +23,26 @@ from workgate.control.session_copy_store import TransferPayloadCapacityError
 from workgate.control.state import ControlSessionRecord
 from workgate.control.tool_routing import ControlToolRouter
 from workgate.persistence import FileStateStore
-from workgate.protocol.executor import ExecutorResult
+from workgate.protocol.executor import ExecutorResult, OperationError
 from workgate.protocol.ids import (
     new_command_id,
     new_executor_id,
     new_session_id,
 )
 from workgate.schemas.result_models.jobs import JobStartOutput
+
+
+def _disabled_object_store(
+    state_store: FileStateStore,
+) -> S3ObjectTransferService:
+    return S3ObjectTransferService(
+        state_store,
+        bucket=None,
+        prefix="workgate",
+        region=None,
+        endpoint_url=None,
+        presign_ttl_s=3600,
+    )
 
 
 def _configure(monkeypatch, tmp_path) -> None:
@@ -90,6 +107,17 @@ async def test_shared_session_copy_keeps_file_bytes_on_same_executor(
 
     async def report(value: dict[str, Any]) -> None:
         progress.append(value)
+
+    async def unexpected_object_store_reconcile() -> None:
+        raise AssertionError(
+            "same-executor copy must not touch object-store state"
+        )
+
+    monkeypatch.setattr(
+        harness.control.session_copy_service,
+        "reconcile_object_store_orphans",
+        unexpected_object_store_reconcile,
+    )
 
     result = await harness.control.session_copy_service.copy(
         src_session_id=src_id,
@@ -512,7 +540,11 @@ class _DestinationOnlyTransport:
 
 
 def _checkpoint_service(
-    tmp_path: Path, payload: bytes, *, owner_job_id: str | None = None
+    tmp_path: Path,
+    payload: bytes,
+    *,
+    owner_job_id: str | None = None,
+    object_store: Any | None = None,
 ):
     source_executor_id = str(new_executor_id())
     destination_executor_id = str(new_executor_id())
@@ -554,6 +586,11 @@ def _checkpoint_service(
         state_store,
         tmp_path / "data",
         transfer_gateway=gateway,  # type: ignore[arg-type]
+        object_store=(
+            object_store
+            if object_store is not None
+            else _disabled_object_store(state_store)
+        ),  # type: ignore[arg-type]
         max_transfer_payload_bytes=10_000_000,
         max_transfer_payload_store_bytes=10_000_000,
     )
@@ -681,6 +718,7 @@ async def test_cross_executor_import_resumes_after_control_service_restart(
         state_store,
         tmp_path / "data",
         transfer_gateway=gateway,  # type: ignore[arg-type]
+        object_store=_disabled_object_store(state_store),
         max_transfer_payload_bytes=10_000_000,
         max_transfer_payload_store_bytes=10_000_000,
     )
@@ -856,6 +894,83 @@ async def test_corrupt_control_payload_fails_without_destination_publish(
     ]
 
 
+class _ObjectStoreStub:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        setup_error: Exception | None = None,
+        cleanup_error: str | None = None,
+    ) -> None:
+        self.enabled = enabled
+        self.setup_error = setup_error
+        self.cleanup_error = cleanup_error
+        self.data = b""
+        self.begun = 0
+        self.finished = 0
+        self.reconciled = 0
+
+    async def reconcile_orphans(self) -> tuple[str, ...]:
+        self.reconciled += 1
+        return ()
+
+    def begin_attempt(self, transfer_id: str):
+        self.begun += 1
+        if self.setup_error is not None:
+            raise self.setup_error
+        attempt = SimpleNamespace(
+            transfer_id=transfer_id,
+            bucket="bucket",
+            key=f"transfers/{transfer_id}",
+        )
+        return attempt, "https://storage.test/upload?sig=secret"
+
+    def presign_get(self, attempt) -> str:
+        _ = attempt
+        return "https://storage.test/download?sig=secret"
+
+    async def finish_attempt(self, attempt) -> str | None:
+        _ = attempt
+        self.finished += 1
+        return self.cleanup_error
+
+
+@pytest.mark.asyncio
+async def test_durable_control_checkpoint_skips_configured_object_store(
+    tmp_path,
+):
+    payload = b"durable-route-wins"
+    object_store = _ObjectStoreStub()
+    service, sessions, transport, checkpoint, _state_store = (
+        _checkpoint_service(
+            tmp_path,
+            payload,
+            object_store=object_store,
+        )
+    )
+
+    result = await service.copy(
+        src_session_id=str(checkpoint.source_session_id),
+        src_path=checkpoint.source_path,
+        dst_session_id=str(checkpoint.destination_session_id),
+        dst_path=checkpoint.destination_path,
+        kind="file",
+        overwrite=True,
+        chunk_size=checkpoint.chunk_size,
+        transfer_id=checkpoint.transfer_id,
+    )
+
+    assert result.transport == "control_relay"
+    assert sessions.require_available == (
+        str(checkpoint.destination_session_id),
+    )
+    assert object_store.reconciled == 0
+    assert object_store.begun == 0
+    assert object_store.finished == 0
+    assert "transfer.http_download" in transport.calls
+    assert transport.data == payload
+
+
 class _FirstExportTransport:
     def __init__(
         self,
@@ -866,6 +981,9 @@ class _FirstExportTransport:
         source_kind: str,
         payload: bytes,
         archive: bytes | None = None,
+        object_store: _ObjectStoreStub | None = None,
+        object_download_failures: int = 0,
+        object_semantic_failure: bool = False,
     ) -> None:
         self.source_executor_id = source_executor_id
         self.destination_executor_id = destination_executor_id
@@ -873,6 +991,9 @@ class _FirstExportTransport:
         self.source_kind = source_kind
         self.payload = payload
         self.archive = archive
+        self.object_store = object_store
+        self.object_download_failures = object_download_failures
+        self.object_semantic_failure = object_semantic_failure
         self.destination = bytearray()
         self.calls: list[tuple[str, str]] = []
         self.allocated_path = ".incoming.tar.gz"
@@ -918,6 +1039,18 @@ class _FirstExportTransport:
                 }
             elif op == "transfer.http_upload":
                 result = self.gateway.complete_upload()
+            elif op == "transfer.url_upload":
+                assert self.object_store is not None
+                raw = (
+                    self.payload
+                    if self.source_kind == "file"
+                    else (self.archive or b"")
+                )
+                self.object_store.data = raw
+                result = {
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                }
             elif op == "transfer_delete_temp_path":
                 result = {"path": str(values["path"]), "deleted": True}
             else:
@@ -933,8 +1066,8 @@ class _FirstExportTransport:
                     "transfer_id": str(values["transfer_id"]),
                     "created": True,
                     "expected_bytes": int(values["expected_bytes"]),
-                    "offset": 0,
-                    "resumed": False,
+                    "offset": len(self.destination),
+                    "resumed": bool(self.destination),
                     "completed": False,
                     "sha256": None,
                 }
@@ -945,6 +1078,51 @@ class _FirstExportTransport:
                 result = {
                     "offset": len(self.destination),
                     "bytes": len(raw),
+                }
+            elif op == "transfer.url_download":
+                assert self.object_store is not None
+                if self.object_semantic_failure:
+                    return ExecutorResult(
+                        id=new_command_id(),
+                        ok=False,
+                        error=OperationError(
+                            code="operation_failed",
+                            message=(
+                                "destination write failed "
+                                "https://storage.test/object?sig=do-not-leak"
+                            ),
+                        ),
+                    )
+                offset = int(values["offset"])
+                assert offset == len(self.destination)
+                if self.object_download_failures:
+                    self.object_download_failures -= 1
+                    remaining = self.object_store.data[offset:]
+                    prefix = remaining[: max(1, len(remaining) // 3)]
+                    self.destination.extend(prefix)
+                    return ExecutorResult(
+                        id=new_command_id(),
+                        ok=False,
+                        error=OperationError(
+                            code="transfer_route_unavailable",
+                            message=(
+                                "object-store download interrupted "
+                                "https://storage.test/object?sig=do-not-leak"
+                            ),
+                        ),
+                    )
+                raw = self.object_store.data[offset:]
+                self.destination.extend(raw)
+                result = {
+                    "offset": len(self.destination),
+                    "bytes": len(raw),
+                }
+            elif op == "transfer_abandon_import":
+                self.destination.clear()
+                result = {
+                    "safe_to_forget": True,
+                    "write_reconciled": True,
+                    "unpack_reconciled": self.source_kind == "dir",
                 }
             elif op == "transfer_finish_write":
                 result = {
@@ -982,6 +1160,9 @@ def _fresh_cross_executor_service(
     archive: bytes | None = None,
     max_payload_bytes: int = 10_000_000,
     max_store_bytes: int = 10_000_000,
+    object_store: _ObjectStoreStub | None = None,
+    object_download_failures: int = 0,
+    object_semantic_failure: bool = False,
 ):
     source_executor_id = str(new_executor_id())
     destination_executor_id = str(new_executor_id())
@@ -1013,6 +1194,9 @@ def _fresh_cross_executor_service(
         source_kind=source_kind,
         payload=payload,
         archive=archive,
+        object_store=object_store,
+        object_download_failures=object_download_failures,
+        object_semantic_failure=object_semantic_failure,
     )
     state_store = FileStateStore(lambda: tmp_path / "state")
     service = ControlSessionCopyService(
@@ -1021,10 +1205,260 @@ def _fresh_cross_executor_service(
         state_store,
         tmp_path / "data",
         transfer_gateway=gateway,  # type: ignore[arg-type]
+        object_store=(
+            object_store
+            if object_store is not None
+            else _disabled_object_store(state_store)
+        ),  # type: ignore[arg-type]
         max_transfer_payload_bytes=max_payload_bytes,
         max_transfer_payload_store_bytes=max_store_bytes,
     )
     return service, source, destination, transport
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_store_file_bypasses_control_payload(
+    tmp_path,
+):
+    payload = b"object-store-file" * 100
+    object_store = _ObjectStoreStub()
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+    )
+
+    result = await service.copy(
+        src_session_id=str(source.session_id),
+        src_path="source.bin",
+        dst_session_id=str(destination.session_id),
+        dst_path="destination.bin",
+        kind="file",
+        overwrite=False,
+        chunk_size=64,
+    )
+
+    operations = [op for _executor_id, op in transport.calls]
+    assert result.transport == "object_store"
+    assert result.fallbacks == []
+    assert result.bytes == len(payload)
+    assert result.sha256 == hashlib.sha256(payload).hexdigest()
+    assert bytes(transport.destination) == payload
+    assert "transfer.url_upload" in operations
+    assert "transfer.url_download" in operations
+    assert "transfer.http_upload" not in operations
+    assert "transfer.http_download" not in operations
+    assert not list(
+        service._payloads.directory("transfer").glob("payload_*.bin")
+    )
+    assert object_store.finished == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_store_directory_packs_once(tmp_path):
+    archive = b"packed-directory" * 100
+    object_store = _ObjectStoreStub()
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="dir",
+        payload=b"",
+        archive=archive,
+        object_store=object_store,
+    )
+
+    result = await service.copy(
+        src_session_id=str(source.session_id),
+        src_path="tree",
+        dst_session_id=str(destination.session_id),
+        dst_path="tree-copy",
+        kind="dir",
+        overwrite=True,
+        chunk_size=64,
+    )
+
+    source_ops = [
+        op
+        for executor_id, op in transport.calls
+        if executor_id == transport.source_executor_id
+    ]
+    destination_ops = [
+        op
+        for executor_id, op in transport.calls
+        if executor_id == transport.destination_executor_id
+    ]
+    assert result.transport == "object_store"
+    assert result.archive_bytes == len(archive)
+    assert result.archive_sha256 == hashlib.sha256(archive).hexdigest()
+    assert result.entries == 3
+    assert source_ops.count("transfer_pack_dir") == 1
+    assert "transfer.url_upload" in source_ops
+    assert "transfer.http_upload" not in source_ops
+    assert "transfer.url_download" in destination_ops
+    assert "transfer.http_download" not in destination_ops
+    assert "transfer_unpack_archive" in destination_ops
+    assert source_ops.count("transfer_delete_temp_path") == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_store_unavailable_falls_back_to_control(
+    tmp_path,
+):
+    payload = b"fallback-control"
+    object_store = _ObjectStoreStub(
+        setup_error=ObjectStoreRouteUnavailable("setup", "cleanup pending")
+    )
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+    )
+
+    result = await service.copy(
+        src_session_id=str(source.session_id),
+        src_path="source.bin",
+        dst_session_id=str(destination.session_id),
+        dst_path="destination.bin",
+        kind="file",
+        overwrite=True,
+        chunk_size=4,
+    )
+
+    operations = [op for _executor_id, op in transport.calls]
+    assert result.transport == "control_relay"
+    assert result.fallbacks == ["object_store:setup"]
+    assert bytes(transport.destination) == payload
+    assert "transfer.url_upload" not in operations
+    assert "transfer.http_upload" in operations
+    assert "transfer.http_download" in operations
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_store_setup_error_does_not_fallback(
+    tmp_path,
+):
+    payload = b"setup-error"
+    object_store = _ObjectStoreStub(
+        setup_error=RuntimeError("cleanup registry is invalid")
+    )
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+    )
+
+    with pytest.raises(RuntimeError, match="cleanup registry is invalid"):
+        await service.copy(
+            src_session_id=str(source.session_id),
+            src_path="source.bin",
+            dst_session_id=str(destination.session_id),
+            dst_path="destination.bin",
+            kind="file",
+            overwrite=True,
+            chunk_size=4,
+        )
+
+    operations = [op for _executor_id, op in transport.calls]
+    assert "transfer.url_upload" not in operations
+    assert "transfer.http_upload" not in operations
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_download_failure_aborts_before_control_fallback(
+    tmp_path,
+):
+    payload = b"partial-object-download" * 100
+    object_store = _ObjectStoreStub()
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+        object_download_failures=1,
+    )
+
+    result = await service.copy(
+        src_session_id=str(source.session_id),
+        src_path="source.bin",
+        dst_session_id=str(destination.session_id),
+        dst_path="destination.bin",
+        kind="file",
+        overwrite=True,
+        chunk_size=64,
+    )
+
+    operations = [op for _executor_id, op in transport.calls]
+    assert result.transport == "control_relay"
+    assert len(result.fallbacks) == 1
+    assert result.fallbacks == ["object_store:download"]
+    assert "do-not-leak" not in repr(result.model_dump())
+    assert operations.count("transfer.url_download") == 1
+    assert "transfer_abandon_import" in operations
+    assert operations.index("transfer_abandon_import") < operations.index(
+        "transfer.http_download"
+    )
+    assert bytes(transport.destination) == payload
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_destination_failure_does_not_fallback(
+    tmp_path,
+):
+    payload = b"destination-semantic-error"
+    object_store = _ObjectStoreStub()
+    service, source, destination, transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+        object_semantic_failure=True,
+    )
+
+    with pytest.raises(RuntimeError, match="operation_failed") as exc:
+        await service.copy(
+            src_session_id=str(source.session_id),
+            src_path="source.bin",
+            dst_session_id=str(destination.session_id),
+            dst_path="destination.bin",
+            kind="file",
+            overwrite=True,
+            chunk_size=8,
+        )
+
+    assert "do-not-leak" not in str(exc.value)
+    operations = [op for _executor_id, op in transport.calls]
+    assert "transfer.url_upload" in operations
+    assert "transfer.url_download" in operations
+    assert "transfer.http_upload" not in operations
+    assert object_store.finished == 1
+
+
+@pytest.mark.asyncio
+async def test_cross_executor_object_cleanup_failure_is_visible_after_success(
+    tmp_path,
+):
+    payload = b"cleanup-visible"
+    object_store = _ObjectStoreStub(cleanup_error="OSError")
+    service, source, destination, _transport = _fresh_cross_executor_service(
+        tmp_path,
+        source_kind="file",
+        payload=payload,
+        object_store=object_store,
+    )
+
+    result = await service.copy(
+        src_session_id=str(source.session_id),
+        src_path="source.bin",
+        dst_session_id=str(destination.session_id),
+        dst_path="destination.bin",
+        kind="file",
+        overwrite=True,
+    )
+
+    assert result.transport == "object_store"
+    assert "object-store cleanup failed (OSError)" in result.cleanup_errors
 
 
 @pytest.mark.asyncio

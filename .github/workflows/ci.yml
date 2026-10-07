@@ -79,7 +79,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --group dev
+      - run: uv sync --locked --group dev --extra s3
       - name: Run real-process deployment topologies
         run: uv run pytest -q -m topology --basetemp=topology-artifacts
       - name: Validate hosted edge protocol contracts

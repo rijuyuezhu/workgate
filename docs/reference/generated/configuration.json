@@ -1710,6 +1710,129 @@
         "Default",
         "Description"
       ],
+      "heading": "Cross-executor transfer",
+      "kind": "table",
+      "rows": [
+        [
+          {
+            "code": "transfer_object_store_bucket"
+          },
+          {
+            "lines": [
+              {
+                "code": "--transfer-object-store-bucket"
+              },
+              {
+                "code": "--unset-transfer-object-store-bucket clears the value"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TRANSFER_OBJECT_STORE_BUCKET"
+          },
+          "string",
+          {
+            "code": "unset"
+          },
+          "S3-compatible bucket enabling the optional object-store transfer route."
+        ],
+        [
+          {
+            "code": "transfer_object_store_prefix"
+          },
+          {
+            "lines": [
+              {
+                "code": "--transfer-object-store-prefix"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TRANSFER_OBJECT_STORE_PREFIX"
+          },
+          "string",
+          {
+            "code": "workgate"
+          },
+          "Object-key prefix used for temporary transfer objects."
+        ],
+        [
+          {
+            "code": "transfer_object_store_region"
+          },
+          {
+            "lines": [
+              {
+                "code": "--transfer-object-store-region"
+              },
+              {
+                "code": "--unset-transfer-object-store-region clears the value"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TRANSFER_OBJECT_STORE_REGION"
+          },
+          "string",
+          {
+            "code": "unset"
+          },
+          "Optional S3-compatible region used by the control-side presigner."
+        ],
+        [
+          {
+            "code": "transfer_object_store_endpoint_url"
+          },
+          {
+            "lines": [
+              {
+                "code": "--transfer-object-store-endpoint-url"
+              },
+              {
+                "code": "--unset-transfer-object-store-endpoint-url clears the value"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TRANSFER_OBJECT_STORE_ENDPOINT_URL"
+          },
+          "string",
+          {
+            "code": "unset"
+          },
+          "Optional S3-compatible endpoint URL used by the control-side presigner."
+        ],
+        [
+          {
+            "code": "transfer_object_store_presign_ttl_s"
+          },
+          {
+            "lines": [
+              {
+                "code": "--transfer-object-store-presign-ttl-s"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TRANSFER_OBJECT_STORE_PRESIGN_TTL_S"
+          },
+          "integer",
+          {
+            "code": "3600"
+          },
+          "Lifetime in seconds for object-store presigned PUT/GET URLs."
+        ]
+      ]
+    },
+    {
+      "headers": [
+        "Setting",
+        "CLI",
+        "Environment",
+        "Type",
+        "Default",
+        "Description"
+      ],
       "heading": "Agent capability bridge",
       "kind": "table",
       "rows": [
@@ -2793,6 +2916,71 @@
       "name": "max_transfer_payload_store_bytes",
       "nullable": false,
       "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--transfer-object-store-bucket",
+      "default": null,
+      "default_display": "unset",
+      "description": "S3-compatible bucket enabling the optional object-store transfer route.",
+      "env": "WORKGATE_TRANSFER_OBJECT_STORE_BUCKET",
+      "name": "transfer_object_store_bucket",
+      "nullable": true,
+      "section": "Cross-executor transfer",
+      "type": "string",
+      "unset_cli": "--unset-transfer-object-store-bucket"
+    },
+    {
+      "choices": [],
+      "cli": "--transfer-object-store-prefix",
+      "default": "workgate",
+      "default_display": "workgate",
+      "description": "Object-key prefix used for temporary transfer objects.",
+      "env": "WORKGATE_TRANSFER_OBJECT_STORE_PREFIX",
+      "name": "transfer_object_store_prefix",
+      "nullable": false,
+      "section": "Cross-executor transfer",
+      "type": "string",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--transfer-object-store-region",
+      "default": null,
+      "default_display": "unset",
+      "description": "Optional S3-compatible region used by the control-side presigner.",
+      "env": "WORKGATE_TRANSFER_OBJECT_STORE_REGION",
+      "name": "transfer_object_store_region",
+      "nullable": true,
+      "section": "Cross-executor transfer",
+      "type": "string",
+      "unset_cli": "--unset-transfer-object-store-region"
+    },
+    {
+      "choices": [],
+      "cli": "--transfer-object-store-endpoint-url",
+      "default": null,
+      "default_display": "unset",
+      "description": "Optional S3-compatible endpoint URL used by the control-side presigner.",
+      "env": "WORKGATE_TRANSFER_OBJECT_STORE_ENDPOINT_URL",
+      "name": "transfer_object_store_endpoint_url",
+      "nullable": true,
+      "section": "Cross-executor transfer",
+      "type": "string",
+      "unset_cli": "--unset-transfer-object-store-endpoint-url"
+    },
+    {
+      "choices": [],
+      "cli": "--transfer-object-store-presign-ttl-s",
+      "default": 3600,
+      "default_display": "3600",
+      "description": "Lifetime in seconds for object-store presigned PUT/GET URLs.",
+      "env": "WORKGATE_TRANSFER_OBJECT_STORE_PRESIGN_TTL_S",
+      "name": "transfer_object_store_presign_ttl_s",
+      "nullable": false,
+      "section": "Cross-executor transfer",
       "type": "integer",
       "unset_cli": null
     },

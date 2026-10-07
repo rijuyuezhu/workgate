@@ -55,6 +55,11 @@ class ControlConfig(SharedRoleConfig):
     max_todo_bytes: int
     max_transfer_payload_bytes: int
     max_transfer_payload_store_bytes: int
+    transfer_object_store_bucket: str | None
+    transfer_object_store_prefix: str
+    transfer_object_store_region: str | None
+    transfer_object_store_endpoint_url: str | None
+    transfer_object_store_presign_ttl_s: int
 
     file_download_enabled: bool
     file_download_default_ttl_s: int
@@ -138,6 +143,11 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         max_todo_bytes=settings.max_todo_bytes,
         max_transfer_payload_bytes=settings.max_transfer_payload_bytes,
         max_transfer_payload_store_bytes=settings.max_transfer_payload_store_bytes,
+        transfer_object_store_bucket=settings.transfer_object_store_bucket,
+        transfer_object_store_prefix=settings.transfer_object_store_prefix,
+        transfer_object_store_region=settings.transfer_object_store_region,
+        transfer_object_store_endpoint_url=settings.transfer_object_store_endpoint_url,
+        transfer_object_store_presign_ttl_s=settings.transfer_object_store_presign_ttl_s,
         file_download_enabled=settings.file_download_enabled,
         file_download_default_ttl_s=settings.file_download_default_ttl_s,
         file_download_max_ttl_s=settings.file_download_max_ttl_s,
