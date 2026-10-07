@@ -130,7 +130,7 @@ def build_http_app(
     register_http_tool_routes(
         app,
         catalog,
-        task_activity_observer=(
+        agent_activity_observer=(
             None
             if runtime is None or getattr(runtime, "task_service", None) is None
             else runtime.task_service.observe_agent_activity

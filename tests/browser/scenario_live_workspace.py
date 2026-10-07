@@ -182,7 +182,7 @@ window.addEventListener("message", (event) => {{
         continuation.pending = true;
         structuredContent = {{
           action: "claim", task: __due.task, continuation,
-          claim_id: args.claim_id, claimed: true,
+          claim_id: "c_browser_live", claimed: true,
         }};
       }} else if (args.action === "validate") {{
         continuation.eligible = false;
@@ -350,6 +350,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
             "validate",
             "report",
         ]
+        assert "claim_id" not in continuation_calls[0]
         assert all(
             call["task_id"] == "task_browser_live"
             for call in continuation_calls

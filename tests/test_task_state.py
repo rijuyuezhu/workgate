@@ -887,23 +887,18 @@ async def test_task_continuation_claim_is_task_scoped_durable_and_single_owner(
     assert status["attempt_count"] == 0
     assert status["max_attempts"] == 10
 
-    first = await service.claim_continuation(
-        task.task_id, claim_id="claim-first"
-    )
+    first = await service.claim_continuation(task.task_id)
     assert first["claimed"] is True
     assert first["continuation"]["pending"] is True
+    claim_id = first["claim_id"]
+    assert isinstance(claim_id, str)
 
-    duplicate = await service.claim_continuation(
-        task.task_id, claim_id="claim-other"
-    )
+    duplicate = await service.claim_continuation(task.task_id)
     assert duplicate["claimed"] is False
-    recovered = await service.claim_continuation(
-        task.task_id, claim_id="claim-first"
-    )
-    assert recovered["claimed"] is True
+    assert duplicate["claim_id"] is None
 
     validated = await service.validate_continuation(
-        task.task_id, claim_id="claim-first"
+        task.task_id, claim_id=claim_id
     )
     assert validated["valid"] is True
     assert validated["continuation"]["attempt_count"] == 1
@@ -916,7 +911,7 @@ async def test_task_continuation_claim_is_task_scoped_durable_and_single_owner(
 
     reported = await service.report_continuation(
         task.task_id,
-        claim_id="claim-first",
+        claim_id=claim_id,
         accepted=True,
     )
     assert reported["reported"] is True
@@ -952,26 +947,26 @@ async def test_task_continuation_invalidates_on_task_or_agent_activity(
         "workgate.control.task_state.time.time", lambda: clock[0]
     )
 
-    claimed = await service.claim_continuation(
-        task.task_id, claim_id="claim-task-mutation"
-    )
+    claimed = await service.claim_continuation(task.task_id)
     assert claimed["claimed"] is True
+    mutation_claim_id = claimed["claim_id"]
+    assert isinstance(mutation_claim_id, str)
     clock[0] += 1
     await service.report_progress(task.task_id, summary="new human/task state")
     stale = await service.validate_continuation(
-        task.task_id, claim_id="claim-task-mutation"
+        task.task_id, claim_id=mutation_claim_id
     )
     assert stale["valid"] is False
 
     clock[0] += 901
-    claimed = await service.claim_continuation(
-        task.task_id, claim_id="claim-agent-activity"
-    )
+    claimed = await service.claim_continuation(task.task_id)
     assert claimed["claimed"] is True
+    activity_claim_id = claimed["claim_id"]
+    assert isinstance(activity_claim_id, str)
     clock[0] += 1
     await service.observe_agent_activity((task.task_id,), observed_at=clock[0])
     stale = await service.validate_continuation(
-        task.task_id, claim_id="claim-agent-activity"
+        task.task_id, claim_id=activity_claim_id
     )
     assert stale["valid"] is False
     assert stale["continuation"]["pending"] is False
@@ -994,11 +989,10 @@ async def test_task_continuation_backoff_bounds_and_terminal_plan_rules(
     )
 
     for attempt in range(10):
-        claim_id = f"claim-{attempt}"
-        claimed = await service.claim_continuation(
-            task.task_id, claim_id=claim_id
-        )
+        claimed = await service.claim_continuation(task.task_id)
         assert claimed["claimed"] is True
+        claim_id = claimed["claim_id"]
+        assert isinstance(claim_id, str)
         validated = await service.validate_continuation(
             task.task_id, claim_id=claim_id
         )
@@ -1066,19 +1060,18 @@ async def test_task_continuation_expired_claim_can_be_replaced(
     monkeypatch.setattr(
         "workgate.control.task_state.time.time", lambda: clock[0]
     )
-    assert (await service.claim_continuation(task.task_id, claim_id="old"))[
-        "claimed"
-    ] is True
+    old = await service.claim_continuation(task.task_id)
+    assert old["claimed"] is True
+    old_claim_id = old["claim_id"]
+    assert isinstance(old_claim_id, str)
     clock[0] += 301
-    replacement = await service.claim_continuation(
-        task.task_id, claim_id="replacement"
-    )
+    replacement = await service.claim_continuation(task.task_id)
     assert replacement["claimed"] is True
-    assert replacement["claim_id"] == "replacement"
+    assert replacement["claim_id"] != old_claim_id
 
     stale = await service.report_continuation(
         task.task_id,
-        claim_id="old",
+        claim_id=old_claim_id,
         accepted=True,
     )
     assert stale["reported"] is False

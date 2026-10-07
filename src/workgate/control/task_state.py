@@ -49,7 +49,6 @@ _CONTINUATION_IDLE_S = 15 * 60
 _CONTINUATION_MAX_ATTEMPTS = 10
 _CONTINUATION_PENDING_TTL_S = 5 * 60
 _CONTINUATION_FAILURE_BACKOFF_S = 5 * 60
-_CONTINUATION_CLAIM_ID_MAX_CHARS = 128
 _CONTINUATION_STORAGE_OVERHEAD_BYTES = 4096
 
 
@@ -62,8 +61,6 @@ class _TaskContinuation(BaseModel):
     attempt_count: int = Field(default=0, ge=0)
     pending_claim_id: str | None = None
     pending_since: float | None = None
-    pending_task_updated_at: float | None = None
-    pending_agent_activity: float | None = None
     reserved: bool = False
     retry_after: float | None = None
 
@@ -465,8 +462,6 @@ class ControlTaskService:
     ) -> None:
         continuation.pending_claim_id = None
         continuation.pending_since = None
-        continuation.pending_task_updated_at = None
-        continuation.pending_agent_activity = None
         continuation.reserved = False
 
     @classmethod
@@ -478,7 +473,7 @@ class ControlTaskService:
         )
 
     @classmethod
-    def _continuation_public_state(
+    def _continuation_state(
         cls,
         stored: _StoredTask,
         *,
@@ -508,12 +503,7 @@ class ControlTaskService:
             ),
             "attempt_count": continuation.attempt_count,
             "max_attempts": _CONTINUATION_MAX_ATTEMPTS,
-            "idle_after_s": _CONTINUATION_IDLE_S,
-            "pending_ttl_s": _CONTINUATION_PENDING_TTL_S,
-            "retry_backoff_s": _CONTINUATION_FAILURE_BACKOFF_S,
-            "last_agent_activity": last_activity,
             "due_at": due_at,
-            "retry_after": continuation.retry_after,
             "exhausted": exhausted,
         }
 
@@ -575,7 +565,7 @@ class ControlTaskService:
 
     def _continuation_status_sync(self, task_id: str) -> dict[str, Any]:
         stored = self._read_stored_unlocked(task_id)
-        return self._continuation_public_state(stored, now=time.time())
+        return self._continuation_state(stored, now=time.time())
 
     async def continuation_status(self, task_id: str) -> dict[str, Any]:
         return await asyncio.to_thread(self._continuation_status_sync, task_id)
@@ -583,16 +573,7 @@ class ControlTaskService:
     def _claim_continuation_sync(
         self,
         task_id: str,
-        claim_id: str | None,
     ) -> dict[str, Any]:
-        requested = str(claim_id or "").strip()
-        if len(requested) > _CONTINUATION_CLAIM_ID_MAX_CHARS:
-            raise ValueError(
-                "continuation claim_id must be at most "
-                f"{_CONTINUATION_CLAIM_ID_MAX_CHARS} characters"
-            )
-        if not requested:
-            requested = f"c_{secrets.token_hex(8)}"
         path = self._path(task_id)
         with self._store.transaction(path):
             stored = self._read_stored_unlocked(task_id)
@@ -600,18 +581,13 @@ class ControlTaskService:
             expired = self._expire_continuation_claim(stored, now=now)
             continuation = stored.continuation
             if continuation.pending_claim_id is not None:
-                state = self._continuation_public_state(stored, now=now)
                 return {
-                    "claimed": continuation.pending_claim_id == requested,
-                    "claim_id": (
-                        requested
-                        if continuation.pending_claim_id == requested
-                        else None
-                    ),
-                    "continuation": state,
+                    "claimed": False,
+                    "claim_id": None,
+                    "continuation": self._continuation_state(stored, now=now),
                     "task": self._task_output(stored),
                 }
-            state = self._continuation_public_state(stored, now=now)
+            state = self._continuation_state(stored, now=now)
             if not state["eligible"]:
                 if expired:
                     self._persist_stored(path, stored)
@@ -621,33 +597,25 @@ class ControlTaskService:
                     "continuation": state,
                     "task": self._task_output(stored),
                 }
-            continuation.pending_claim_id = requested
+            claim_id = f"c_{secrets.token_hex(8)}"
+            continuation.pending_claim_id = claim_id
             continuation.pending_since = now
-            continuation.pending_task_updated_at = stored.document.updated_at
-            continuation.pending_agent_activity = (
-                continuation.last_agent_activity
-            )
             continuation.reserved = False
             self._persist_stored(path, stored)
             return {
                 "claimed": True,
-                "claim_id": requested,
-                "continuation": self._continuation_public_state(
-                    stored, now=now
-                ),
+                "claim_id": claim_id,
+                "continuation": self._continuation_state(stored, now=now),
                 "task": self._task_output(stored),
             }
 
     async def claim_continuation(
         self,
         task_id: str,
-        *,
-        claim_id: str | None = None,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
             self._claim_continuation_sync,
             task_id,
-            claim_id,
         )
 
     def _validate_continuation_sync(
@@ -672,10 +640,6 @@ class ControlTaskService:
                     continuation.reserved
                     or continuation.attempt_count < _CONTINUATION_MAX_ATTEMPTS
                 )
-                and continuation.pending_task_updated_at
-                == stored.document.updated_at
-                and continuation.pending_agent_activity
-                == continuation.last_agent_activity
                 and now
                 >= self._continuation_last_activity(stored)
                 + _CONTINUATION_IDLE_S
@@ -692,9 +656,7 @@ class ControlTaskService:
             return {
                 "valid": valid,
                 "claim_id": requested if valid else None,
-                "continuation": self._continuation_public_state(
-                    stored, now=now
-                ),
+                "continuation": self._continuation_state(stored, now=now),
                 "task": self._task_output(stored),
             }
 
@@ -729,9 +691,7 @@ class ControlTaskService:
                 return {
                     "reported": False,
                     "accepted": None,
-                    "continuation": self._continuation_public_state(
-                        stored, now=now
-                    ),
+                    "continuation": self._continuation_state(stored, now=now),
                     "task": self._task_output(stored),
                 }
             if not continuation.reserved:
@@ -751,9 +711,7 @@ class ControlTaskService:
             return {
                 "reported": True,
                 "accepted": bool(accepted),
-                "continuation": self._continuation_public_state(
-                    stored, now=now
-                ),
+                "continuation": self._continuation_state(stored, now=now),
                 "task": self._task_output(stored),
             }
 

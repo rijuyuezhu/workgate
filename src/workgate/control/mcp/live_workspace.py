@@ -441,11 +441,11 @@ async def live_workspace_continuation(
     """Advance one task-scoped automatic-continuation handshake."""
 
     if action == "claim":
+        if claim_id is not None:
+            raise ValueError("claim_id is valid only for validate/report")
         if accepted is not None:
             raise ValueError("accepted is valid only for action=report")
-        raw = await runtime.task_service.claim_continuation(
-            task_id, claim_id=claim_id
-        )
+        raw = await runtime.task_service.claim_continuation(task_id)
     elif action == "validate":
         if not claim_id:
             raise ValueError("claim_id is required for action=validate")

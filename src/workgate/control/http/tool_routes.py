@@ -72,7 +72,7 @@ def register_http_tool_routes(
     app: FastAPI,
     catalog: ToolCatalog,
     *,
-    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
     | None = None,
 ) -> None:
     """Register REST tool endpoints from the tool routing table."""
@@ -85,7 +85,7 @@ def register_http_tool_routes(
                     _make_get_tool_handler(
                         route.tool_name,
                         handler,
-                        task_activity_observer=task_activity_observer,
+                        agent_activity_observer=agent_activity_observer,
                     )
                 )
             case "POST":
@@ -94,7 +94,7 @@ def register_http_tool_routes(
                     _make_post_tool_handler(
                         route.tool_name,
                         handler,
-                        task_activity_observer=task_activity_observer,
+                        agent_activity_observer=agent_activity_observer,
                     )
                 )
             case _:
@@ -107,7 +107,7 @@ def _make_get_tool_handler(
     tool_name: str,
     handler: ToolHandler,
     *,
-    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
     | None = None,
 ) -> ToolRouteHandler:
     async def get_handler(request: Request) -> Any:
@@ -116,7 +116,7 @@ def _make_get_tool_handler(
             tool_name,
             args or None,
             handler=handler,
-            task_activity_observer=task_activity_observer,
+            agent_activity_observer=agent_activity_observer,
         )
 
     return get_handler
@@ -126,7 +126,7 @@ def _make_post_tool_handler(
     tool_name: str,
     handler: ToolHandler,
     *,
-    task_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
     | None = None,
 ) -> ToolRouteHandler:
     async def post_handler(body: dict[str, Any] | None = None) -> Any:
@@ -134,7 +134,7 @@ def _make_post_tool_handler(
             tool_name,
             body,
             handler=handler,
-            task_activity_observer=task_activity_observer,
+            agent_activity_observer=agent_activity_observer,
         )
 
     return post_handler

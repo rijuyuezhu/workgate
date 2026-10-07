@@ -130,7 +130,7 @@
   let shuttingDown = false;
   let continuationBusy = false;
   let continuationTimer = null;
-  let pendingContinuationReport = null;
+  let continuationAttempt = null;
 
   function createStandardBridge() {
     let nextId = 1;
@@ -454,18 +454,6 @@
     ].join("\n");
   }
 
-  function newClaimId() {
-    if (window.crypto && typeof window.crypto.randomUUID === "function") {
-      return "c_" + window.crypto.randomUUID().replaceAll("-", "");
-    }
-    const bytes = new Uint8Array(16);
-    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
-      window.crypto.getRandomValues(bytes);
-      return "c_" + Array.from(bytes, (item) => item.toString(16).padStart(2, "0")).join("");
-    }
-    return "c_" + Date.now().toString(36);
-  }
-
   async function sendContinuationToHost(prompt) {
     if (window.openai && typeof window.openai.sendFollowUpMessage === "function") {
       return await window.openai.sendFollowUpMessage({ prompt });
@@ -494,15 +482,15 @@
     const continuation = snapshot.continuation || {};
     if (continuation.exhausted) return false;
     if (continuation.pending) {
-      if (pendingContinuationReport) return true;
+      if (continuationAttempt) return true;
       return Date.now() / 1000 >= Number(continuation.pending_expires_at || Infinity);
     }
     return Date.now() / 1000 >= Number(continuation.due_at || Infinity);
   }
 
   async function reportPendingContinuation(taskId) {
-    if (!pendingContinuationReport || pendingContinuationReport.accepted === null) return;
-    const pending = pendingContinuationReport;
+    if (!continuationAttempt || continuationAttempt.accepted === null) return;
+    const pending = continuationAttempt;
     const result = await callTool("workspace_continuation", {
       task_id: taskId,
       action: "report",
@@ -510,37 +498,33 @@
       accepted: pending.accepted,
     });
     mergeContinuationResult(result);
-    pendingContinuationReport = null;
+    continuationAttempt = null;
   }
 
   async function maybeContinueTask() {
     if (continuationBusy || shuttingDown || !snapshot || !snapshot.task) return;
     const taskId = snapshot.task.task_id;
-    if (!taskCanAutoContinue() && !pendingContinuationReport) return;
+    if (!taskCanAutoContinue() && !continuationAttempt) return;
     continuationBusy = true;
     try {
-      if (pendingContinuationReport && pendingContinuationReport.accepted !== null) {
+      if (continuationAttempt && continuationAttempt.accepted !== null) {
         await reportPendingContinuation(taskId);
         render(snapshot);
         return;
       }
 
-      const claimId = pendingContinuationReport && pendingContinuationReport.claim_id
-        ? pendingContinuationReport.claim_id
-        : newClaimId();
-      pendingContinuationReport = { claim_id: claimId, accepted: null };
-
       const claimed = await callTool("workspace_continuation", {
         task_id: taskId,
         action: "claim",
-        claim_id: claimId,
       });
       mergeContinuationResult(claimed);
-      if (!claimed || claimed.claimed !== true || claimed.claim_id !== claimId) {
-        pendingContinuationReport = null;
+      if (!claimed || claimed.claimed !== true || !claimed.claim_id) {
+        continuationAttempt = null;
         render(snapshot);
         return;
       }
+      const claimId = claimed.claim_id;
+      continuationAttempt = { claim_id: claimId, accepted: null };
       const validated = await callTool("workspace_continuation", {
         task_id: taskId,
         action: "validate",
@@ -548,7 +532,7 @@
       });
       mergeContinuationResult(validated);
       if (!validated || validated.valid !== true) {
-        pendingContinuationReport = null;
+        continuationAttempt = null;
         render(snapshot);
         return;
       }
@@ -561,7 +545,7 @@
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
       }
-      pendingContinuationReport = { claim_id: claimId, accepted };
+      continuationAttempt = { claim_id: claimId, accepted };
       await reportPendingContinuation(taskId);
       render(snapshot);
       $("status").textContent = accepted
