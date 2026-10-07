@@ -162,6 +162,9 @@ def _redact_browser_tool_output(tool: str, value: Any) -> Any:
     if not isinstance(value, Mapping):
         return value
     copied = dict(value)
+    if tool == "browser_session":
+        for key in ("storage_state", "cookies", "origins"):
+            copied.pop(key, None)
     if "title" in copied:
         copied["title"] = "<omitted-from-audit>"
     if "url" in copied:

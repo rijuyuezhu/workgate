@@ -1,4 +1,5 @@
 import shutil
+from typing import Any, cast
 
 import pytest
 
@@ -144,3 +145,59 @@ async def test_workspace_connector_registry_is_declaration_only() -> None:
         await tools["workspace_search"].func(_session_id(1), "needle")
     with pytest.raises(RuntimeError, match="fetch requires control routing"):
         await tools["fetch"].func(_session_id(1), "demo.txt")
+
+
+@pytest.mark.asyncio
+async def test_browser_session_composition_forwards_auth_persistence_args(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    config = resolve_executor_config(settings)
+    services = build_runtime_services(config)
+    store = services.tool_session_store
+    session = store.create_session(session_id=_session_id(3), workdir=tmp_path)
+
+    class RecordingBrowserService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def manage(self, session_id: str, **kwargs):
+            self.calls.append((session_id, kwargs))
+            return {"browser_session_id": "browser_test_auth"}
+
+    browser = RecordingBrowserService()
+    dispatcher = build_executor_tool_dispatcher(
+        config,
+        store,
+        browser_service=cast(Any, browser),
+    )
+
+    result = await dispatcher.execute(
+        "browser_session",
+        {
+            "session_id": session.session_id,
+            "action": "start",
+            "profile_id": "account-profile",
+            "storage_state_path": None,
+            "save_storage_state_path": None,
+        },
+    )
+
+    assert result["browser_session_id"] == "browser_test_auth"
+    assert browser.calls == [
+        (
+            session.session_id,
+            {
+                "action": "start",
+                "browser_session_id": None,
+                "url": None,
+                "headless": True,
+                "width": 1440,
+                "height": 1000,
+                "wait_until": "domcontentloaded",
+                "profile_id": "account-profile",
+                "storage_state_path": None,
+                "save_storage_state_path": None,
+            },
+        )
+    ]

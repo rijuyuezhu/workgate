@@ -370,11 +370,32 @@
                 "note": "(integer, optional)"
               },
               {
+                "description": "Optional case-insensitive durable Chromium profile name on the owning executor. Reuse the same explicit name later to reuse browser authentication state.",
+                "head": {
+                  "code": "profile_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Optional relative JSON path in the owning Workgate session workdir used to import or export Playwright storage state.",
+                "head": {
+                  "code": "save_storage_state_path"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
                 "description": "Opaque execution session_id returned by session_start.",
                 "head": {
                   "code": "session_id"
                 },
                 "note": "(string, required)"
+              },
+              {
+                "description": "Optional relative JSON path in the owning Workgate session workdir used to import or export Playwright storage state.",
+                "head": {
+                  "code": "storage_state_path"
+                },
+                "note": "(string / null, optional)"
               },
               {
                 "description": "Optional http(s) URL to open. file:, data:, javascript:, and other schemes are rejected.",
@@ -399,7 +420,7 @@
               }
             ]
           },
-          "Start, list, or close ephemeral Chromium sessions owned by one Workgate session. Browser resources live on the bound executor, are isolated from other Workgate sessions, and are discarded on executor restart. Only http(s) navigation is permitted. Use browser_snapshot after starting to obtain visible text and stable short element refs."
+          "Start, list, or close Chromium sessions owned by one Workgate session. Ordinary sessions are ephemeral. action=start may explicitly reuse one executor-local durable profile_id or import Playwright storage_state_path; those two start modes are mutually exclusive. action=close may explicitly export storage state to save_storage_state_path. Storage-state paths are relative to the owning Workgate session workdir, and auth payloads are never returned. Live browser resources remain session-owned and are closed by session_end; explicitly persisted auth state is not deleted."
         ],
         [
           {
@@ -3541,7 +3562,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start, list, or close ephemeral Chromium sessions owned by one Workgate session. Browser resources live on the bound executor, are isolated from other Workgate sessions, and are discarded on executor restart. Only http(s) navigation is permitted. Use browser_snapshot after starting to obtain visible text and stable short element refs.",
+      "description": "Start, list, or close Chromium sessions owned by one Workgate session. Ordinary sessions are ephemeral. action=start may explicitly reuse one executor-local durable profile_id or import Playwright storage_state_path; those two start modes are mutually exclusive. action=close may explicitly export storage state to save_storage_state_path. Storage-state paths are relative to the owning Workgate session workdir, and auth payloads are never returned. Live browser resources remain session-owned and are closed by session_end; explicitly persisted auth state is not deleted.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -3584,6 +3605,37 @@
             "title": "Height",
             "type": "integer"
           },
+          "profile_id": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional case-insensitive durable Chromium profile name on the owning executor. Reuse the same explicit name later to reuse browser authentication state.",
+            "title": "Profile Id"
+          },
+          "save_storage_state_path": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional relative JSON path in the owning Workgate session workdir used to import or export Playwright storage state.",
+            "title": "Save Storage State Path"
+          },
           "session_id": {
             "description": "Opaque execution session_id returned by session_start.",
             "maxLength": 128,
@@ -3591,6 +3643,21 @@
             "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
             "title": "Session Id",
             "type": "string"
+          },
+          "storage_state_path": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional relative JSON path in the owning Workgate session workdir used to import or export Playwright storage state.",
+            "title": "Storage State Path"
           },
           "url": {
             "anyOf": [
@@ -3672,7 +3739,7 @@
             "type": "object"
           },
           "BrowserSessionSummary": {
-            "description": "One ephemeral browser owned by a Workgate session.",
+            "description": "One live browser owned by a Workgate session.",
             "properties": {
               "browser_session_id": {
                 "title": "Browser Session Id",
@@ -3692,6 +3759,18 @@
                 },
                 "title": "Pages",
                 "type": "array"
+              },
+              "profile_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile Id"
               }
             },
             "required": [
@@ -3772,6 +3851,18 @@
             "title": "Pages",
             "type": "array"
           },
+          "profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile Id"
+          },
           "sessions": {
             "anyOf": [
               {
@@ -3786,6 +3877,18 @@
             ],
             "default": null,
             "title": "Sessions"
+          },
+          "storage_state_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Storage State Path"
           }
         },
         "title": "BrowserSessionOutput",

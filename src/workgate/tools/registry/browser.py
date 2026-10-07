@@ -8,9 +8,11 @@ from ...schemas.input_models.browser import (
     BrowserMaxElementsArg,
     BrowserMaxTextCharsArg,
     BrowserPageIdArg,
+    BrowserProfileIdArg,
     BrowserScreenshotPathArg,
     BrowserSessionActionArg,
     BrowserSessionIdArg,
+    BrowserStorageStatePathArg,
     BrowserTimeoutMsArg,
     BrowserUrlArg,
     BrowserViewportHeightArg,
@@ -50,8 +52,11 @@ async def browser_session(
     width: BrowserViewportWidthArg = 1440,
     height: BrowserViewportHeightArg = 1000,
     wait_until: BrowserWaitUntilArg = "domcontentloaded",
+    profile_id: BrowserProfileIdArg = None,
+    storage_state_path: BrowserStorageStatePathArg = None,
+    save_storage_state_path: BrowserStorageStatePathArg = None,
 ) -> BrowserSessionOutput:
-    """Start, list, or close ephemeral Chromium sessions owned by one Workgate session. Browser resources live on the bound executor, are isolated from other Workgate sessions, and are discarded on executor restart. Only http(s) navigation is permitted. Use browser_snapshot after starting to obtain visible text and stable short element refs."""
+    """Start, list, or close Chromium sessions owned by one Workgate session. Ordinary sessions are ephemeral. action=start may explicitly reuse one executor-local durable profile_id or import Playwright storage_state_path; those two start modes are mutually exclusive. action=close may explicitly export storage state to save_storage_state_path. Storage-state paths are relative to the owning Workgate session workdir, and auth payloads are never returned. Live browser resources remain session-owned and are closed by session_end; explicitly persisted auth state is not deleted."""
     del (
         session_id,
         action,
@@ -61,6 +66,9 @@ async def browser_session(
         width,
         height,
         wait_until,
+        profile_id,
+        storage_state_path,
+        save_storage_state_path,
     )
     raise RuntimeError("browser_session requires control routing")
 
