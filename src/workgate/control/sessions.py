@@ -10,9 +10,14 @@ from typing import Any, Literal
 from pydantic import JsonValue
 
 from .. import __version__
-from ..errors import BrowserUnavailableError, exception_from_tool_error
+from ..errors import (
+    BrowserUnavailableError,
+    GuiUnavailableError,
+    exception_from_tool_error,
+)
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_BROWSER,
+    EXECUTOR_CAPABILITY_GUI,
     EXECUTOR_CAPABILITY_SESSIONS,
     SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
@@ -36,6 +41,7 @@ _ACTIVE_SESSION_WINDOW_S = 5 * 60 * 60
 _BROWSER_TOOL_NAMES = frozenset(
     {"browser_session", "browser_snapshot", "browser_act"}
 )
+_GUI_TOOL_NAMES = frozenset({"gui_list", "gui_state", "gui_action"})
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +260,15 @@ class ControlSessionCoordinator:
                 ):
                     raise BrowserUnavailableError(
                         "structured browser automation is unavailable on the bound executor"
+                    )
+            if tool_name in _GUI_TOOL_NAMES:
+                hello = await self._transport.inventory(str(record.executor_id))
+                if (
+                    hello is None
+                    or EXECUTOR_CAPABILITY_GUI not in hello.capabilities
+                ):
+                    raise GuiUnavailableError(
+                        "native desktop GUI automation is unavailable on the bound executor"
                     )
             wire_args = {
                 key: value for key, value in args.items() if key != "session_id"

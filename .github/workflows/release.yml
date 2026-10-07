@@ -270,7 +270,7 @@ jobs:
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
             PYINSTALLER_ARGS+=(--collect-all winpty)
           fi
-          uv run --with pyinstaller --with typer pyinstaller \
+          uv run --extra gui --with pyinstaller --with typer pyinstaller \
             "${PYINSTALLER_ARGS[@]}" \
             scripts/release/pyinstaller-entry.py
 

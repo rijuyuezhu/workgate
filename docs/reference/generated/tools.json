@@ -1,11 +1,11 @@
 {
-  "count": 51,
+  "count": 54,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "51"
+          "code": "54"
         },
         "."
       ],
@@ -816,6 +816,125 @@
             ]
           },
           "Write a complete UTF-8 file inside an execution session. Use it for new files or intentional whole-file replacement; prefer hashline_edit for ordinary edits to existing files."
+        ]
+      ]
+    },
+    {
+      "body": "Register executor-routed native desktop automation.",
+      "headers": [
+        "Tool",
+        "Parameters",
+        "Description"
+      ],
+      "heading": "Gui",
+      "kind": "table",
+      "rows": [
+        [
+          {
+            "code": "gui_action"
+          },
+          {
+            "items": [
+              {
+                "description": "Actions against one fresh gui_state observation.",
+                "head": {
+                  "code": "actions"
+                },
+                "note": "(array, required)"
+              },
+              {
+                "description": "Opaque execution session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Single-use short-lived state_id returned by gui_state.",
+                "head": {
+                  "code": "state_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Opaque native window id returned by gui_list.",
+                "head": {
+                  "code": "window_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Perform bounded native GUI actions against one fresh gui_state observation. The state_id is single-use; semantic targets are preferred over window-relative coordinate fallback. Actions execute sequentially, not transactionally: once execution starts, the state is consumed and earlier side effects are not rolled back if a later action fails, so re-observe after any error."
+        ],
+        [
+          {
+            "code": "gui_list"
+          },
+          {
+            "items": [
+              {
+                "description": "Opaque execution session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "List visible desktop application windows on the executor bound to this Workgate session."
+        ],
+        [
+          {
+            "code": "gui_state"
+          },
+          {
+            "items": [
+              {
+                "description": "Include bounded accessibility elements in gui_state.",
+                "head": {
+                  "code": "include_elements"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
+                "description": "Maximum accessibility tree depth to traverse.",
+                "head": {
+                  "code": "max_depth"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Maximum accessibility elements to return.",
+                "head": {
+                  "code": "max_elements"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Include a native screenshot in the gui_state result.",
+                "head": {
+                  "code": "screenshot"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
+                "description": "Opaque execution session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Opaque native window id returned by gui_list.",
+                "head": {
+                  "code": "window_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Observe one native desktop window. Returns bounded accessibility state, an optional native screenshot, and a short-lived single-use state_id. Prefer element ids; coordinate actions are window-relative."
         ]
       ]
     },
@@ -2135,6 +2254,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -2228,6 +2348,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -4105,6 +4226,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -5163,6 +5285,697 @@
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Perform bounded native GUI actions against one fresh gui_state observation. The state_id is single-use; semantic targets are preferred over window-relative coordinate fallback. Actions execute sequentially, not transactionally: once execution starts, the state is consumed and earlier side effects are not rolled back if a later action fails, so re-observe after any error.",
+      "inputSchema": {
+        "$defs": {
+          "GuiDragAction": {
+            "additionalProperties": false,
+            "properties": {
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "to_x": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "To X",
+                "type": "integer"
+              },
+              "to_y": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "To Y",
+                "type": "integer"
+              },
+              "type": {
+                "const": "drag",
+                "title": "Type",
+                "type": "string"
+              },
+              "x": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "X",
+                "type": "integer"
+              },
+              "y": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Y",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type",
+              "to_x",
+              "to_y"
+            ],
+            "title": "GuiDragAction",
+            "type": "object"
+          },
+          "GuiFocusAction": {
+            "additionalProperties": false,
+            "properties": {
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "type": {
+                "const": "focus",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "GuiFocusAction",
+            "type": "object"
+          },
+          "GuiKeyAction": {
+            "additionalProperties": false,
+            "properties": {
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "keys": {
+                "anyOf": [
+                  {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 16,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                ],
+                "description": "Bounded key chord or ordered key parts.",
+                "title": "Keys"
+              },
+              "type": {
+                "const": "key",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "keys"
+            ],
+            "title": "GuiKeyAction",
+            "type": "object"
+          },
+          "GuiPointerAction": {
+            "additionalProperties": false,
+            "properties": {
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "click",
+                  "double_click",
+                  "right_click",
+                  "move"
+                ],
+                "title": "Type",
+                "type": "string"
+              },
+              "x": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "X",
+                "type": "integer"
+              },
+              "y": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Y",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "GuiPointerAction",
+            "type": "object"
+          },
+          "GuiScrollAction": {
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "maximum": 100,
+                "minimum": -100,
+                "title": "Amount",
+                "type": "integer"
+              },
+              "delta_x": {
+                "maximum": 100,
+                "minimum": -100,
+                "title": "Delta X",
+                "type": "number"
+              },
+              "delta_y": {
+                "maximum": 100,
+                "minimum": -100,
+                "title": "Delta Y",
+                "type": "number"
+              },
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "type": {
+                "const": "scroll",
+                "title": "Type",
+                "type": "string"
+              },
+              "x": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "X",
+                "type": "integer"
+              },
+              "y": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Y",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "GuiScrollAction",
+            "type": "object"
+          },
+          "GuiSetValueAction": {
+            "additionalProperties": false,
+            "properties": {
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "text": {
+                "description": "Bounded text for a GUI type/set action.",
+                "maxLength": 4096,
+                "title": "Text",
+                "type": "string"
+              },
+              "type": {
+                "const": "set_value",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "element_id",
+              "text"
+            ],
+            "title": "GuiSetValueAction",
+            "type": "object"
+          },
+          "GuiTypeAction": {
+            "additionalProperties": false,
+            "properties": {
+              "element_id": {
+                "description": "Element id from gui_state.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "title": "Element Id",
+                "type": "string"
+              },
+              "text": {
+                "description": "Bounded text for a GUI type/set action.",
+                "maxLength": 4096,
+                "title": "Text",
+                "type": "string"
+              },
+              "type": {
+                "const": "type",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "title": "GuiTypeAction",
+            "type": "object"
+          },
+          "GuiWaitAction": {
+            "additionalProperties": false,
+            "properties": {
+              "seconds": {
+                "maximum": 30,
+                "minimum": 0,
+                "title": "Seconds",
+                "type": "number"
+              },
+              "type": {
+                "const": "wait",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "GuiWaitAction",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "actions": {
+            "description": "Actions against one fresh gui_state observation.",
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "click": "#/$defs/GuiPointerAction",
+                  "double_click": "#/$defs/GuiPointerAction",
+                  "drag": "#/$defs/GuiDragAction",
+                  "focus": "#/$defs/GuiFocusAction",
+                  "key": "#/$defs/GuiKeyAction",
+                  "move": "#/$defs/GuiPointerAction",
+                  "right_click": "#/$defs/GuiPointerAction",
+                  "scroll": "#/$defs/GuiScrollAction",
+                  "set_value": "#/$defs/GuiSetValueAction",
+                  "type": "#/$defs/GuiTypeAction",
+                  "wait": "#/$defs/GuiWaitAction"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/GuiPointerAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiScrollAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiDragAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiTypeAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiKeyAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiSetValueAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiFocusAction"
+                },
+                {
+                  "$ref": "#/$defs/GuiWaitAction"
+                }
+              ]
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Actions",
+            "type": "array"
+          },
+          "session_id": {
+            "description": "Opaque execution session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state_id": {
+            "description": "Single-use short-lived state_id returned by gui_state.",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "State Id",
+            "type": "string"
+          },
+          "window_id": {
+            "description": "Opaque native window id returned by gui_list.",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Window Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "window_id",
+          "state_id",
+          "actions"
+        ],
+        "title": "gui_actionArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "gui:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "gui_action",
+      "outputSchema": {
+        "properties": {
+          "actions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state_consumed": {
+            "title": "State Consumed",
+            "type": "boolean"
+          },
+          "state_id": {
+            "title": "State Id",
+            "type": "string"
+          },
+          "window_id": {
+            "title": "Window Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "backend",
+          "state_id",
+          "window_id",
+          "state_consumed"
+        ],
+        "title": "GuiActionOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "List visible desktop application windows on the executor bound to this Workgate session.",
+      "inputSchema": {
+        "properties": {
+          "session_id": {
+            "description": "Opaque execution session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "gui_listArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "gui:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "gui_list",
+      "outputSchema": {
+        "$defs": {
+          "GuiWindow": {
+            "properties": {
+              "app": {
+                "default": "",
+                "title": "App",
+                "type": "string"
+              },
+              "bounds": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "title": "Bounds",
+                "type": "object"
+              },
+              "id": {
+                "title": "Id",
+                "type": "string"
+              },
+              "pid": {
+                "default": 0,
+                "title": "Pid",
+                "type": "integer"
+              },
+              "title": {
+                "default": "",
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "title": "GuiWindow",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "windows": {
+            "items": {
+              "$ref": "#/$defs/GuiWindow"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_id",
+          "backend"
+        ],
+        "title": "GuiListOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Observe one native desktop window. Returns bounded accessibility state, an optional native screenshot, and a short-lived single-use state_id. Prefer element ids; coordinate actions are window-relative.",
+      "inputSchema": {
+        "properties": {
+          "include_elements": {
+            "default": true,
+            "description": "Include bounded accessibility elements in gui_state.",
+            "title": "Include Elements",
+            "type": "boolean"
+          },
+          "max_depth": {
+            "default": 12,
+            "description": "Maximum accessibility tree depth to traverse.",
+            "maximum": 20,
+            "minimum": 1,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "max_elements": {
+            "default": 300,
+            "description": "Maximum accessibility elements to return.",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Elements",
+            "type": "integer"
+          },
+          "screenshot": {
+            "default": true,
+            "description": "Include a native screenshot in the gui_state result.",
+            "title": "Screenshot",
+            "type": "boolean"
+          },
+          "session_id": {
+            "description": "Opaque execution session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "window_id": {
+            "description": "Opaque native window id returned by gui_list.",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Window Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "window_id"
+        ],
+        "title": "gui_stateArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "gui:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "gui_state",
+      "outputSchema": {
+        "$defs": {
+          "GuiScreenshotMetadata": {
+            "properties": {
+              "bytes": {
+                "minimum": 1,
+                "title": "Bytes",
+                "type": "integer"
+              },
+              "mime_type": {
+                "title": "Mime Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mime_type",
+              "bytes"
+            ],
+            "title": "GuiScreenshotMetadata",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "elements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Elements",
+            "type": "array"
+          },
+          "screenshot": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GuiScreenshotMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state_id": {
+            "title": "State Id",
+            "type": "string"
+          },
+          "state_ttl_s": {
+            "exclusiveMinimum": 0,
+            "title": "State Ttl S",
+            "type": "number"
+          },
+          "window": {
+            "additionalProperties": true,
+            "title": "Window",
+            "type": "object"
+          }
+        },
+        "required": [
+          "session_id",
+          "backend",
+          "state_id",
+          "state_ttl_s",
+          "window"
+        ],
+        "title": "GuiStateOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
         "openWorldHint": false,
         "readOnlyHint": false
       },
@@ -6084,6 +6897,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -6150,6 +6964,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -6211,6 +7026,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -7114,6 +7930,7 @@
               "file:share",
               "executor:use",
               "browser:use",
+              "gui:use",
               "audit:read",
               "audit:full"
             ],
@@ -8437,6 +9254,11 @@
                 "title": "Conpty",
                 "type": "boolean"
               },
+              "gui": {
+                "description": "Whether native desktop GUI automation is available on this executor.",
+                "title": "Gui",
+                "type": "boolean"
+              },
               "raw_pty": {
                 "description": "Whether a raw persistent-terminal backend is available.",
                 "title": "Raw Pty",
@@ -8446,7 +9268,8 @@
             "required": [
               "raw_pty",
               "conpty",
-              "browser"
+              "browser",
+              "gui"
             ],
             "title": "SessionCapabilitiesEnvironment",
             "type": "object"
@@ -9620,6 +10443,11 @@
                 "title": "Conpty",
                 "type": "boolean"
               },
+              "gui": {
+                "description": "Whether native desktop GUI automation is available on this executor.",
+                "title": "Gui",
+                "type": "boolean"
+              },
               "raw_pty": {
                 "description": "Whether a raw persistent-terminal backend is available.",
                 "title": "Raw Pty",
@@ -9629,7 +10457,8 @@
             "required": [
               "raw_pty",
               "conpty",
-              "browser"
+              "browser",
+              "gui"
             ],
             "title": "SessionCapabilitiesEnvironment",
             "type": "object"

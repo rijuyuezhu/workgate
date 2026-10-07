@@ -30,6 +30,29 @@ Platform-specific wheels include the native OpenTUI client on supported
 platforms. A universal wheel may omit the native TUI; the browser interface is
 still available.
 
+## Native desktop automation
+
+Native `gui_list`, `gui_state`, and `gui_action` require the dedicated `gui:use`
+OAuth scope and run only on the executor that owns the selected Workgate session.
+For source or Python-package executors, install the optional GUI bindings:
+
+```bash
+uv sync --extra gui                  # source checkout
+pipx install 'workgate[gui]'         # isolated CLI install
+pip install 'workgate[gui]'          # Python environment
+```
+
+Release standalone executables already bundle the corresponding Python GUI bindings.
+macOS requires Accessibility permission for native control. Window screenshots
+also require Screen Recording permission; without it, use `gui_state` with
+`screenshot=false`. Linux requires a graphical desktop session plus the system
+PyGObject/AT-SPI bindings (for example, the distro's Python GI and AT-SPI
+typelib packages); Wayland uses the desktop portal and X11 uses the session's
+X server. Executors without supported bindings or a usable Linux graphical session
+omit `gui.v1`. Runtime permission or desktop-session failures are reported
+explicitly; GUI tools never fall back to the control machine. Windows native GUI
+automation is not supported.
+
 ## Release archive
 
 For a self-contained install, download the archive matching your operating

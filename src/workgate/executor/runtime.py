@@ -22,6 +22,7 @@ from .browser import BrowserService
 from .dispatch import ExecutorDispatcher
 from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
+from .gui import GuiService, build_gui_service
 from .path import resolve_default_workdir, resolve_path
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
@@ -72,6 +73,8 @@ class ExecutorRuntime:
     """Persistent executor profile store, when configured."""
     browser: BrowserService
     """Executor-owned ephemeral structured browser resources."""
+    gui: GuiService
+    """Executor-owned short-lived native desktop GUI observations."""
     runtime_state_store: ExecutorRuntimeStateStore
     """Small persisted runtime ownership/update authority."""
     managed_service: bool = False
@@ -438,7 +441,10 @@ class ExecutorRuntime:
             finally:
                 try:
                     try:
-                        await self.browser.aclose()
+                        try:
+                            await self.gui.aclose()
+                        finally:
+                            await self.browser.aclose()
                     finally:
                         await self.terminal_runtime.aclose()
                 finally:
@@ -494,6 +500,7 @@ def build_executor_runtime(
     shell_service = ShellService(config, services.tool_session_store)
     agent_bridge = ExecutorAgentBridgeService(config)
     browser_service = BrowserService(config, services.tool_session_store)
+    gui_service = build_gui_service(config, services.tool_session_store)
     from .runtime_update import ExecutorRuntimeStateStore
 
     runtime_state_store = ExecutorRuntimeStateStore(services.state_store)
@@ -513,12 +520,14 @@ def build_executor_runtime(
             shell_service=shell_service,
             agent_bridge_service=agent_bridge,
             browser_service=browser_service,
+            gui_service=gui_service,
         ),
         sessions=ExecutorSessionService(
             config,
             services.tool_session_store,
             shell_service,
             browser_service,
+            gui_service,
         ),
         ui_files=UiFilesService(
             files_config_from_executor_config(config),
@@ -527,6 +536,7 @@ def build_executor_runtime(
         ui_terminals=UiTerminalsService(shell_service),
         profile_store=profile_store,
         browser=browser_service,
+        gui=gui_service,
         runtime_state_store=runtime_state_store,
         managed_service=managed_service,
         runtime_ownership=runtime_ownership,

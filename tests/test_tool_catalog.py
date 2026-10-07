@@ -17,6 +17,7 @@ EXPECTED_BUILTIN_REGISTRIES = (
     "downloads",
     "executor",
     "files",
+    "gui",
     "image",
     "jobs",
     "patch",

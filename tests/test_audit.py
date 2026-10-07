@@ -242,6 +242,66 @@ def test_audit_uniformly_redacts_secrets_but_retains_fingerprints(
     assert record["nested"]["password"] == "<redacted>"
 
 
+def test_gui_tool_payloads_are_fully_redacted_from_audit(
+    tmp_path, monkeypatch
+) -> None:
+    audit_path = _configure_audit(tmp_path, monkeypatch)
+    marker = "gui-private-screen-marker"
+
+    for index, tool in enumerate(("gui_list", "gui_state", "gui_action")):
+        call_id = f"gui-redaction-{index}"
+        session_ids, task_ids = audit_tool_call_start(
+            call_id=call_id,
+            transport="mcp",
+            tool=tool,
+            input={
+                "session_id": "sess_gui_redaction",
+                "window_id": "window-1",
+                "text": marker,
+                "actions": [{"type": "type", "text": marker}],
+            },
+        )
+        audit_tool_call_end(
+            call_id=call_id,
+            transport="mcp",
+            tool=tool,
+            ok=True,
+            duration_ms=1,
+            output={
+                "content": [
+                    {
+                        "type": "image",
+                        "data": marker,
+                        "mimeType": "image/png",
+                    }
+                ],
+                "structuredContent": {
+                    "window": {"title": marker},
+                    "elements": [{"name": marker, "value": marker}],
+                },
+            },
+            session_ids=session_ids,
+            task_ids=task_ids,
+        )
+
+    text = audit_path.read_text(encoding="utf-8")
+    assert marker not in text
+    records = [json.loads(line) for line in text.splitlines() if line]
+    for tool in ("gui_list", "gui_state", "gui_action"):
+        starts = [
+            row
+            for row in records
+            if row.get("event") == "tool_call_start" and row.get("tool") == tool
+        ]
+        ends = [
+            row
+            for row in records
+            if row.get("event") == "tool_call_end" and row.get("tool") == tool
+        ]
+        assert starts and all(row["input"] == "<redacted>" for row in starts)
+        assert ends and all(row["output"] == "<redacted>" for row in ends)
+
+
 def test_browser_action_values_are_redacted_before_audit_storage(
     tmp_path, monkeypatch
 ):

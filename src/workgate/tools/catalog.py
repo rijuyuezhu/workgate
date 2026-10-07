@@ -12,6 +12,7 @@ from .registry.browser import BrowserToolRegistry
 from .registry.downloads import DownloadToolRegistry
 from .registry.executor import ExecutorToolRegistry
 from .registry.files import FileToolRegistry
+from .registry.gui import GuiToolRegistry
 from .registry.image import ImageToolRegistry
 from .registry.jobs import JobToolRegistry
 from .registry.patch import PatchToolRegistry
@@ -36,6 +37,7 @@ BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
     ("downloads", DownloadToolRegistry),
     ("executor", ExecutorToolRegistry),
     ("files", FileToolRegistry),
+    ("gui", GuiToolRegistry),
     ("image", ImageToolRegistry),
     ("jobs", JobToolRegistry),
     ("patch", PatchToolRegistry),

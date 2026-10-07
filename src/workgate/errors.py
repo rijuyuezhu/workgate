@@ -24,6 +24,14 @@ class BrowserUnavailableError(RuntimeError):
     """Raised when the bound executor cannot provide structured browser automation."""
 
 
+class GuiUnavailableError(RuntimeError):
+    """Raised when the bound executor cannot provide native desktop automation."""
+
+
+class GuiStaleStateError(RuntimeError):
+    """Raised when GUI input references an expired or changed observation."""
+
+
 class PathNotFoundError(FileNotFoundError):
     """A missing filesystem path selected from a trusted operation endpoint."""
 
@@ -170,6 +178,8 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
         "OSError": OSError,
         "RuntimeError": RuntimeError,
         "BrowserUnavailableError": BrowserUnavailableError,
+        "GuiUnavailableError": GuiUnavailableError,
+        "GuiStaleStateError": GuiStaleStateError,
     }
     if exception_type := public_types.get(error_type):
         return exception_type(message)

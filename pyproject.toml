@@ -39,6 +39,12 @@ dependencies = [
 s3 = [
     "boto3>=1.40,<2",
 ]
+gui = [
+    "dbus-next>=0.2.3,<1; platform_system == 'Linux'",
+    "python-xlib>=0.33,<1; platform_system == 'Linux'",
+    "pyobjc-framework-ApplicationServices>=11.1,<13; platform_system == 'Darwin'",
+    "pyobjc-framework-Quartz>=11.1,<13; platform_system == 'Darwin'",
+]
 
 [dependency-groups]
 dev = [
@@ -128,6 +134,9 @@ line-length = 80
 target-version = "py314"
 extend-exclude = ["src/workgate/hosted/_tool_manifest.py"]
 
+[tool.ruff.per-file-target-version]
+"src/workgate/executor/gui/linux_atspi_helper.py" = "py310"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
@@ -161,6 +170,12 @@ source = [
 ]
 
 [tool.coverage.report]
+omit = [
+    "*/workgate/executor/gui/linux.py",
+    "*/workgate/executor/gui/linux_atspi_helper.py",
+    "*/workgate/executor/gui/linux_portal.py",
+    "*/workgate/executor/gui/macos.py",
+]
 precision = 2
 show_missing = true
 skip_covered = true

@@ -156,6 +156,15 @@ def main() -> int:
         EXPECTED_PLATFORM_WHEELS,
         _platform_wheel_matrix(ci_text),
     )
+    binary_gui_runtime_status = _require_fragments(
+        "standalone GUI runtime packaging",
+        _section(
+            release_text,
+            r"^  build-binary:\n",
+            r"^  [A-Za-z0-9_-]+:\n",
+        ),
+        ("uv run --extra gui --with pyinstaller",),
+    )
     opentui_release_status = _require_fragments(
         "OpenTUI sidecar packaging",
         _section(
@@ -243,6 +252,7 @@ def main() -> int:
         (
             release_python_status,
             binary_status,
+            binary_gui_runtime_status,
             release_wheel_status,
             ci_wheel_status,
             opentui_release_status,

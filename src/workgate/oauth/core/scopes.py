@@ -7,6 +7,7 @@ SCOPE_GIT_WRITE = "git:write"
 SCOPE_FILE_SHARE = "file:share"
 SCOPE_EXECUTOR_USE = "executor:use"
 SCOPE_BROWSER_USE = "browser:use"
+SCOPE_GUI_USE = "gui:use"
 SCOPE_AUDIT_READ = "audit:read"
 SCOPE_AUDIT_FULL = "audit:full"
 
@@ -18,6 +19,7 @@ SUPPORTED_OAUTH_SCOPES = (
     SCOPE_FILE_SHARE,
     SCOPE_EXECUTOR_USE,
     SCOPE_BROWSER_USE,
+    SCOPE_GUI_USE,
     SCOPE_AUDIT_READ,
     SCOPE_AUDIT_FULL,
 )

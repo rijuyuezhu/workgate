@@ -10,6 +10,7 @@ from .dashboard import dashboard_snapshot
 from .dispatch import ExecutorDispatcher, build_executor_dispatcher
 from .files import files_config_from_executor_config
 from .files_service import FilesService
+from .gui import GuiService, build_gui_service
 from .search.composition import build_search_service
 from .search.core import SearchPaths
 from .secret_scan import SecretScanService
@@ -27,6 +28,7 @@ def build_executor_tool_dispatcher(
     shell_service: ShellService | None = None,
     agent_bridge_service: ExecutorAgentBridgeService | None = None,
     browser_service: BrowserService | None = None,
+    gui_service: GuiService | None = None,
 ) -> ExecutorDispatcher:
     """Bind executor-local Search and Files into the final dispatcher."""
     search_service = build_search_service(config, store)
@@ -47,6 +49,8 @@ def build_executor_tool_dispatcher(
         agent_bridge_service = ExecutorAgentBridgeService(executor_config)
     if browser_service is None:
         browser_service = BrowserService(executor_config, store)
+    if gui_service is None:
+        gui_service = build_gui_service(executor_config, store)
 
     async def search_handler(args: dict[str, Any]) -> Any:
         max_results = args.get("max_results")
@@ -294,6 +298,33 @@ def build_executor_tool_dispatcher(
                 timeout_ms=int(args.get("timeout_ms", 30_000)),
             )
 
+    async def gui_list_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await gui_service.list_windows(session_id)
+
+    async def gui_state_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await gui_service.snapshot(
+                session_id,
+                str(args["window_id"]),
+                screenshot=bool(args.get("screenshot", True)),
+                include_elements=bool(args.get("include_elements", True)),
+                max_elements=int(args.get("max_elements", 300)),
+                max_depth=int(args.get("max_depth", 12)),
+            )
+
+    async def gui_action_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await gui_service.act(
+                session_id,
+                str(args["window_id"]),
+                str(args["state_id"]),
+                list(args["actions"]),
+            )
+
     return build_executor_dispatcher(
         handler_overrides={
             "search": search_handler,
@@ -329,6 +360,9 @@ def build_executor_tool_dispatcher(
             "browser_session": browser_session_handler,
             "browser_snapshot": browser_snapshot_handler,
             "browser_act": browser_act_handler,
+            "gui_list": gui_list_handler,
+            "gui_state": gui_state_handler,
+            "gui_action": gui_action_handler,
             **build_transfer_handlers(executor_config, store),
         }
     )

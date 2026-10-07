@@ -8,6 +8,8 @@ Tool availability still depends on client capability, server settings, and execu
 
 Structured browser automation is provided by `browser_session`, `browser_snapshot`, and `browser_act`. These tools require the dedicated `browser:use` OAuth scope and an executor that advertises `browser.v1` with Playwright Chromium installed. Browser state is ephemeral and owned by the Workgate session; persistent profiles/storage state and arbitrary Playwright scripts are not exposed.
 
+Native desktop automation is provided by `gui_list`, `gui_state`, and `gui_action`. These tools require the dedicated `gui:use` OAuth scope and an executor that advertises `gui.v1`. Observations are short-lived and session-owned; actions consume a fresh observation and do not retarget another session or executor.
+
 <div class="generated-reference" data-reference-json="../generated/tools.json">
 Loading generated tools reference...
 </div>
