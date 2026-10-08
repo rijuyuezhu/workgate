@@ -541,47 +541,6 @@ async def test_build_agent_registry_works_inside_running_loop(tmp_path):
     assert registry.mcp_servers["docs"].tools[0].name == "search"
 
 
-def test_build_agent_registry_dynamic_flag_overrides(tmp_path):
-    (tmp_path / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "dynamicTools": {"mcp": False, "skills": False},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    manifest_registry = build_agent_registry(
-        tmp_path, FakeMcpManager(), probe_timeout_s=1
-    )
-    override_registry = build_agent_registry(
-        tmp_path,
-        FakeMcpManager(),
-        probe_timeout_s=1,
-        dynamic_mcp_tools=True,
-        dynamic_skill_tools=True,
-    )
-
-    assert manifest_registry.dynamic_mcp_tools is False
-    assert manifest_registry.dynamic_skill_tools is False
-    assert override_registry.dynamic_mcp_tools is True
-    assert override_registry.dynamic_skill_tools is True
-
-    default_dir = tmp_path / "defaults"
-    default_dir.mkdir()
-    (default_dir / "config.json").write_text(
-        json.dumps({"version": 1}), encoding="utf-8"
-    )
-
-    default_registry = build_agent_registry(
-        default_dir, FakeMcpManager(), probe_timeout_s=1
-    )
-
-    assert default_registry.dynamic_mcp_tools is True
-    assert default_registry.dynamic_skill_tools is True
-
-
 def test_build_agent_registry_records_timeout_without_hanging(tmp_path):
     class StubbornMcpManager:
         async def list_tools(self, name, server):

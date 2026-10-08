@@ -17,7 +17,6 @@ from workgate.agent_bridge.service import (
     list_agent_mcp_tools_payload,
 )
 from workgate.agent_bridge.status import registry_config_status
-from workgate.agent_bridge.tools import AgentBridgeToolReloader
 from workgate.app_paths import app_paths
 from workgate.audit import get_audit_entry, query_audit
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -132,7 +131,9 @@ async def test_fixed_bridge_tools_exist_with_missing_config(
     assert "activate_agent_skill" in tools
     assert "read_agent_skill_file" in tools
     assert "list_agent_mcp_servers" in tools
-    assert "list_agent_mcp_tools" in tools
+    assert "search_agent_mcp_tools" in tools
+    assert "inspect_agent_mcp_tool" in tools
+    assert "list_agent_mcp_tools" not in tools
     assert "call_agent_mcp_tool" in tools
 
 
@@ -433,13 +434,28 @@ if __name__ == "__main__":
 
         tools = _payload(
             await mcp.call_tool(
-                "list_agent_mcp_tools", {"session_id": session_id}
+                "search_agent_mcp_tools",
+                {"session_id": session_id, "refresh": True},
             )
         )["tools"]
         assert sorted((row["server"], row["tool"]) for row in tools) == [
             ("stdio", "echo_secret"),
             ("stdio", "secret_fingerprint"),
         ]
+        assert all("input_schema" not in row for row in tools)
+        inspected = _payload(
+            await mcp.call_tool(
+                "inspect_agent_mcp_tool",
+                {
+                    "server": "stdio",
+                    "tool": "secret_fingerprint",
+                    "session_id": session_id,
+                },
+            )
+        )
+        assert inspected["server"] == "stdio"
+        assert inspected["tool"] == "secret_fingerprint"
+        assert isinstance(inspected["input_schema"], dict)
 
         fingerprint = _payload(
             await mcp.call_tool(
@@ -685,19 +701,21 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
     assert servers["bad"]["available"] is False
     assert servers["off"]["available"] is False
 
-    tools = _payload(await mcp.call_tool("list_agent_mcp_tools", {}))["tools"]
+    tools = _payload(
+        await mcp.call_tool("search_agent_mcp_tools", {"refresh": True})
+    )["tools"]
     assert tools == [
-        {
-            "server": "docs",
-            "tool": "search",
-            "description": "Search docs",
-            "input_schema": {
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-            },
-            "dynamic_tool_name": "agent_mcp__docs__search",
-        }
+        {"server": "docs", "tool": "search", "description": "Search docs"}
     ]
+    inspected = _payload(
+        await mcp.call_tool(
+            "inspect_agent_mcp_tool", {"server": "docs", "tool": "search"}
+        )
+    )
+    assert inspected["input_schema"] == {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+    }
 
     result = _payload(
         await mcp.call_tool(
@@ -1058,7 +1076,18 @@ async def test_agent_mcp_public_metadata_redacts_configured_values(
     clear_settings_cache()
 
     mcp = build_mcp()
-    rows = _payload(await mcp.call_tool("list_agent_mcp_tools", {}))["tools"]
+    found = _payload(
+        await mcp.call_tool("search_agent_mcp_tools", {"refresh": True})
+    )
+    rows = [
+        _payload(
+            await mcp.call_tool(
+                "inspect_agent_mcp_tool",
+                {"server": item["server"], "tool": item["tool"]},
+            )
+        )
+        for item in found["tools"]
+    ]
     rows_payload = json.dumps(rows)
 
     for secret in (
@@ -1074,482 +1103,23 @@ async def test_agent_mcp_public_metadata_redacts_configured_values(
     assert row["input_schema"]["properties"]["query_<redacted>"][
         "<redacted>"
     ] == ("default <redacted>")
-    dynamic_tool_name = row["dynamic_tool_name"]
-    assert "redacted" in dynamic_tool_name
+    searched = _payload(
+        await mcp.call_tool("search_agent_mcp_tools", {"refresh": True})
+    )
+    assert all("input_schema" not in item for item in searched["tools"])
+    assert len(searched["tools"]) == 1
+    examined = _payload(
+        await mcp.call_tool(
+            "inspect_agent_mcp_tool", {"server": "docs", "tool": row["tool"]}
+        )
+    )
+    assert examined["input_schema"] == row["input_schema"]
     for secret in (
         CONFIGURED_ENV_VALUE,
         CONFIGURED_HEADER_VALUE,
         high_confidence_token,
     ):
-        assert secret not in dynamic_tool_name
-
-    dynamic_tool = {tool.name: tool for tool in await mcp.list_tools()}[
-        dynamic_tool_name
-    ]
-    dynamic_description = dynamic_tool.description or ""
-    for secret in (
-        CONFIGURED_ENV_VALUE,
-        CONFIGURED_HEADER_VALUE,
-        high_confidence_token,
-    ):
-        assert secret not in dynamic_description
-    assert "<redacted>" in dynamic_description
-
-    await mcp.call_tool(dynamic_tool_name, {"args": {"query": "abc"}})
-    assert fake_manager.call_calls == [
-        ("docs", upstream_tool_name, {"query": "abc"})
-    ]
-
-
-def test_agent_mcp_probe_rotation_redacts_public_capability_metadata(
-    tmp_path,
-) -> None:
-    old_token = "oauth-access-before-probe"
-    new_token = "oauth-access-after-probe"
-    raw_tool_name = f"echo-{old_token}"
-    config_dir = tmp_path / "agent"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "mcpServers": {
-                    "oauth": {
-                        "integrationId": "oauth",
-                        "type": "http",
-                        "url": "https://example.test/mcp",
-                        "auth": {"mode": "oauth"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    class RotatingProbeManager:
-        def __init__(self) -> None:
-            self.token = old_token
-
-        def redaction_maps(self, _name, _server):
-            return ({"oauth_access_token": self.token}, {})
-
-        async def list_tools(self, _name, _server):
-            assert self.token == old_token
-            self.token = new_token
-            return [
-                AgentMcpTool(
-                    name=raw_tool_name,
-                    description=f"saw {old_token}",
-                    input_schema={"note": old_token},
-                )
-            ]
-
-    manager = RotatingProbeManager()
-    registry = build_agent_registry(
-        config_dir,
-        manager,
-        dynamic_mcp_tools=True,
-        dynamic_skill_tools=False,
-        scan_skills=False,
-    )
-    record = registry.mcp_servers["oauth"]
-    rows = list_agent_mcp_tools_payload(registry).tools
-    public_payload = json.dumps(rows)
-    status_payload = json.dumps(registry_config_status(registry))
-
-    assert manager.token == new_token
-    assert record.raw_tool_names == (raw_tool_name,)
-    assert record.probe_redaction_values == (old_token, new_token)
-    assert old_token not in repr(record)
-    assert new_token not in repr(record)
-    assert record.tools[0].name == "echo-<redacted>"
-    assert record.tools[0].description == "saw <redacted>"
-    assert record.tools[0].input_schema == {"note": "<redacted>"}
-    assert rows[0]["tool"] == "echo-<redacted>"
-    assert rows[0]["description"] == "saw <redacted>"
-    assert rows[0]["input_schema"] == {"note": "<redacted>"}
-    assert old_token not in public_payload
-    assert new_token not in public_payload
-    assert old_token not in status_payload
-    assert new_token not in status_payload
-
-    dynamic_name, dynamic_record = next(
-        iter(registry.dynamic_mcp_tool_map.items())
-    )
-    assert dynamic_record.tool_name == raw_tool_name
-    assert old_token not in dynamic_name
-    assert new_token not in dynamic_name
-
-    class CapturingMcp:
-        def __init__(self) -> None:
-            self.descriptions: dict[str, str] = {}
-
-        def add_tool(self, _handler, *, name, description, **_kwargs) -> None:
-            self.descriptions[name] = description
-
-        def remove_tool(self, name) -> None:
-            self.descriptions.pop(name, None)
-
-    public_mcp = CapturingMcp()
-    reloader = AgentBridgeToolReloader(
-        public_mcp,
-        registry,
-        {},
-        5,
-        True,
-        False,
-    )
-    reloader.register_dynamic_tools()
-    dynamic_description = public_mcp.descriptions[dynamic_name]
-    assert old_token not in dynamic_description
-    assert new_token not in dynamic_description
-    assert "<redacted>" in dynamic_description
-
-
-def test_agent_mcp_probe_rotation_redacts_probe_error(tmp_path) -> None:
-    old_token = "oauth-access-before-probe"
-    new_token = "oauth-access-after-probe"
-    config_dir = tmp_path / "agent"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "mcpServers": {
-                    "oauth": {
-                        "integrationId": "oauth",
-                        "type": "http",
-                        "url": "https://example.test/mcp",
-                        "auth": {"mode": "oauth"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    class FailingRotatingProbeManager:
-        def __init__(self) -> None:
-            self.token = old_token
-
-        def redaction_maps(self, _name, _server):
-            return ({"oauth_access_token": self.token}, {})
-
-        async def list_tools(self, _name, _server):
-            assert self.token == old_token
-            self.token = new_token
-            raise RuntimeError(f"upstream echoed {old_token}")
-
-    manager = FailingRotatingProbeManager()
-    registry = build_agent_registry(
-        config_dir,
-        manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
-        scan_skills=False,
-    )
-    record = registry.mcp_servers["oauth"]
-    status_payload = json.dumps(registry_config_status(registry))
-
-    assert manager.token == new_token
-    assert record.error == "RuntimeError: upstream echoed <redacted>"
-    assert record.error is not None
-    assert old_token not in record.error
-    assert new_token not in record.error
-    assert old_token not in status_payload
-    assert new_token not in status_payload
-    assert "<redacted>" in status_payload
-
-
-def test_agent_mcp_probe_redacts_intermediate_oauth_credentials(
-    tmp_path, monkeypatch
-) -> None:
-    old_token = "m9X4q7V2z8N5p3K1"
-    mid_token = "q6L1v9R3c8H2w4J7"
-    new_token = "n2C8r6T4y1B7d5F3"
-    config_dir = tmp_path / "agent"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "mcpServers": {
-                    "oauth": {
-                        "integrationId": "oauth",
-                        "type": "http",
-                        "url": "https://example.test/mcp",
-                        "auth": {"mode": "oauth"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    store = AgentAuthStore(tmp_path / "auth")
-    store.set_tokens(
-        "oauth",
-        OAuthToken.model_validate(
-            {"access_token": old_token, "token_type": "Bearer"}
-        ),
-    )
-    manager = AgentMcpClientManager(1, store)
-
-    async def rotating_list_tools(name, _server):
-        store.set_tokens(
-            name,
-            OAuthToken.model_validate(
-                {"access_token": mid_token, "token_type": "Bearer"}
-            ),
-        )
-        store.set_tokens(
-            name,
-            OAuthToken.model_validate(
-                {"access_token": new_token, "token_type": "Bearer"}
-            ),
-        )
-        return [
-            AgentMcpTool(
-                name="echo",
-                description=f"server saw {mid_token}",
-                input_schema={"seen": mid_token},
-            )
-        ]
-
-    monkeypatch.setattr(manager, "list_tools", rotating_list_tools)
-    registry = build_agent_registry(
-        config_dir,
-        manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
-        scan_skills=False,
-    )
-
-    record = registry.mcp_servers["oauth"]
-    public_payload = json.dumps(list_agent_mcp_tools_payload(registry).tools)
-    assert record.tools[0].description == "server saw <redacted>"
-    assert record.tools[0].input_schema == {"seen": "<redacted>"}
-    assert set(record.probe_redaction_values) >= {
-        old_token,
-        mid_token,
-        new_token,
-    }
-    for secret in (old_token, mid_token, new_token):
-        assert secret not in public_payload
-
-
-def test_agent_mcp_probe_redacts_cross_instance_credential_history(
-    tmp_path, monkeypatch
-) -> None:
-    old_token = "oldOpaqueA1"
-    mid_token = "midOpaqueB2"
-    new_token = "newOpaqueC3"
-    config_dir = tmp_path / "agent"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "mcpServers": {
-                    "oauth": {
-                        "integrationId": "oauth",
-                        "type": "http",
-                        "url": "https://example.test/mcp",
-                        "auth": {"mode": "oauth"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    auth_root = tmp_path / "auth"
-    service_store = AgentAuthStore(auth_root)
-    cli_store = AgentAuthStore(auth_root)
-    service_store.set_tokens(
-        "oauth",
-        OAuthToken.model_validate(
-            {"access_token": old_token, "token_type": "Bearer"}
-        ),
-    )
-    manager = AgentMcpClientManager(1, service_store)
-
-    async def externally_rotating_list_tools(name, _server):
-        cli_store.set_tokens(
-            name,
-            OAuthToken.model_validate(
-                {"access_token": mid_token, "token_type": "Bearer"}
-            ),
-        )
-        observed_tokens = service_store.get_tokens(name)
-        assert observed_tokens is not None
-        assert observed_tokens.access_token == mid_token
-        cli_store.set_tokens(
-            name,
-            OAuthToken.model_validate(
-                {"access_token": new_token, "token_type": "Bearer"}
-            ),
-        )
-        return [
-            AgentMcpTool(
-                name="echo",
-                description=f"server saw {mid_token}",
-                input_schema={"seen": mid_token},
-            )
-        ]
-
-    monkeypatch.setattr(manager, "list_tools", externally_rotating_list_tools)
-    registry = build_agent_registry(
-        config_dir,
-        manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
-        scan_skills=False,
-    )
-
-    record = registry.mcp_servers["oauth"]
-    public_payload = json.dumps(list_agent_mcp_tools_payload(registry).tools)
-    assert record.available is True
-    assert record.error is None
-    assert record.tools[0].description == "server saw <redacted>"
-    assert record.tools[0].input_schema == {"seen": "<redacted>"}
-    assert set(record.probe_redaction_values) >= {
-        old_token,
-        mid_token,
-        new_token,
-    }
-    for secret in (old_token, mid_token, new_token):
-        assert secret not in public_payload
-
-
-@pytest.mark.parametrize("probe_fails", [False, True])
-def test_agent_mcp_probe_redacts_logged_out_retired_oauth_credentials(
-    tmp_path, monkeypatch, probe_fails
-) -> None:
-    old_token = "oldLoggedOutA1"
-    new_token = "newConcurrentB2"
-    config_dir = tmp_path / "agent"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "mcpServers": {
-                    "oauth": {
-                        "integrationId": "oauth",
-                        "type": "http",
-                        "url": "https://example.test/mcp",
-                        "auth": {"mode": "oauth"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    auth_root = tmp_path / "auth"
-    service_store = AgentAuthStore(auth_root)
-    cli_store = AgentAuthStore(auth_root)
-    service_store.set_tokens(
-        "oauth",
-        OAuthToken.model_validate(
-            {"access_token": old_token, "token_type": "Bearer"}
-        ),
-    )
-    assert service_store.clear_oauth("oauth") is True
-    assert service_store.get_tokens("oauth") is None
-    assert service_store.redaction_cursor("oauth") == 2
-
-    manager = AgentMcpClientManager(1, service_store)
-
-    async def authorize_while_probe_runs(name, _server):
-        cli_store.set_tokens(
-            name,
-            OAuthToken.model_validate(
-                {"access_token": new_token, "token_type": "Bearer"}
-            ),
-        )
-        if probe_fails:
-            raise RuntimeError(f"upstream remembered {old_token}")
-        return [
-            AgentMcpTool(
-                name="echo",
-                description=f"remembered {old_token}",
-                input_schema={"old": old_token},
-            )
-        ]
-
-    monkeypatch.setattr(manager, "list_tools", authorize_while_probe_runs)
-    registry = build_agent_registry(
-        config_dir,
-        manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
-        scan_skills=False,
-    )
-
-    record = registry.mcp_servers["oauth"]
-    public_status = json.dumps(registry_config_status(registry), sort_keys=True)
-    if probe_fails:
-        assert record.available is False
-        assert record.error == "RuntimeError: upstream remembered <redacted>"
-        assert "<redacted>" in public_status
-    else:
-        assert record.available is True
-        assert record.error is None
-        assert record.tools[0].description == "remembered <redacted>"
-        assert record.tools[0].input_schema == {"old": "<redacted>"}
-        assert {old_token, new_token} <= set(record.probe_redaction_values)
-        public_tools = json.dumps(
-            list_agent_mcp_tools_payload(registry).tools, sort_keys=True
-        )
-        assert "<redacted>" in public_tools
-        assert old_token not in public_tools
-        assert new_token not in public_tools
-    assert old_token not in public_status
-    assert new_token not in public_status
-
-
-def test_agent_mcp_probe_fails_closed_when_redaction_cursor_is_unavailable(
-    tmp_path,
-) -> None:
-    secret = "cursorOpaqueQ7"
-    config_dir = tmp_path / "agent"
-    config_dir.mkdir()
-    (config_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "mcpServers": {
-                    "oauth": {
-                        "integrationId": "oauth",
-                        "type": "http",
-                        "url": "https://example.test/mcp",
-                        "auth": {"mode": "oauth"},
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    class CursorFailureManager:
-        def redaction_cursor(self, _name, _server):
-            raise RuntimeError(f"credential store failed {secret}")
-
-        async def list_tools(self, _name, _server):
-            raise AssertionError(
-                "probe must not run without a redaction cursor"
-            )
-
-    registry = build_agent_registry(
-        config_dir,
-        CursorFailureManager(),
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
-        scan_skills=False,
-    )
-    record = registry.mcp_servers["oauth"]
-    assert record.available is False
-    assert record.error == "credential redaction history unavailable"
-    assert secret not in json.dumps(registry_config_status(registry))
+        assert secret not in json.dumps(examined)
 
 
 @pytest.mark.asyncio
@@ -1604,8 +1174,6 @@ async def test_agent_mcp_call_fails_closed_when_redaction_cursor_is_unavailable(
     registry = build_agent_registry(
         config_dir,
         manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
         scan_skills=False,
     )
     assert registry.mcp_servers["oauth"].available is True
@@ -1668,8 +1236,6 @@ def test_agent_mcp_probe_fails_closed_when_redaction_history_is_lost(
     registry = build_agent_registry(
         config_dir,
         LostHistoryManager(),
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
         scan_skills=False,
     )
     record = registry.mcp_servers["oauth"]
@@ -1833,8 +1399,6 @@ async def test_agent_mcp_call_retains_retired_credentials_across_later_calls(
     registry = build_agent_registry(
         config_dir,
         manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
         scan_skills=False,
     )
     first = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
@@ -1912,8 +1476,6 @@ async def test_agent_mcp_restart_redacts_retired_credentials_from_metadata_and_c
     first_registry = build_agent_registry(
         config_dir,
         first_manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
         scan_skills=False,
     )
     await call_agent_mcp_tool_payload(first_registry, "oauth", "echo", {})
@@ -1942,8 +1504,6 @@ async def test_agent_mcp_restart_redacts_retired_credentials_from_metadata_and_c
     restarted_registry = build_agent_registry(
         config_dir,
         restarted_manager,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
         scan_skills=False,
     )
     metadata_payload = json.dumps(
@@ -2064,7 +1624,7 @@ async def test_control_oauth_cross_instance_rotation_is_redacted_and_audit_is_sa
 
 
 @pytest.mark.asyncio
-async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
+async def test_fixed_mcp_external_rotation_reload_retains_redaction_history(
     tmp_path, monkeypatch
 ):
     old_token = "oldReloadA1"
@@ -2121,13 +1681,12 @@ async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
     )
 
     mcp = build_mcp()
-    dynamic_names = {
-        tool.name
-        for tool in await mcp.list_tools()
-        if tool.name.startswith("agent_mcp__oauth__")
-    }
-    assert len(dynamic_names) == 1
-    dynamic_name = dynamic_names.pop()
+    found = _payload(
+        await mcp.call_tool(
+            "search_agent_mcp_tools", {"server": "oauth", "refresh": True}
+        )
+    )
+    assert any(row["tool"] == "echo" for row in found["tools"])
 
     external_store = AgentAuthStore(auth_root)
     for token in (mid_token, new_token):
@@ -2138,15 +1697,19 @@ async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
             ),
         )
 
-    response = await mcp.call_tool(dynamic_name, {"args": {}})
+    response = await mcp.call_tool(
+        "call_agent_mcp_tool", {"server": "oauth", "tool": "echo", "args": {}}
+    )
     public_payload = mcp_text(response)
     assert upstream_calls == 1
     assert "<redacted>" in public_payload
     for secret in (old_token, mid_token, new_token):
         assert secret not in public_payload
 
-    assert dynamic_name in {tool.name for tool in await mcp.list_tools()}
-    audit_entries = query_audit(search=dynamic_name)["entries"]
+    assert "search_agent_mcp_tools" in {
+        tool.name for tool in await mcp.list_tools()
+    }
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
     for entry in audit_entries:
         retained = json.dumps(
             get_audit_entry(entry["id"], include_full_payloads=True),
@@ -2157,7 +1720,7 @@ async def test_dynamic_mcp_external_rotation_reload_retains_redaction_history(
 
 
 @pytest.mark.asyncio
-async def test_dynamic_mcp_literal_header_reload_redacts_retired_probe_value(
+async def test_fixed_mcp_literal_header_reload_redacts_retired_probe_value(
     tmp_path, monkeypatch
 ):
     old_header = "oldLiteralHeaderA1"
@@ -2212,9 +1775,12 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_probe_value(
     )
 
     mcp = build_mcp()
+    await mcp.call_tool("search_agent_mcp_tools", {"refresh": True})
     write_config(new_header)
     public_payload = json.dumps(
-        [tool.model_dump(mode="json") for tool in await mcp.list_tools()],
+        _payload(
+            await mcp.call_tool("search_agent_mcp_tools", {"refresh": True})
+        ),
         sort_keys=True,
     )
 
@@ -2226,7 +1792,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_probe_value(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("upstream_fails", [False, True])
-async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
+async def test_fixed_mcp_literal_header_reload_redacts_retired_call_and_audit(
     tmp_path, monkeypatch, upstream_fails
 ):
     old_header = "oldLiteralCallA1"
@@ -2281,22 +1847,29 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
     )
 
     mcp = build_mcp()
-    dynamic_names = {
-        tool.name
-        for tool in await mcp.list_tools()
-        if tool.name.startswith("agent_mcp__docs__")
-    }
-    assert len(dynamic_names) == 1
-    dynamic_name = dynamic_names.pop()
+    found = _payload(
+        await mcp.call_tool(
+            "search_agent_mcp_tools", {"server": "docs", "refresh": True}
+        )
+    )
+    assert any(row["tool"] == "echo" for row in found["tools"])
 
     write_config(new_header)
-    assert dynamic_name in {tool.name for tool in await mcp.list_tools()}
+    assert "search_agent_mcp_tools" in {
+        tool.name for tool in await mcp.list_tools()
+    }
     if upstream_fails:
         with pytest.raises(ToolError) as exc_info:
-            await mcp.call_tool(dynamic_name, {"args": {}})
+            await mcp.call_tool(
+                "call_agent_mcp_tool",
+                {"server": "docs", "tool": "echo", "args": {}},
+            )
         public_payload = str(exc_info.value)
     else:
-        response = await mcp.call_tool(dynamic_name, {"args": {}})
+        response = await mcp.call_tool(
+            "call_agent_mcp_tool",
+            {"server": "docs", "tool": "echo", "args": {}},
+        )
         public_payload = mcp_text(response)
 
     assert upstream_calls == 1
@@ -2304,7 +1877,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
     assert old_header not in public_payload
     assert new_header not in public_payload
 
-    audit_entries = query_audit(search=dynamic_name)["entries"]
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
     assert audit_entries
     for entry in audit_entries:
         retained = json.dumps(
@@ -2317,7 +1890,7 @@ async def test_dynamic_mcp_literal_header_reload_redacts_retired_call_and_audit(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("upstream_fails", [False, True])
-async def test_dynamic_mcp_server_rename_retains_literal_redaction_domain(
+async def test_fixed_mcp_server_rename_retains_literal_redaction_domain(
     tmp_path, monkeypatch, upstream_fails
 ):
     old_header = "oldBeforeRenameA1"
@@ -2369,29 +1942,44 @@ async def test_dynamic_mcp_server_rename_retains_literal_redaction_domain(
     )
 
     mcp = build_mcp()
-    assert "agent_mcp__docs__echo" in {
-        tool.name for tool in await mcp.list_tools()
-    }
+    assert any(
+        row["tool"] == "echo"
+        for row in _payload(
+            await mcp.call_tool(
+                "search_agent_mcp_tools", {"server": "docs", "refresh": True}
+            )
+        )["tools"]
+    )
 
     write_config("docs2", new_header)
-    renamed_dynamic_name = "agent_mcp__docs2__echo"
-    assert renamed_dynamic_name in {
-        tool.name for tool in await mcp.list_tools()
-    }
+    assert any(
+        row["tool"] == "echo"
+        for row in _payload(
+            await mcp.call_tool(
+                "search_agent_mcp_tools", {"server": "docs2", "refresh": True}
+            )
+        )["tools"]
+    )
 
     if upstream_fails:
         with pytest.raises(ToolError) as exc_info:
-            await mcp.call_tool(renamed_dynamic_name, {"args": {}})
+            await mcp.call_tool(
+                "call_agent_mcp_tool",
+                {"server": "docs2", "tool": "echo", "args": {}},
+            )
         public_payload = str(exc_info.value)
     else:
-        response = await mcp.call_tool(renamed_dynamic_name, {"args": {}})
+        response = await mcp.call_tool(
+            "call_agent_mcp_tool",
+            {"server": "docs2", "tool": "echo", "args": {}},
+        )
         public_payload = mcp_text(response)
 
     assert "<redacted>" in public_payload
     assert old_header not in public_payload
     assert new_header not in public_payload
 
-    audit_entries = query_audit(search=renamed_dynamic_name)["entries"]
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
     assert audit_entries
     for entry in audit_entries:
         retained = json.dumps(
@@ -2403,14 +1991,12 @@ async def test_dynamic_mcp_server_rename_retains_literal_redaction_domain(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fail", [False, True])
-async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
-    tmp_path, monkeypatch, fail
+async def test_fixed_mcp_tool_redacts_retired_probe_credentials(
+    tmp_path, monkeypatch
 ):
     old_token = "m9X4q7V2z8N5p3K1"
     new_token = "n2C8r6T4y1B7d5F3"
     raw_tool_name = f"echo-{old_token}"
-    dynamic_name = "agent_mcp__oauth__echo__redacted"
     config_dir = app_paths().agent_config_dir
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
@@ -2437,6 +2023,9 @@ async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
         def redaction_maps(self, _name, _server):
             return ({"oauth_access_token": self.token}, {})
 
+        def redaction_maps_since(self, _name, _server, _cursor):
+            return ({"current": self.token, "retired": old_token}, {})
+
         async def list_tools(self, _name, _server):
             assert self.token == old_token
             self.token = new_token
@@ -2450,8 +2039,6 @@ async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
 
         async def call_tool(self, _name, _server, tool, _args):
             assert tool == raw_tool_name
-            if fail:
-                raise RuntimeError(f"upstream failed for tool {tool}")
             return {
                 "structured_content": {"called": tool, "opaque": old_token},
                 "content": [],
@@ -2467,21 +2054,33 @@ async def test_dynamic_mcp_tool_redacts_retired_probe_credentials(
     clear_settings_cache()
 
     mcp = build_mcp()
-    assert dynamic_name in {tool.name for tool in await mcp.list_tools()}
+    assert "search_agent_mcp_tools" in {
+        tool.name for tool in await mcp.list_tools()
+    }
 
-    if fail:
-        with pytest.raises(ToolError) as exc_info:
-            await mcp.call_tool(dynamic_name, {"args": {}})
-        public_payload = str(exc_info.value)
-    else:
-        response = await mcp.call_tool(dynamic_name, {"args": {}})
-        public_payload = mcp_text(response)
+    discovered = _payload(
+        await mcp.call_tool(
+            "search_agent_mcp_tools", {"server": "oauth", "refresh": True}
+        )
+    )
+    public_name = discovered["tools"][0]["tool"]
+    assert public_name == "echo-<redacted>"
+    with pytest.raises(ToolError) as exc_info:
+        await mcp.call_tool(
+            "call_agent_mcp_tool",
+            {
+                "server": "oauth",
+                "tool": public_name,
+                "args": {},
+            },
+        )
+    public_payload = str(exc_info.value)
 
     assert old_token not in public_payload
     assert new_token not in public_payload
     assert "<redacted>" in public_payload
 
-    audit_entries = query_audit(search=dynamic_name)["entries"]
+    audit_entries = query_audit(search="call_agent_mcp_tool")["entries"]
     assert audit_entries
     for entry in audit_entries:
         retained = json.dumps(
@@ -2539,7 +2138,7 @@ async def test_dynamic_skill_alias_is_not_control_local(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dynamic_mcp_tool_is_visible_and_callable(tmp_path, monkeypatch):
+async def test_fixed_mcp_tool_is_visible_and_callable(tmp_path, monkeypatch):
     config_dir = app_paths().agent_config_dir
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
@@ -2565,15 +2164,16 @@ async def test_dynamic_mcp_tool_is_visible_and_callable(tmp_path, monkeypatch):
     mcp = build_mcp()
     tool_names = {tool.name for tool in await mcp.list_tools()}
 
-    assert "agent_mcp__docs__search" in tool_names
+    assert "search_agent_mcp_tools" in tool_names
     response = await mcp.call_tool(
-        "agent_mcp__docs__search", {"args": {"query": "abc"}}
+        "call_agent_mcp_tool",
+        {"server": "docs", "tool": "search", "args": {"query": "abc"}},
     )
     assert "abc" in mcp_text(response)
 
 
 @pytest.mark.asyncio
-async def test_dynamic_mcp_tool_redacts_configured_values_in_call_error(
+async def test_fixed_mcp_tool_redacts_configured_values_in_call_error(
     tmp_path, monkeypatch
 ):
     config_dir = app_paths().agent_config_dir
@@ -2619,14 +2219,17 @@ async def test_dynamic_mcp_tool_redacts_configured_values_in_call_error(
     clear_settings_cache()
 
     with pytest.raises(ToolError) as exc_info:
-        await build_mcp().call_tool("agent_mcp__docs__search", {"args": {}})
+        await build_mcp().call_tool(
+            "call_agent_mcp_tool",
+            {"server": "docs", "tool": "search", "args": {}},
+        )
     payload = str(exc_info.value)
 
     _assert_configured_values_redacted(payload)
 
 
 @pytest.mark.asyncio
-async def test_dynamic_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
+async def test_fixed_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
     config_dir = app_paths().agent_config_dir
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
@@ -2689,7 +2292,7 @@ async def test_dynamic_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
     clear_settings_cache()
 
     response = await build_mcp().call_tool(
-        "agent_mcp__docs__search", {"args": {}}
+        "call_agent_mcp_tool", {"server": "docs", "tool": "search", "args": {}}
     )
     payload = mcp_text(response)
     data = _payload(response)
@@ -2704,7 +2307,7 @@ async def test_dynamic_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_build_mcp_respects_manifest_dynamic_tool_disable(
+async def test_build_mcp_does_not_register_dynamic_skill_or_mcp_aliases(
     tmp_path, monkeypatch
 ):
     config_dir = app_paths().agent_config_dir
@@ -2717,7 +2320,6 @@ async def test_build_mcp_respects_manifest_dynamic_tool_disable(
                 "mcpServers": {
                     "docs": {"type": "http", "url": "https://example.com/mcp"}
                 },
-                "dynamicTools": {"mcp": False, "skills": False},
             }
         ),
         encoding="utf-8",
@@ -2736,11 +2338,8 @@ async def test_build_mcp_respects_manifest_dynamic_tool_disable(
 
     mcp = build_mcp()
     tool_names = {tool.name for tool in await mcp.list_tools()}
-    status = _payload(await mcp.call_tool("agent_config_status", {}))
-
     assert "activate_skill__paper_writer" not in tool_names
     assert "agent_mcp__docs__search" not in tool_names
-    assert status["dynamic_tools"] == {"mcp": False, "skills": False}
 
 
 @pytest.mark.asyncio
@@ -2782,7 +2381,9 @@ async def test_control_dynamic_registry_ignores_skill_filesystem_changes(
 
 
 @pytest.mark.asyncio
-async def test_agent_bridge_hot_reloads_mcp_server_tools(tmp_path, monkeypatch):
+async def test_agent_bridge_config_reload_via_fixed_tools(
+    tmp_path, monkeypatch
+):
     config_dir = app_paths().agent_config_dir
     config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text(
@@ -2833,9 +2434,10 @@ async def test_agent_bridge_hot_reloads_mcp_server_tools(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     tool_names = {tool.name for tool in await mcp.list_tools()}
-    assert "agent_mcp__docs__search" in tool_names
+    assert "search_agent_mcp_tools" in tool_names
     response = await mcp.call_tool(
-        "agent_mcp__docs__search", {"args": {"query": "abc"}}
+        "call_agent_mcp_tool",
+        {"server": "docs", "tool": "search", "args": {"query": "abc"}},
     )
     assert _payload(response) == {
         "server": "docs",
@@ -2857,7 +2459,7 @@ async def test_agent_bridge_hot_reloads_mcp_server_tools(tmp_path, monkeypatch):
     )
     tool_names = {tool.name for tool in await mcp.list_tools()}
     assert "agent_mcp__docs__search" not in tool_names
-    assert "agent_mcp__api__search" in tool_names
+    assert "search_agent_mcp_tools" in tool_names
 
     response = await mcp.call_tool(
         "call_agent_mcp_tool", {"server": "api", "tool": "search"}
@@ -2879,8 +2481,10 @@ async def test_control_agent_bridge_rejects_same_name_across_owner_planes():
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda *, probe_mcp_tools=True: cast(
-        Any, SimpleNamespace(mcp_servers={"same": object()})
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
+            Any, SimpleNamespace(mcp_servers={"same": object()})
+        )
     )
 
     with pytest.raises(ValueError, match="ambiguous across control"):
@@ -2913,7 +2517,9 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda *, probe_mcp_tools=True: registry
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: registry
+    )
     monkeypatch.setattr(
         control_agent_bridge_module,
         "list_agent_mcp_tools_payload",
@@ -2968,8 +2574,10 @@ async def test_control_agent_bridge_rejects_duplicate_rows_when_listing_all(
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda *, probe_mcp_tools=True: cast(
-        Any, SimpleNamespace(mcp_servers={"same": object()})
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
+            Any, SimpleNamespace(mcp_servers={"same": object()})
+        )
     )
     monkeypatch.setattr(
         control_agent_bridge_module,

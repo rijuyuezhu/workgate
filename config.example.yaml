@@ -204,8 +204,6 @@ agent_bridge_enabled: true
 agent_mcp_probe_timeout_s: 5
 # Agent MCP tool-call timeout in seconds.
 agent_mcp_call_timeout_s: 60
-# Register dynamic MCP bridge tools.
-agent_dynamic_mcp_tools: true
 
 # Tool executables.
 # Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows.

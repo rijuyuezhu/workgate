@@ -465,7 +465,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec(
         "agent_mcp_call_timeout_s", "Agent capability bridge", metavar="SECONDS"
     ),
-    SettingSpec("agent_dynamic_mcp_tools", "Agent capability bridge"),
     SettingSpec("shell_executable", "Tool executables", metavar="PATH"),
     SettingSpec("tmux_bin", "Tool executables", metavar="PATH"),
     SettingSpec("rg_bin", "Tool executables", metavar="PATH"),

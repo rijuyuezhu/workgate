@@ -206,19 +206,27 @@ async def test_routed_call_probes_no_servers_and_starts_only_target_child(
     loop_thread = threading.get_ident()
     original_network_registry = service._network_registry
 
-    def observed_network_registry(*, probe_mcp_tools=True):
+    def observed_network_registry(
+        *, probe_mcp_tools=True, mcp_server_name=None
+    ):
         if probe_mcp_tools:
             assert threading.get_ident() != loop_thread
-        return original_network_registry(probe_mcp_tools=probe_mcp_tools)
+        return original_network_registry(
+            probe_mcp_tools=probe_mcp_tools, mcp_server_name=mcp_server_name
+        )
 
     monkeypatch.setattr(service, "_network_registry", observed_network_registry)
     original_executor_registry = harness.executor.agent_bridge._registry
 
-    def observed_executor_registry(session_id, *, probe_mcp_tools=True):
+    def observed_executor_registry(
+        session_id, *, probe_mcp_tools=True, mcp_server_name=None
+    ):
         if probe_mcp_tools:
             assert threading.get_ident() != loop_thread
         return original_executor_registry(
-            session_id, probe_mcp_tools=probe_mcp_tools
+            session_id,
+            probe_mcp_tools=probe_mcp_tools,
+            mcp_server_name=mcp_server_name,
         )
 
     monkeypatch.setattr(
@@ -243,6 +251,64 @@ async def test_routed_call_probes_no_servers_and_starts_only_target_child(
         assert servers.root["other"]["available"] is True
         assert len(launches) == 3
         await harness.control.session_coordinator.end_session(session_id)
+    finally:
+        await harness.executor.aclose()
+        await harness.control.aclose()
+
+
+@pytest.mark.asyncio
+async def test_scoped_discovery_probes_only_selected_stdio_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workdir"
+    workspace.mkdir()
+    settings = Settings(
+        default_workdir=workspace,
+        state_dir=tmp_path / "state",
+        agent_bridge_enabled=True,
+        agent_mcp_probe_timeout_s=15,
+        agent_mcp_call_timeout_s=20,
+    )
+    harness = build_paired_control_harness(settings)
+    _install_stdio_server(
+        harness.executor.config, tmp_path, ("first", "second", "third")
+    )
+    launches: list[str] = []
+    original_stdio = agent_mcp_module.stdio_client
+
+    @asynccontextmanager
+    async def counted_stdio(params):
+        launches.append(params.command)
+        async with original_stdio(params) as streams:
+            yield streams
+
+    monkeypatch.setattr(agent_mcp_module, "stdio_client", counted_stdio)
+    bridge = ControlAgentBridgeService(
+        resolve_control_config(settings), harness.control.session_coordinator
+    )
+    try:
+        created = await harness.control.session_coordinator.start_session(
+            workdir=str(workspace), executor_id=harness.executor_id
+        )
+        assert isinstance(created, dict)
+        sid = str(created["session_id"])
+        match = await bridge.search_tools(
+            "inspect", session_id=sid, server="first"
+        )
+        assert match["total_matches"] == 1
+        assert match["tools"][0]["server"] == "first"
+        assert len(launches) == 1
+        assert (await bridge.inspect_tool("first", "inspect", session_id=sid))[
+            "tool"
+        ] == "inspect"
+        assert len(launches) == 1
+        await bridge.search_tools("inspect", session_id=sid, server="second")
+        assert len(launches) == 2
+        await bridge.search_tools(
+            "inspect", session_id=sid, server="first", refresh=True
+        )
+        assert len(launches) == 3
+        await harness.control.session_coordinator.end_session(sid)
     finally:
         await harness.executor.aclose()
         await harness.control.aclose()

@@ -3,6 +3,7 @@
 import asyncio
 from typing import Any
 
+from ..agent_bridge.discovery import McpDiscovery
 from ..agent_bridge.mcp import AgentMcpClientManager
 from ..agent_bridge.models import AgentCapabilityRegistry
 from ..agent_bridge.service import (
@@ -28,14 +29,19 @@ class ControlAgentBridgeService:
     ) -> None:
         self._settings = settings
         self._sessions = sessions
+        self._discovery = McpDiscovery(self._discovery_rows)
 
     def _network_registry(
-        self, *, probe_mcp_tools: bool = True
+        self,
+        *,
+        probe_mcp_tools: bool = True,
+        mcp_server_name: str | None = None,
     ) -> AgentCapabilityRegistry:
         return build_network_agent_registry_from_settings(
             self._settings,
             AgentMcpClientManager,
             probe_mcp_tools=probe_mcp_tools,
+            mcp_server_name=mcp_server_name,
         )
 
     @staticmethod
@@ -108,7 +114,9 @@ class ControlAgentBridgeService:
         if server is not None:
             _, owner = await self._resolve_server_owner(server, session_id)
             if owner == "control":
-                registry = await asyncio.to_thread(self._network_registry)
+                registry = await asyncio.to_thread(
+                    self._network_registry, mcp_server_name=server
+                )
                 return list_agent_mcp_tools_payload(registry, server)
             selected_session = self._require_session_id(session_id, server)
             if owner == "unknown":
@@ -137,6 +145,44 @@ class ControlAgentBridgeService:
                 f"selected executor; duplicates: {names}"
             )
         return ListAgentMcpToolsOutput(tools=[*control, *executor])
+
+    async def _discovery_rows(
+        self, session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        return (
+            await self.list_tools(server=server, session_id=session_id)
+        ).tools
+
+    def invalidate_discovery(self, session_id: str) -> None:
+        self._discovery.invalidate(session_id)
+
+    async def search_tools(
+        self,
+        query: str = "",
+        *,
+        session_id: str | None = None,
+        server: str | None = None,
+        limit: int = 20,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        return await self._discovery.search(
+            query,
+            session_id=session_id,
+            server=server,
+            limit=limit,
+            refresh=refresh,
+        )
+
+    async def inspect_tool(
+        self,
+        server: str,
+        tool: str,
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._discovery.inspect(
+            server, tool, session_id=session_id
+        )
 
     async def call_tool(
         self,

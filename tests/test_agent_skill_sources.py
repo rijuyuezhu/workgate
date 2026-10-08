@@ -22,7 +22,6 @@ from workgate.agent_bridge.state import (
     agent_config_fingerprint,
     agent_registry_fingerprint,
 )
-from workgate.agent_bridge.tools import AgentBridgeToolReloader
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.executor.runtime import build_executor_runtime
@@ -160,8 +159,6 @@ def test_registry_prioritizes_project_then_managed_then_global(
         managed,
         _NoopClientManager(),
         project_root=project,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
     )
 
     assert list(registry.skills) == ["duplicate", "managed-only", "global-only"]
@@ -192,8 +189,6 @@ def test_invalid_project_duplicate_falls_back_to_managed(
         managed,
         _NoopClientManager(),
         project_root=project,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=False,
     )
 
     assert registry.skills["fallback"].source == "managed"
@@ -216,8 +211,6 @@ async def test_project_skill_payloads_and_dynamic_reloader_use_registry_snapshot
         managed,
         _NoopClientManager(),
         project_root=project,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=True,
     )
 
     listed = list_agent_skills_payload(registry)
@@ -236,31 +229,6 @@ async def test_project_skill_payloads_and_dynamic_reloader_use_registry_snapshot
         activate_agent_skill_payload(registry, "missing")
     with pytest.raises(ValueError, match="Unknown agent skill"):
         read_agent_skill_file_payload(registry, "missing", "guide.md")
-
-    class FakeMcp:
-        def __init__(self) -> None:
-            self.handlers: dict[str, Any] = {}
-
-        def add_tool(self, handler, *, name, **_kwargs) -> None:
-            self.handlers[name] = handler
-
-        def remove_tool(self, name: str) -> None:
-            self.handlers.pop(name, None)
-
-    mcp = FakeMcp()
-    reloader = AgentBridgeToolReloader(
-        mcp,
-        registry,
-        {},
-        probe_timeout_s=1,
-        dynamic_mcp_tools=False,
-        dynamic_skill_tools=True,
-    )
-    reloader.register_dynamic_tools()
-    handler = mcp.handlers["activate_skill__debugging"]
-    dynamic = await handler()
-    assert dynamic.name == "debugging"
-    assert "find root causes" in dynamic.content
 
 
 @pytest.mark.parametrize(

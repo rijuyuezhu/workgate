@@ -5,7 +5,6 @@ import pytest
 
 import workgate.agent_bridge.skills as skills
 from workgate.agent_bridge.models import SkillRecord
-from workgate.agent_bridge.registry import make_unique_tool_name
 
 
 def _install_skill(
@@ -455,19 +454,3 @@ def test_scan_agent_skills_reports_scandir_failure(tmp_path, monkeypatch):
     assert result.warnings == [
         "Could not scan skills directory skills: racing directory"
     ]
-
-
-def test_make_unique_tool_name_sanitizes_and_hashes_collisions():
-    seen: set[str] = set()
-    first = make_unique_tool_name("activate_skill", "paper-writer", seen)
-    second = make_unique_tool_name("activate_skill", "paper writer", seen)
-
-    assert first == "activate_skill__paper_writer"
-    assert second.startswith("activate_skill__paper_writer__")
-    assert first != second
-
-
-def test_make_unique_tool_name_preserves_empty_raw_name_segment():
-    assert make_unique_tool_name("activate_skill", "!!!", set()) == (
-        "activate_skill__unnamed"
-    )

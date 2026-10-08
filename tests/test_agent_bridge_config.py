@@ -5,7 +5,6 @@ import pytest
 
 from workgate.agent_bridge.models import (
     AgentBridgeManifest,
-    AgentDynamicToolsConfig,
     AgentMcpServerConfig,
     AgentSecretReference,
 )
@@ -97,7 +96,6 @@ def test_load_agent_manifest_valid_config(tmp_path):
             },
         },
         "skills": {"enabled": True, "directory": "skills"},
-        "dynamicTools": {"mcp": False, "skills": True},
     }
     (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
 
@@ -106,7 +104,6 @@ def test_load_agent_manifest_valid_config(tmp_path):
     assert manifest.status == "loaded"
     assert manifest.data.mcp_servers["github"].command == "github-mcp-server"
     assert manifest.data.mcp_servers["docs"].enabled is False
-    assert manifest.data.dynamic_tools.mcp is False
     assert manifest.data.skills.directory == "skills"
 
 
@@ -404,11 +401,9 @@ def test_agent_bridge_manifest_populates_python_field_names():
                 type="stdio", command="github-mcp-server"
             )
         },
-        dynamicTools=AgentDynamicToolsConfig(mcp=False, skills=True),
     )
 
     assert manifest.mcp_servers["github"].command == "github-mcp-server"
-    assert manifest.dynamic_tools.mcp is False
 
 
 def test_agent_mcp_manifest_accepts_secret_references_and_oauth_scopes():

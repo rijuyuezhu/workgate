@@ -55,8 +55,4 @@ def registry_config_status(
             }
             for name, record in registry.mcp_servers.items()
         },
-        "dynamic_tools": {
-            "mcp": registry.dynamic_mcp_tools,
-            "skills": registry.dynamic_skill_tools,
-        },
     }

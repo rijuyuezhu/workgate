@@ -1895,26 +1895,6 @@
             "code": "60"
           },
           "Agent MCP tool-call timeout in seconds."
-        ],
-        [
-          {
-            "code": "agent_dynamic_mcp_tools"
-          },
-          {
-            "lines": [
-              {
-                "code": "--agent-dynamic-mcp-tools"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_AGENT_DYNAMIC_MCP_TOOLS"
-          },
-          "true | false",
-          {
-            "code": "true"
-          },
-          "Register dynamic MCP bridge tools."
         ]
       ]
     },
@@ -3209,22 +3189,6 @@
       "nullable": false,
       "section": "Agent capability bridge",
       "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "true",
-        "false"
-      ],
-      "cli": "--agent-dynamic-mcp-tools",
-      "default": true,
-      "default_display": "true",
-      "description": "Register dynamic MCP bridge tools.",
-      "env": "WORKGATE_AGENT_DYNAMIC_MCP_TOOLS",
-      "name": "agent_dynamic_mcp_tools",
-      "nullable": false,
-      "section": "Agent capability bridge",
-      "type": "true | false",
       "unset_cli": null
     },
     {

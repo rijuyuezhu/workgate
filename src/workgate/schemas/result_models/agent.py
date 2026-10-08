@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class AgentConfigStatusOutput(BaseModel):
-    """Agent bridge configuration, skill, MCP server, and dynamic-tool status."""
+    """Agent bridge configuration, Skill and MCP server status."""
 
     model_config = ConfigDict(extra="allow")
     """Allow passthrough keys for dynamically shaped output payloads."""
@@ -22,9 +22,6 @@ class AgentConfigStatusOutput(BaseModel):
     )
     mcp_servers: dict[str, Any] = Field(
         description="Configured upstream MCP server status rows."
-    )
-    dynamic_tools: dict[str, bool] = Field(
-        description="Dynamic tool exposure flags."
     )
 
 
@@ -82,6 +79,22 @@ class ListAgentMcpToolsOutput(BaseModel):
     tools: list[dict[str, Any]] = Field(
         description="Redacted upstream MCP tool rows."
     )
+
+
+class SearchAgentMcpToolsOutput(BaseModel):
+    """Small external-MCP search results without tool input schemas."""
+
+    tools: list[dict[str, str]]
+    total_matches: int
+
+
+class InspectAgentMcpToolOutput(BaseModel):
+    """One selected tool descriptor containing its complete input schema."""
+
+    server: str
+    tool: str
+    description: str
+    input_schema: dict[str, Any]
 
 
 class CallAgentMcpToolOutput(BaseModel):

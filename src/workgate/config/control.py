@@ -70,7 +70,6 @@ class ControlConfig(SharedRoleConfig):
     agent_bridge_enabled: bool
     agent_config_dir: Path
     agent_auth_dir: Path
-    agent_dynamic_mcp_tools: bool
 
 
 CONTROL_SETTING_NAMES = frozenset(
@@ -158,5 +157,4 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         agent_auth_dir=settings.agent_auth_dir.resolve(strict=False),
         agent_mcp_probe_timeout_s=settings.agent_mcp_probe_timeout_s,
         agent_mcp_call_timeout_s=settings.agent_mcp_call_timeout_s,
-        agent_dynamic_mcp_tools=settings.agent_dynamic_mcp_tools,
     )

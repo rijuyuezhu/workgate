@@ -56,3 +56,14 @@ AgentToolArgsArg = Annotated[
         description="JSON object of arguments passed to the upstream MCP tool."
     ),
 ]
+
+
+AgentMcpSearchQueryArg = Annotated[
+    str,
+    Field(
+        description="Keywords to match an external MCP tool name or description."
+    ),
+]
+AgentMcpSearchLimitArg = Annotated[
+    int, Field(ge=1, le=50, description="Maximum tools returned by discovery.")
+]
