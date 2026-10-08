@@ -753,7 +753,7 @@ class BrowserService:
         target = str(data.get("target") or "").strip()
         if not target:
             raise ValueError(f"{action} requires target")
-        locator = self._locator(current, target)
+        locator = await self._locator(current, target, timeout_ms)
         if action == "click":
             await locator.click(timeout=timeout_ms)
         elif action == "fill":
@@ -855,13 +855,27 @@ class BrowserService:
         }
         return raw
 
-    def _locator(self, page_state: BrowserPageState, target: str) -> Any:
-        selector = page_state.refs.get(target)
-        if selector is None:
-            raise ValueError(
-                f"browser ref {target} is stale or unknown; take a new snapshot"
-            )
-        return page_state.page.locator(selector).first
+    async def _locator(
+        self, page_state: BrowserPageState, target: str, timeout_ms: int
+    ) -> Any:
+        if re.fullmatch(r"e[1-9][0-9]*", target):
+            selector = page_state.refs.get(target)
+            if selector is None:
+                raise ValueError(
+                    f"browser ref {target} is stale or unknown; take a new snapshot"
+                )
+            return page_state.page.locator(selector).first
+        # Playwright's css= prefix alone also accepts >> selector-engine chains.
+        valid_css = await asyncio.wait_for(
+            page_state.page.evaluate(
+                '(selector) => CSS.supports("selector(" + selector + ")")',
+                target,
+            ),
+            timeout=timeout_ms / 1000,
+        )
+        if not valid_css:
+            raise ValueError("target must be a valid CSS selector")
+        return page_state.page.locator(f"css={target}")
 
     @staticmethod
     def _profile_key(profile_id: str) -> str:

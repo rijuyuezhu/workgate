@@ -1342,3 +1342,34 @@ def test_audit_payload_decompression_bomb_is_bounded(tmp_path, monkeypatch):
     full = get_audit_entry(preview["id"], include_full_payloads=True)
 
     assert full["payload"][AUDIT_PAYLOAD_KEY]["status"] == "corrupt"
+
+
+def test_browser_css_selector_audit_redacts_selector_and_entered_value(
+    tmp_path, monkeypatch
+) -> None:
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "secret-value-never-recorded"
+    selector = "input[data-secret='sensitive-selector']"
+    audit_tool_call_start(
+        call_id="browser-css-selector",
+        transport="mcp",
+        tool="browser_act",
+        input={
+            "actions": [{"action": "fill", "target": selector, "value": secret}]
+        },
+    )
+    audit_tool_call_end(
+        call_id="browser-css-selector",
+        transport="mcp",
+        tool="browser_act",
+        ok=True,
+        duration_ms=1,
+        output={"results": [{"action": "fill", "target": selector}]},
+    )
+    content = path.read_text(encoding="utf-8")
+    assert secret not in content
+    assert "sensitive-selector" not in content
+    starts, ends = _records(path)
+    assert starts["input"]["actions"][0]["target"] == "<selector>"
+    assert starts["input"]["actions"][0]["value"] == "<redacted>"
+    assert ends["output"]["results"][0]["target"] == "<selector>"

@@ -118,10 +118,9 @@ BrowserFullPageArg = Annotated[
 BrowserTarget = Annotated[
     str,
     Field(
-        min_length=2,
-        max_length=16,
-        pattern=r"^e[1-9][0-9]*$",
-        description="Snapshot ref such as e1.",
+        min_length=1,
+        max_length=4096,
+        description="Snapshot ref such as e1 (preferred), or a CSS selector matching one element.",
     ),
 ]
 BrowserActionUrl = Annotated[
@@ -218,7 +217,7 @@ BrowserActionsArg = Annotated[
     Field(
         min_length=1,
         max_length=50,
-        description="Ordered high-level actions using snapshot refs for element targets.",
+        description="Ordered high-level actions using snapshot refs or CSS selectors for element targets.",
     ),
 ]
 BrowserTimeoutMsArg = Annotated[
