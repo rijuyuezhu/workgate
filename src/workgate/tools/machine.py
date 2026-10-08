@@ -63,6 +63,7 @@ EXECUTOR_AGENT_MCP_OPERATION_NAMES = frozenset(
     {
         "agent_mcp.list_servers",
         "agent_mcp.list_tools",
+        "agent_mcp.manage",
         "agent_mcp.call_tool",
     }
 )

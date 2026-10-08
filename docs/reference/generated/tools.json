@@ -1,11 +1,11 @@
 {
-  "count": 56,
+  "count": 57,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "56"
+          "code": "57"
         },
         "."
       ],
@@ -154,6 +154,44 @@
             ]
           },
           "List Skills in project/session, managed, then global priority order without loading instructions."
+        ],
+        [
+          {
+            "code": "manage_agent_mcp_server"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "action"
+                },
+                "note": "(list / get / register / update / enable / disable / refresh / remove, required)"
+              },
+              {
+                "description": "Complete MCP server connection config for register/update. Include type (http/sse/stdio), URL or command/args, optional integrationId and auth. env/headers require {secret: key} references; never pass inline tokens, passwords, or API keys.",
+                "head": {
+                  "code": "config"
+                },
+                "note": "(object / null, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "name"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              }
+            ]
+          },
+          "Manage external MCP integrations with a whole-entry config (type, url or command/args, optional auth, and env/headers secret references only). Never pass raw credential values."
         ],
         [
           {
@@ -7879,6 +7917,102 @@
           "shells"
         ],
         "title": "ListPersistentShellsOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Manage external MCP integrations with a whole-entry config (type, url or command/args, optional auth, and env/headers secret references only). Never pass raw credential values.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "get",
+              "register",
+              "update",
+              "enable",
+              "disable",
+              "refresh",
+              "remove"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Complete MCP server connection config for register/update. Include type (http/sse/stdio), URL or command/args, optional integrationId and auth. env/headers require {secret: key} references; never pass inline tokens, passwords, or API keys.",
+            "title": "Config"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "manage_agent_mcp_serverArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "manage_agent_mcp_server",
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "manage_agent_mcp_serverDictOutput",
         "type": "object"
       }
     },

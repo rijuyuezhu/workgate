@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from ..agent_bridge.discovery import McpDiscovery
+from ..agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
 from ..agent_bridge.mcp import AgentMcpClientManager
 from ..agent_bridge.models import AgentCapabilityRegistry
 from ..agent_bridge.service import (
@@ -155,6 +156,105 @@ class ControlAgentBridgeService:
 
     def invalidate_discovery(self, session_id: str) -> None:
         self._discovery.invalidate(session_id)
+
+    async def manage(
+        self,
+        action: str,
+        *,
+        name: str | None = None,
+        config: ManagedMcpConfig | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Manage one owner's existing manifest; route stdio through its session."""
+        if action not in {"register", "update"} and config is not None:
+            raise ValueError(f"config is not valid for {action}")
+        if action == "list" and name is not None:
+            raise ValueError("name is not valid for action=list")
+        if action in {"register", "update"} and config is None:
+            raise ValueError(f"config is required for {action}")
+        if action == "list":
+            control = await asyncio.to_thread(
+                manage_mcp_manifest,
+                self._settings.agent_config_dir,
+                "list",
+                owner_type="network",
+            )
+            if session_id is None:
+                return control
+            executor = await self._sessions.call_session_tool(
+                "agent_mcp.manage", {"session_id": session_id, "action": "list"}
+            )
+            if not isinstance(executor, dict):
+                raise ValueError(
+                    "executor returned invalid MCP management payload"
+                )
+            executor_servers = executor.get("servers")
+            if not isinstance(executor_servers, list):
+                raise ValueError(
+                    "executor returned invalid MCP management catalog"
+                )
+            names = {row["name"] for row in control["servers"]}
+            duplicates = names & {
+                str(row["name"])
+                for row in executor_servers
+                if isinstance(row, dict) and isinstance(row.get("name"), str)
+            }
+            if duplicates:
+                raise ValueError(
+                    f"MCP server names are ambiguous: {', '.join(sorted(duplicates))}"
+                )
+            return {"servers": [*control["servers"], *executor_servers]}
+
+        if not name:
+            raise ValueError(f"name is required for {action}")
+        if action == "register":
+            if config is None:
+                raise ValueError("config is required for register")
+            _, existing = await self._resolve_server_owner(name, session_id)
+            if existing != "unknown":
+                raise ValueError(f"MCP server already exists: {name}")
+            owner = "executor" if config.type == "stdio" else "control"
+        else:
+            _, owner = await self._resolve_server_owner(name, session_id)
+            if owner == "unknown":
+                raise ValueError(f"Unknown agent MCP server: {name}")
+        if action == "refresh":
+            self._discovery.invalidate_all()
+            return await self.search_tools(
+                "", server=name, session_id=session_id, refresh=True
+            )
+
+        if owner == "control":
+            result = await asyncio.to_thread(
+                manage_mcp_manifest,
+                self._settings.agent_config_dir,
+                action,
+                name=name,
+                config=config,
+                owner_type="network",
+                auth_dir=self._settings.agent_auth_dir,
+            )
+        else:
+            if session_id is None:
+                raise ValueError(
+                    "session_id is required for executor-owned stdio MCP"
+                )
+            result = await self._sessions.call_session_tool(
+                "agent_mcp.manage",
+                {
+                    "session_id": session_id,
+                    "action": action,
+                    "name": name,
+                    "config": config.model_dump(by_alias=True)
+                    if config
+                    else None,
+                },
+            )
+        if action not in {"get"}:
+            self._discovery.invalidate_all()
+        if not isinstance(result, dict):
+            raise ValueError("MCP management returned invalid payload")
+        return result
 
     async def search_tools(
         self,

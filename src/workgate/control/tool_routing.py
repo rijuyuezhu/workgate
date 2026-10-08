@@ -5,7 +5,9 @@ from functools import wraps
 from typing import Any
 
 from mcp.types import CallToolResult
+from pydantic import ValidationError
 
+from ..agent_bridge.management import ManagedMcpConfig
 from ..tools.contracts import McpToolContext, ToolRegistry
 from ..tools.declarative import DeclarativeToolRegistry, ToolDefinition
 from ..tools.machine import MACHINE_TOOL_NAMES
@@ -36,6 +38,7 @@ _AGENT_MCP_CONTROL_TOOLS = frozenset(
         "search_agent_mcp_tools",
         "inspect_agent_mcp_tool",
         "call_agent_mcp_tool",
+        "manage_agent_mcp_server",
     }
 )
 
@@ -233,6 +236,23 @@ class ControlToolRouter:
                 str(args["tool"]),
                 dict(args.get("args") or {}),
                 args.get("session_id"),
+            )
+        if tool_name == "manage_agent_mcp_server":
+            try:
+                config = (
+                    ManagedMcpConfig.model_validate(args["config"])
+                    if args.get("config") is not None
+                    else None
+                )
+            except ValidationError:
+                raise ValueError(
+                    "Invalid MCP config: use private secret references, not literal credentials"
+                ) from None
+            return await self._agent_bridge.manage(
+                str(args["action"]),
+                name=args.get("name"),
+                config=config,
+                session_id=args.get("session_id"),
             )
         if tool_name == "create_file_link":
             return await self._downloads.create(

@@ -67,3 +67,16 @@ AgentMcpSearchQueryArg = Annotated[
 AgentMcpSearchLimitArg = Annotated[
     int, Field(ge=1, le=50, description="Maximum tools returned by discovery.")
 ]
+
+
+AgentMcpManageConfigArg = Annotated[
+    dict[str, Any] | None,
+    Field(
+        description=(
+            "Complete MCP server connection config for register/update. "
+            "Include type (http/sse/stdio), URL or command/args, optional "
+            "integrationId and auth. env/headers require {secret: key} "
+            "references; never pass inline tokens, passwords, or API keys."
+        )
+    ),
+]
