@@ -9,6 +9,7 @@ from ...schemas.input_models.browser import (
     BrowserMaxTextCharsArg,
     BrowserPageIdArg,
     BrowserProfileIdArg,
+    BrowserScreenshotArg,
     BrowserScreenshotPathArg,
     BrowserSessionActionArg,
     BrowserSessionIdArg,
@@ -91,10 +92,11 @@ async def browser_snapshot(
     include_text: BrowserIncludeTextArg = True,
     max_text_chars: BrowserMaxTextCharsArg = 100_000,
     max_elements: BrowserMaxElementsArg = 100,
+    screenshot: BrowserScreenshotArg = True,
     screenshot_path: BrowserScreenshotPathArg = None,
     full_page: BrowserFullPageArg = False,
 ) -> BrowserSnapshotOutput:
-    """Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir."""
+    """Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. A screenshot is saved by default to a managed executor-local artifact; screenshot=false skips it. screenshot_path optionally writes to a new user-managed PNG; relative paths resolve from the session workdir."""
     del (
         session_id,
         browser_session_id,
@@ -102,6 +104,7 @@ async def browser_snapshot(
         include_text,
         max_text_chars,
         max_elements,
+        screenshot,
         screenshot_path,
         full_page,
     )

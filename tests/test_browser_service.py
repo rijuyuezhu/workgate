@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
+from mcp.types import CallToolResult
 from playwright.async_api import Error as PlaywrightError
 from pydantic import TypeAdapter, ValidationError
 
@@ -1054,6 +1055,17 @@ async def test_browser_routes_over_executor_http_protocol(
                     },
                 )
             )
+            managed_path = Path(str(snapshot["screenshot_path"]))
+            assert managed_path.is_file()
+            assert managed_path.is_relative_to(executor.config.state_dir)
+            assert not managed_path.is_relative_to(control_workspace)
+            image_reply = await mcp.call_tool(
+                "view_image",
+                {"session_id": session_id, "path": str(managed_path)},
+            )
+            assert isinstance(image_reply, CallToolResult)
+            assert any(part.type == "image" for part in image_reply.content)
+
             elements = snapshot["interactive_elements"]
             assert isinstance(elements, list)
             button_ref = next(
@@ -1086,6 +1098,7 @@ async def test_browser_routes_over_executor_http_protocol(
                 await mcp.call_tool("session_end", {"session_id": session_id})
             )
             assert browser_id in ended["stopped_browsers"]
+            assert not managed_path.parent.exists()
     finally:
         if connection is not None:
             await connection.aclose()
@@ -1742,5 +1755,127 @@ async def test_browser_network_timeline_bounds_and_drops_body_fields(
         assert len(snapshot["network"][-1]["method"]) == 32
         assert "must-not-retain" not in str(snapshot["network"])
         assert snapshot["errors"] == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_managed_screenshot_defaults_pruning_and_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_chromium(monkeypatch)
+    service, config, _store, session_id, workspace = _service(tmp_path)
+    try:
+        started = await service.start(session_id)
+        browser_id = str(started["browser_session_id"])
+        managed_dir = config.state_dir / "browser-artifacts" / browser_id
+        first = await service.snapshot(session_id, browser_id)
+        first_path = Path(str(first["screenshot_path"]))
+        assert first_path.parent == managed_dir
+        assert first_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+        disabled = await service.snapshot(
+            session_id, browser_id, screenshot=False
+        )
+        assert disabled["screenshot_path"] is None
+        assert len(list(managed_dir.glob("*.png"))) == 1
+        with pytest.raises(ValueError, match="requires screenshot=true"):
+            await service.snapshot(
+                session_id,
+                browser_id,
+                screenshot=False,
+                screenshot_path="a.png",
+            )
+
+        explicit = await service.snapshot(
+            session_id, browser_id, screenshot_path="user-owned.png"
+        )
+        assert explicit["screenshot_path"] == "user-owned.png"
+        assert (workspace / "user-owned.png").is_file()
+        assert len(list(managed_dir.glob("*.png"))) == 1
+
+        monkeypatch.setattr(browser_ops, "_MAX_MANAGED_SCREENSHOT_FILES", 3)
+        latest = None
+        for _ in range(6):
+            latest = await service.snapshot(session_id, browser_id)
+        assert latest is not None
+        assert Path(str(latest["screenshot_path"])).exists()
+        assert len(list(managed_dir.glob("*.png"))) == 3
+
+        await service.close(session_id, browser_id)
+        assert not managed_dir.exists()
+        assert (workspace / "user-owned.png").is_file()
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_managed_screenshot_byte_pruning_and_image_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, config, store, session_id, _workspace = _service(tmp_path)
+    browser_id = "browser_0000000000000000000001"
+    monkeypatch.setattr(browser_ops, "_MAX_MANAGED_SCREENSHOT_BYTES", 300)
+
+    class SmallScreenshotPage:
+        async def screenshot(self, **_kwargs):
+            return b"\x89PNG\r\n\x1a\n" + b"a" * 142
+
+    path1 = Path(
+        await service._screenshot(
+            session_id,
+            SmallScreenshotPage(),
+            None,
+            full_page=False,
+            browser_session_id=browser_id,
+        )
+    )
+    path2 = Path(
+        await service._screenshot(
+            session_id,
+            SmallScreenshotPage(),
+            None,
+            full_page=False,
+            browser_session_id=browser_id,
+        )
+    )
+    path3 = Path(
+        await service._screenshot(
+            session_id,
+            SmallScreenshotPage(),
+            None,
+            full_page=False,
+            browser_session_id=browser_id,
+        )
+    )
+    assert not path1.exists()
+    assert path2.exists() and path3.exists()
+    directory = config.state_dir / "browser-artifacts" / browser_id
+    assert sum(p.stat().st_size for p in directory.glob("*.png")) <= 300
+
+    # Managed absolute paths are valid session-scoped executor file paths.
+    resolved = store.resolve_session_path(
+        store.require_session(session_id), str(path3), must_exist=True
+    )
+    assert resolved == path3
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_idle_reap_deletes_managed_screenshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+    try:
+        started = await service.start(session_id)
+        browser_id = str(started["browser_session_id"])
+        snapshot = await service.snapshot(session_id, browser_id)
+        path = Path(str(snapshot["screenshot_path"]))
+        assert path.is_file()
+        service._sessions[browser_id].last_used_at = 0
+        await service._cleanup_idle()
+        assert browser_id not in service._sessions
+        assert not path.parent.exists()
     finally:
         await service.aclose()

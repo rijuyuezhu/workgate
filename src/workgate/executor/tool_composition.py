@@ -312,6 +312,7 @@ def build_executor_tool_dispatcher(
                 include_text=bool(args.get("include_text", True)),
                 max_text_chars=int(args.get("max_text_chars", 100_000)),
                 max_elements=int(args.get("max_elements", 100)),
+                screenshot=bool(args.get("screenshot", True)),
                 screenshot_path=(
                     None
                     if args.get("screenshot_path") is None

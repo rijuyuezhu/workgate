@@ -474,7 +474,7 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Capture the full scrollable page when screenshot_path is set.",
+                "description": "Capture the full scrollable page when screenshots are enabled.",
                 "head": {
                   "code": "full_page"
                 },
@@ -509,6 +509,13 @@
                 "note": "(string / null, optional)"
               },
               {
+                "description": "Capture a PNG screenshot by default; set false to skip.",
+                "head": {
+                  "code": "screenshot"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
                 "description": "Optional new .png path. Relative values resolve from the owning session workdir; existing files are never overwritten.",
                 "head": {
                   "code": "screenshot_path"
@@ -524,7 +531,7 @@
               }
             ]
           },
-          "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir."
+          "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. A screenshot is saved by default to a managed executor-local artifact; screenshot=false skips it. screenshot_path optionally writes to a new user-managed PNG; relative paths resolve from the session workdir."
         ]
       ]
     },
@@ -4052,7 +4059,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir.",
+      "description": "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. A screenshot is saved by default to a managed executor-local artifact; screenshot=false skips it. screenshot_path optionally writes to a new user-managed PNG; relative paths resolve from the session workdir.",
       "inputSchema": {
         "properties": {
           "browser_session_id": {
@@ -4065,7 +4072,7 @@
           },
           "full_page": {
             "default": false,
-            "description": "Capture the full scrollable page when screenshot_path is set.",
+            "description": "Capture the full scrollable page when screenshots are enabled.",
             "title": "Full Page",
             "type": "boolean"
           },
@@ -4106,6 +4113,12 @@
             "default": null,
             "description": "Optional browser page_id; omit to use the most recently active page.",
             "title": "Page Id"
+          },
+          "screenshot": {
+            "default": true,
+            "description": "Capture a PNG screenshot by default; set false to skip.",
+            "title": "Screenshot",
+            "type": "boolean"
           },
           "screenshot_path": {
             "anyOf": [
