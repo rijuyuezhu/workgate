@@ -828,6 +828,7 @@ async def test_browser_routes_through_control_to_bound_executor(
   <head><title>Routed browser</title></head>
   <body>
     <button id="go" onclick="document.querySelector('#result').textContent='routed-click'">Go</button>
+    <button id="css" onclick="document.querySelector('#result').textContent='css-click'">CSS</button>
     <div id="result">ready</div>
   </body>
 </html>
@@ -890,6 +891,33 @@ async def test_browser_routes_through_control_to_bound_executor(
             )
             assert isinstance(after, dict)
             assert "routed-click" in str(after["text"])
+
+            css_result = (
+                await harness.control.session_coordinator.call_session_tool(
+                    "browser_act",
+                    {
+                        "session_id": session_id,
+                        "browser_session_id": browser_id,
+                        "actions": [{"action": "click", "target": "#css"}],
+                    },
+                )
+            )
+            assert isinstance(css_result, dict)
+            assert isinstance(css_result["results"], list)
+            css_action_result = css_result["results"][0]
+            assert isinstance(css_action_result, dict)
+            assert css_action_result["target"] == "#css"
+            css_after = (
+                await harness.control.session_coordinator.call_session_tool(
+                    "browser_snapshot",
+                    {
+                        "session_id": session_id,
+                        "browser_session_id": browser_id,
+                    },
+                )
+            )
+            assert isinstance(css_after, dict)
+            assert "css-click" in str(css_after["text"])
 
             ended = await harness.control.session_coordinator.end_session(
                 session_id
@@ -1417,7 +1445,7 @@ async def test_browser_css_selectors_and_snapshot_refs_use_same_actions(
 <input id="name"><input id="typed"><input id="confirm" type="checkbox">
 <select id="choice"><option value="a">A</option><option value="b">B</option></select>
 <button id="apply" onclick="document.querySelector('#status').textContent='clicked'">Apply</button>
-<button id="extra">Extra</button><span id="status">not clicked</span>
+<button id="extra" title="arrow>>value">Extra</button><span id="status">not clicked</span>
 </body></html>""",
         encoding="utf-8",
     )
@@ -1440,7 +1468,7 @@ async def test_browser_css_selectors_and_snapshot_refs_use_same_actions(
                 {"action": "press", "target": "#name", "key": "End"},
                 {"action": "check", "target": "#confirm"},
                 {"action": "uncheck", "target": "#confirm"},
-                {"action": "hover", "target": "#extra"},
+                {"action": "hover", "target": "button[title='arrow>>value']"},
                 {"action": "click", "target": button_ref},
             ]
             response = await service.act(session_id, browser_id, actions)
@@ -1467,9 +1495,7 @@ async def test_browser_css_selectors_and_snapshot_refs_use_same_actions(
                     [{"action": "click", "target": "button"}],
                     timeout_ms=500,
                 )
-            with pytest.raises(
-                PlaywrightError, match="Unexpected token|InvalidSelectorError"
-            ):
+            with pytest.raises(ValueError, match="valid CSS selector"):
                 await service.act(
                     session_id,
                     browser_id,
@@ -1483,13 +1509,22 @@ async def test_browser_css_selectors_and_snapshot_refs_use_same_actions(
                     [{"action": "click", "target": "#absent"}],
                     timeout_ms=50,
                 )
-            with pytest.raises(PlaywrightError):
-                await service.act(
-                    session_id,
-                    browser_id,
-                    [{"action": "click", "target": "text=Apply"}],
-                    timeout_ms=500,
-                )
+            # Native CSS validation blocks Playwright-specific selector engines,
+            # including chains that bypass a simple css= prefix.
+            for non_css in (
+                "text=Apply",
+                "button >> nth=1",
+                "body >> xpath=.//button[@id='extra']",
+                "body >> text=Apply",
+                "button:has-text('Apply')",
+            ):
+                with pytest.raises(ValueError, match="valid CSS selector"):
+                    await service.act(
+                        session_id,
+                        browser_id,
+                        [{"action": "click", "target": non_css}],
+                        timeout_ms=500,
+                    )
             await service.close(session_id, browser_id)
     finally:
         await service.aclose()
