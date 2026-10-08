@@ -13,7 +13,6 @@ Choose where those roles run. The protocol and trust model stay the same.
 | Separate local processes | you want to run and debug each role yourself | [Run the roles separately](#run-the-roles-separately) |
 | VPS control + executors | you want one stable public control endpoint | [VPS deployment](vps.md) |
 | Self-hosted control through Cloudflare Tunnel | control stays on your machine/VPS but needs public HTTPS | [Cloudflare Tunnel](cloudflare-tunnel.md) |
-| Cloudflare hosted control | you want the serverless control adapter and can use its reduced feature surface | [Cloudflare hosted](cloudflare-hosted.md) |
 
 ## Configuration
 
