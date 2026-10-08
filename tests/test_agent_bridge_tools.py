@@ -665,6 +665,8 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
 
         async def call_tool(self, name, server, tool, args):
             self.call_calls.append((name, server.url, tool, args))
+            if name == "bad":
+                raise RuntimeError("call failed")
             return {"server": name, "tool": tool, "args": args}
 
     fake_manager = FakeMcpClientManager()
@@ -720,7 +722,7 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
 
     with pytest.raises(
         ToolError,
-        match="MCP server bad is unavailable: RuntimeError: probe failed",
+        match="Agent MCP tool call failed: call failed",
     ):
         await mcp.call_tool(
             "call_agent_mcp_tool",
@@ -733,7 +735,8 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
             {"server": "missing", "tool": "search", "args": {}},
         )
     assert fake_manager.call_calls == [
-        ("docs", "https://docs.example/mcp", "search", {"query": "mcp"})
+        ("docs", "https://docs.example/mcp", "search", {"query": "mcp"}),
+        ("bad", "https://bad.example/mcp", "search", {}),
     ]
 
 
@@ -775,7 +778,9 @@ async def test_call_agent_mcp_tool_redacts_unavailable_probe_error(
             )
 
         async def call_tool(self, name, server, tool, args):
-            raise AssertionError("unavailable server should not be called")
+            raise RuntimeError(
+                f"{REALISTIC_SECRET_ERROR} {CONFIGURED_VALUE_ERROR}"
+            )
 
     monkeypatch.setattr(
         tools_module,
@@ -2865,13 +2870,16 @@ async def test_control_agent_bridge_rejects_same_name_across_owner_planes():
     class Sessions:
         async def call_session_tool(self, op, args):
             assert op == "agent_mcp.list_servers"
-            assert args == {"session_id": "sess_owner"}
+            assert args == {
+                "session_id": "sess_owner",
+                "probe_mcp_tools": False,
+            }
             return {"same": {"available": True}}
 
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda: cast(
+    service._network_registry = lambda *, probe_mcp_tools=True: cast(
         Any, SimpleNamespace(mcp_servers={"same": object()})
     )
 
@@ -2905,7 +2913,7 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda: registry
+    service._network_registry = lambda *, probe_mcp_tools=True: registry
     monkeypatch.setattr(
         control_agent_bridge_module,
         "list_agent_mcp_tools_payload",
@@ -2960,7 +2968,7 @@ async def test_control_agent_bridge_rejects_duplicate_rows_when_listing_all(
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda: cast(
+    service._network_registry = lambda *, probe_mcp_tools=True: cast(
         Any, SimpleNamespace(mcp_servers={"same": object()})
     )
     monkeypatch.setattr(

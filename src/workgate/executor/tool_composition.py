@@ -201,7 +201,9 @@ def build_executor_tool_dispatcher(
         session_id = str(args["session_id"])
         async with session_lifecycle_lock(session_id):
             return await asyncio.to_thread(
-                agent_bridge_service.list_servers, session_id
+                agent_bridge_service.list_servers,
+                session_id,
+                probe_mcp_tools=bool(args.get("probe_mcp_tools", True)),
             )
 
     async def agent_mcp_list_tools_handler(args: dict[str, Any]) -> Any:

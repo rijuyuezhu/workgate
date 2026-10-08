@@ -88,6 +88,7 @@ class AgentBridgeToolReloader:
                 include_project_skills=self.registry.include_project_skills,
                 mcp_server_types=self.registry.mcp_server_types,
                 scan_skills=self.registry.scan_skills,
+                probe_mcp_tools=True,
                 **self.skill_limits,
             )
             self._fingerprint = fingerprint

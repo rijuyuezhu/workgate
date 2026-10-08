@@ -1,5 +1,6 @@
 """Control-owned Agent Bridge routing across network and executor-local transports."""
 
+import asyncio
 from typing import Any
 
 from ..agent_bridge.mcp import AgentMcpClientManager
@@ -28,9 +29,13 @@ class ControlAgentBridgeService:
         self._settings = settings
         self._sessions = sessions
 
-    def _network_registry(self) -> AgentCapabilityRegistry:
+    def _network_registry(
+        self, *, probe_mcp_tools: bool = True
+    ) -> AgentCapabilityRegistry:
         return build_network_agent_registry_from_settings(
-            self._settings, AgentMcpClientManager
+            self._settings,
+            AgentMcpClientManager,
+            probe_mcp_tools=probe_mcp_tools,
         )
 
     @staticmethod
@@ -45,12 +50,15 @@ class ControlAgentBridgeService:
     async def _resolve_server_owner(
         self, server: str, session_id: str | None
     ) -> tuple[AgentCapabilityRegistry, str]:
-        registry = self._network_registry()
+        registry = await asyncio.to_thread(
+            self._network_registry, probe_mcp_tools=False
+        )
         control_has = server in registry.mcp_servers
         if session_id is None:
             return registry, "control" if control_has else "unknown"
         payload = await self._sessions.call_session_tool(
-            "agent_mcp.list_servers", {"session_id": session_id}
+            "agent_mcp.list_servers",
+            {"session_id": session_id, "probe_mcp_tools": False},
         )
         executor_rows = ListAgentMcpServersOutput.model_validate(payload).root
         executor_has = server in executor_rows
@@ -81,7 +89,9 @@ class ControlAgentBridgeService:
     async def list_servers(
         self, session_id: str | None = None
     ) -> ListAgentMcpServersOutput:
-        control = list_agent_mcp_servers_payload(self._network_registry()).root
+        control = list_agent_mcp_servers_payload(
+            await asyncio.to_thread(self._network_registry)
+        ).root
         if session_id is None:
             return ListAgentMcpServersOutput(root=control)
         payload = await self._sessions.call_session_tool(
@@ -95,12 +105,10 @@ class ControlAgentBridgeService:
     async def list_tools(
         self, server: str | None = None, session_id: str | None = None
     ) -> ListAgentMcpToolsOutput:
-        registry = self._network_registry()
         if server is not None:
-            registry, owner = await self._resolve_server_owner(
-                server, session_id
-            )
+            _, owner = await self._resolve_server_owner(server, session_id)
             if owner == "control":
+                registry = await asyncio.to_thread(self._network_registry)
                 return list_agent_mcp_tools_payload(registry, server)
             selected_session = self._require_session_id(session_id, server)
             if owner == "unknown":
@@ -111,6 +119,7 @@ class ControlAgentBridgeService:
             )
             return ListAgentMcpToolsOutput.model_validate(payload)
 
+        registry = await asyncio.to_thread(self._network_registry)
         control = list_agent_mcp_tools_payload(registry).tools
         if session_id is None:
             return ListAgentMcpToolsOutput(tools=control)

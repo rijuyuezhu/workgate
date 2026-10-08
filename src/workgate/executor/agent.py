@@ -143,8 +143,8 @@ class ExecutorAgentBridgeService:
         self._store = store
         self._auth_store = AgentAuthStore(config.agent_auth_dir)
 
-    def _registry(self, session_id: str):
-        """Probe stdio MCP inside the selected session's live workdir."""
+    def _registry(self, session_id: str, *, probe_mcp_tools: bool = True):
+        """Resolve configured stdio MCP for the selected session workdir."""
         from ..agent_bridge.mcp import AgentMcpClientManager
         from ..agent_bridge.registry import build_agent_registry
 
@@ -169,13 +169,18 @@ class ExecutorAgentBridgeService:
             max_skill_entry_bytes=self._config.max_file_read_bytes,
             include_project_skills=False,
             mcp_server_types=frozenset({"stdio"}),
+            probe_mcp_tools=probe_mcp_tools,
         )
 
-    def list_servers(self, session_id: str) -> ListAgentMcpServersOutput:
+    def list_servers(
+        self, session_id: str, *, probe_mcp_tools: bool = True
+    ) -> ListAgentMcpServersOutput:
         """List executor-local servers visible to this active Workgate session."""
         from ..agent_bridge.service import list_agent_mcp_servers_payload
 
-        return list_agent_mcp_servers_payload(self._registry(session_id))
+        return list_agent_mcp_servers_payload(
+            self._registry(session_id, probe_mcp_tools=probe_mcp_tools)
+        )
 
     def list_tools(
         self, session_id: str, server: str | None = None
@@ -192,5 +197,8 @@ class ExecutorAgentBridgeService:
         from ..agent_bridge.service import call_agent_mcp_tool_payload
 
         return await call_agent_mcp_tool_payload(
-            self._registry(session_id), server, tool, args or {}
+            self._registry(session_id, probe_mcp_tools=False),
+            server,
+            tool,
+            args or {},
         )
