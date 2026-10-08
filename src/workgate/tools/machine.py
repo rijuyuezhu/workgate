@@ -57,7 +57,7 @@ MACHINE_TOOL_NAMES = frozenset(
 )
 
 # Internal executor-only operations used by mixed-placement public integrations.
-# They are not themselves public machine tools, so control may keep HTTP/SSE
+# They are not themselves public machine tools, so control may keep HTTP
 # Agent Bridge calls local while routing only session-bound stdio work here.
 EXECUTOR_AGENT_MCP_OPERATION_NAMES = frozenset(
     {

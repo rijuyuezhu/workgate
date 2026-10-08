@@ -74,7 +74,7 @@ AgentMcpManageConfigArg = Annotated[
     Field(
         description=(
             "Complete MCP server connection config for register/update. "
-            "Include type (http/sse/stdio), URL or command/args, optional "
+            "Include type (http/stdio), URL or command/args, optional "
             "integrationId and auth. env/headers require {secret: key} "
             "references; never pass inline tokens, passwords, or API keys."
         )

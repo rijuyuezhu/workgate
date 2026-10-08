@@ -9,7 +9,6 @@ from typing import Any
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import PaginatedRequestParams
@@ -288,20 +287,6 @@ class AgentMcpClientManager:
                         read_stream,
                         write_stream,
                         _get_session_id,
-                    ),
-                    ClientSession(read_stream, write_stream) as session,
-                ):
-                    await session.initialize()
-                    yield session
-            case "sse":
-                if not server.url:
-                    raise ValueError("sse MCP server requires url")
-                async with (
-                    sse_client(
-                        server.url, headers=headers or None, auth=auth
-                    ) as (
-                        read_stream,
-                        write_stream,
                     ),
                     ClientSession(read_stream, write_stream) as session,
                 ):

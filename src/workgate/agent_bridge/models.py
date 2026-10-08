@@ -83,7 +83,7 @@ class AgentMcpServerConfig(BaseModel):
         ),
     )
 
-    type: Literal["stdio", "http", "sse"]
+    type: Literal["stdio", "http"]
     """Transport type used to connect to the upstream MCP server."""
     enabled: bool = True
     """Whether this upstream server should be probed and exposed."""
@@ -94,7 +94,7 @@ class AgentMcpServerConfig(BaseModel):
     env: dict[str, AgentConfigValue] = Field(default_factory=dict)
     """Environment variables injected into a stdio MCP server process."""
     url: str | None = None
-    """HTTP or SSE endpoint URL for network MCP servers."""
+    """HTTP endpoint URL for network MCP servers."""
     headers: dict[str, AgentConfigValue] = Field(default_factory=dict)
     """HTTP headers sent when connecting to network MCP servers."""
     auth: AgentMcpAuthConfig = Field(default_factory=AgentMcpAuthConfig)
@@ -123,9 +123,9 @@ class AgentMcpServerConfig(BaseModel):
             isinstance(value, AgentSecretReference)
             for value in (*self.env.values(), *self.headers.values())
         )
-        if self.auth.mode == "oauth" and self.type not in {"http", "sse"}:
+        if self.auth.mode == "oauth" and self.type != "http":
             raise ValueError(
-                "OAuth authentication is valid only for HTTP or SSE MCP servers"
+                "OAuth authentication is valid only for HTTP MCP servers"
             )
         if self.auth.mode == "secret" and not secret_references:
             raise ValueError(

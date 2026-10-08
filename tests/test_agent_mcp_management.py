@@ -208,6 +208,18 @@ async def test_public_control_executor_management_round_trip(
                 },
             )
         assert "DUMMY_SECRET_NEVER_USE" not in str(invalid.value)
+        with pytest.raises(ToolError, match="Invalid MCP config"):
+            await mcp.call_tool(
+                "manage_agent_mcp_server",
+                {
+                    "action": "register",
+                    "name": "legacy-events",
+                    "config": {
+                        "type": "sse",
+                        "url": "https://example.org/events",
+                    },
+                },
+            )
         assert mcp_structured(
             await mcp.call_tool("manage_agent_mcp_server", {"action": "list"})
         ) == {"servers": []}
@@ -460,3 +472,37 @@ def test_runtime_management_cannot_retarget_or_reuse_private_credentials(
             auth_dir=auth_dir,
         )
     assert load_agent_manifest(root).data.mcp_servers == {}
+
+
+def test_outbound_sse_is_rejected_by_runtime_management(tmp_path: Path) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ManagedMcpConfig.model_validate(
+            {"type": "sse", "url": "https://example.test/events"}
+        )
+    root = tmp_path / "config"
+    root.mkdir()
+    original = {
+        "version": 1,
+        "mcpServers": {
+            "legacy": {"type": "sse", "url": "https://example.test/events"}
+        },
+    }
+    (root / "config.json").write_text(json.dumps(original), encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        manage_mcp_manifest(root, "list", owner_type="network")
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        manage_mcp_manifest(
+            root,
+            "register",
+            name="modern",
+            config=ManagedMcpConfig(
+                type="http", url="https://example.test/mcp"
+            ),
+            owner_type="network",
+        )
+    assert (
+        json.loads((root / "config.json").read_text(encoding="utf-8"))
+        == original
+    )

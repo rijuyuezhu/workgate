@@ -52,7 +52,7 @@ Example with one upstream MCP server and managed Skills:
 }
 ```
 
-Supported upstream types are `stdio`, `http`, and `sse`. Review every command, URL, tool description, and requested scope before enabling a server.
+Supported upstream types are `stdio` and `http` (Streamable HTTP). Review every command, URL, tool description, and requested scope before enabling a server.
 
 Credential-bearing servers use `integrationId` as their stable private identity. Set it when using OAuth, structured secret references, or credential-like literal headers/environment values. It must be unique within the manifest and must stay unchanged if you later rename the `mcpServers` key. For an existing configuration, using the current server key as the initial `integrationId` preserves the natural credential-store identity. Servers with only ordinary non-sensitive literals do not require one.
 
@@ -147,7 +147,7 @@ Discovery keeps a bounded in-memory snapshot for up to 60 seconds; pass `refresh
 ## Security notes
 
 - Stdio servers run on the executor selected by `session_id`, using that session's current workdir. Explicit server/tool discovery opens short-lived MCP subprocesses to inspect their live status or schemas. Ordinary calls only read configured server ownership and start the selected MCP subprocess once; process-local state is not retained between calls or shared between Workgate sessions.
-- HTTP and SSE servers use the server's network access, not the MCP client's.
+- HTTP servers use the server's network access, not the MCP client's.
 - An upstream server can use any secret or OAuth scope granted to it. Configure only trusted servers and use the narrowest credentials possible.
 - Keep the entire service state directory private and back it up only through a secure process.
 

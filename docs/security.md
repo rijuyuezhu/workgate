@@ -74,7 +74,7 @@ Agent Bridge authentication is separate from the built-in OAuth server that prot
 - Upstream OAuth uses the MCP SDK's protected-resource and authorization-server discovery, PKCE, state validation, dynamic client registration, refresh, and HTTP authentication. The interactive CLI binds a one-shot callback to a random `127.0.0.1` port. Normal server operation is noninteractive: it may refresh stored credentials, but a new authorization requirement fails immediately with instructions to run the CLI.
 - OAuth logout attempts the advertised revocation endpoint before deleting local credentials. The command distinguishes successful, unsupported, and failed remote revocation; local state is cleared even when revocation is unsupported or fails.
 - Agent Bridge status exposes only mode, authorization state, expiry/status metadata, counts, and redacted errors. Administrative secret names are available only to the local `mcp secret list` command. Credential-store changes participate in the dynamic registry fingerprint so updates become visible without restart.
-- Secret-based stdio servers receive values in their child environment; HTTP/SSE servers receive them in request headers. OAuth and static secrets therefore grant the upstream server access to those credentials. Configure only trusted upstreams and use narrowly scoped, revocable credentials.
+- Secret-based stdio servers receive values in their child environment; HTTP servers receive them in request headers. OAuth and static secrets therefore grant the upstream server access to those credentials. Configure only trusted upstreams and use narrowly scoped, revocable credentials.
 
 ## Session environment disclosure boundary
 
