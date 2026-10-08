@@ -24,11 +24,7 @@ job_tool = JobToolRegistry.get_tool_decorator()
 
 
 def _job_description(_context: object) -> str:
-    return """Inspect durable output, progress/results, stop, or retry tracked work owned by an execution session.
-
-`bash(async_=true)` creates tracked shell jobs. `session_copy` creates a control-managed transfer job by default, owned by the source session; `background=false` is the explicit synchronous opt-in. Tracked calls return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a control-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.
-
-Pass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call."""
+    return """List, poll, cancel, or retry durable jobs by session_id and job_id. Includes bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available."""
 
 
 @job_tool(
