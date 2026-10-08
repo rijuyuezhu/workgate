@@ -46,6 +46,11 @@ class McpDiscovery:
             if key[0] == session_id:
                 del self._pending[key]
 
+    def invalidate_all(self) -> None:
+        """Discard cached metadata across sessions after a manifest mutation."""
+        self._cache.clear()
+        self._pending.clear()
+
     async def _rows(
         self,
         session_id: str | None,

@@ -1,6 +1,9 @@
 """Agent bridge MCP tool registry."""
 
+from typing import Any, Literal
+
 from ...agent_bridge.discovery import McpDiscovery
+from ...agent_bridge.management import ManagedMcpConfig
 from ...agent_bridge.mcp import AgentMcpClientManager
 from ...agent_bridge.models import AgentCapabilityRegistry
 from ...agent_bridge.service import (
@@ -206,3 +209,27 @@ async def call_agent_mcp_tool(
     return await call_agent_mcp_tool_payload(
         _agent_registry(), server, tool, args or {}
     )
+
+
+@agent_bridge_tool(
+    http_method="POST",
+    http_path="/tools/manage_agent_mcp_server",
+    enabled=_agent_bridge_enabled,
+)
+async def manage_agent_mcp_server(
+    action: Literal[
+        "list",
+        "get",
+        "register",
+        "update",
+        "enable",
+        "disable",
+        "refresh",
+        "remove",
+    ],
+    name: str | None = None,
+    config: ManagedMcpConfig | None = None,
+    session_id: AgentMcpSessionIdArg = None,
+) -> dict[str, Any]:
+    """Manage external MCP integrations in their owning manifest; credentials are references only."""
+    raise RuntimeError("MCP integration management requires control routing")

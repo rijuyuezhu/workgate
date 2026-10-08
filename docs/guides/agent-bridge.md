@@ -76,6 +76,14 @@ Use `list_agent_skills` to see discovered names and sources, then `activate_agen
 
 Skill trees may use normal filesystem symlinks for the Skill directory, `SKILL.md`, and related files or directories. Workgate follows those links under the same file-size and scan budgets while keeping the configured Skill/source path and Skill-relative related paths in tool output. Broken links and directory loops are skipped or reported without unbounded traversal.
 
+## Manage MCP integrations at runtime
+
+Use `manage_agent_mcp_server` to `list`, `get`, `register`, `update`, `enable`, `disable`, `refresh`, or `remove` an upstream MCP server. For example, register a network server with `action="register"`, `name="docs"`, and `config={"type":"http","url":"https://docs.example.com/mcp"}`. Use `action="refresh"` and `name="docs"` to immediately re-probe that server's tools; the result is also available to `search_agent_mcp_tools` and `inspect_agent_mcp_tool` without waiting for the normal 60-second discovery cache to expire.
+
+For `stdio` integrations, pass a Workgate `session_id`: configuration and execution belong to its bound executor, not Control. Network integrations remain Control-owned. `list` without a session shows network integrations; with one it also includes that executor's stdio integrations. `get` returns a safe summary rather than replaying potentially secret-bearing legacy command arguments or URLs. `update` replaces the complete server connection entry, preserving its existing `integrationId`, and never silently changes transport ownership. `remove` deletes the manifest entry but does not erase any existing private credentials.
+
+Runtime changes are written atomically to the owner's **existing `config.json`**; they do not create a second integration registry. In model-facing `config`, `env` and `headers` only accept secret references such as `{"X-API-Key":{"secret":"api_key"}}`, not literal values. URLs may not contain embedded credentials or query strings. Set the actual secret and authorize OAuth only through the private CLI/UI flows described below; never put tokens in connection arguments or URLs. Manual edits of the same manifest remain supported.
+
 ## Store a static secret
 
 Secret references are valid only when the same server uses `auth.mode="secret"`. For example, this complete entry configures a server named `github` with a managed API-key header:

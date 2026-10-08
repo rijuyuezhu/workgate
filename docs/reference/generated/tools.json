@@ -1,11 +1,11 @@
 {
-  "count": 56,
+  "count": 57,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "56"
+          "code": "57"
         },
         "."
       ],
@@ -154,6 +154,44 @@
             ]
           },
           "List Skills in project/session, managed, then global priority order without loading instructions."
+        ],
+        [
+          {
+            "code": "manage_agent_mcp_server"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "action"
+                },
+                "note": "(list / get / register / update / enable / disable / refresh / remove, required)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "config"
+                },
+                "note": "(ManagedMcpConfig / null, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "name"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              }
+            ]
+          },
+          "Manage external MCP integrations in their owning manifest; credentials are references only."
         ],
         [
           {
@@ -7879,6 +7917,234 @@
           "shells"
         ],
         "title": "ListPersistentShellsOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Manage external MCP integrations in their owning manifest; credentials are references only.",
+      "inputSchema": {
+        "$defs": {
+          "AgentMcpAuthConfig": {
+            "additionalProperties": false,
+            "description": "Authentication mode and OAuth scopes for one upstream MCP server.",
+            "properties": {
+              "mode": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "secret",
+                  "oauth"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "scopes": {
+                "description": "OAuth scopes requested during interactive authorization.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Scopes",
+                "type": "array"
+              }
+            },
+            "title": "AgentMcpAuthConfig",
+            "type": "object"
+          },
+          "AgentSecretReference": {
+            "additionalProperties": false,
+            "description": "Reference to a value held in the private Agent Bridge credential store.",
+            "properties": {
+              "secret": {
+                "description": "Private credential-store key resolved for this server.",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                "title": "Secret",
+                "type": "string"
+              }
+            },
+            "required": [
+              "secret"
+            ],
+            "title": "AgentSecretReference",
+            "type": "object"
+          },
+          "ManagedMcpConfig": {
+            "additionalProperties": false,
+            "description": "Public MCP connection settings: credentials only by private-store key.",
+            "properties": {
+              "args": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Args",
+                "type": "array"
+              },
+              "auth": {
+                "$ref": "#/$defs/AgentMcpAuthConfig"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "enabled": {
+                "default": true,
+                "title": "Enabled",
+                "type": "boolean"
+              },
+              "env": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/AgentSecretReference"
+                },
+                "title": "Env",
+                "type": "object"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/AgentSecretReference"
+                },
+                "title": "Headers",
+                "type": "object"
+              },
+              "integrationId": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Integrationid"
+              },
+              "type": {
+                "enum": [
+                  "stdio",
+                  "http",
+                  "sse"
+                ],
+                "title": "Type",
+                "type": "string"
+              },
+              "url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Url"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "ManagedMcpConfig",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "get",
+              "register",
+              "update",
+              "enable",
+              "disable",
+              "refresh",
+              "remove"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ManagedMcpConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "manage_agent_mcp_serverArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "manage_agent_mcp_server",
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "manage_agent_mcp_serverDictOutput",
         "type": "object"
       }
     },

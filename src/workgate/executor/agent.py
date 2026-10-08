@@ -197,6 +197,33 @@ class ExecutorAgentBridgeService:
             self._registry(session_id, mcp_server_name=server), server
         )
 
+    def manage(
+        self,
+        session_id: str,
+        action: str,
+        name: str | None = None,
+        config: dict | None = None,
+    ) -> dict:
+        """Mutate executor-owned stdio MCP entries in the canonical manifest."""
+        from ..agent_bridge.management import (
+            ManagedMcpConfig,
+            manage_mcp_manifest,
+        )
+
+        self._store.touch_session(session_id)
+        parsed = (
+            ManagedMcpConfig.model_validate(config)
+            if config is not None
+            else None
+        )
+        return manage_mcp_manifest(
+            self._config.agent_config_dir,
+            action,
+            name=name,
+            config=parsed,
+            owner_type="stdio",
+        )
+
     async def call_tool(
         self, session_id: str, server: str, tool: str, args: dict | None = None
     ) -> CallAgentMcpToolOutput:
