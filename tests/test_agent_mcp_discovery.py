@@ -152,3 +152,53 @@ async def test_upstream_tool_pagination_is_bounded_before_caching() -> None:
                 ),
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_discovery_server_filter_scope_eviction_and_server_bound() -> (
+    None
+):
+    scopes: list[str | None] = []
+
+    async def fetch(session_id: str | None) -> list[dict[str, Any]]:
+        scopes.append(session_id)
+        return [
+            {
+                "server": "one",
+                "tool": "ping",
+                "description": "one",
+                "input_schema": {},
+            },
+            {
+                "server": "two",
+                "tool": "status",
+                "description": "two",
+                "input_schema": {},
+            },
+        ]
+
+    catalog = McpDiscovery(fetch)
+    selected = await catalog.search("", server="two", session_id="scope0")
+    assert selected["tools"] == [
+        {"server": "two", "tool": "status", "description": "two"}
+    ]
+    for i in range(1, 17):
+        await catalog.search("", session_id=f"scope{i}")
+    assert len(catalog._cache) == 16
+    assert "scope0" not in catalog._cache
+    await catalog.search("", session_id="scope0")
+    assert scopes.count("scope0") == 2
+
+    async def many_servers(_session_id: str | None) -> list[dict[str, Any]]:
+        return [
+            {
+                "server": f"server{i}",
+                "tool": "ping",
+                "description": "",
+                "input_schema": {},
+            }
+            for i in range(33)
+        ]
+
+    with pytest.raises(ValueError, match="discovery catalog exceeds bounds"):
+        await McpDiscovery(many_servers).search("")
