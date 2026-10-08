@@ -281,8 +281,6 @@ class Settings(BaseSettings):
     """Agent MCP server probe timeout in seconds."""
     agent_mcp_call_timeout_s: _PositiveInt = 60
     """Agent MCP tool-call timeout in seconds."""
-    agent_dynamic_mcp_tools: bool = True
-    """Register dynamic MCP bridge tools."""
 
     # Tool executables.
     shell_executable: str = "/bin/bash"

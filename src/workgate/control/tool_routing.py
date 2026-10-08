@@ -31,7 +31,12 @@ _TODO_CONTROL_TOOLS = frozenset({"read_todos", "write_todos"})
 _AUDIT_CONTROL_TOOLS = frozenset({"audit_tail"})
 _JOB_CONTROL_TOOLS = frozenset({"job"})
 _AGENT_MCP_CONTROL_TOOLS = frozenset(
-    {"list_agent_mcp_servers", "list_agent_mcp_tools", "call_agent_mcp_tool"}
+    {
+        "list_agent_mcp_servers",
+        "search_agent_mcp_tools",
+        "inspect_agent_mcp_tool",
+        "call_agent_mcp_tool",
+    }
 )
 
 
@@ -82,13 +87,18 @@ class ControlToolRouter:
                 task_id=str(task_id) if task_id is not None else None,
             )
         if tool_name == "session_change_workdir":
-            return await self._sessions.change_workdir(
+            result = await self._sessions.change_workdir(
                 str(args["session_id"]), str(args["workdir"])
             )
+            self._agent_bridge.invalidate_discovery(str(args["session_id"]))
+            return result
         if tool_name == "session_end":
-            return await self._sessions.end_session(
-                str(args["session_id"]), force=bool(args.get("force", False))
+            session_id = str(args["session_id"])
+            result = await self._sessions.end_session(
+                session_id, force=bool(args.get("force", False))
             )
+            self._agent_bridge.invalidate_discovery(session_id)
+            return result
         if tool_name == "session_copy":
             copy_args = {
                 "src_session_id": str(args["src_session_id"]),
@@ -203,9 +213,19 @@ class ControlToolRouter:
             )
         if tool_name == "list_agent_mcp_servers":
             return await self._agent_bridge.list_servers(args.get("session_id"))
-        if tool_name == "list_agent_mcp_tools":
-            return await self._agent_bridge.list_tools(
-                args.get("server"), args.get("session_id")
+        if tool_name == "search_agent_mcp_tools":
+            return await self._agent_bridge.search_tools(
+                str(args.get("query") or ""),
+                server=args.get("server"),
+                session_id=args.get("session_id"),
+                limit=int(args.get("limit", 20)),
+                refresh=bool(args.get("refresh", False)),
+            )
+        if tool_name == "inspect_agent_mcp_tool":
+            return await self._agent_bridge.inspect_tool(
+                str(args["server"]),
+                str(args["tool"]),
+                session_id=args.get("session_id"),
             )
         if tool_name == "call_agent_mcp_tool":
             return await self._agent_bridge.call_tool(
@@ -317,15 +337,6 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
     def register_mcp(self, mcp, context: McpToolContext) -> None:
         for tool in self._enabled_tools():
             tool.register_mcp(mcp, context)
-        if (
-            self.name == "agent_bridge"
-            and context.settings.agent_bridge_enabled
-        ):
-            # Preserve control-owned dynamic upstream-MCP integration tools while
-            # the filesystem-backed static Skill tools above use executor routing.
-            from ..tools.registry.agent import register_agent_bridge_dynamic_mcp
-
-            register_agent_bridge_dynamic_mcp(mcp, context)
 
 
 def control_machine_tool_names() -> frozenset[str]:

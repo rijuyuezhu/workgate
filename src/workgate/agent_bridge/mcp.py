@@ -1,6 +1,7 @@
 """Normalize upstream MCP protocol objects and manage client sessions for configured agent bridge servers."""
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -102,17 +103,46 @@ def normalize_tool_result(result: Any) -> dict[str, Any]:
     }
 
 
+# Bound both the upstream transfer and any retained discovery metadata.
+MAX_TOOLS_PER_SERVER = 100
+MAX_TOOL_DESCRIPTOR_BYTES = 16 * 1024
+MAX_SERVER_DESCRIPTOR_BYTES = 256 * 1024
+
+
+def _tool_descriptor_bytes(tool: AgentMcpTool) -> int:
+    return len(
+        json.dumps(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            },
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8")
+    )
+
+
 async def _list_session_tools(session: ClientSession) -> list[AgentMcpTool]:
-    """Page through one initialized MCP session's tool list."""
+    """Page through one MCP server's bounded tool catalog."""
     tools: list[AgentMcpTool] = []
+    catalog_bytes = 0
     cursor: str | None = None
     while True:
         result = await session.list_tools(
             params=PaginatedRequestParams(cursor=cursor)
         )
-        tools.extend(
-            normalize_mcp_tool(tool) for tool in _value(result, "tools", result)
-        )
+        for item in _value(result, "tools", result):
+            if len(tools) >= MAX_TOOLS_PER_SERVER:
+                raise ValueError("MCP server exceeds tool count limit")
+            tool = normalize_mcp_tool(item)
+            size = _tool_descriptor_bytes(tool)
+            if size > MAX_TOOL_DESCRIPTOR_BYTES:
+                raise ValueError("MCP tool descriptor exceeds size limit")
+            catalog_bytes += size
+            if catalog_bytes > MAX_SERVER_DESCRIPTOR_BYTES:
+                raise ValueError("MCP server tool catalog exceeds size limit")
+            tools.append(tool)
         cursor = getattr(result, "nextCursor", None)
         if not cursor:
             return tools

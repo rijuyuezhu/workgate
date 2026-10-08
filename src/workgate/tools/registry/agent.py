@@ -1,7 +1,6 @@
 """Agent bridge MCP tool registry."""
 
-from mcp.server.fastmcp import FastMCP
-
+from ...agent_bridge.discovery import McpDiscovery
 from ...agent_bridge.mcp import AgentMcpClientManager
 from ...agent_bridge.models import AgentCapabilityRegistry
 from ...agent_bridge.service import (
@@ -11,10 +10,10 @@ from ...agent_bridge.service import (
     list_agent_mcp_servers_payload,
     list_agent_mcp_tools_payload,
 )
-from ...agent_bridge.tools import register_agent_bridge_dynamic_tools
 from ...config.control import ControlConfig
-from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
 from ...schemas.input_models.agent import (
+    AgentMcpSearchLimitArg,
+    AgentMcpSearchQueryArg,
     AgentMcpSessionIdArg,
     AgentServerArg,
     AgentServerFilterArg,
@@ -28,14 +27,13 @@ from ...schemas.result_models.agent import (
     ActivateAgentSkillOutput,
     AgentConfigStatusOutput,
     CallAgentMcpToolOutput,
+    InspectAgentMcpToolOutput,
     ListAgentMcpServersOutput,
-    ListAgentMcpToolsOutput,
     ListAgentSkillsOutput,
     ReadAgentSkillFileOutput,
+    SearchAgentMcpToolsOutput,
 )
-from ..contracts import McpToolContext
 from ..declarative import DeclarativeToolRegistry
-from ..metadata import oauth_security_meta
 
 
 def _agent_registry() -> AgentCapabilityRegistry:
@@ -53,13 +51,6 @@ class AgentBridgeToolRegistry(DeclarativeToolRegistry):
 
     name = "agent_bridge"
     """Registry group name used for tool-surface organization."""
-
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
-        """Register static and dynamic agent bridge tools when enabled."""
-        if not context.settings.agent_bridge_enabled:
-            return
-        super().register_mcp(mcp, context)
-        register_agent_bridge_dynamic_mcp(mcp, context)
 
 
 agent_bridge_tool = AgentBridgeToolRegistry.get_tool_decorator()
@@ -137,22 +128,61 @@ async def list_agent_mcp_servers(
     return list_agent_mcp_servers_payload(_agent_registry())
 
 
+async def _local_search_rows(_session_id: str | None) -> list[dict]:
+    import asyncio
+
+    registry = await asyncio.to_thread(_agent_registry)
+    return list_agent_mcp_tools_payload(registry).tools
+
+
+_LOCAL_DISCOVERY = McpDiscovery(_local_search_rows)
+
+
 @agent_bridge_tool(
     http_method="POST",
-    http_path="/tools/list_agent_mcp_tools",
+    http_path="/tools/search_agent_mcp_tools",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
-async def list_agent_mcp_tools(
-    server: AgentServerFilterArg = None,
+async def search_agent_mcp_tools(
+    query: AgentMcpSearchQueryArg = "",
     session_id: AgentMcpSessionIdArg = None,
-) -> ListAgentMcpToolsOutput:
-    """List tools from control-owned network MCP servers or session-bound executor stdio servers."""
+    server: AgentServerFilterArg = None,
+    limit: AgentMcpSearchLimitArg = 20,
+    refresh: bool = False,
+) -> SearchAgentMcpToolsOutput:
+    """Search bounded MCP tool summaries; inspect a result for its input schema."""
+    if session_id is not None:
+        raise RuntimeError("session-bound MCP search requires control routing")
+    return SearchAgentMcpToolsOutput(
+        **await _LOCAL_DISCOVERY.search(
+            query,
+            server=server,
+            limit=limit,
+            refresh=refresh,
+        )
+    )
+
+
+@agent_bridge_tool(
+    http_method="POST",
+    http_path="/tools/inspect_agent_mcp_tool",
+    enabled=_agent_bridge_enabled,
+    annotations="read_only",
+)
+async def inspect_agent_mcp_tool(
+    server: AgentServerArg,
+    tool: AgentToolArg,
+    session_id: AgentMcpSessionIdArg = None,
+) -> InspectAgentMcpToolOutput:
+    """Inspect the input schema of exactly one previously discovered MCP tool."""
     if session_id is not None:
         raise RuntimeError(
-            "session-bound agent MCP listing requires control routing"
+            "session-bound MCP inspection requires control routing"
         )
-    return list_agent_mcp_tools_payload(_agent_registry(), server)
+    return InspectAgentMcpToolOutput(
+        **await _LOCAL_DISCOVERY.inspect(server, tool)
+    )
 
 
 @agent_bridge_tool(
@@ -173,23 +203,4 @@ async def call_agent_mcp_tool(
         )
     return await call_agent_mcp_tool_payload(
         _agent_registry(), server, tool, args or {}
-    )
-
-
-def register_agent_bridge_dynamic_mcp(
-    mcp: FastMCP, context: McpToolContext
-) -> None:
-    """Register dynamic MCP tools for this tool group."""
-    settings = context.settings
-    registry = build_network_agent_registry_from_settings(
-        settings, AgentMcpClientManager
-    )
-    register_agent_bridge_dynamic_tools(
-        mcp,
-        registry,
-        oauth_security_meta(SUPPORTED_OAUTH_SCOPES),
-        settings.agent_mcp_probe_timeout_s,
-        None if settings.agent_dynamic_mcp_tools else False,
-        False,
-        {},
     )

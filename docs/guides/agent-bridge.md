@@ -48,10 +48,6 @@ Example with one upstream MCP server and managed Skills:
   "skills": {
     "enabled": true,
     "directory": "skills"
-  },
-  "dynamicTools": {
-    "mcp": true,
-    "skills": true
   }
 }
 ```
@@ -60,7 +56,7 @@ Supported upstream types are `stdio`, `http`, and `sse`. Review every command, U
 
 Credential-bearing servers use `integrationId` as their stable private identity. Set it when using OAuth, structured secret references, or credential-like literal headers/environment values. It must be unique within the manifest and must stay unchanged if you later rename the `mcpServers` key. For an existing configuration, using the current server key as the initial `integrationId` preserves the natural credential-store identity. Servers with only ordinary non-sensitive literals do not require one.
 
-Enabled `stdio` servers are kept alive and reused by the Agent Bridge instead of being restarted for every probe or tool call. This is required for upstreams that hold process-local state or accept a secondary long-lived connection, such as browser-extension MCP servers. Changing, disabling, or removing the configured server tears down the retained process.
+Enabled `stdio` tools run in a fresh subprocess for each discovery or call, bound to the selected Workgate Session workdir. In-process state is not preserved between calls; use a network MCP server if long-lived server state is required.
 
 ## Add a Skill
 
@@ -79,8 +75,6 @@ Reproduce the failure first, inspect the smallest relevant code path, and verify
 Use `list_agent_skills` to see discovered names and sources, then `activate_agent_skill` to load one. Related files returned by a Skill can be read with `read_agent_skill_file`.
 
 Skill trees may use normal filesystem symlinks for the Skill directory, `SKILL.md`, and related files or directories. Workgate follows those links under the same file-size and scan budgets while keeping the configured Skill/source path and Skill-relative related paths in tool output. Broken links and directory loops are skipped or reported without unbounded traversal.
-
-When dynamic Skill tools are enabled, selected Skills also appear directly in the MCP tool list.
 
 ## Store a static secret
 
@@ -138,9 +132,9 @@ Start by asking the client to show what is available:
 Use workgate to check Agent Bridge status, list available Skills and upstream MCP servers, and summarize the extra capabilities.
 ```
 
-Before calling an upstream tool, list that server's tools and review the selected tool name and description.
+Use `search_agent_mcp_tools` with keywords and an optional `session_id` to discover external tool summaries (without schemas). Then call `inspect_agent_mcp_tool` with the chosen `server` and `tool` to fetch its input schema. Finally use `call_agent_mcp_tool` to invoke it. These are fixed Workgate tools: upstream tool counts never expand the public tool list.
 
-Dynamic tools are convenient, but they make the exposed tool list change with configuration. Disable them when clients should use only the fixed bridge tools.
+Discovery keeps a bounded in-memory snapshot for up to 60 seconds; pass `refresh=true` to search again after changing a server's configuration or tools. Session workdir changes invalidate that session's cache. Searches are limited to 50 matches, with a default of 20; each selected schema is returned on demand, not in the search result. Credentials and sensitive descriptor values remain redacted.
 
 ## Security notes
 

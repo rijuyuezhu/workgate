@@ -156,15 +156,6 @@ class AgentSkillsConfig(BaseModel):
     """Directory, relative to the agent config directory, containing skills."""
 
 
-class AgentDynamicToolsConfig(BaseModel):
-    """Feature flags for exposing discovered capabilities as public tools."""
-
-    mcp: bool = True
-    """Whether discovered upstream MCP tools become public dynamic tools."""
-    skills: bool = True
-    """Whether discovered Markdown skills become public dynamic tools."""
-
-
 class AgentBridgeManifest(BaseModel):
     """Validated bridge manifest."""
 
@@ -179,10 +170,6 @@ class AgentBridgeManifest(BaseModel):
     """Named upstream MCP server configurations."""
     skills: AgentSkillsConfig = Field(default_factory=AgentSkillsConfig)
     """Markdown skill discovery configuration."""
-    dynamic_tools: AgentDynamicToolsConfig = Field(
-        default_factory=AgentDynamicToolsConfig, alias="dynamicTools"
-    )
-    """Dynamic tool exposure settings for discovered capabilities."""
 
     @field_validator("version")
     @classmethod
@@ -305,28 +292,6 @@ class SkillSource:
 
 
 @dataclass(frozen=True)
-class DynamicSkillToolRecord:
-    """Association between a generated tool name and the skill it activates."""
-
-    dynamic_name: str
-    """Public dynamic tool name exposed by workgate."""
-    skill_name: str
-    """Underlying skill name activated by the dynamic tool."""
-
-
-@dataclass(frozen=True)
-class DynamicMcpToolRecord:
-    """Association between a generated public tool name and an upstream MCP server tool."""
-
-    dynamic_name: str
-    """Public dynamic tool name exposed by workgate."""
-    server_name: str
-    """Manifest key for the upstream MCP server."""
-    tool_name: str
-    """Original upstream MCP tool name."""
-
-
-@dataclass(frozen=True)
 class AgentCapabilityRegistry:
     """Snapshot of discovered agent bridge capabilities."""
 
@@ -348,14 +313,6 @@ class AgentCapabilityRegistry:
     """Non-fatal skill discovery warnings."""
     mcp_servers: dict[str, AgentMcpServerRecord]
     """Probed upstream MCP servers keyed by manifest name."""
-    dynamic_mcp_tools: bool
-    """Whether dynamic MCP tool exposure is enabled."""
-    dynamic_skill_tools: bool
-    """Whether dynamic skill tool exposure is enabled."""
-    dynamic_skill_tool_map: dict[str, DynamicSkillToolRecord]
-    """Public skill tool names mapped to skill records."""
-    dynamic_mcp_tool_map: dict[str, DynamicMcpToolRecord]
-    """Public MCP tool names mapped to upstream tools."""
     client_manager: Any
     """MCP client-session manager used to call upstream tools."""
     include_project_skills: bool = True

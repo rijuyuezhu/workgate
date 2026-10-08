@@ -57,8 +57,6 @@ def build_network_agent_registry_from_settings(
         active_settings.agent_config_dir,
         client_manager,
         active_settings.agent_mcp_probe_timeout_s,
-        None if active_settings.agent_dynamic_mcp_tools else False,
-        False,
         project_root=active_settings.agent_config_dir,
         max_skills=0,
         max_skill_related_files=0,
@@ -84,7 +82,6 @@ def agent_mcp_tool_row(
     tool: Any,
     env: dict[str, str],
     headers: dict[str, str],
-    dynamic_tool_name: str | None = None,
 ) -> dict[str, Any]:
     """Convert an upstream MCP tool into a redacted status row."""
     jsonable_tool = to_jsonable(tool)
@@ -116,10 +113,6 @@ def agent_mcp_tool_row(
             input_schema or {}, env, headers
         ),
     }
-    if dynamic_tool_name is not None:
-        row["dynamic_tool_name"] = redact_configured_value_tree(
-            dynamic_tool_name, env, headers
-        )
     return row
 
 
@@ -252,10 +245,6 @@ def list_agent_mcp_tools_payload(
 ) -> ListAgentMcpToolsOutput:
     """Return redacted upstream MCP tool rows, optionally filtered by server."""
     records = _agent_mcp_records(registry, server)
-    dynamic_names = {
-        (record.server_name, record.tool_name): dynamic_name
-        for dynamic_name, record in registry.dynamic_mcp_tool_map.items()
-    }
     rows = []
     for server_name, record in records:
         env, headers = manager_redaction_maps(
@@ -267,7 +256,6 @@ def list_agent_mcp_tools_payload(
                 tool,
                 env,
                 headers,
-                dynamic_names.get((server_name, raw_tool_name)),
             )
             for raw_tool_name, tool in zip(
                 record.raw_tool_names, record.tools, strict=True

@@ -755,13 +755,13 @@ async def test_agent_bridge_annotations_remain_conservative(
             open_world=False,
         )
     _assert_tool_annotations(
-        tools["list_agent_mcp_tools"],
+        tools["search_agent_mcp_tools"],
         read_only=True,
         destructive=False,
         idempotent=True,
         open_world=True,
     )
-    for name in {"call_agent_mcp_tool", "agent_mcp__docs__search"}:
+    for name in {"call_agent_mcp_tool"}:
         _assert_tool_annotations(
             tools[name],
             read_only=False,

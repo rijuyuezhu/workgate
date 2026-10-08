@@ -48,7 +48,8 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "executor",
         "job",
         "kill_persistent_shell",
-        "list_agent_mcp_tools",
+        "search_agent_mcp_tools",
+        "inspect_agent_mcp_tool",
         "resize_persistent_shell",
         "revoke_file_link",
         "run_python_code",
@@ -59,7 +60,6 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "session_start",
     }
 )
-_OPEN_WORLD_TOOL_PREFIXES = ("agent_mcp__",)
 _NON_DESTRUCTIVE_MUTATION_TOOL_NAMES = frozenset(
     {
         "create_file_link",
@@ -75,9 +75,7 @@ def tool_safety_annotations(
     tool_name: str, *, read_only: bool
 ) -> ToolAnnotations:
     """Return conservative, mode-independent MCP safety annotations."""
-    open_world = tool_name in _OPEN_WORLD_TOOL_NAMES or tool_name.startswith(
-        _OPEN_WORLD_TOOL_PREFIXES
-    )
+    open_world = tool_name in _OPEN_WORLD_TOOL_NAMES
     destructive = (
         not read_only and tool_name not in _NON_DESTRUCTIVE_MUTATION_TOOL_NAMES
     )

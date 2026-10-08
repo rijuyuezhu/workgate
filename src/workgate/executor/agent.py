@@ -159,8 +159,6 @@ class ExecutorAgentBridgeService:
             self._config.agent_config_dir,
             manager,
             self._config.agent_mcp_probe_timeout_s,
-            False,
-            False,
             project_root=self._config.agent_config_dir,
             max_skills=0,
             max_skill_related_files=self._config.max_skill_related_files,

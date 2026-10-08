@@ -1,11 +1,11 @@
 {
-  "count": 55,
+  "count": 56,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "55"
+          "code": "56"
         },
         "."
       ],
@@ -92,6 +92,37 @@
         ],
         [
           {
+            "code": "inspect_agent_mcp_tool"
+          },
+          {
+            "items": [
+              {
+                "description": "Exact configured agent MCP server name.",
+                "head": {
+                  "code": "server"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Exact upstream tool name exposed by the selected agent MCP server.",
+                "head": {
+                  "code": "tool"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Inspect the input schema of exactly one previously discovered MCP tool."
+        ],
+        [
+          {
             "code": "list_agent_mcp_servers"
           },
           {
@@ -106,30 +137,6 @@
             ]
           },
           "List control-owned network MCP servers and, with session_id, executor-owned stdio servers."
-        ],
-        [
-          {
-            "code": "list_agent_mcp_tools"
-          },
-          {
-            "items": [
-              {
-                "description": "Optional exact agent MCP server name to filter listed tools.",
-                "head": {
-                  "code": "server"
-                },
-                "note": "(string / null, optional)"
-              },
-              {
-                "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
-                "head": {
-                  "code": "session_id"
-                },
-                "note": "(string / null, optional)"
-              }
-            ]
-          },
-          "List tools from control-owned network MCP servers or session-bound executor stdio servers."
         ],
         [
           {
@@ -178,6 +185,51 @@
             ]
           },
           "Read a bounded related file from the same selected Skill source; activate the Skill first."
+        ],
+        [
+          {
+            "code": "search_agent_mcp_tools"
+          },
+          {
+            "items": [
+              {
+                "description": "Maximum tools returned by discovery.",
+                "head": {
+                  "code": "limit"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Keywords to match an external MCP tool name or description.",
+                "head": {
+                  "code": "query"
+                },
+                "note": "(string, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "refresh"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
+                "description": "Optional exact agent MCP server name to filter listed tools.",
+                "head": {
+                  "code": "server"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string / null, optional)"
+              }
+            ]
+          },
+          "Search bounded MCP tool summaries; inspect a result for its input schema."
         ]
       ]
     },
@@ -2437,14 +2489,6 @@
             "title": "Config Path",
             "type": "string"
           },
-          "dynamic_tools": {
-            "additionalProperties": {
-              "type": "boolean"
-            },
-            "description": "Dynamic tool exposure flags.",
-            "title": "Dynamic Tools",
-            "type": "object"
-          },
           "manifest_errors": {
             "description": "Manifest validation or load errors.",
             "items": {
@@ -2477,8 +2521,7 @@
           "manifest_status",
           "manifest_errors",
           "skills",
-          "mcp_servers",
-          "dynamic_tools"
+          "mcp_servers"
         ],
         "title": "AgentConfigStatusOutput",
         "type": "object"
@@ -6481,6 +6524,98 @@
     },
     {
       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Inspect the input schema of exactly one previously discovered MCP tool.",
+      "inputSchema": {
+        "properties": {
+          "server": {
+            "description": "Exact configured agent MCP server name.",
+            "title": "Server",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
+          },
+          "tool": {
+            "description": "Exact upstream tool name exposed by the selected agent MCP server.",
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "tool"
+        ],
+        "title": "inspect_agent_mcp_toolArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "inspect_agent_mcp_tool",
+      "outputSchema": {
+        "description": "One selected tool descriptor containing its complete input schema.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "server": {
+            "title": "Server",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "tool",
+          "description",
+          "input_schema"
+        ],
+        "title": "InspectAgentMcpToolOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true,
@@ -7213,86 +7348,6 @@
         "additionalProperties": true,
         "description": "Configured agent MCP server status rows keyed by server name.",
         "title": "ListAgentMcpServersOutput",
-        "type": "object"
-      }
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true,
-        "readOnlyHint": true
-      },
-      "description": "List tools from control-owned network MCP servers or session-bound executor stdio servers.",
-      "inputSchema": {
-        "properties": {
-          "server": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional exact agent MCP server name to filter listed tools.",
-            "title": "Server"
-          },
-          "session_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
-            "title": "Session Id"
-          }
-        },
-        "title": "list_agent_mcp_toolsArguments",
-        "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
-      "name": "list_agent_mcp_tools",
-      "outputSchema": {
-        "description": "Tools exposed by configured agent MCP servers.",
-        "properties": {
-          "tools": {
-            "description": "Redacted upstream MCP tool rows.",
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Tools",
-            "type": "array"
-          }
-        },
-        "required": [
-          "tools"
-        ],
-        "title": "ListAgentMcpToolsOutput",
         "type": "object"
       }
     },
@@ -9237,6 +9292,111 @@
           "stderr"
         ],
         "title": "GrepSearchOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Search bounded MCP tool summaries; inspect a result for its input schema.",
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "description": "Maximum tools returned by discovery.",
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "default": "",
+            "description": "Keywords to match an external MCP tool name or description.",
+            "title": "Query",
+            "type": "string"
+          },
+          "refresh": {
+            "default": false,
+            "title": "Refresh",
+            "type": "boolean"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional exact agent MCP server name to filter listed tools.",
+            "title": "Server"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional execution session id. Pass it to include/call stdio MCP servers owned by the executor bound to that session.",
+            "title": "Session Id"
+          }
+        },
+        "title": "search_agent_mcp_toolsArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "search_agent_mcp_tools",
+      "outputSchema": {
+        "description": "Small external-MCP search results without tool input schemas.",
+        "properties": {
+          "tools": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "total_matches": {
+            "title": "Total Matches",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tools",
+          "total_matches"
+        ],
+        "title": "SearchAgentMcpToolsOutput",
         "type": "object"
       }
     },
