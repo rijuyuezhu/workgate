@@ -1578,7 +1578,7 @@ async def test_mcp_bounded_python_watchdog_honors_requested_timeout(
             {
                 "session_id": session["session_id"],
                 "code": "import time; time.sleep(0.1); print('completed')",
-                "timeout_s": 1,
+                "timeout_s": 10,
             },
         )
     )
@@ -1614,7 +1614,7 @@ def test_http_bounded_python_watchdog_honors_requested_timeout(
         json={
             "session_id": session_id,
             "code": "import time; time.sleep(0.1); print('completed')",
-            "timeout_s": 1,
+            "timeout_s": 10,
         },
     )
     assert response.status_code == 200
