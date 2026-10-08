@@ -57,6 +57,6 @@ AuditIncludeFullPayloadsArg = Annotated[
     bool,
     Field(
         default=False,
-        description="Resolve retained sanitized payload objects. Requires audit:full and entry_id.",
+        description="Resolve retained audit payload objects. Requires audit:full and entry_id.",
     ),
 ]

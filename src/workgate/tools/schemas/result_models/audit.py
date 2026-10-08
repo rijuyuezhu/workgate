@@ -13,7 +13,7 @@ class AuditTailOutput(BaseModel):
     session_id: str | None = None
     """Concrete execution-session scope, when requested."""
     entries: list[dict[str, Any]] = Field(default_factory=list)
-    """Bounded logical audit entries with references or resolved sanitized values."""
+    """Bounded logical audit entries with references or resolved retained values."""
     count: int
     """Number of entries returned in this response."""
     total_matched: int
@@ -23,4 +23,4 @@ class AuditTailOutput(BaseModel):
     entry_id: str | None = None
     """Requested stable logical entry id for detail mode."""
     full_payloads: bool = False
-    """Whether retained sanitized payload references were requested for resolution."""
+    """Whether retained audit payload references were requested for resolution."""

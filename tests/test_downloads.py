@@ -298,7 +298,7 @@ def test_download_store_never_persists_bearer_token_or_url(
     assert "url" not in record
 
 
-def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
+def test_download_tokens_are_visible_in_owner_audit_logs(tmp_path, monkeypatch):
     _reset(tmp_path, monkeypatch)
     (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
     app, _harness = build_paired_http_app(get_settings())
@@ -320,9 +320,8 @@ def test_download_tokens_are_redacted_from_audit_logs(tmp_path, monkeypatch):
     log_text = get_settings().audit_log_path.read_text(encoding="utf-8")
     records = [json.loads(line) for line in log_text.splitlines() if line]
     fingerprint = download_token_fingerprint(token)
-    assert token not in log_text
-    assert link["url"] not in log_text
-    assert "/download/<redacted>" in log_text
+    assert token in log_text
+    assert link["url"] in log_text
     assert fingerprint in log_text
     assert any(
         record.get("event") == "download_link_created"

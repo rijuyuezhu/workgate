@@ -1,9 +1,6 @@
 # Audit log
 
-`workgate` records server and tool activity so users can review what happened. Audit data may include project text, command input, command output, errors, and remote activity after best-effort credential redaction.
-
-Durable task-state tools redact their generic tool-call input/output payloads entirely. Separate mutation events retain only structural details such as changed fields and step IDs/statuses. The task document itself still contains the full progress and plan text, so its control-state storage remains sensitive.
-Treat the entire audit directory as sensitive.
+`workgate` records bounded server and tool activity for the owner to review. **Audit does not mask content**: commands, script source, URLs, page text, form inputs, stdout/stderr, tool results, errors, and credentials can appear in retained records. Treat the entire audit directory and exports as sensitive.
 
 ## Review activity
 
@@ -11,7 +8,7 @@ The browser and OpenTUI **Audit** panels are the easiest way to filter recent ac
 
 From an MCP client, use `audit_tail(task_id=...)` for task-wide history, `audit_tail(session_id=...)` for one concrete execution session, or pass both to request their intersection. Neither identity selects or rebinds execution. The default response is a bounded recent list; use filters to narrow it rather than requesting a large history.
 
-To retrieve a retained full sanitized value, request one specific entry with `include_full_payloads=true`. This requires the additional `audit:full` scope. Redacted credentials cannot be recovered.
+To retrieve a retained full value, request one specific entry with `include_full_payloads=true`. This requires the additional `audit:full` scope. Regular list/detail views remain bounded; size-based truncation and omission are explicit.
 
 ## Storage location
 
@@ -23,13 +20,13 @@ ${XDG_STATE_HOME:-~/.local/state}/workgate/audit_log/
 
 This is the control-side Linux default; macOS and Windows use their native Workgate state location. An explicit `state_dir` changes the root. Executors keep their own audit state under their executor-private state root, while the shared UI/tool flow selects the relevant session/executor history.
 
-Do not publish this directory, attach it to public bug reports, or assume redaction removed every sensitive project value.
+Do not publish this directory or attach it to public bug reports. It may contain credential values and third-party data.
 
 ## Retention and limits
 
 Audit retention, per-entry limits, and optional retained payloads are configurable. Use the generated [Configuration reference](../reference/configuration.md) instead of copying default values into deployment notes.
 
-Reduce retention or disable retained payloads when the ability to inspect full sanitized values is not worth the storage and privacy cost.
+Reduce retention or disable retained payloads when the ability to inspect full values is not worth the storage and privacy cost.
 
 ## Permissions
 

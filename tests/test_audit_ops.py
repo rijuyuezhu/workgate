@@ -109,7 +109,7 @@ async def test_control_audit_is_task_wide_with_session_attribution(tmp_path):
     assert result.entries[0]["event"] == "canonical-control-entry"
     assert result.entries[0]["task"] == task_id
     assert result.entries[0]["session"] == session_id
-    assert result.entries[0]["payload"]["token"] == "<redacted>"
+    assert result.entries[0]["payload"]["token"] == "private-token-value"
     assert session_only.count == 1
 
 
@@ -363,6 +363,6 @@ def test_http_audit_tail_enforces_read_and_full_scopes(monkeypatch, tmp_path):
     assert denied_full.status_code == 403
     assert full.status_code == 200
     assert full.json()["entries"][0]["payload"] == {
-        "token": "<redacted>",
+        "token": "route-secret",
         "body": "route-" * 4_000,
     }

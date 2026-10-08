@@ -211,7 +211,7 @@ def _audit_view_image_detail(
     entry: dict[str, Any],
     preview_request: UiImagePreviewRequest | None = None,
 ) -> dict[str, Any]:
-    """Sanitize an audited MCP image result and attach bounded UI previews."""
+    """Replace inline image bytes with a bounded UI preview representation."""
     if str(entry.get("tool") or "") != "view_image":
         return entry
     output = entry.get("output")
