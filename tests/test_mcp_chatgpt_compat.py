@@ -225,6 +225,11 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     assert tool_oauth_scopes("browser_session") == ["browser:use"]
     assert tool_oauth_scopes("browser_snapshot") == ["browser:use"]
     assert tool_oauth_scopes("browser_act") == ["browser:use"]
+    assert tool_oauth_scopes("browser_run_script") == [
+        "browser:use",
+        "shell:read",
+        "shell:execute",
+    ]
     assert tool_oauth_scopes("gui_list") == ["gui:use"]
     assert tool_oauth_scopes("gui_state") == ["gui:use"]
     assert tool_oauth_scopes("gui_action") == ["gui:use"]
@@ -240,6 +245,10 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     }
     assert "session_id" in tools["bash"].inputSchema["required"]
     assert "session_id" in tools["run_python_code"].inputSchema["required"]
+    assert set(tools["browser_run_script"].inputSchema["required"]) == {
+        "session_id",
+        "script",
+    }
     assert "session_id" in tools["tree_view"].inputSchema["required"]
     assert "session_id" in tools["glob_search"].inputSchema["required"]
     assert "session_id" in tools["job"].inputSchema["required"]
@@ -1447,3 +1456,34 @@ def test_oauth_authorize_form_escapes_reflected_fields(tmp_path, monkeypatch):
 
     assert marker not in body
     assert "&lt;unsafe&gt;" in body
+
+
+@pytest.mark.asyncio
+async def test_browser_script_rejects_missing_browser_or_shell_scope() -> None:
+    from fastapi import HTTPException
+
+    from workgate.oauth.core.context import (
+        bind_oauth_claims,
+        reset_oauth_claims,
+    )
+    from workgate.tools.registry.browser import BrowserToolRegistry
+
+    tool = next(
+        tool
+        for tool in BrowserToolRegistry()._enabled_tools()
+        if tool.name == "browser_run_script"
+    )
+    for scopes, missing in (
+        ("browser:use shell:read", "shell:execute"),
+        ("shell:read shell:execute", "browser:use"),
+    ):
+        token = bind_oauth_claims({"scope": scopes})
+        try:
+            with pytest.raises(HTTPException) as caught:
+                await tool.call_from_mapping(
+                    {"session_id": "sess_fake", "script": "print(1)"}
+                )
+            assert caught.value.status_code == 403
+            assert missing in str(caught.value.detail)
+        finally:
+            reset_oauth_claims(token)

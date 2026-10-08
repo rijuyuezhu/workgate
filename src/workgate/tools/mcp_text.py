@@ -244,6 +244,7 @@ _RENDERERS: dict[str, ToolTextRenderer] = {
     "hashline_edit": _hashline_edit_text,
     "bash": _shell_text,
     "run_python_code": _shell_text,
+    "browser_run_script": _shell_text,
     "read_persistent_shell_output": _persistent_shell_text,
     "job": _job_text,
     "activate_agent_skill": _skill_text,

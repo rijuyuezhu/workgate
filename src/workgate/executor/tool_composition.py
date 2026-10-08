@@ -4,8 +4,9 @@ import asyncio
 from typing import Any, cast
 
 from ..config.executor import ExecutorConfig
+from ..errors import BrowserUnavailableError
 from .agent import ExecutorAgentBridgeService
-from .browser import BrowserService
+from .browser import BrowserService, browser_capability_available
 from .dashboard import dashboard_snapshot
 from .dispatch import ExecutorDispatcher, build_executor_dispatcher
 from .files import files_config_from_executor_config
@@ -247,6 +248,21 @@ def build_executor_tool_dispatcher(
     async def job_handler(args: dict[str, Any]) -> Any:
         return await shell_service.jobs.execute(args)
 
+    async def browser_run_script_handler(args: dict[str, Any]) -> Any:
+        if not await asyncio.to_thread(browser_capability_available):
+            raise BrowserUnavailableError(
+                "Playwright Chromium is unavailable on the bound executor"
+            )
+        return await shell_service.run_python_code(
+            {
+                "session_id": args["session_id"],
+                "code": args["script"],
+                "cwd": ".",
+                "timeout_s": args.get("timeout_s", 60),
+                "max_output_bytes": args.get("max_output_bytes"),
+            }
+        )
+
     async def browser_session_handler(args: dict[str, Any]) -> Any:
         session_id = str(args["session_id"])
         async with session_lifecycle_lock(session_id):
@@ -375,6 +391,7 @@ def build_executor_tool_dispatcher(
             "browser_session": browser_session_handler,
             "browser_snapshot": browser_snapshot_handler,
             "browser_act": browser_act_handler,
+            "browser_run_script": browser_run_script_handler,
             "gui_list": gui_list_handler,
             "gui_state": gui_state_handler,
             "gui_action": gui_action_handler,

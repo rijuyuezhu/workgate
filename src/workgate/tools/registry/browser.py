@@ -21,11 +21,17 @@ from ...schemas.input_models.browser import (
     RequiredBrowserSessionIdArg,
 )
 from ...schemas.input_models.session import SessionIdArg
+from ...schemas.input_models.shell import (
+    PythonCodeArg,
+    ShellMaxOutputBytesArg,
+    ShellTimeoutArg,
+)
 from ...schemas.result_models.browser import (
     BrowserActOutput,
     BrowserSessionOutput,
     BrowserSnapshotOutput,
 )
+from ...schemas.result_models.shell import RunPythonCodeOutput
 from ..declarative import DeclarativeToolRegistry
 
 
@@ -114,6 +120,22 @@ async def browser_act(
     page_id: BrowserPageIdArg = None,
     timeout_ms: BrowserTimeoutMsArg = 30_000,
 ) -> BrowserActOutput:
-    """Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. No arbitrary Playwright-script escape hatch."""
+    """Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. For arbitrary Python code, use the separate browser_run_script tool with shell execution scope."""
     del session_id, browser_session_id, actions, page_id, timeout_ms
     raise RuntimeError("browser_act requires control routing")
+
+
+@browser_tool(
+    http_method="POST",
+    http_path="/tools/browser_run_script",
+    oauth_scopes=("browser:use", "shell:read", "shell:execute"),
+)
+async def browser_run_script(
+    session_id: SessionIdArg,
+    script: PythonCodeArg,
+    timeout_s: ShellTimeoutArg = 60,
+    max_output_bytes: ShellMaxOutputBytesArg = None,
+) -> RunPythonCodeOutput:
+    """Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and the configured Python executable; the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."""
+    del session_id, script, timeout_s, max_output_bytes
+    raise RuntimeError("browser_run_script requires control routing")

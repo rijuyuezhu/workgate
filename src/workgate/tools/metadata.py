@@ -37,6 +37,7 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
     {
         "bash",
         "browser_act",
+        "browser_run_script",
         "browser_session",
         "browser_snapshot",
         "call_agent_mcp_tool",

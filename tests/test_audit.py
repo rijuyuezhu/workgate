@@ -1373,3 +1373,32 @@ def test_browser_css_selector_audit_redacts_selector_and_entered_value(
     assert starts["input"]["actions"][0]["target"] == "<selector>"
     assert starts["input"]["actions"][0]["value"] == "<redacted>"
     assert ends["output"]["results"][0]["target"] == "<selector>"
+
+
+def test_browser_run_script_audit_keeps_code_and_output_private(
+    tmp_path, monkeypatch
+) -> None:
+    path = _configure_audit(tmp_path, monkeypatch)
+    secret = "script-secret-is-never-audited"
+    audit_tool_call_start(
+        call_id="browser-script-private",
+        transport="mcp",
+        tool="browser_run_script",
+        input={
+            "session_id": "sess_0000000000000000000001",
+            "script": f"print('{secret}')",
+        },
+    )
+    audit_tool_call_end(
+        call_id="browser-script-private",
+        transport="mcp",
+        tool="browser_run_script",
+        ok=True,
+        duration_ms=1,
+        output={"result": {"stdout": secret, "ok": True}},
+    )
+    raw = path.read_text(encoding="utf-8")
+    assert secret not in raw
+    starts, ends = _records(path)
+    assert starts["input"] == "<redacted>"
+    assert ends["output"] == "<redacted>"

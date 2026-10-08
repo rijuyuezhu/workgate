@@ -70,6 +70,7 @@ _AUDIT_CYCLE_KEY = "$workgate_audit_cycle"
 _AUDIT_SAFE_IDENTIFIER_SUFFIXES = ("_sha256", "_fingerprint", "_token_id")
 _AUDIT_REDACTED_TOOL_PAYLOADS = frozenset(
     {
+        "browser_run_script",
         "gui_action",
         "gui_list",
         "gui_state",
