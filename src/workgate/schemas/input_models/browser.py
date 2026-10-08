@@ -102,6 +102,12 @@ BrowserMaxElementsArg = Annotated[
         description="Maximum visible interactive elements returned by one snapshot.",
     ),
 ]
+BrowserScreenshotArg = Annotated[
+    bool,
+    Field(
+        description="Capture a PNG screenshot by default; set false to skip."
+    ),
+]
 BrowserScreenshotPathArg = Annotated[
     str | None,
     Field(
@@ -112,7 +118,7 @@ BrowserScreenshotPathArg = Annotated[
 BrowserFullPageArg = Annotated[
     bool,
     Field(
-        description="Capture the full scrollable page when screenshot_path is set."
+        description="Capture the full scrollable page when screenshots are enabled."
     ),
 ]
 BrowserTarget = Annotated[

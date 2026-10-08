@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,7 @@ from ..errors import BrowserUnavailableError
 from ..schemas.input_models.browser import BrowserActionsArg
 from ..utils.private_files import atomic_write_private_bytes
 from .errors import ExecutorOperationFailure
-from .path import display_path
+from .path import display_path, prune_temp_dir
 from .tool_session.store import ToolSessionStore
 
 _MAX_BROWSER_SESSIONS = 8
@@ -39,6 +40,8 @@ _MAX_TIMEOUT_MS = 120_000
 _MAX_WAIT_MS = 30_000
 _MAX_FULL_PAGE_SCREENSHOT_DIMENSION = 16_384
 _MAX_SCREENSHOT_PIXELS = 40_000_000
+_MAX_MANAGED_SCREENSHOT_FILES = 16
+_MAX_MANAGED_SCREENSHOT_BYTES = 32 * 1024 * 1024
 _IDLE_TIMEOUT_S = 60 * 60
 _IDLE_REAP_INTERVAL_S = 60
 _REF_ATTRIBUTE = "data-workgate-browser-ref"
@@ -493,10 +496,13 @@ class BrowserService:
         include_text: bool = True,
         max_text_chars: int = _MAX_SNAPSHOT_TEXT_CHARS,
         max_elements: int = 100,
+        screenshot: bool = True,
         screenshot_path: str | None = None,
         full_page: bool = False,
     ) -> dict[str, Any]:
         """Capture bounded page state and refresh short-lived element refs."""
+        if not screenshot and screenshot_path is not None:
+            raise ValueError("screenshot_path requires screenshot=true")
         state = await self._get_owned(owner_session_id, browser_session_id)
         async with state.lock:
             current = await self._select_page(state, page_id)
@@ -527,12 +533,13 @@ class BrowserService:
                 text_truncated = bool(data["truncated"])
 
             rendered_path = None
-            if screenshot_path is not None:
+            if screenshot:
                 rendered_path = await self._screenshot(
                     owner_session_id,
                     page,
                     screenshot_path,
                     full_page=bool(full_page),
+                    browser_session_id=browser_session_id,
                 )
 
             await self._sync_pages(state)
@@ -1002,23 +1009,38 @@ class BrowserService:
         self,
         owner_session_id: str,
         page: Any,
-        screenshot_path: str,
+        screenshot_path: str | None,
         *,
         full_page: bool,
+        browser_session_id: str | None = None,
     ) -> str:
         session = self._store.require_session(owner_session_id)
-        raw = screenshot_path.strip()
-        if not raw:
-            raise ValueError("screenshot_path must not be empty")
-        if Path(raw).suffix.lower() != ".png":
-            raise ValueError("screenshot_path must end in .png")
-        target = self._store.resolve_session_path(
-            session,
-            raw,
-            must_exist=False,
-            allow_missing_parent=False,
-            follow_final_symlink=False,
-        )
+        managed = screenshot_path is None
+        if managed:
+            if browser_session_id is None:
+                raise ValueError(
+                    "managed screenshot requires a browser session"
+                )
+            artifacts = ensure_private_directory(
+                ensure_private_directory(
+                    self._config.state_dir / "browser-artifacts"
+                )
+                / browser_session_id
+            )
+            target = artifacts / f"{secrets.token_hex(12)}.png"
+        else:
+            raw = screenshot_path.strip()
+            if not raw:
+                raise ValueError("screenshot_path must not be empty")
+            if Path(raw).suffix.lower() != ".png":
+                raise ValueError("screenshot_path must end in .png")
+            target = self._store.resolve_session_path(
+                session,
+                raw,
+                must_exist=False,
+                allow_missing_parent=False,
+                follow_final_symlink=False,
+            )
         if full_page:
             metrics = await page.evaluate(
                 """() => {
@@ -1052,10 +1074,11 @@ class BrowserService:
                     "full-page browser screenshot exceeds the configured dimension limit"
                 )
         payload = await page.screenshot(type="png", full_page=full_page)
-        if len(payload) > self._config.max_view_image_bytes:
-            raise ValueError(
-                "browser screenshot exceeds the configured image byte limit"
-            )
+        image_limit = self._config.max_view_image_bytes
+        if managed:
+            image_limit = min(image_limit, _MAX_MANAGED_SCREENSHOT_BYTES)
+        if len(payload) > image_limit:
+            raise ValueError("browser screenshot exceeds the image byte limit")
         try:
             with target.open("xb") as output:
                 output.write(payload)
@@ -1063,6 +1086,13 @@ class BrowserService:
             raise FileExistsError(
                 "browser screenshots never overwrite an existing path"
             ) from None
+        if managed:
+            prune_temp_dir(
+                max_files=_MAX_MANAGED_SCREENSHOT_FILES - 1,
+                max_bytes=_MAX_MANAGED_SCREENSHOT_BYTES - len(payload),
+                directory=target.parent,
+                protected_paths=frozenset({target}),
+            )
         return display_path(target, Path(session.workdir))
 
     def _require_owner(self, owner_session_id: str) -> None:
@@ -1345,15 +1375,24 @@ class BrowserService:
 
     async def _close_state(self, state: BrowserSessionState) -> None:
         try:
-            await state.context.close()
-        finally:
             try:
-                if state.profile_id is None:
-                    await state.browser.close()
+                await state.context.close()
             finally:
-                await state.playwright.stop()
-        if state.profile_id is not None:
-            async with self._lock:
-                self._profiles_in_use.discard(
-                    self._profile_key(state.profile_id)
+                try:
+                    if state.profile_id is None:
+                        await state.browser.close()
+                finally:
+                    await state.playwright.stop()
+            if state.profile_id is not None:
+                async with self._lock:
+                    self._profiles_in_use.discard(
+                        self._profile_key(state.profile_id)
+                    )
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                await asyncio.to_thread(
+                    shutil.rmtree,
+                    self._config.state_dir
+                    / "browser-artifacts"
+                    / state.browser_session_id,
                 )
