@@ -205,17 +205,24 @@ class ExecutorAgentBridgeService:
         config: dict | None = None,
     ) -> dict:
         """Mutate executor-owned stdio MCP entries in the canonical manifest."""
+        from pydantic import ValidationError
+
         from ..agent_bridge.management import (
             ManagedMcpConfig,
             manage_mcp_manifest,
         )
 
         self._store.touch_session(session_id)
-        parsed = (
-            ManagedMcpConfig.model_validate(config)
-            if config is not None
-            else None
-        )
+        try:
+            parsed = (
+                ManagedMcpConfig.model_validate(config)
+                if config is not None
+                else None
+            )
+        except ValidationError:
+            raise ValueError(
+                "Invalid MCP config: use private secret references"
+            ) from None
         return manage_mcp_manifest(
             self._config.agent_config_dir,
             action,

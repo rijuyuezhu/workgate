@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
 from tests.helpers import build_paired_mcp, mcp_structured
@@ -189,6 +190,22 @@ async def test_public_control_executor_management_round_trip(
     try:
         names = {tool.name for tool in await mcp.list_tools()}
         assert "manage_agent_mcp_server" in names
+        with pytest.raises(ToolError) as invalid:
+            await mcp.call_tool(
+                "manage_agent_mcp_server",
+                {
+                    "action": "register",
+                    "name": "invalid",
+                    "config": {
+                        "type": "http",
+                        "url": "https://example.org/mcp",
+                        "integrationId": "invalid",
+                        "auth": {"mode": "secret"},
+                        "headers": {"Authorization": "DUMMY_SECRET_NEVER_USE"},
+                    },
+                },
+            )
+        assert "DUMMY_SECRET_NEVER_USE" not in str(invalid.value)
         assert mcp_structured(
             await mcp.call_tool("manage_agent_mcp_server", {"action": "list"})
         ) == {"servers": []}
@@ -215,6 +232,21 @@ async def test_public_control_executor_management_round_trip(
             await mcp.call_tool("session_start", {"workdir": str(workspace)})
         )
         sid = created["session_id"]
+        with pytest.raises(ValueError) as remote_invalid:
+            await harness.control.session_coordinator.call_session_tool(
+                "agent_mcp.manage",
+                {
+                    "session_id": sid,
+                    "action": "register",
+                    "name": "invalid-local",
+                    "config": {
+                        "type": "stdio",
+                        "command": sys.executable,
+                        "env": {"TOKEN": "DUMMY_SECRET_NEVER_USE"},
+                    },
+                },
+            )
+        assert "DUMMY_SECRET_NEVER_USE" not in str(remote_invalid.value)
         registered = mcp_structured(
             await mcp.call_tool(
                 "manage_agent_mcp_server",

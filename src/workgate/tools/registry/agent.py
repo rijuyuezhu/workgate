@@ -3,7 +3,6 @@
 from typing import Any, Literal
 
 from ...agent_bridge.discovery import McpDiscovery
-from ...agent_bridge.management import ManagedMcpConfig
 from ...agent_bridge.mcp import AgentMcpClientManager
 from ...agent_bridge.models import AgentCapabilityRegistry
 from ...agent_bridge.service import (
@@ -15,6 +14,7 @@ from ...agent_bridge.service import (
 )
 from ...config.control import ControlConfig
 from ...schemas.input_models.agent import (
+    AgentMcpManageConfigArg,
     AgentMcpSearchLimitArg,
     AgentMcpSearchQueryArg,
     AgentMcpSessionIdArg,
@@ -228,8 +228,8 @@ async def manage_agent_mcp_server(
         "remove",
     ],
     name: str | None = None,
-    config: ManagedMcpConfig | None = None,
+    config: AgentMcpManageConfigArg = None,
     session_id: AgentMcpSessionIdArg = None,
 ) -> dict[str, Any]:
-    """Manage external MCP integrations in their owning manifest; credentials are references only."""
+    """Manage external MCP integrations with a whole-entry config (type, url or command/args, optional auth, and env/headers secret references only). Never pass raw credential values."""
     raise RuntimeError("MCP integration management requires control routing")

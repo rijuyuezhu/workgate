@@ -169,11 +169,11 @@
                 "note": "(list / get / register / update / enable / disable / refresh / remove, required)"
               },
               {
-                "description": null,
+                "description": "Complete MCP server connection config for register/update. Include type (http/sse/stdio), URL or command/args, optional integrationId and auth. env/headers require {secret: key} references; never pass inline tokens, passwords, or API keys.",
                 "head": {
                   "code": "config"
                 },
-                "note": "(ManagedMcpConfig / null, optional)"
+                "note": "(object / null, optional)"
               },
               {
                 "description": null,
@@ -191,7 +191,7 @@
               }
             ]
           },
-          "Manage external MCP integrations in their owning manifest; credentials are references only."
+          "Manage external MCP integrations with a whole-entry config (type, url or command/args, optional auth, and env/headers secret references only). Never pass raw credential values."
         ],
         [
           {
@@ -7927,143 +7927,8 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Manage external MCP integrations in their owning manifest; credentials are references only.",
+      "description": "Manage external MCP integrations with a whole-entry config (type, url or command/args, optional auth, and env/headers secret references only). Never pass raw credential values.",
       "inputSchema": {
-        "$defs": {
-          "AgentMcpAuthConfig": {
-            "additionalProperties": false,
-            "description": "Authentication mode and OAuth scopes for one upstream MCP server.",
-            "properties": {
-              "mode": {
-                "default": "none",
-                "enum": [
-                  "none",
-                  "secret",
-                  "oauth"
-                ],
-                "title": "Mode",
-                "type": "string"
-              },
-              "scopes": {
-                "description": "OAuth scopes requested during interactive authorization.",
-                "items": {
-                  "type": "string"
-                },
-                "title": "Scopes",
-                "type": "array"
-              }
-            },
-            "title": "AgentMcpAuthConfig",
-            "type": "object"
-          },
-          "AgentSecretReference": {
-            "additionalProperties": false,
-            "description": "Reference to a value held in the private Agent Bridge credential store.",
-            "properties": {
-              "secret": {
-                "description": "Private credential-store key resolved for this server.",
-                "maxLength": 128,
-                "minLength": 1,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-                "title": "Secret",
-                "type": "string"
-              }
-            },
-            "required": [
-              "secret"
-            ],
-            "title": "AgentSecretReference",
-            "type": "object"
-          },
-          "ManagedMcpConfig": {
-            "additionalProperties": false,
-            "description": "Public MCP connection settings: credentials only by private-store key.",
-            "properties": {
-              "args": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Args",
-                "type": "array"
-              },
-              "auth": {
-                "$ref": "#/$defs/AgentMcpAuthConfig"
-              },
-              "command": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Command"
-              },
-              "enabled": {
-                "default": true,
-                "title": "Enabled",
-                "type": "boolean"
-              },
-              "env": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/AgentSecretReference"
-                },
-                "title": "Env",
-                "type": "object"
-              },
-              "headers": {
-                "additionalProperties": {
-                  "$ref": "#/$defs/AgentSecretReference"
-                },
-                "title": "Headers",
-                "type": "object"
-              },
-              "integrationId": {
-                "anyOf": [
-                  {
-                    "maxLength": 128,
-                    "minLength": 1,
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Integrationid"
-              },
-              "type": {
-                "enum": [
-                  "stdio",
-                  "http",
-                  "sse"
-                ],
-                "title": "Type",
-                "type": "string"
-              },
-              "url": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Url"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "title": "ManagedMcpConfig",
-            "type": "object"
-          }
-        },
         "properties": {
           "action": {
             "enum": [
@@ -8082,13 +7947,16 @@
           "config": {
             "anyOf": [
               {
-                "$ref": "#/$defs/ManagedMcpConfig"
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "description": "Complete MCP server connection config for register/update. Include type (http/sse/stdio), URL or command/args, optional integrationId and auth. env/headers require {secret: key} references; never pass inline tokens, passwords, or API keys.",
+            "title": "Config"
           },
           "name": {
             "anyOf": [
