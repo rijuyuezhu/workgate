@@ -60,6 +60,15 @@ class BrowserErrorEvent(BaseModel):
     failure: str | None = None
 
 
+class BrowserNetworkEvent(BaseModel):
+    """Bounded response metadata without request or response content."""
+
+    page_id: str
+    method: str
+    status: int
+    url: str
+
+
 class BrowserSnapshotOutput(BaseModel):
     """Bounded browser snapshot suitable for model-driven interaction."""
 
@@ -72,6 +81,7 @@ class BrowserSnapshotOutput(BaseModel):
     text_truncated: bool
     interactive_elements: list[BrowserInteractiveElement]
     errors: list[BrowserErrorEvent]
+    network: list[BrowserNetworkEvent]
     screenshot_path: str | None
 
 
