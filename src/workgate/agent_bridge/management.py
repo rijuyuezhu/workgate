@@ -30,7 +30,7 @@ class ManagedMcpConfig(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
-    type: Literal["stdio", "http", "sse"]
+    type: Literal["stdio", "http"]
     enabled: bool = True
     command: str | None = None
     args: list[str] = Field(default_factory=list)
@@ -56,13 +56,11 @@ class ManagedMcpConfig(BaseModel):
                 )
         if self.type == "stdio" and not self.command:
             raise ValueError("stdio MCP requires a command")
-        if self.type in {"http", "sse"} and not self.url:
+        if self.type == "http" and not self.url:
             raise ValueError("network MCP requires a URL")
         if self.type == "stdio" and (self.url is not None or self.headers):
             raise ValueError("stdio MCP does not use URL or headers")
-        if self.type in {"http", "sse"} and (
-            self.command or self.args or self.env
-        ):
+        if self.type == "http" and (self.command or self.args or self.env):
             raise ValueError("network MCP does not use command, args, or env")
         AgentMcpServerConfig.model_validate(self.model_dump(by_alias=True))
         return self

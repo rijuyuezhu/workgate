@@ -489,3 +489,31 @@ def test_agent_mcp_manifest_rejects_blank_or_whitespace_oauth_scope():
                     "auth": {"mode": "oauth", "scopes": [scope]},
                 }
             )
+
+
+def test_legacy_outbound_sse_manifest_is_rejected(tmp_path):
+    """No hidden fallback from legacy SSE to Streamable HTTP."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AgentMcpServerConfig.model_validate(
+            {"type": "sse", "url": "https://example.test/events"}
+        )
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "legacy": {
+                        "type": "sse",
+                        "url": "https://example.test/events",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_agent_manifest(tmp_path)
+    assert loaded.status == "invalid_config"
+    assert loaded.data.mcp_servers == {}
+    assert loaded.errors
