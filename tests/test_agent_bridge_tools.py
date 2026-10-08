@@ -1311,16 +1311,13 @@ def test_agent_mcp_probe_redacts_intermediate_oauth_credentials(
         ]
 
     monkeypatch.setattr(manager, "list_tools", rotating_list_tools)
-    try:
-        registry = build_agent_registry(
-            config_dir,
-            manager,
-            dynamic_mcp_tools=False,
-            dynamic_skill_tools=False,
-            scan_skills=False,
-        )
-    finally:
-        manager.close()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
 
     record = registry.mcp_servers["oauth"]
     public_payload = json.dumps(list_agent_mcp_tools_payload(registry).tools)
@@ -1395,16 +1392,13 @@ def test_agent_mcp_probe_redacts_cross_instance_credential_history(
         ]
 
     monkeypatch.setattr(manager, "list_tools", externally_rotating_list_tools)
-    try:
-        registry = build_agent_registry(
-            config_dir,
-            manager,
-            dynamic_mcp_tools=False,
-            dynamic_skill_tools=False,
-            scan_skills=False,
-        )
-    finally:
-        manager.close()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
 
     record = registry.mcp_servers["oauth"]
     public_payload = json.dumps(list_agent_mcp_tools_payload(registry).tools)
@@ -1478,16 +1472,13 @@ def test_agent_mcp_probe_redacts_logged_out_retired_oauth_credentials(
         ]
 
     monkeypatch.setattr(manager, "list_tools", authorize_while_probe_runs)
-    try:
-        registry = build_agent_registry(
-            config_dir,
-            manager,
-            dynamic_mcp_tools=False,
-            dynamic_skill_tools=False,
-            scan_skills=False,
-        )
-    finally:
-        manager.close()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
 
     record = registry.mcp_servers["oauth"]
     public_status = json.dumps(registry_config_status(registry), sort_keys=True)
@@ -1834,21 +1825,16 @@ async def test_agent_mcp_call_retains_retired_credentials_across_later_calls(
 
     monkeypatch.setattr(manager, "list_tools", fake_list_tools)
     monkeypatch.setattr(manager, "call_tool", fake_call_tool)
-    try:
-        registry = build_agent_registry(
-            config_dir,
-            manager,
-            dynamic_mcp_tools=False,
-            dynamic_skill_tools=False,
-            scan_skills=False,
-        )
-        first = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
-        second = await call_agent_mcp_tool_payload(
-            registry, "oauth", "echo", {}
-        )
-        third = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
-    finally:
-        manager.close()
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    first = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
+    second = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
+    third = await call_agent_mcp_tool_payload(registry, "oauth", "echo", {})
 
     assert first.model_dump(mode="json")["structured_content"] == {
         "ok": "first"
@@ -1918,17 +1904,14 @@ async def test_agent_mcp_restart_redacts_retired_credentials_from_metadata_and_c
 
     monkeypatch.setattr(first_manager, "list_tools", first_list_tools)
     monkeypatch.setattr(first_manager, "call_tool", rotating_call)
-    try:
-        first_registry = build_agent_registry(
-            config_dir,
-            first_manager,
-            dynamic_mcp_tools=False,
-            dynamic_skill_tools=False,
-            scan_skills=False,
-        )
-        await call_agent_mcp_tool_payload(first_registry, "oauth", "echo", {})
-    finally:
-        first_manager.close()
+    first_registry = build_agent_registry(
+        config_dir,
+        first_manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    await call_agent_mcp_tool_payload(first_registry, "oauth", "echo", {})
 
     restarted_store = AgentAuthStore(auth_root)
     restarted_manager = AgentMcpClientManager(1, restarted_store)
@@ -1951,26 +1934,21 @@ async def test_agent_mcp_restart_redacts_retired_credentials_from_metadata_and_c
 
     monkeypatch.setattr(restarted_manager, "list_tools", restarted_list_tools)
     monkeypatch.setattr(restarted_manager, "call_tool", restarted_call)
-    try:
-        restarted_registry = build_agent_registry(
-            config_dir,
-            restarted_manager,
-            dynamic_mcp_tools=False,
-            dynamic_skill_tools=False,
-            scan_skills=False,
-        )
-        metadata_payload = json.dumps(
-            list_agent_mcp_tools_payload(restarted_registry).tools,
-            sort_keys=True,
-        )
-        result = await call_agent_mcp_tool_payload(
-            restarted_registry, "oauth", "echo", {}
-        )
-        call_payload = json.dumps(
-            result.model_dump(mode="json"), sort_keys=True
-        )
-    finally:
-        restarted_manager.close()
+    restarted_registry = build_agent_registry(
+        config_dir,
+        restarted_manager,
+        dynamic_mcp_tools=False,
+        dynamic_skill_tools=False,
+        scan_skills=False,
+    )
+    metadata_payload = json.dumps(
+        list_agent_mcp_tools_payload(restarted_registry).tools,
+        sort_keys=True,
+    )
+    result = await call_agent_mcp_tool_payload(
+        restarted_registry, "oauth", "echo", {}
+    )
+    call_payload = json.dumps(result.model_dump(mode="json"), sort_keys=True)
 
     assert "<redacted>" in metadata_payload
     assert "<redacted>" in call_payload

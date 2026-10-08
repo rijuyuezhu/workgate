@@ -441,14 +441,11 @@ class ExecutorRuntime:
             finally:
                 try:
                     try:
-                        try:
-                            await self.gui.aclose()
-                        finally:
-                            await self.browser.aclose()
+                        await self.gui.aclose()
                     finally:
-                        await self.terminal_runtime.aclose()
+                        await self.browser.aclose()
                 finally:
-                    self.agent_bridge.close()
+                    await self.terminal_runtime.aclose()
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[ExecutorRuntime]:
@@ -498,7 +495,9 @@ def build_executor_runtime(
     from .sessions import ExecutorSessionService
 
     shell_service = ShellService(config, services.tool_session_store)
-    agent_bridge = ExecutorAgentBridgeService(config)
+    agent_bridge = ExecutorAgentBridgeService(
+        config, services.tool_session_store
+    )
     browser_service = BrowserService(config, services.tool_session_store)
     gui_service = build_gui_service(config, services.tool_session_store)
     from .runtime_update import ExecutorRuntimeStateStore

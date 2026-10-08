@@ -1,10 +1,7 @@
 """Shared service helpers for agent bridge tool adapters."""
 
-import atexit
-import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from ..config.control import ControlConfig, get_control_config
@@ -38,57 +35,6 @@ from .status import registry_config_status
 type AgentMcpClientManagerFactory = Callable[[float], Any]
 
 
-_shared_mcp_manager_lock = threading.RLock()
-_shared_mcp_manager: AgentMcpClientManager | None = None
-_shared_mcp_manager_key: tuple[str, str, float, bool] | None = None
-
-
-def _shared_agent_mcp_client_manager(
-    settings: ControlConfig,
-    *,
-    allow_stdio: bool = True,
-) -> AgentMcpClientManager:
-    """Reuse one manager per active transport policy and service configuration."""
-    global _shared_mcp_manager, _shared_mcp_manager_key
-
-    key = (
-        str(Path(settings.agent_config_dir).expanduser().resolve()),
-        str(Path(settings.agent_auth_dir).expanduser().resolve()),
-        float(settings.agent_mcp_call_timeout_s),
-        allow_stdio,
-    )
-    with _shared_mcp_manager_lock:
-        if _shared_mcp_manager is not None and _shared_mcp_manager_key == key:
-            return _shared_mcp_manager
-        if _shared_mcp_manager is not None:
-            _shared_mcp_manager.close()
-        _shared_mcp_manager = None
-        _shared_mcp_manager_key = None
-        manager = AgentMcpClientManager(
-            settings.agent_mcp_call_timeout_s,
-            AgentAuthStore(settings.agent_auth_dir),
-            allow_stdio=allow_stdio,
-        )
-        _shared_mcp_manager = manager
-        _shared_mcp_manager_key = key
-        return manager
-
-
-def _close_shared_agent_mcp_client_manager() -> None:
-    """Best-effort teardown for persistent stdio children at interpreter shutdown."""
-    global _shared_mcp_manager, _shared_mcp_manager_key
-
-    with _shared_mcp_manager_lock:
-        manager = _shared_mcp_manager
-        _shared_mcp_manager = None
-        _shared_mcp_manager_key = None
-    if manager is not None:
-        manager.close()
-
-
-atexit.register(_close_shared_agent_mcp_client_manager)
-
-
 def build_network_agent_registry_from_settings(
     settings: ControlConfig | None = None,
     client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
@@ -96,8 +42,10 @@ def build_network_agent_registry_from_settings(
     """Build the control-owned HTTP/SSE registry without machine/Skill policy."""
     active_settings: ControlConfig = settings or get_control_config()
     if client_manager_factory is AgentMcpClientManager:
-        client_manager = _shared_agent_mcp_client_manager(
-            active_settings, allow_stdio=False
+        client_manager = AgentMcpClientManager(
+            active_settings.agent_mcp_call_timeout_s,
+            AgentAuthStore(active_settings.agent_auth_dir),
+            allow_stdio=False,
         )
     else:
         client_manager = client_manager_factory(

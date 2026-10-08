@@ -164,19 +164,6 @@ def build_agent_registry(
 
         client_manager = AgentMcpClientManager(call_timeout_s=probe_timeout)
 
-    retain_stdio_servers = getattr(client_manager, "retain_stdio_servers", None)
-    if callable(retain_stdio_servers):
-        retained_servers = (
-            {
-                name: server
-                for name, server in manifest.data.mcp_servers.items()
-                if mcp_server_types is None or server.type in mcp_server_types
-            }
-            if manifest.status == "loaded"
-            else {}
-        )
-        retain_stdio_servers(retained_servers)
-
     skill_scan = SkillScanResult()
     if (
         scan_skills
