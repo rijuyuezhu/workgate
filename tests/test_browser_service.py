@@ -1732,7 +1732,7 @@ async def test_browser_network_timeline_bounds_and_drops_body_fields(
                 body="must-not-retain",
             )
             service._record_response(state, page_id, response)
-        assert len(state.network) == browser_ops._MAX_EVENTS
+        assert len(state.network) == browser_ops._MAX_NETWORK_EVENTS
         snapshot = await service.snapshot(session_id, browser_id)
         assert len(snapshot["network"]) == 30
         assert snapshot["network"][0]["url"].startswith(

@@ -34,7 +34,7 @@ _MAX_SNAPSHOT_TEXT_CHARS = 100_000
 _MAX_ELEMENT_METADATA_CHARS = 2_000
 _MAX_EVENT_CHARS = 2_000
 _MAX_EVENTS = 50
-_MAX_SNAPSHOT_NETWORK_EVENTS = 30
+_MAX_NETWORK_EVENTS = 30
 _MAX_TIMEOUT_MS = 120_000
 _MAX_WAIT_MS = 30_000
 _MAX_FULL_PAGE_SCREENSHOT_DIMENSION = 16_384
@@ -132,7 +132,7 @@ class BrowserSessionState:
         default_factory=lambda: deque(maxlen=_MAX_EVENTS)
     )
     network: deque[dict[str, Any]] = field(
-        default_factory=lambda: deque(maxlen=_MAX_EVENTS)
+        default_factory=lambda: deque(maxlen=_MAX_NETWORK_EVENTS)
     )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -547,7 +547,7 @@ class BrowserService:
                 "text_truncated": text_truncated,
                 "interactive_elements": elements,
                 "errors": list(state.errors),
-                "network": list(state.network)[-_MAX_SNAPSHOT_NETWORK_EVENTS:],
+                "network": list(state.network),
                 "screenshot_path": rendered_path,
             }
 
