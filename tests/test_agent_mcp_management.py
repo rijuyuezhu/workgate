@@ -1,6 +1,7 @@
 """External MCP integration management: one manifest, isolated owners, no inline secrets."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -120,7 +121,8 @@ def test_manifest_crud_is_atomic_validated_and_preserves_unrelated_configuration
     )
     manage_mcp_manifest(config_dir, "remove", name="docs", owner_type="network")
     assert "docs" not in load_agent_manifest(config_dir).data.mcp_servers
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_management_secret_boundary_and_identity_safety(tmp_path: Path) -> None:
