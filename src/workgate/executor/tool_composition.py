@@ -263,6 +263,21 @@ def build_executor_tool_dispatcher(
                 width=int(args.get("width", 1440)),
                 height=int(args.get("height", 1000)),
                 wait_until=str(args.get("wait_until") or "domcontentloaded"),
+                profile_id=(
+                    None
+                    if args.get("profile_id") is None
+                    else str(args["profile_id"])
+                ),
+                storage_state_path=(
+                    None
+                    if args.get("storage_state_path") is None
+                    else str(args["storage_state_path"])
+                ),
+                save_storage_state_path=(
+                    None
+                    if args.get("save_storage_state_path") is None
+                    else str(args["save_storage_state_path"])
+                ),
             )
 
     async def browser_snapshot_handler(args: dict[str, Any]) -> Any:

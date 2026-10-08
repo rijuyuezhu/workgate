@@ -605,6 +605,36 @@ def test_browser_audit_malformed_shapes_are_fail_safe(tmp_path, monkeypatch):
     )
 
 
+def test_browser_session_audit_drops_auth_payload_fields(
+    tmp_path, monkeypatch
+) -> None:
+    path = _configure_audit(tmp_path, monkeypatch)
+    audit_tool_call_end(
+        call_id="browser-auth-redaction",
+        transport="mcp",
+        tool="browser_session",
+        ok=True,
+        duration_ms=1,
+        output={
+            "browser_session_id": "browser_auth_redaction",
+            "profile_id": "login-profile",
+            "storage_state_path": "auth-state.json",
+            "storage_state": {"cookies": [{"value": "secret-cookie"}]},
+            "cookies": [{"value": "secret-cookie"}],
+            "origins": [{"localStorage": [{"value": "secret-origin"}]}],
+        },
+    )
+
+    record = _records(path)[-1]
+    assert record["output"]["profile_id"] == "login-profile"
+    assert record["output"]["storage_state_path"] == "auth-state.json"
+    assert "storage_state" not in record["output"]
+    assert "cookies" not in record["output"]
+    assert "origins" not in record["output"]
+    assert "secret-cookie" not in str(record)
+    assert "secret-origin" not in str(record)
+
+
 def test_browser_error_audit_omits_backend_diagnostics(tmp_path, monkeypatch):
     path = _configure_audit(tmp_path, monkeypatch)
     secret = "sensitive-playwright-error-detail"

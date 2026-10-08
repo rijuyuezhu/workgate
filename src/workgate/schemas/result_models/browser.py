@@ -12,9 +12,10 @@ class BrowserPageSummary(BaseModel):
 
 
 class BrowserSessionSummary(BaseModel):
-    """One ephemeral browser owned by a Workgate session."""
+    """One live browser owned by a Workgate session."""
 
     browser_session_id: str
+    profile_id: str | None = None
     pages: list[BrowserPageSummary] = Field(default_factory=list)
     created_at: float
     last_used_at: float
@@ -24,6 +25,8 @@ class BrowserSessionOutput(BaseModel):
     """Lifecycle result for browser_session."""
 
     browser_session_id: str | None = None
+    profile_id: str | None = None
+    storage_state_path: str | None = None
     current_page_id: str | None = None
     pages: list[BrowserPageSummary] = Field(default_factory=list)
     created_at: float | None = None

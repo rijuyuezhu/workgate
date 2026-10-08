@@ -3,6 +3,7 @@ import os
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import replace
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1046,3 +1047,354 @@ async def test_browser_routes_over_executor_http_protocol(
         await executor.aclose()
         await control.aclose()
         clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_browser_storage_state_round_trip_is_private_and_session_relative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, workspace = _service(tmp_path)
+    site = tmp_path / "storage-state-site"
+    site.mkdir()
+    (site / "index.html").write_text(
+        """<!doctype html>
+<html><head><title>Auth state</title></head><body>
+<div id="state"></div>
+<script>
+if (new URLSearchParams(location.search).get('seed') === '1') {
+  localStorage.setItem('auth-state', 'persisted-login');
+  document.cookie = 'auth-cookie=persisted-cookie; path=/';
+}
+document.querySelector('#state').textContent =
+  (localStorage.getItem('auth-state') || 'missing-login') + '|' +
+  (document.cookie || 'missing-cookie');
+</script>
+</body></html>
+""",
+        encoding="utf-8",
+    )
+
+    with _serve_site(site) as base_url:
+        first = await service.start(
+            session_id,
+            url=f"{base_url}/index.html?seed=1",
+        )
+        first_id = str(first["browser_session_id"])
+        before = await service.snapshot(
+            session_id, first_id, screenshot_path=None
+        )
+        assert "persisted-login" in str(before["text"])
+        assert "persisted-cookie" in str(before["text"])
+
+        closed = await service.close(
+            session_id,
+            first_id,
+            save_storage_state_path="auth-state.json",
+        )
+        assert closed["storage_state_path"] == "auth-state.json"
+        state_path = workspace / "auth-state.json"
+        assert state_path.is_file()
+        assert state_path.stat().st_mode & 0o777 == 0o600
+        raw_state = state_path.read_text(encoding="utf-8")
+        assert "persisted-login" in raw_state
+
+        restored = await service.start(
+            session_id,
+            url=f"{base_url}/index.html",
+            storage_state_path="auth-state.json",
+        )
+        restored_id = str(restored["browser_session_id"])
+        after = await service.snapshot(
+            session_id,
+            restored_id,
+            screenshot_path=None,
+        )
+        assert "persisted-login" in str(after["text"])
+        assert "persisted-cookie" in str(after["text"])
+        await service.close(session_id, restored_id)
+
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_profile_persists_across_workgate_sessions_and_is_exclusive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_chromium(monkeypatch)
+    service, config, store, first_session_id, workspace = _service(tmp_path)
+    second_session_id = "sess_0000000000000000000002"
+    store.create_session(session_id=second_session_id, workdir=workspace)
+    site = tmp_path / "profile-site"
+    site.mkdir()
+    (site / "index.html").write_text(
+        """<!doctype html>
+<html><head><title>Profile state</title></head><body>
+<div id="state"></div>
+<script>
+if (new URLSearchParams(location.search).get('seed') === '1') {
+  localStorage.setItem('profile-auth', 'profile-login');
+}
+document.querySelector('#state').textContent =
+  localStorage.getItem('profile-auth') || 'missing-profile';
+</script>
+</body></html>
+""",
+        encoding="utf-8",
+    )
+
+    with _serve_site(site) as base_url:
+        first = await service.start(
+            first_session_id,
+            url=f"{base_url}/index.html?seed=1",
+            profile_id="login-profile",
+        )
+        first_id = str(first["browser_session_id"])
+        assert first["profile_id"] == "login-profile"
+        profile_dir = config.state_dir / "browser-profiles" / "login-profile"
+        assert profile_dir.is_dir()
+        assert not (
+            config.state_dir / "browser-profiles" / "LOGIN-PROFILE"
+        ).exists()
+
+        with pytest.raises(ValueError, match="already in use"):
+            await service.start(
+                second_session_id,
+                url=f"{base_url}/index.html",
+                profile_id="login-profile",
+            )
+        with pytest.raises(ValueError, match="already in use"):
+            await service.start(
+                second_session_id,
+                url=f"{base_url}/index.html",
+                profile_id="LOGIN-PROFILE",
+            )
+
+        closed = await service.close_owned(first_session_id)
+        assert first_id in closed
+        assert profile_dir.is_dir()
+
+        restored = await service.start(
+            second_session_id,
+            url=f"{base_url}/index.html",
+            profile_id="login-profile",
+        )
+        restored_id = str(restored["browser_session_id"])
+        after = await service.snapshot(
+            second_session_id,
+            restored_id,
+            screenshot_path=None,
+        )
+        assert "profile-login" in str(after["text"])
+        await service.close(second_session_id, restored_id)
+
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_persistence_validation_and_failed_export_still_closes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, workspace = _service(tmp_path)
+
+    for profile_id in (".", "..", "bad profile"):
+        with pytest.raises(ValueError, match="profile_id"):
+            await service.start(session_id, profile_id=profile_id)
+
+    invalid_state_path = workspace / "invalid-state.json"
+    invalid_state_path.write_text(
+        '{"cookies":[{"name":"missing-required-cookie-fields"}],"origins":[]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid for Playwright") as raised:
+        await service.start(
+            session_id,
+            storage_state_path="invalid-state.json",
+        )
+    assert "missing-required-cookie-fields" not in str(raised.value)
+
+    state_path = workspace / "state.json"
+    state_path.write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot be combined"):
+        await service.start(
+            session_id,
+            profile_id="profile",
+            storage_state_path="state.json",
+        )
+    with pytest.raises(ValueError, match="relative"):
+        await service.start(
+            session_id,
+            storage_state_path=str(state_path),
+        )
+    outside_state = tmp_path / "outside-state.json"
+    outside_state.write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="stay within"):
+        await service.start(
+            session_id,
+            storage_state_path="../outside-state.json",
+        )
+    with pytest.raises(ValueError, match="only valid for action=close"):
+        await service.manage(
+            session_id,
+            action="start",
+            save_storage_state_path="state.json",
+        )
+    with pytest.raises(ValueError, match="not valid for action=list"):
+        await service.manage(
+            session_id,
+            action="list",
+            storage_state_path="state.json",
+        )
+
+    started = await service.start(session_id)
+    browser_id = str(started["browser_session_id"])
+    with pytest.raises(
+        Exception, match="missing-parent|No such file|not found"
+    ):
+        await service.close(
+            session_id,
+            browser_id,
+            save_storage_state_path="missing-parent/state.json",
+        )
+    listed = await service.manage(session_id, action="list")
+    assert listed["sessions"] == []
+
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_storage_state_respects_file_byte_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_chromium(monkeypatch)
+    service, config, _store, session_id, workspace = _service(tmp_path)
+
+    oversized = workspace / "oversized-state.json"
+    oversized.write_text(
+        '{"cookies":[],"origins":[],"padding":"' + ("x" * 128) + '"}',
+        encoding="utf-8",
+    )
+    service._config = replace(config, max_file_read_bytes=32)
+    with pytest.raises(ValueError, match="file read limit"):
+        await service.start(
+            session_id,
+            storage_state_path="oversized-state.json",
+        )
+
+    service._config = replace(config, max_file_write_bytes=1)
+    started = await service.start(session_id)
+    browser_id = str(started["browser_session_id"])
+    with pytest.raises(ValueError, match="file write limit"):
+        await service.close(
+            session_id,
+            browser_id,
+            save_storage_state_path="too-large.json",
+        )
+    assert not (workspace / "too-large.json").exists()
+    listed = await service.manage(session_id, action="list")
+    assert listed["sessions"] == []
+
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_profile_launch_failure_is_not_reported_as_missing_chromium(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+    monkeypatch.setattr(
+        browser_ops, "browser_capability_available", lambda: True
+    )
+
+    class BrokenChromium:
+        async def launch_persistent_context(self, **_kwargs):
+            raise RuntimeError("backend detail that must stay hidden")
+
+    class FakePlaywright:
+        chromium = BrokenChromium()
+
+        async def stop(self) -> None:
+            return None
+
+    class Starter:
+        async def start(self):
+            return FakePlaywright()
+
+    monkeypatch.setattr(
+        "playwright.async_api.async_playwright",
+        lambda: Starter(),
+    )
+
+    with pytest.raises(
+        browser_ops.ExecutorOperationFailure,
+        match="browser profile 'login-profile' could not be opened",
+    ) as raised:
+        await service.start(session_id, profile_id="login-profile")
+
+    assert raised.value.code == "browser_profile_unavailable"
+    assert "backend detail" not in str(raised.value)
+    assert service._profiles_in_use == set()
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_profile_reservation_survives_cleanup_pending(
+    tmp_path: Path,
+) -> None:
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+
+    class FlakyContext:
+        attempts = 0
+
+        async def close(self) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("synthetic persistent-context close failure")
+
+    class FakePlaywright:
+        stops = 0
+
+        async def stop(self) -> None:
+            self.stops += 1
+
+    class FakeBrowser:
+        pass
+
+    browser_id = "browser_profile_cleanup_pending"
+    context = FlakyContext()
+    playwright = FakePlaywright()
+    state = browser_ops.BrowserSessionState(
+        browser_session_id=browser_id,
+        owner_session_id=session_id,
+        playwright=playwright,
+        browser=FakeBrowser(),
+        context=context,
+        profile_id="login-profile",
+        created_at=0.0,
+        last_used_at=0.0,
+    )
+    service._sessions[browser_id] = state
+    service._profiles_in_use.add(service._profile_key("login-profile"))
+
+    with pytest.raises(
+        RuntimeError, match="synthetic persistent-context close failure"
+    ):
+        await service.close(session_id, browser_id)
+
+    assert browser_id in service._cleanup_pending
+    assert service._profile_key("login-profile") in service._profiles_in_use
+
+    closed = await service.close(session_id, browser_id)
+    assert closed == {"browser_session_id": browser_id, "closed": True}
+    assert browser_id not in service._cleanup_pending
+    assert service._profile_key("login-profile") not in service._profiles_in_use
+    assert context.attempts == 2
+    assert playwright.stops == 2
+
+    await service.aclose()

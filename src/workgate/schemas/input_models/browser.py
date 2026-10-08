@@ -38,6 +38,23 @@ BrowserPageIdArg = Annotated[
         description="Optional browser page_id; omit to use the most recently active page.",
     ),
 ]
+BrowserProfileIdArg = Annotated[
+    str | None,
+    Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9._-]+$",
+        description="Optional case-insensitive durable Chromium profile name on the owning executor. Reuse the same explicit name later to reuse browser authentication state.",
+    ),
+]
+BrowserStorageStatePathArg = Annotated[
+    str | None,
+    Field(
+        min_length=1,
+        max_length=4096,
+        description="Optional relative JSON path in the owning Workgate session workdir used to import or export Playwright storage state.",
+    ),
+]
 BrowserUrlArg = Annotated[
     str | None,
     Field(

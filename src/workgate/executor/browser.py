@@ -3,7 +3,9 @@
 import asyncio
 import contextlib
 import importlib.util
+import json
 import os
+import re
 import secrets
 import time
 from collections import deque
@@ -16,9 +18,11 @@ from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 
+from ..app_paths import ensure_private_directory
 from ..config.executor import ExecutorConfig
 from ..errors import BrowserUnavailableError
 from ..schemas.input_models.browser import BrowserActionsArg
+from ..utils.private_files import atomic_write_private_bytes
 from .errors import ExecutorOperationFailure
 from .path import display_path
 from .tool_session.store import ToolSessionStore
@@ -37,6 +41,7 @@ _MAX_SCREENSHOT_PIXELS = 40_000_000
 _IDLE_TIMEOUT_S = 60 * 60
 _IDLE_REAP_INTERVAL_S = 60
 _REF_ATTRIBUTE = "data-workgate-browser-ref"
+_PROFILE_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 _BROWSER_ACTIONS_ADAPTER = TypeAdapter(BrowserActionsArg)
 
 
@@ -120,6 +125,7 @@ class BrowserSessionState:
     context: Any
     created_at: float
     last_used_at: float
+    profile_id: str | None = None
     pages: dict[str, BrowserPageState] = field(default_factory=dict)
     errors: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=_MAX_EVENTS)
@@ -128,7 +134,7 @@ class BrowserSessionState:
 
 
 class BrowserService:
-    """Own ephemeral Chromium resources scoped to Workgate sessions."""
+    """Own session-scoped Chromium resources plus explicit executor-local auth persistence."""
 
     def __init__(self, config: ExecutorConfig, store: ToolSessionStore) -> None:
         self._config = config
@@ -136,6 +142,7 @@ class BrowserService:
         self._sessions: dict[str, BrowserSessionState] = {}
         self._cleanup_pending: dict[str, BrowserSessionState] = {}
         self._closing: dict[str, BrowserSessionState] = {}
+        self._profiles_in_use: set[str] = set()
         self._starting = 0
         self._lock = asyncio.Lock()
         self._cleanup_lock = asyncio.Lock()
@@ -153,11 +160,18 @@ class BrowserService:
         width: int = 1440,
         height: int = 1000,
         wait_until: str = "domcontentloaded",
+        profile_id: str | None = None,
+        storage_state_path: str | None = None,
+        save_storage_state_path: str | None = None,
     ) -> dict[str, Any]:
         """Start, list, or close browsers owned by one Workgate session."""
         self._require_owner(owner_session_id)
         normalized = action.strip().lower()
         if normalized == "start":
+            if save_storage_state_path is not None:
+                raise ValueError(
+                    "save_storage_state_path is only valid for action=close"
+                )
             result = await self.start(
                 owner_session_id,
                 url=url,
@@ -165,10 +179,23 @@ class BrowserService:
                 width=width,
                 height=height,
                 wait_until=wait_until,
+                profile_id=profile_id,
+                storage_state_path=storage_state_path,
             )
             self._touch_owner(owner_session_id)
             return result
         if normalized == "list":
+            if any(
+                value is not None
+                for value in (
+                    profile_id,
+                    storage_state_path,
+                    save_storage_state_path,
+                )
+            ):
+                raise ValueError(
+                    "browser persistence arguments are not valid for action=list"
+                )
             async with self._cleanup_lock:
                 await self._cleanup_idle_locked()
                 async with self._lock:
@@ -188,11 +215,19 @@ class BrowserService:
             self._touch_owner(owner_session_id)
             return result
         if normalized == "close":
+            if profile_id is not None or storage_state_path is not None:
+                raise ValueError(
+                    "profile_id and storage_state_path are only valid for action=start"
+                )
             if not browser_session_id:
                 raise ValueError(
                     "browser_session_id is required for action=close"
                 )
-            result = await self.close(owner_session_id, browser_session_id)
+            result = await self.close(
+                owner_session_id,
+                browser_session_id,
+                save_storage_state_path=save_storage_state_path,
+            )
             self._touch_owner(owner_session_id)
             return result
         raise ValueError("action must be start, list, or close")
@@ -206,8 +241,10 @@ class BrowserService:
         width: int = 1440,
         height: int = 1000,
         wait_until: str = "domcontentloaded",
+        profile_id: str | None = None,
+        storage_state_path: str | None = None,
     ) -> dict[str, Any]:
-        """Start one isolated ephemeral Chromium context."""
+        """Start one isolated Chromium context, optionally with explicit durable auth state."""
         self._require_owner(owner_session_id)
         if self._closed:
             raise RuntimeError("browser service is closed")
@@ -225,6 +262,16 @@ class BrowserService:
         width = max(320, min(int(width), 7680))
         height = max(240, min(int(height), 4320))
         target_url = _navigation_url(url) if url else None
+        profile_id = self._validated_profile_id(profile_id)
+        if profile_id is not None and storage_state_path is not None:
+            raise ValueError(
+                "profile_id and storage_state_path cannot be combined"
+            )
+        storage_state = (
+            self._load_storage_state(owner_session_id, storage_state_path)
+            if storage_state_path is not None
+            else None
+        )
 
         await self._cleanup_idle()
         async with self._lock:
@@ -238,6 +285,13 @@ class BrowserService:
                 raise ValueError(
                     f"at most {_MAX_BROWSER_SESSIONS} browser sessions may be active"
                 )
+            if profile_id is not None:
+                profile_key = self._profile_key(profile_id)
+                if profile_key in self._profiles_in_use:
+                    raise ValueError(
+                        f"browser profile {profile_id!r} is already in use"
+                    )
+                self._profiles_in_use.add(profile_key)
             self._starting += 1
 
         playwright = None
@@ -257,17 +311,60 @@ class BrowserService:
 
             try:
                 playwright = await async_playwright().start()
-                browser = await playwright.chromium.launch(
-                    headless=bool(headless)
-                )
             except Exception as exc:
                 raise BrowserUnavailableError(
-                    "Chromium is unavailable on this executor; install the Playwright Chromium runtime",
+                    "Playwright could not start on this executor",
                 ) from exc
 
-            context = await browser.new_context(
-                viewport={"width": width, "height": height}
-            )
+            viewport: Any = {"width": width, "height": height}
+            if profile_id is not None:
+                profile_dir = ensure_private_directory(
+                    ensure_private_directory(
+                        self._config.state_dir / "browser-profiles"
+                    )
+                    / self._profile_key(profile_id)
+                )
+                try:
+                    context = (
+                        await playwright.chromium.launch_persistent_context(
+                            user_data_dir=str(profile_dir),
+                            headless=bool(headless),
+                            viewport=viewport,
+                        )
+                    )
+                except Exception as exc:
+                    raise ExecutorOperationFailure(
+                        "browser_profile_unavailable",
+                        f"browser profile {profile_id!r} could not be opened",
+                    ) from exc
+                browser = context.browser
+                if browser is None:
+                    raise BrowserUnavailableError(
+                        "Chromium persistent context did not expose its browser process"
+                    )
+            else:
+                try:
+                    browser = await playwright.chromium.launch(
+                        headless=bool(headless)
+                    )
+                except Exception as exc:
+                    raise BrowserUnavailableError(
+                        "Chromium is unavailable on this executor; install the Playwright Chromium runtime",
+                    ) from exc
+                context_options: dict[str, Any] = {"viewport": viewport}
+                if storage_state is not None:
+                    context_options["storage_state"] = storage_state
+                try:
+                    context = await browser.new_context(**context_options)
+                except Exception as exc:
+                    if storage_state is not None:
+                        raise ValueError(
+                            "browser storage state is invalid for Playwright"
+                        ) from exc
+                    raise BrowserUnavailableError(
+                        "Chromium could not create a browser context",
+                    ) from exc
+
             now = time.time()
             state = BrowserSessionState(
                 browser_session_id=_new_browser_id(),
@@ -275,6 +372,7 @@ class BrowserService:
                 playwright=playwright,
                 browser=browser,
                 context=context,
+                profile_id=profile_id,
                 created_at=now,
                 last_used_at=now,
             )
@@ -315,6 +413,11 @@ class BrowserService:
                 if playwright is not None:
                     with contextlib.suppress(Exception):
                         await playwright.stop()
+                if profile_id is not None:
+                    async with self._lock:
+                        self._profiles_in_use.discard(
+                            self._profile_key(profile_id)
+                        )
             raise
         finally:
             if not inserted:
@@ -323,18 +426,39 @@ class BrowserService:
                         self._starting -= 1
 
     async def close(
-        self, owner_session_id: str, browser_session_id: str
+        self,
+        owner_session_id: str,
+        browser_session_id: str,
+        *,
+        save_storage_state_path: str | None = None,
     ) -> dict[str, Any]:
         """Close one browser after verifying Workgate-session ownership."""
         async with self._cleanup_lock:
             return await self._close_owned_browser(
-                owner_session_id, browser_session_id
+                owner_session_id,
+                browser_session_id,
+                save_storage_state_path=save_storage_state_path,
             )
 
     async def _close_owned_browser(
-        self, owner_session_id: str, browser_session_id: str
+        self,
+        owner_session_id: str,
+        browser_session_id: str,
+        *,
+        save_storage_state_path: str | None = None,
     ) -> dict[str, Any]:
         state = await self._take_owned(owner_session_id, browser_session_id)
+        saved_path: str | None = None
+        save_error: BaseException | None = None
+        if save_storage_state_path is not None:
+            try:
+                saved_path = await self._save_storage_state(
+                    owner_session_id,
+                    state.context,
+                    save_storage_state_path,
+                )
+            except (Exception, asyncio.CancelledError) as exc:
+                save_error = exc
         try:
             await self._close_state(state)
         except Exception, asyncio.CancelledError:
@@ -346,10 +470,15 @@ class BrowserService:
             async with self._lock:
                 if browser_session_id not in self._cleanup_pending:
                     self._closing.pop(browser_session_id, None)
-        return {
+        if save_error is not None:
+            raise save_error
+        result: dict[str, Any] = {
             "browser_session_id": browser_session_id,
             "closed": True,
         }
+        if saved_path is not None:
+            result["storage_state_path"] = saved_path
+        return result
 
     async def snapshot(
         self,
@@ -734,6 +863,122 @@ class BrowserService:
             )
         return page_state.page.locator(selector).first
 
+    @staticmethod
+    def _profile_key(profile_id: str) -> str:
+        return profile_id.casefold()
+
+    @staticmethod
+    def _validated_profile_id(profile_id: str | None) -> str | None:
+        if profile_id is None:
+            return None
+        if (
+            profile_id in {".", ".."}
+            or _PROFILE_RE.fullmatch(profile_id) is None
+        ):
+            raise ValueError(
+                "profile_id must match [A-Za-z0-9._-] and be at most 80 characters"
+            )
+        return profile_id
+
+    def _storage_state_path(
+        self,
+        owner_session_id: str,
+        raw_path: str,
+        *,
+        must_exist: bool,
+        follow_final_symlink: bool,
+    ) -> tuple[Path, Path]:
+        raw = raw_path.strip()
+        if not raw:
+            raise ValueError("storage state path must not be empty")
+        if Path(raw).is_absolute():
+            raise ValueError(
+                "storage state paths must be relative to the owning session workdir"
+            )
+        session = self._store.require_session(owner_session_id)
+        workdir = Path(session.workdir).resolve(strict=False)
+        target = self._store.resolve_session_path(
+            session,
+            raw,
+            must_exist=must_exist,
+            allow_missing_parent=False,
+            follow_final_symlink=follow_final_symlink,
+        )
+        try:
+            target.relative_to(workdir)
+        except ValueError:
+            raise ValueError(
+                "storage state paths must stay within the owning session workdir"
+            ) from None
+        if must_exist:
+            if not target.is_file():
+                raise ValueError(
+                    "storage state path must reference a regular file"
+                )
+        elif target.exists() and target.is_dir():
+            raise ValueError("storage state path must reference a file")
+        return workdir, target
+
+    def _load_storage_state(
+        self,
+        owner_session_id: str,
+        raw_path: str,
+    ) -> dict[str, Any]:
+        _workdir, target = self._storage_state_path(
+            owner_session_id,
+            raw_path,
+            must_exist=True,
+            follow_final_symlink=True,
+        )
+        limit = max(1, int(self._config.max_file_read_bytes))
+        with target.open("rb") as handle:
+            payload = handle.read(limit + 1)
+        if len(payload) > limit:
+            raise ValueError(
+                "browser storage state exceeds the configured file read limit"
+            )
+        try:
+            decoded = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "browser storage state must be valid UTF-8 JSON"
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("browser storage state must be a JSON object")
+        cookies = decoded.get("cookies", [])
+        origins = decoded.get("origins", [])
+        if not isinstance(cookies, list) or not isinstance(origins, list):
+            raise ValueError(
+                "browser storage state cookies and origins must be JSON arrays"
+            )
+        return cast(dict[str, Any], decoded)
+
+    async def _save_storage_state(
+        self,
+        owner_session_id: str,
+        context: Any,
+        raw_path: str,
+    ) -> str:
+        workdir, target = self._storage_state_path(
+            owner_session_id,
+            raw_path,
+            must_exist=False,
+            follow_final_symlink=False,
+        )
+        state = await context.storage_state()
+        payload = json.dumps(
+            state,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        limit = max(1, int(self._config.max_file_write_bytes))
+        if len(payload) > limit:
+            raise ValueError(
+                "browser storage state exceeds the configured file write limit"
+            )
+        atomic_write_private_bytes(target, payload)
+        return display_path(target, workdir)
+
     async def _screenshot(
         self,
         owner_session_id: str,
@@ -1038,6 +1283,7 @@ class BrowserService:
         await self._sync_pages(state)
         result = {
             "browser_session_id": state.browser_session_id,
+            "profile_id": state.profile_id,
             "pages": await self._page_summaries(state),
             "created_at": state.created_at,
             "last_used_at": state.last_used_at,
@@ -1063,12 +1309,17 @@ class BrowserService:
             )
         return rows
 
-    @staticmethod
-    async def _close_state(state: BrowserSessionState) -> None:
+    async def _close_state(self, state: BrowserSessionState) -> None:
         try:
             await state.context.close()
         finally:
             try:
-                await state.browser.close()
+                if state.profile_id is None:
+                    await state.browser.close()
             finally:
                 await state.playwright.stop()
+        if state.profile_id is not None:
+            async with self._lock:
+                self._profiles_in_use.discard(
+                    self._profile_key(state.profile_id)
+                )
