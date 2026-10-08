@@ -1,6 +1,7 @@
 """REST routes and middleware for tool invocations."""
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -11,7 +12,7 @@ from starlette.responses import Response
 
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import ToolHandler
-from ..tool_timeouts import tool_timeout_s
+from ..tool_timeouts import SHELL_COMMAND_TOOL_NAMES, tool_timeout_s
 from .invocations import call_http_tool
 
 type ToolRouteHandler = Callable[..., Awaitable[Any]]
@@ -55,7 +56,15 @@ def install_tools_timeout_middleware(
         if (request.method.upper(), request.url.path) in non_cancellable_routes:
             return await call_next(request)
         tool_name = request.url.path.removeprefix("/tools/").split("/", 1)[0]
-        timeout_s = tool_timeout_s(tool_name)
+        args = None
+        if request.method == "POST" and tool_name in SHELL_COMMAND_TOOL_NAMES:
+            with contextlib.suppress(ValueError):
+                args = await request.json()
+        timeout_s = (
+            tool_timeout_s(tool_name, args=args)
+            if tool_name in SHELL_COMMAND_TOOL_NAMES and isinstance(args, dict)
+            else tool_timeout_s(tool_name)
+        )
         try:
             return await asyncio.wait_for(call_next(request), timeout=timeout_s)
         except TimeoutError:

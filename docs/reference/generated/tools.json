@@ -1,11 +1,11 @@
 {
-  "count": 54,
+  "count": 55,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "54"
+          "code": "55"
         },
         "."
       ],
@@ -333,7 +333,45 @@
               }
             ]
           },
-          "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. No arbitrary Playwright-script escape hatch."
+          "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. For arbitrary Python code, use the separate browser_run_script tool with shell execution scope."
+        ],
+        [
+          {
+            "code": "browser_run_script"
+          },
+          {
+            "items": [
+              {
+                "description": "Optional combined stdout/stderr byte budget for bounded command mode. Values above the configured server cap are clamped.",
+                "head": {
+                  "code": "max_output_bytes"
+                },
+                "note": "(integer / null, optional)"
+              },
+              {
+                "description": "Complete Python source code to write to a temporary script and execute through the shell execution surface.",
+                "head": {
+                  "code": "script"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Opaque execution session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              },
+              {
+                "description": "Optional timeout in seconds for bounded command mode. For long-running work, prefer async_=true and manage the returned job_id with job.",
+                "head": {
+                  "code": "timeout_s"
+                },
+                "note": "(integer / null, optional)"
+              }
+            ]
+          },
+          "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."
         ],
         [
           {
@@ -2991,7 +3029,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. No arbitrary Playwright-script escape hatch.",
+      "description": "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. For arbitrary Python code, use the separate browser_run_script tool with shell execution scope.",
       "inputSchema": {
         "$defs": {
           "BrowserClosePageAction": {
@@ -3548,6 +3586,122 @@
           "results"
         ],
         "title": "BrowserActOutput",
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations.",
+      "inputSchema": {
+        "properties": {
+          "max_output_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional combined stdout/stderr byte budget for bounded command mode. Values above the configured server cap are clamped.",
+            "title": "Max Output Bytes"
+          },
+          "script": {
+            "description": "Complete Python source code to write to a temporary script and execute through the shell execution surface.",
+            "title": "Script",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Opaque execution session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "timeout_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 60,
+            "description": "Optional timeout in seconds for bounded command mode. For long-running work, prefer async_=true and manage the returned job_id with job.",
+            "title": "Timeout S"
+          }
+        },
+        "required": [
+          "session_id",
+          "script"
+        ],
+        "title": "browser_run_scriptArguments",
+        "type": "object"
+      },
+      "meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use",
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "browser_run_script",
+      "outputSchema": {
+        "description": "Result of writing Python code to a temporary file and executing it through shell modes.",
+        "properties": {
+          "command": {
+            "description": "Generated shell command used to run the temporary Python script.",
+            "title": "Command",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "Resolved working directory used for this Python execution.",
+            "title": "Cwd",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Execution mode selected for the generated Python script.",
+            "enum": [
+              "command",
+              "job",
+              "pty"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": true,
+            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
+            "title": "Result",
+            "type": "object"
+          },
+          "script_path": {
+            "description": "Path to the temporary Python script that was executed.",
+            "title": "Script Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "command",
+          "cwd",
+          "result",
+          "script_path"
+        ],
+        "title": "RunPythonCodeOutput",
         "type": "object"
       }
     },

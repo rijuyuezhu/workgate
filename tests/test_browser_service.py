@@ -15,6 +15,7 @@ from playwright.async_api import Error as PlaywrightError
 from pydantic import TypeAdapter, ValidationError
 
 import workgate.executor.browser as browser_ops
+import workgate.executor.tool_composition as tool_comp
 from tests.helpers import (
     build_paired_control_harness,
     build_tool_session_store,
@@ -919,6 +920,19 @@ async def test_browser_routes_through_control_to_bound_executor(
             assert isinstance(css_after, dict)
             assert "css-click" in str(css_after["text"])
 
+            script_result = await harness.control.session_coordinator.call_session_tool(
+                "browser_run_script",
+                {
+                    "session_id": session_id,
+                    "script": "from pathlib import Path; print('browser-script-route', Path.cwd())",
+                },
+            )
+            assert isinstance(script_result, dict)
+            command_result = script_result["result"]
+            assert isinstance(command_result, dict)
+            assert command_result["ok"] is True
+            assert "browser-script-route" in str(command_result["stdout"])
+
             ended = await harness.control.session_coordinator.end_session(
                 session_id
             )
@@ -1526,5 +1540,96 @@ async def test_browser_css_selectors_and_snapshot_refs_use_same_actions(
                         timeout_ms=500,
                     )
             await service.close(session_id, browser_id)
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_run_script_uses_bounded_shell_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_chromium(monkeypatch)
+    service, config, store, session_id, workdir = _service(tmp_path)
+    # A separately configured system python need not have Workgate's Playwright.
+    config = (
+        replace(config, python_bin="/usr/bin/python3")
+        if os.name != "nt"
+        else config
+    )
+    dispatcher = build_executor_tool_dispatcher(
+        config, store, browser_service=service
+    )
+    script = """from pathlib import Path
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.set_content('<button id="demo">Hello</button>')
+    print(page.locator('#demo').inner_text())
+    print(Path.cwd())
+    browser.close()
+"""
+    try:
+        result = await dispatcher.execute(
+            "browser_run_script", {"session_id": session_id, "script": script}
+        )
+        assert result.mode == "command"
+        assert result.result["ok"] is True
+        assert result.result["stdout"].splitlines() == ["Hello", str(workdir)]
+        assert result.script_path.endswith(".py")
+        assert service._sessions == {}
+
+        limited = await dispatcher.execute(
+            "browser_run_script",
+            {
+                "session_id": session_id,
+                "script": "print('a' * 2000)",
+                "max_output_bytes": 64,
+            },
+        )
+        assert limited.result["ok"] is True
+        assert limited.result["truncated"] is True
+
+        timed = await dispatcher.execute(
+            "browser_run_script",
+            {
+                "session_id": session_id,
+                "script": "import time; time.sleep(10)",
+                "timeout_s": 1,
+            },
+        )
+        assert timed.result["timed_out"] is True
+        assert timed.result["ok"] is False
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_run_script_rejects_missing_browser_and_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, config, store, session_id, _ = _service(tmp_path)
+    dispatcher = build_executor_tool_dispatcher(
+        config, store, browser_service=service
+    )
+    try:
+        monkeypatch.setattr(
+            tool_comp, "browser_capability_available", lambda: False
+        )
+        with pytest.raises(
+            BrowserUnavailableError, match="Chromium is unavailable"
+        ):
+            await dispatcher.execute(
+                "browser_run_script",
+                {"session_id": session_id, "script": "print(1)"},
+            )
+        monkeypatch.setattr(
+            tool_comp, "browser_capability_available", lambda: True
+        )
+        with pytest.raises(ValueError, match="unknown|session"):
+            await dispatcher.execute(
+                "browser_run_script",
+                {"session_id": "sess_invalid", "script": "print(1)"},
+            )
     finally:
         await service.aclose()

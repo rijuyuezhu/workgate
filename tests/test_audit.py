@@ -1373,3 +1373,43 @@ def test_browser_css_selector_audit_redacts_selector_and_entered_value(
     assert starts["input"]["actions"][0]["target"] == "<selector>"
     assert starts["input"]["actions"][0]["value"] == "<redacted>"
     assert ends["output"]["results"][0]["target"] == "<selector>"
+
+
+def test_browser_run_script_audit_records_input_output_and_errors(
+    tmp_path, monkeypatch
+) -> None:
+    path = _configure_audit(tmp_path, monkeypatch)
+    marker = "script-audit-test-value"
+    audit_tool_call_start(
+        call_id="browser-script-audit",
+        transport="mcp",
+        tool="browser_run_script",
+        input={"script": f"print('{marker}')"},
+    )
+    audit_tool_call_end(
+        call_id="browser-script-audit",
+        transport="mcp",
+        tool="browser_run_script",
+        ok=False,
+        duration_ms=1,
+        error={"type": "RuntimeError", "message": marker},
+    )
+    audit_tool_call_start(
+        call_id="browser-script-success",
+        transport="mcp",
+        tool="browser_run_script",
+        input={"script": f"print('{marker}')"},
+    )
+    audit_tool_call_end(
+        call_id="browser-script-success",
+        transport="mcp",
+        tool="browser_run_script",
+        ok=True,
+        duration_ms=1,
+        output={"result": {"stdout": marker, "ok": True}},
+    )
+    starts, ends, success_start, success_end = _records(path)
+    assert starts["input"]["script"] == f"print('{marker}')"
+    assert ends["error"]["message"] == marker
+    assert success_start["input"]["script"] == f"print('{marker}')"
+    assert success_end["output"]["result"]["stdout"] == marker

@@ -39,7 +39,7 @@ _CREATE_UNCONFIRMED = "session_create_unconfirmed"
 _LOOKUP_TIMEOUT_S = 2.0
 _ACTIVE_SESSION_WINDOW_S = 5 * 60 * 60
 _BROWSER_TOOL_NAMES = frozenset(
-    {"browser_session", "browser_snapshot", "browser_act"}
+    {"browser_session", "browser_snapshot", "browser_act", "browser_run_script"}
 )
 _GUI_TOOL_NAMES = frozenset({"gui_list", "gui_state", "gui_action"})
 

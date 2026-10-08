@@ -24,6 +24,7 @@ LOCAL_MCP_TOOL_NAMES = {
     "audit_tail",
     "bash",
     "browser_act",
+    "browser_run_script",
     "browser_session",
     "browser_snapshot",
     "read",

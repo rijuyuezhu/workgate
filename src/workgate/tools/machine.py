@@ -8,6 +8,7 @@ MACHINE_TOOL_NAMES = frozenset(
         "apply_patch",
         "bash",
         "browser_act",
+        "browser_run_script",
         "browser_session",
         "browser_snapshot",
         "close_terminal_bridge",

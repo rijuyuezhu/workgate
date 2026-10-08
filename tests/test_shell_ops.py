@@ -1540,6 +1540,86 @@ def test_control_tool_watchdog_ignores_executor_shell_policy(
     monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "120")
     clear_settings_cache()
     assert tool_timeout_s("bash") == 0.01
+    # Explicit bounded command timeouts get a shared cleanup margin.
+    assert tool_timeout_s("bash", args={"timeout_s": 120}) == 135
+    assert tool_timeout_s("run_python_code", args={"timeout_s": 120}) == 135
+    assert tool_timeout_s("browser_run_script", args={"timeout_s": 120}) == 135
+    assert tool_timeout_s("browser_run_script", args={}) == 75
+    assert (
+        tool_timeout_s("bash", args={"timeout_s": 120, "async_": True}) == 0.01
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_bounded_python_watchdog_honors_requested_timeout(
+    tmp_path, monkeypatch
+):
+    from workgate.config.control import resolve_control_config
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    clear_settings_cache()
+    mcp, _harness = build_paired_mcp(get_settings())
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    tiny_control = replace(
+        resolve_control_config(get_settings()), tool_timeout_s=0.01
+    )
+    monkeypatch.setattr(
+        mcp_watchdogs,
+        "tool_timeout_s",
+        lambda name, *, args=None: tool_timeout_s(
+            name, config=tiny_control, args=args
+        ),
+    )
+    result = mcp_structured(
+        await mcp.call_tool(
+            "run_python_code",
+            {
+                "session_id": session["session_id"],
+                "code": "import time; time.sleep(0.1); print('completed')",
+                "timeout_s": 10,
+            },
+        )
+    )
+    assert result["result"]["ok"] is True
+    assert "completed" in result["result"]["stdout"]
+
+
+def test_http_bounded_python_watchdog_honors_requested_timeout(
+    tmp_path, monkeypatch
+):
+    from workgate.config.control import resolve_control_config
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    clear_settings_cache()
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
+    session_id = client.post(
+        "/tools/session_start", json={"workdir": "."}
+    ).json()["session_id"]
+    tiny_control = replace(
+        resolve_control_config(get_settings()), tool_timeout_s=0.01
+    )
+    monkeypatch.setattr(
+        http_tool_routes_module,
+        "tool_timeout_s",
+        lambda name, *, args=None: tool_timeout_s(
+            name, config=tiny_control, args=args
+        ),
+    )
+    response = client.post(
+        "/tools/run_python_code",
+        json={
+            "session_id": session_id,
+            "code": "import time; time.sleep(0.1); print('completed')",
+            "timeout_s": 10,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["ok"] is True
+    assert "completed" in response.json()["result"]["stdout"]
 
 
 @pytest.mark.asyncio
