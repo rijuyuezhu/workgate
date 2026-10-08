@@ -856,12 +856,14 @@ class BrowserService:
         return raw
 
     def _locator(self, page_state: BrowserPageState, target: str) -> Any:
-        selector = page_state.refs.get(target)
-        if selector is None:
-            raise ValueError(
-                f"browser ref {target} is stale or unknown; take a new snapshot"
-            )
-        return page_state.page.locator(selector).first
+        if re.fullmatch(r"e[1-9][0-9]*", target):
+            selector = page_state.refs.get(target)
+            if selector is None:
+                raise ValueError(
+                    f"browser ref {target} is stale or unknown; take a new snapshot"
+                )
+            return page_state.page.locator(selector).first
+        return page_state.page.locator(f"css={target}")
 
     @staticmethod
     def _profile_key(profile_id: str) -> str:

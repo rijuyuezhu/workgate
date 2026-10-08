@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
+from playwright.async_api import Error as PlaywrightError
 from pydantic import TypeAdapter, ValidationError
 
 import workgate.executor.browser as browser_ops
@@ -90,8 +91,11 @@ def test_browser_action_schema_rejects_unknown_or_incomplete_fields() -> None:
         )
     with pytest.raises(ValidationError, match="Field required"):
         adapter.validate_python([{"action": "fill", "target": "e1"}])
-    with pytest.raises(ValidationError, match="String should match pattern"):
-        adapter.validate_python([{"action": "click", "target": "#submit"}])
+    assert adapter.validate_python([{"action": "click", "target": "#submit"}])
+    with pytest.raises(
+        ValidationError, match="String should have at most 4096 characters"
+    ):
+        adapter.validate_python([{"action": "click", "target": "x" * 4097}])
     with pytest.raises(
         ValidationError, match="List should have at most 100 items"
     ):
@@ -1398,3 +1402,94 @@ async def test_browser_profile_reservation_survives_cleanup_pending(
     assert playwright.stops == 2
 
     await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_css_selectors_and_snapshot_refs_use_same_actions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+    site = tmp_path / "css-target-site"
+    site.mkdir()
+    (site / "index.html").write_text(
+        """<!doctype html><html><head><title>CSS targets</title></head><body>
+<input id="name"><input id="typed"><input id="confirm" type="checkbox">
+<select id="choice"><option value="a">A</option><option value="b">B</option></select>
+<button id="apply" onclick="document.querySelector('#status').textContent='clicked'">Apply</button>
+<button id="extra">Extra</button><span id="status">not clicked</span>
+</body></html>""",
+        encoding="utf-8",
+    )
+    try:
+        with _serve_site(site) as base_url:
+            started = await service.start(
+                session_id, url=f"{base_url}/index.html"
+            )
+            browser_id = str(started["browser_session_id"])
+            snap = await service.snapshot(session_id, browser_id)
+            button_ref = next(
+                item["ref"]
+                for item in snap["interactive_elements"]
+                if item["text"] == "Apply"
+            )
+            actions = [
+                {"action": "fill", "target": "#name", "value": "private-value"},
+                {"action": "type", "target": "input#typed", "value": "typed"},
+                {"action": "select", "target": "#choice", "value": "b"},
+                {"action": "press", "target": "#name", "key": "End"},
+                {"action": "check", "target": "#confirm"},
+                {"action": "uncheck", "target": "#confirm"},
+                {"action": "hover", "target": "#extra"},
+                {"action": "click", "target": button_ref},
+            ]
+            response = await service.act(session_id, browser_id, actions)
+            assert [item["target"] for item in response["results"]] == [
+                item["target"] for item in actions
+            ]
+            assert "private-value" not in str(response)
+            page = next(iter(service._sessions[browser_id].pages.values())).page
+            assert await page.input_value("#name") == "private-value"
+            assert await page.input_value("#typed") == "typed"
+            assert await page.input_value("#choice") == "b"
+            assert not await page.is_checked("#confirm")
+            assert await page.text_content("#status") == "clicked"
+            with pytest.raises(ValueError, match="stale or unknown"):
+                await service.act(
+                    session_id,
+                    browser_id,
+                    [{"action": "click", "target": "e99"}],
+                )
+            with pytest.raises(PlaywrightError, match="strict mode violation"):
+                await service.act(
+                    session_id,
+                    browser_id,
+                    [{"action": "click", "target": "button"}],
+                    timeout_ms=500,
+                )
+            with pytest.raises(
+                PlaywrightError, match="Unexpected token|InvalidSelectorError"
+            ):
+                await service.act(
+                    session_id,
+                    browser_id,
+                    [{"action": "click", "target": "#bad["}],
+                    timeout_ms=500,
+                )
+            with pytest.raises(PlaywrightError):
+                await service.act(
+                    session_id,
+                    browser_id,
+                    [{"action": "click", "target": "#absent"}],
+                    timeout_ms=50,
+                )
+            with pytest.raises(PlaywrightError):
+                await service.act(
+                    session_id,
+                    browser_id,
+                    [{"action": "click", "target": "text=Apply"}],
+                    timeout_ms=500,
+                )
+            await service.close(session_id, browser_id)
+    finally:
+        await service.aclose()

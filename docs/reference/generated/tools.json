@@ -297,7 +297,7 @@
           {
             "items": [
               {
-                "description": "Ordered high-level actions using snapshot refs for element targets.",
+                "description": "Ordered high-level actions using snapshot refs or CSS selectors for element targets.",
                 "head": {
                   "code": "actions"
                 },
@@ -333,7 +333,7 @@
               }
             ]
           },
-          "Perform bounded high-level browser actions on an owned browser session using snapshot refs for element targets. There is intentionally no arbitrary Playwright-script escape hatch."
+          "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. No arbitrary Playwright-script escape hatch."
         ],
         [
           {
@@ -2991,7 +2991,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Perform bounded high-level browser actions on an owned browser session using snapshot refs for element targets. There is intentionally no arbitrary Playwright-script escape hatch.",
+      "description": "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. No arbitrary Playwright-script escape hatch.",
       "inputSchema": {
         "$defs": {
           "BrowserClosePageAction": {
@@ -3080,10 +3080,9 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1.",
-                "maxLength": 16,
-                "minLength": 2,
-                "pattern": "^e[1-9][0-9]*$",
+                "description": "Snapshot ref such as e1 (preferred), or a CSS selector matching one element.",
+                "maxLength": 4096,
+                "minLength": 1,
                 "title": "Target",
                 "type": "string"
               }
@@ -3105,10 +3104,9 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1.",
-                "maxLength": 16,
-                "minLength": 2,
-                "pattern": "^e[1-9][0-9]*$",
+                "description": "Snapshot ref such as e1 (preferred), or a CSS selector matching one element.",
+                "maxLength": 4096,
+                "minLength": 1,
                 "title": "Target",
                 "type": "string"
               },
@@ -3155,10 +3153,9 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1.",
-                "maxLength": 16,
-                "minLength": 2,
-                "pattern": "^e[1-9][0-9]*$",
+                "description": "Snapshot ref such as e1 (preferred), or a CSS selector matching one element.",
+                "maxLength": 4096,
+                "minLength": 1,
                 "title": "Target",
                 "type": "string"
               }
@@ -3182,10 +3179,9 @@
                 "type": "string"
               },
               "target": {
-                "description": "Snapshot ref such as e1.",
-                "maxLength": 16,
-                "minLength": 2,
-                "pattern": "^e[1-9][0-9]*$",
+                "description": "Snapshot ref such as e1 (preferred), or a CSS selector matching one element.",
+                "maxLength": 4096,
+                "minLength": 1,
                 "title": "Target",
                 "type": "string"
               },
@@ -3273,7 +3269,7 @@
         },
         "properties": {
           "actions": {
-            "description": "Ordered high-level actions using snapshot refs for element targets.",
+            "description": "Ordered high-level actions using snapshot refs or CSS selectors for element targets.",
             "items": {
               "discriminator": {
                 "mapping": {

@@ -114,6 +114,6 @@ async def browser_act(
     page_id: BrowserPageIdArg = None,
     timeout_ms: BrowserTimeoutMsArg = 30_000,
 ) -> BrowserActOutput:
-    """Perform bounded high-level browser actions on an owned browser session using snapshot refs for element targets. There is intentionally no arbitrary Playwright-script escape hatch."""
+    """Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. No arbitrary Playwright-script escape hatch."""
     del session_id, browser_session_id, actions, page_id, timeout_ms
     raise RuntimeError("browser_act requires control routing")
