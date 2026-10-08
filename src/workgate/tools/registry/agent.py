@@ -36,9 +36,9 @@ from ...schemas.result_models.agent import (
 from ..declarative import DeclarativeToolRegistry
 
 
-def _agent_registry() -> AgentCapabilityRegistry:
+def _agent_registry(server: str | None = None) -> AgentCapabilityRegistry:
     return build_network_agent_registry_from_settings(
-        client_manager_factory=AgentMcpClientManager
+        client_manager_factory=AgentMcpClientManager, mcp_server_name=server
     )
 
 
@@ -128,11 +128,13 @@ async def list_agent_mcp_servers(
     return list_agent_mcp_servers_payload(_agent_registry())
 
 
-async def _local_search_rows(_session_id: str | None) -> list[dict]:
+async def _local_search_rows(
+    _session_id: str | None, server: str | None
+) -> list[dict]:
     import asyncio
 
-    registry = await asyncio.to_thread(_agent_registry)
-    return list_agent_mcp_tools_payload(registry).tools
+    registry = await asyncio.to_thread(_agent_registry, server)
+    return list_agent_mcp_tools_payload(registry, server).tools
 
 
 _LOCAL_DISCOVERY = McpDiscovery(_local_search_rows)

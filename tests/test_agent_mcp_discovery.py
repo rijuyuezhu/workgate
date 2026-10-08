@@ -1,5 +1,6 @@
 """Bounded progressive disclosure of external MCP tool metadata."""
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -20,7 +21,9 @@ async def test_search_excludes_schema_and_inspect_reuses_cached_metadata() -> (
 ):
     calls: list[str | None] = []
 
-    async def fetch(session_id: str | None) -> list[dict[str, Any]]:
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
         calls.append(session_id)
         return [
             {
@@ -68,7 +71,9 @@ async def test_search_excludes_schema_and_inspect_reuses_cached_metadata() -> (
 
 @pytest.mark.asyncio
 async def test_search_rejects_invalid_limits_and_bounded_catalogs() -> None:
-    async def fetch(_session_id: str | None) -> list[dict[str, Any]]:
+    async def fetch(
+        _session_id: str | None, _server: str | None
+    ) -> list[dict[str, Any]]:
         return [
             {"server": "s", "tool": "t", "description": "x", "input_schema": {}}
         ]
@@ -78,7 +83,9 @@ async def test_search_rejects_invalid_limits_and_bounded_catalogs() -> None:
         with pytest.raises(ValueError, match="limit"):
             await catalog.search("", limit=value)
 
-    async def oversized(_session_id: str | None) -> list[dict[str, Any]]:
+    async def oversized(
+        _session_id: str | None, _server: str | None
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "server": "s",
@@ -91,7 +98,9 @@ async def test_search_rejects_invalid_limits_and_bounded_catalogs() -> None:
     with pytest.raises(ValueError, match="size limit"):
         await McpDiscovery(oversized).search("")
 
-    async def too_many(_session_id: str | None) -> list[dict[str, Any]]:
+    async def too_many(
+        _session_id: str | None, _server: str | None
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "server": "s",
@@ -160,7 +169,9 @@ async def test_discovery_server_filter_scope_eviction_and_server_bound() -> (
 ):
     scopes: list[str | None] = []
 
-    async def fetch(session_id: str | None) -> list[dict[str, Any]]:
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
         scopes.append(session_id)
         return [
             {
@@ -185,11 +196,13 @@ async def test_discovery_server_filter_scope_eviction_and_server_bound() -> (
     for i in range(1, 17):
         await catalog.search("", session_id=f"scope{i}")
     assert len(catalog._cache) == 16
-    assert "scope0" not in catalog._cache
+    assert ("scope0", "two") not in catalog._cache
     await catalog.search("", session_id="scope0")
     assert scopes.count("scope0") == 2
 
-    async def many_servers(_session_id: str | None) -> list[dict[str, Any]]:
+    async def many_servers(
+        _session_id: str | None, _server: str | None
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "server": f"server{i}",
@@ -202,3 +215,134 @@ async def test_discovery_server_filter_scope_eviction_and_server_bound() -> (
 
     with pytest.raises(ValueError, match="discovery catalog exceeds bounds"):
         await McpDiscovery(many_servers).search("")
+
+
+@pytest.mark.asyncio
+async def test_invalidation_wins_over_inflight_fetch() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        nonlocal calls
+        assert (session_id, server) == ("session", "docs")
+        calls += 1
+        if calls == 1:
+            started.set()
+            await release.wait()
+        return [
+            {
+                "server": "docs",
+                "tool": "old" if calls == 1 else "fresh",
+                "description": "One tool",
+                "input_schema": {},
+            }
+        ]
+
+    catalog = McpDiscovery(fetch)
+    old = asyncio.create_task(
+        catalog.search("", server="docs", session_id="session")
+    )
+    await started.wait()
+    catalog.invalidate("session")
+    release.set()
+    assert (await old)["tools"][0]["tool"] == "old"
+    assert (await catalog.search("", server="docs", session_id="session"))[
+        "tools"
+    ][0]["tool"] == "fresh"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_searches_share_one_fetch_and_refresh_replaces_old() -> (
+    None
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def fetch(
+        _session_id: str | None, _server: str | None
+    ) -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        number = calls
+        if number == 1:
+            started.set()
+            await release.wait()
+        return [
+            {
+                "server": "docs",
+                "tool": f"tool{number}",
+                "description": "ok",
+                "input_schema": {},
+            }
+        ]
+
+    catalog = McpDiscovery(fetch)
+    tasks = [
+        asyncio.create_task(catalog.search("", session_id="s", server="docs"))
+        for _ in range(3)
+    ]
+    await started.wait()
+    await asyncio.sleep(0)
+    assert calls == 1
+    release.set()
+    result = await asyncio.gather(*tasks)
+    assert all(item["tools"][0]["tool"] == "tool1" for item in result)
+    assert (await catalog.inspect("docs", "tool1", session_id="s"))[
+        "tool"
+    ] == "tool1"
+
+    # A forced refresh supersedes the in-flight result without retaining it.
+    catalog.invalidate("s")
+    started.clear()
+    release.clear()
+    calls = 0
+    old = asyncio.create_task(catalog.search("", session_id="s", server="docs"))
+    await started.wait()
+    fresh = await catalog.search(
+        "", session_id="s", server="docs", refresh=True
+    )
+    assert fresh["tools"][0]["tool"] == "tool2"
+    release.set()
+    await old
+    assert (await catalog.inspect("docs", "tool2", session_id="s"))[
+        "tool"
+    ] == "tool2"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_server_scopes_are_separate_but_full_catalog_is_reusable() -> (
+    None
+):
+    calls: list[tuple[str | None, str | None]] = []
+
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        calls.append((session_id, server))
+        names = ("a", "b") if server is None else (server,)
+        return [
+            {
+                "server": name,
+                "tool": "ping",
+                "description": "ok",
+                "input_schema": {},
+            }
+            for name in names
+        ]
+
+    catalog = McpDiscovery(fetch)
+    await catalog.search("", session_id="one", server="a")
+    await catalog.inspect("a", "ping", session_id="one")
+    await catalog.search("", session_id="one", server="b")
+    assert calls == [("one", "a"), ("one", "b")]
+    await catalog.search("", session_id="two")
+    await catalog.inspect("b", "ping", session_id="two")
+    assert calls == [("one", "a"), ("one", "b"), ("two", None)]
+    catalog.invalidate("one")
+    assert not any(scope == "one" for scope, _ in catalog._cache)

@@ -54,12 +54,16 @@ async def test_standalone_fixed_search_inspect_and_call(monkeypatch) -> None:
         }
     ]
     monkeypatch.setattr(
-        public_agent, "_agent_registry", lambda: cast(Any, object())
+        public_agent,
+        "_agent_registry",
+        lambda _server=None: cast(Any, object()),
     )
     monkeypatch.setattr(
         public_agent,
         "list_agent_mcp_tools_payload",
-        lambda _registry: cast(Any, type("ToolRows", (), {"tools": tools})()),
+        lambda _registry, _server=None: cast(
+            Any, type("ToolRows", (), {"tools": tools})()
+        ),
     )
     monkeypatch.setattr(
         public_agent,

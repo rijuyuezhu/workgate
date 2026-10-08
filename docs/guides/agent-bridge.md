@@ -132,7 +132,7 @@ Start by asking the client to show what is available:
 Use workgate to check Agent Bridge status, list available Skills and upstream MCP servers, and summarize the extra capabilities.
 ```
 
-Use `search_agent_mcp_tools` with keywords and an optional `session_id` to discover external tool summaries (without schemas). Then call `inspect_agent_mcp_tool` with the chosen `server` and `tool` to fetch its input schema. Finally use `call_agent_mcp_tool` to invoke it. These are fixed Workgate tools: upstream tool counts never expand the public tool list.
+Use `search_agent_mcp_tools` with keywords and an optional `session_id` to discover external tool summaries (without schemas). Set `server` to probe only that configured MCP server. Then call `inspect_agent_mcp_tool` with the chosen `server` and `tool` to fetch its input schema. Finally use `call_agent_mcp_tool` to invoke it. These are fixed Workgate tools: upstream tool counts never expand the public tool list.
 
 Discovery keeps a bounded in-memory snapshot for up to 60 seconds; pass `refresh=true` to search again after changing a server's configuration or tools. Session workdir changes invalidate that session's cache. Searches are limited to 50 matches, with a default of 20; each selected schema is returned on demand, not in the search result. Credentials and sensitive descriptor values remain redacted.
 

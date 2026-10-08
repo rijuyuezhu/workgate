@@ -143,7 +143,13 @@ class ExecutorAgentBridgeService:
         self._store = store
         self._auth_store = AgentAuthStore(config.agent_auth_dir)
 
-    def _registry(self, session_id: str, *, probe_mcp_tools: bool = True):
+    def _registry(
+        self,
+        session_id: str,
+        *,
+        probe_mcp_tools: bool = True,
+        mcp_server_name: str | None = None,
+    ):
         """Resolve configured stdio MCP for the selected session workdir."""
         from ..agent_bridge.mcp import AgentMcpClientManager
         from ..agent_bridge.registry import build_agent_registry
@@ -168,6 +174,7 @@ class ExecutorAgentBridgeService:
             include_project_skills=False,
             mcp_server_types=frozenset({"stdio"}),
             probe_mcp_tools=probe_mcp_tools,
+            mcp_server_name=mcp_server_name,
         )
 
     def list_servers(
@@ -186,7 +193,9 @@ class ExecutorAgentBridgeService:
         """List stdio MCP tools with discovery bound to a Workgate session."""
         from ..agent_bridge.service import list_agent_mcp_tools_payload
 
-        return list_agent_mcp_tools_payload(self._registry(session_id), server)
+        return list_agent_mcp_tools_payload(
+            self._registry(session_id, mcp_server_name=server), server
+        )
 
     async def call_tool(
         self, session_id: str, server: str, tool: str, args: dict | None = None

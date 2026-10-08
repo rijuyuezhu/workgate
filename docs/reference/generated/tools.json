@@ -2477,7 +2477,7 @@
       "name": "agent_config_status",
       "outputSchema": {
         "additionalProperties": true,
-        "description": "Agent bridge configuration, skill, MCP server, and dynamic-tool status.",
+        "description": "Agent bridge configuration, Skill and MCP server status.",
         "properties": {
           "config_dir": {
             "description": "Agent bridge configuration directory.",

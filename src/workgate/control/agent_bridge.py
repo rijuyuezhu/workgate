@@ -32,12 +32,16 @@ class ControlAgentBridgeService:
         self._discovery = McpDiscovery(self._discovery_rows)
 
     def _network_registry(
-        self, *, probe_mcp_tools: bool = True
+        self,
+        *,
+        probe_mcp_tools: bool = True,
+        mcp_server_name: str | None = None,
     ) -> AgentCapabilityRegistry:
         return build_network_agent_registry_from_settings(
             self._settings,
             AgentMcpClientManager,
             probe_mcp_tools=probe_mcp_tools,
+            mcp_server_name=mcp_server_name,
         )
 
     @staticmethod
@@ -110,7 +114,9 @@ class ControlAgentBridgeService:
         if server is not None:
             _, owner = await self._resolve_server_owner(server, session_id)
             if owner == "control":
-                registry = await asyncio.to_thread(self._network_registry)
+                registry = await asyncio.to_thread(
+                    self._network_registry, mcp_server_name=server
+                )
                 return list_agent_mcp_tools_payload(registry, server)
             selected_session = self._require_session_id(session_id, server)
             if owner == "unknown":
@@ -141,9 +147,11 @@ class ControlAgentBridgeService:
         return ListAgentMcpToolsOutput(tools=[*control, *executor])
 
     async def _discovery_rows(
-        self, session_id: str | None
+        self, session_id: str | None, server: str | None
     ) -> list[dict[str, Any]]:
-        return (await self.list_tools(session_id=session_id)).tools
+        return (
+            await self.list_tools(server=server, session_id=session_id)
+        ).tools
 
     def invalidate_discovery(self, session_id: str) -> None:
         self._discovery.invalidate(session_id)

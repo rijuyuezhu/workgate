@@ -113,6 +113,7 @@ def build_agent_registry(
     mcp_server_types: frozenset[str] | None = None,
     scan_skills: bool = True,
     probe_mcp_tools: bool = True,
+    mcp_server_name: str | None = None,
 ) -> AgentCapabilityRegistry:
     """Build one manifest-backed registry with ordered project, managed, and global Skills."""
     config_root = Path(config_dir).expanduser().resolve()
@@ -156,6 +157,8 @@ def build_agent_registry(
     mcp_servers: dict[str, AgentMcpServerRecord] = {}
     if manifest.status == "loaded":
         for name, server in manifest.data.mcp_servers.items():
+            if mcp_server_name is not None and name != mcp_server_name:
+                continue
             if (
                 mcp_server_types is not None
                 and server.type not in mcp_server_types

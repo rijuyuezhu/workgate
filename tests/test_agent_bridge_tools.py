@@ -2481,8 +2481,10 @@ async def test_control_agent_bridge_rejects_same_name_across_owner_planes():
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda *, probe_mcp_tools=True: cast(
-        Any, SimpleNamespace(mcp_servers={"same": object()})
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
+            Any, SimpleNamespace(mcp_servers={"same": object()})
+        )
     )
 
     with pytest.raises(ValueError, match="ambiguous across control"):
@@ -2515,7 +2517,9 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda *, probe_mcp_tools=True: registry
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: registry
+    )
     monkeypatch.setattr(
         control_agent_bridge_module,
         "list_agent_mcp_tools_payload",
@@ -2570,8 +2574,10 @@ async def test_control_agent_bridge_rejects_duplicate_rows_when_listing_all(
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = lambda *, probe_mcp_tools=True: cast(
-        Any, SimpleNamespace(mcp_servers={"same": object()})
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
+            Any, SimpleNamespace(mcp_servers={"same": object()})
+        )
     )
     monkeypatch.setattr(
         control_agent_bridge_module,

@@ -40,6 +40,7 @@ def build_network_agent_registry_from_settings(
     client_manager_factory: AgentMcpClientManagerFactory = AgentMcpClientManager,
     *,
     probe_mcp_tools: bool = True,
+    mcp_server_name: str | None = None,
 ) -> AgentCapabilityRegistry:
     """Build the control-owned HTTP/SSE registry without machine/Skill policy."""
     active_settings: ControlConfig = settings or get_control_config()
@@ -67,6 +68,7 @@ def build_network_agent_registry_from_settings(
         mcp_server_types=frozenset({"http", "sse"}),
         scan_skills=False,
         probe_mcp_tools=probe_mcp_tools,
+        mcp_server_name=mcp_server_name,
     )
 
 

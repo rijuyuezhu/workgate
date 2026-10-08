@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class AgentConfigStatusOutput(BaseModel):
-    """Agent bridge configuration, skill, MCP server, and dynamic-tool status."""
+    """Agent bridge configuration, Skill and MCP server status."""
 
     model_config = ConfigDict(extra="allow")
     """Allow passthrough keys for dynamically shaped output payloads."""
