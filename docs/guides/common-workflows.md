@@ -89,7 +89,7 @@ For substantial multi-step work, create or resume a task before starting its exe
 
 Use the Human UI Audit panel or `audit_tail` to review recent tool activity. Request a full retained payload only for a specific entry and only when the client has the required scope.
 
-Audit data can contain project content and command output even after redaction. Treat it as private. See [Audit log](audit-log.md).
+Audit data is not redacted: it may contain project content, credentials, and command output. Treat it as private. See [Audit log](audit-log.md).
 
 ## Finish cleanly
 

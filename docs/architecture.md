@@ -407,14 +407,14 @@ Rejected ownership alternatives:
 - `ui/http`: Human UI adapters consume terminal bridges, but executor terminal
   lifetime remains below HTTP delivery.
 
-## `audit`: redacted event persistence and query
+## `audit`: bounded event persistence and query
 
-The `audit` package owns the transport-neutral lifecycle of bounded, redacted
-audit events. Every session-owned event is appended to both the global log and
+The `audit` package owns the transport-neutral lifecycle of bounded audit
+events without content masking. Every session-owned event is appended to both the global log and
 that session's colocated log; events without a session remain global-only. The
 global log remains authoritative for payload-object retention, while local logs
 provide direct per-session reads without re-scanning unrelated records. Audit may
-consume configuration, persistence primitives, execution-session identity, redaction,
+consume configuration, persistence primitives, execution-session identity,
 and the current payload store, but it must not depend on control delivery adapters, HTTP
 route adapters, Human UI presentation, or terminal implementations.
 
@@ -423,7 +423,7 @@ Rejected ownership alternatives:
 - top-level `audit.py` and `audit_payloads.py`: they split one audit persistence
   domain across unrelated package-root files and made implementation paths look
   like supported public APIs.
-- `utils`: audit policy includes redaction, retention, event semantics, payload
+- `utils`: audit policy includes retention, event semantics, payload
   references, and public query behavior rather than generic serialization.
 - `control` delivery adapters or `ui/http`: those layers emit and present audit events, but the
   same event store is shared across every delivery surface.
