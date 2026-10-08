@@ -25,7 +25,7 @@ from ...tools.declarative import mcp_handler_error_handler
 from ...tools.mcp_text import has_explicit_tool_text
 from ...utils.serialization import to_jsonable
 from ..execution_context import control_execution_context
-from ..tool_timeouts import tool_timeout_s
+from ..tool_timeouts import SHELL_COMMAND_TOOL_NAMES, tool_timeout_s
 
 
 class AuditedMcpToolFn(Protocol):
@@ -95,7 +95,12 @@ def _mcp_tool_audit_watchdog_wrapper(
             tool=tool_name,
             input=tool_input,
         )
-        timeout_s = tool_timeout_s(tool_name)
+        timeout_s = (
+            tool_timeout_s(tool_name, args=tool_input)
+            if tool_name in SHELL_COMMAND_TOOL_NAMES
+            and isinstance(tool_input, dict)
+            else tool_timeout_s(tool_name)
+        )
         try:
             if agent_activity_observer is not None and task_ids:
                 await agent_activity_observer(task_ids)

@@ -142,6 +142,7 @@ async def run_python_code_execute(
     *,
     job_start: JobStarter | None = None,
     forbidden_shell_ids: frozenset[str] = frozenset(),
+    python_executable: str | None = None,
 ) -> RunPythonCodeOutput:
     """Write Python code to a temporary file and execute it through shell modes."""
     session = store.touch_session(session_id)
@@ -157,7 +158,10 @@ async def run_python_code_execute(
         temp_directory=config.temp_dir,
     )
     command = _shell_join_argv(
-        [_effective_python_executable(config), str(script_path)]
+        [
+            python_executable or _effective_python_executable(config),
+            str(script_path),
+        ]
     )
     result = await bash_execute(
         config,

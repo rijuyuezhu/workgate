@@ -371,7 +371,7 @@
               }
             ]
           },
-          "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and the configured Python executable; the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."
+          "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."
         ],
         [
           {
@@ -3596,7 +3596,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and the configured Python executable; the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations.",
+      "description": "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations.",
       "inputSchema": {
         "properties": {
           "max_output_bytes": {

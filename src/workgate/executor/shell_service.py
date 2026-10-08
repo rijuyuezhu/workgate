@@ -67,6 +67,7 @@ class ShellService:
             forbidden_shell_ids=(
                 self.jobs.reserved_shell_ids() if pty else frozenset()
             ),
+            python_executable=args.get("python_executable"),
         )
 
     async def start(self, args: dict[str, Any]) -> Any:

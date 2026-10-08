@@ -1550,6 +1550,12 @@ async def test_browser_run_script_uses_bounded_shell_execution(
 ) -> None:
     _require_chromium(monkeypatch)
     service, config, store, session_id, workdir = _service(tmp_path)
+    # A separately configured system python need not have Workgate's Playwright.
+    config = (
+        replace(config, python_bin="/usr/bin/python3")
+        if os.name != "nt"
+        else config
+    )
     dispatcher = build_executor_tool_dispatcher(
         config, store, browser_service=service
     )

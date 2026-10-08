@@ -136,6 +136,6 @@ async def browser_run_script(
     timeout_s: ShellTimeoutArg = 60,
     max_output_bytes: ShellMaxOutputBytesArg = None,
 ) -> RunPythonCodeOutput:
-    """Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and the configured Python executable; the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."""
+    """Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."""
     del session_id, script, timeout_s, max_output_bytes
     raise RuntimeError("browser_run_script requires control routing")

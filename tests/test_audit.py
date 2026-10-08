@@ -1375,30 +1375,41 @@ def test_browser_css_selector_audit_redacts_selector_and_entered_value(
     assert ends["output"]["results"][0]["target"] == "<selector>"
 
 
-def test_browser_run_script_audit_keeps_code_and_output_private(
+def test_browser_run_script_audit_records_input_output_and_errors(
     tmp_path, monkeypatch
 ) -> None:
     path = _configure_audit(tmp_path, monkeypatch)
-    secret = "script-secret-is-never-audited"
+    marker = "script-audit-test-value"
     audit_tool_call_start(
-        call_id="browser-script-private",
+        call_id="browser-script-audit",
         transport="mcp",
         tool="browser_run_script",
-        input={
-            "session_id": "sess_0000000000000000000001",
-            "script": f"print('{secret}')",
-        },
+        input={"script": f"print('{marker}')"},
     )
     audit_tool_call_end(
-        call_id="browser-script-private",
+        call_id="browser-script-audit",
+        transport="mcp",
+        tool="browser_run_script",
+        ok=False,
+        duration_ms=1,
+        error={"type": "RuntimeError", "message": marker},
+    )
+    audit_tool_call_start(
+        call_id="browser-script-success",
+        transport="mcp",
+        tool="browser_run_script",
+        input={"script": f"print('{marker}')"},
+    )
+    audit_tool_call_end(
+        call_id="browser-script-success",
         transport="mcp",
         tool="browser_run_script",
         ok=True,
         duration_ms=1,
-        output={"result": {"stdout": secret, "ok": True}},
+        output={"result": {"stdout": marker, "ok": True}},
     )
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    starts, ends = _records(path)
-    assert starts["input"] == "<redacted>"
-    assert ends["output"] == "<redacted>"
+    starts, ends, success_start, success_end = _records(path)
+    assert starts["input"]["script"] == f"print('{marker}')"
+    assert ends["error"]["message"] == marker
+    assert success_start["input"]["script"] == f"print('{marker}')"
+    assert success_end["output"]["result"]["stdout"] == marker
