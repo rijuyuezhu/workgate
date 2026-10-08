@@ -139,6 +139,7 @@ def build_agent_registry(
     include_project_skills: bool = True,
     mcp_server_types: frozenset[str] | None = None,
     scan_skills: bool = True,
+    probe_mcp_tools: bool = True,
 ) -> AgentCapabilityRegistry:
     """Build one manifest-backed registry with ordered project, managed, and global Skills."""
     config_root = Path(config_dir).expanduser().resolve()
@@ -163,19 +164,6 @@ def build_agent_registry(
         from .mcp import AgentMcpClientManager
 
         client_manager = AgentMcpClientManager(call_timeout_s=probe_timeout)
-
-    retain_stdio_servers = getattr(client_manager, "retain_stdio_servers", None)
-    if callable(retain_stdio_servers):
-        retained_servers = (
-            {
-                name: server
-                for name, server in manifest.data.mcp_servers.items()
-                if mcp_server_types is None or server.type in mcp_server_types
-            }
-            if manifest.status == "loaded"
-            else {}
-        )
-        retain_stdio_servers(retained_servers)
 
     skill_scan = SkillScanResult()
     if (
@@ -219,6 +207,11 @@ def build_agent_registry(
                     config=server,
                     available=False,
                     error="credential redaction history unavailable",
+                )
+                continue
+            if not probe_mcp_tools:
+                mcp_servers[name] = AgentMcpServerRecord(
+                    name=name, config=server, available=True
                 )
                 continue
             before_env, before_headers = manager_redaction_maps(

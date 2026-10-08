@@ -134,26 +134,30 @@ def read_agent_skill_file_execute(
 
 
 class ExecutorAgentBridgeService:
-    """Executor-owned stdio MCP integration runtime and private credential boundary."""
+    """Executor-owned, session-scoped stdio MCP and credential boundary."""
 
-    def __init__(self, config: ExecutorConfig) -> None:
+    def __init__(self, config: ExecutorConfig, store: ToolSessionStore) -> None:
         from ..agent_bridge.auth_store import AgentAuthStore
-        from ..agent_bridge.mcp import AgentMcpClientManager
 
         self._config = config
-        self._manager = AgentMcpClientManager(
-            config.agent_mcp_call_timeout_s,
-            AgentAuthStore(config.agent_auth_dir),
-            allow_stdio=True,
-        )
+        self._store = store
+        self._auth_store = AgentAuthStore(config.agent_auth_dir)
 
-    def _registry(self):
-        """Build the current executor-local stdio-only capability snapshot."""
+    def _registry(self, session_id: str, *, probe_mcp_tools: bool = True):
+        """Resolve configured stdio MCP for the selected session workdir."""
+        from ..agent_bridge.mcp import AgentMcpClientManager
         from ..agent_bridge.registry import build_agent_registry
 
+        session = self._store.touch_session(session_id)
+        manager = AgentMcpClientManager(
+            self._config.agent_mcp_call_timeout_s,
+            self._auth_store,
+            allow_stdio=True,
+            stdio_cwd=str(session.workdir),
+        )
         return build_agent_registry(
             self._config.agent_config_dir,
-            self._manager,
+            manager,
             self._config.agent_mcp_probe_timeout_s,
             False,
             False,
@@ -165,30 +169,36 @@ class ExecutorAgentBridgeService:
             max_skill_entry_bytes=self._config.max_file_read_bytes,
             include_project_skills=False,
             mcp_server_types=frozenset({"stdio"}),
+            probe_mcp_tools=probe_mcp_tools,
         )
 
-    def list_servers(self) -> ListAgentMcpServersOutput:
-        """List only stdio MCP servers configured on this executor."""
+    def list_servers(
+        self, session_id: str, *, probe_mcp_tools: bool = True
+    ) -> ListAgentMcpServersOutput:
+        """List executor-local servers visible to this active Workgate session."""
         from ..agent_bridge.service import list_agent_mcp_servers_payload
 
-        return list_agent_mcp_servers_payload(self._registry())
+        return list_agent_mcp_servers_payload(
+            self._registry(session_id, probe_mcp_tools=probe_mcp_tools)
+        )
 
-    def list_tools(self, server: str | None = None) -> ListAgentMcpToolsOutput:
-        """List tools from executor-local stdio MCP servers."""
+    def list_tools(
+        self, session_id: str, server: str | None = None
+    ) -> ListAgentMcpToolsOutput:
+        """List stdio MCP tools with discovery bound to a Workgate session."""
         from ..agent_bridge.service import list_agent_mcp_tools_payload
 
-        return list_agent_mcp_tools_payload(self._registry(), server)
+        return list_agent_mcp_tools_payload(self._registry(session_id), server)
 
     async def call_tool(
-        self, server: str, tool: str, args: dict | None = None
+        self, session_id: str, server: str, tool: str, args: dict | None = None
     ) -> CallAgentMcpToolOutput:
-        """Call one executor-local stdio MCP tool with executor-local secrets."""
+        """Invoke a short-lived stdio MCP connection in the session workdir."""
         from ..agent_bridge.service import call_agent_mcp_tool_payload
 
         return await call_agent_mcp_tool_payload(
-            self._registry(), server, tool, args or {}
+            self._registry(session_id, probe_mcp_tools=False),
+            server,
+            tool,
+            args or {},
         )
-
-    def close(self) -> None:
-        """Retire persistent stdio subprocesses owned by this executor."""
-        self._manager.close()

@@ -48,7 +48,9 @@ def build_executor_tool_dispatcher(
         shell_service = ShellService(config, store)
     executor_config = shell_service.config
     if agent_bridge_service is None:
-        agent_bridge_service = ExecutorAgentBridgeService(executor_config)
+        agent_bridge_service = ExecutorAgentBridgeService(
+            executor_config, store
+        )
     if browser_service is None:
         browser_service = BrowserService(executor_config, store)
     if gui_service is None:
@@ -196,21 +198,32 @@ def build_executor_tool_dispatcher(
         )
 
     async def agent_mcp_list_servers_handler(args: dict[str, Any]) -> Any:
-        del args
-        return await asyncio.to_thread(agent_bridge_service.list_servers)
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await asyncio.to_thread(
+                agent_bridge_service.list_servers,
+                session_id,
+                probe_mcp_tools=bool(args.get("probe_mcp_tools", True)),
+            )
 
     async def agent_mcp_list_tools_handler(args: dict[str, Any]) -> Any:
-        return await asyncio.to_thread(
-            agent_bridge_service.list_tools,
-            None if args.get("server") is None else str(args["server"]),
-        )
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await asyncio.to_thread(
+                agent_bridge_service.list_tools,
+                session_id,
+                None if args.get("server") is None else str(args["server"]),
+            )
 
     async def agent_mcp_call_tool_handler(args: dict[str, Any]) -> Any:
-        return await agent_bridge_service.call_tool(
-            str(args["server"]),
-            str(args["tool"]),
-            dict(args.get("args") or {}),
-        )
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await agent_bridge_service.call_tool(
+                session_id,
+                str(args["server"]),
+                str(args["tool"]),
+                dict(args.get("args") or {}),
+            )
 
     async def view_image_handler(args: dict[str, Any]) -> Any:
         from .image import view_image_execute

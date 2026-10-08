@@ -161,10 +161,7 @@ def test_agent_oauth_storage_persists_expiry_client_and_refresh_token(tmp_path):
         }
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        redaction_values, headers = manager.redaction_maps("docs", server)
-    finally:
-        manager.close()
+    redaction_values, headers = manager.redaction_maps("docs", server)
     assert headers == {}
     assert set(redaction_values.values()) >= {
         "access-two",
@@ -423,22 +420,16 @@ def test_mcp_manager_reconstructs_manifest_literal_history_after_restart(
         return AgentMcpServerConfig.model_validate(payload)
 
     first_manager = AgentMcpClientManager(1, AgentAuthStore(root))
-    try:
-        assert first_manager.redaction_cursor("docs", server(old_value)) == 0
-    finally:
-        first_manager.close()
+    assert first_manager.redaction_cursor("docs", server(old_value)) == 0
 
     restarted_manager = AgentMcpClientManager(1, AgentAuthStore(root))
-    try:
-        current = server(new_value)
-        baseline = restarted_manager.redaction_cursor("docs", current)
-        assert baseline == 0
-        env, headers = restarted_manager.redaction_maps_since(
-            "docs", current, baseline
-        )
-        assert {old_value, new_value} <= set((*env.values(), *headers.values()))
-    finally:
-        restarted_manager.close()
+    current = server(new_value)
+    baseline = restarted_manager.redaction_cursor("docs", current)
+    assert baseline == 0
+    env, headers = restarted_manager.redaction_maps_since(
+        "docs", current, baseline
+    )
+    assert {old_value, new_value} <= set((*env.values(), *headers.values()))
 
 
 def test_mcp_manager_redacts_manifest_literals_across_server_rename_and_restart(
@@ -459,22 +450,16 @@ def test_mcp_manager_redacts_manifest_literals_across_server_rename_and_restart(
     old_value = "oldBeforeRenameA1"
     new_value = "newAfterRenameB2"
     first_manager = AgentMcpClientManager(1, AgentAuthStore(root))
-    try:
-        assert first_manager.redaction_cursor("docs", server(old_value)) == 0
-    finally:
-        first_manager.close()
+    assert first_manager.redaction_cursor("docs", server(old_value)) == 0
 
     restarted_manager = AgentMcpClientManager(1, AgentAuthStore(root))
-    try:
-        current = server(new_value)
-        baseline = restarted_manager.redaction_cursor("docs2", current)
-        assert baseline == 0
-        env, headers = restarted_manager.redaction_maps_since(
-            "docs2", current, baseline
-        )
-        assert {old_value, new_value} <= set((*env.values(), *headers.values()))
-    finally:
-        restarted_manager.close()
+    current = server(new_value)
+    baseline = restarted_manager.redaction_cursor("docs2", current)
+    assert baseline == 0
+    env, headers = restarted_manager.redaction_maps_since(
+        "docs2", current, baseline
+    )
+    assert {old_value, new_value} <= set((*env.values(), *headers.values()))
 
 
 def test_durable_redaction_values_do_not_replace_current_env_redaction(
@@ -505,12 +490,9 @@ def test_durable_redaction_values_do_not_replace_current_env_redaction(
         }
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        baseline = manager.redaction_cursor("docs", server)
-        env, _headers = manager.redaction_maps_since("docs", server, baseline)
-        assert {"activeLegacySecretA1", "retiredLiteralB2"} <= set(env.values())
-    finally:
-        manager.close()
+    baseline = manager.redaction_cursor("docs", server)
+    env, _headers = manager.redaction_maps_since("docs", server, baseline)
+    assert {"activeLegacySecretA1", "retiredLiteralB2"} <= set(env.values())
 
 
 def test_redaction_history_gap_is_scoped_to_one_integration(tmp_path):
@@ -548,14 +530,11 @@ def test_redaction_history_gap_is_scoped_to_one_integration(tmp_path):
         }
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        assert manager.redaction_cursor("server-b", server_b) == 0
-        with pytest.raises(
-            AgentAuthRedactionHistoryLostError, match="history unavailable"
-        ):
-            manager.redaction_cursor("server-a", server_a)
-    finally:
-        manager.close()
+    assert manager.redaction_cursor("server-b", server_b) == 0
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        manager.redaction_cursor("server-a", server_a)
 
 
 def test_identical_credential_writes_do_not_consume_redaction_history(tmp_path):
@@ -596,18 +575,13 @@ def test_non_sensitive_literal_is_not_a_cross_integration_redaction_filter(
         {"type": "http", "url": "https://b.example/mcp"}
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        manager.redaction_cursor("server-a", server_a)
-        cursor = manager.redaction_cursor("server-b", server_b)
-        env, headers = manager.redaction_maps_since(
-            "server-b", server_b, cursor
-        )
-        result = redact_configured_value_tree(
-            {"text": "server-b version 1 production ready"}, env, headers
-        )
-        assert result == {"text": "server-b version 1 production ready"}
-    finally:
-        manager.close()
+    manager.redaction_cursor("server-a", server_a)
+    cursor = manager.redaction_cursor("server-b", server_b)
+    env, headers = manager.redaction_maps_since("server-b", server_b, cursor)
+    result = redact_configured_value_tree(
+        {"text": "server-b version 1 production ready"}, env, headers
+    )
+    assert result == {"text": "server-b version 1 production ready"}
 
 
 def test_explicit_integration_id_keeps_retired_history_after_decredentialization(
@@ -625,18 +599,13 @@ def test_explicit_integration_id_keeps_retired_history_after_decredentialization
         }
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        cursor = manager.redaction_cursor("docs-renamed", plain)
-        assert cursor == 0
-        env, headers = manager.redaction_maps_since(
-            "docs-renamed", plain, cursor
-        )
-        result = redact_configured_value_tree(
-            {"text": "retiredPrivateA1 must stay private"}, env, headers
-        )
-        assert result == {"text": "<redacted> must stay private"}
-    finally:
-        manager.close()
+    cursor = manager.redaction_cursor("docs-renamed", plain)
+    assert cursor == 0
+    env, headers = manager.redaction_maps_since("docs-renamed", plain, cursor)
+    result = redact_configured_value_tree(
+        {"text": "retiredPrivateA1 must stay private"}, env, headers
+    )
+    assert result == {"text": "<redacted> must stay private"}
 
 
 def test_plain_server_does_not_join_colliding_durable_integration_domain(
@@ -665,16 +634,13 @@ def test_plain_server_does_not_join_colliding_durable_integration_domain(
         ),
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        cursor = manager.redaction_cursor("shared", plain)
-        assert cursor is None
-        env, headers = manager.redaction_maps_since("shared", plain, cursor)
-        result = redact_configured_value_tree(
-            {"text": "plain server says production ready"}, env, headers
-        )
-        assert result == {"text": "plain server says production ready"}
-    finally:
-        manager.close()
+    cursor = manager.redaction_cursor("shared", plain)
+    assert cursor is None
+    env, headers = manager.redaction_maps_since("shared", plain, cursor)
+    result = redact_configured_value_tree(
+        {"text": "plain server says production ready"}, env, headers
+    )
+    assert result == {"text": "plain server says production ready"}
 
     store.path.write_text(
         json.dumps(
@@ -690,14 +656,11 @@ def test_plain_server_does_not_join_colliding_durable_integration_domain(
         encoding="utf-8",
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        assert manager.redaction_cursor("shared", plain) is None
-        with pytest.raises(
-            AgentAuthRedactionHistoryLostError, match="history unavailable"
-        ):
-            manager.redaction_cursor("oauth", oauth)
-    finally:
-        manager.close()
+    assert manager.redaction_cursor("shared", plain) is None
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        manager.redaction_cursor("oauth", oauth)
 
 
 def test_stable_integration_id_preserves_structured_secret_across_server_rename(
@@ -715,14 +678,11 @@ def test_stable_integration_id_preserves_structured_secret_across_server_rename(
         }
     )
     manager = AgentMcpClientManager(1, store)
-    try:
-        _env, headers = manager.resolved_maps("docs2", renamed)
-        assert headers["Authorization"] == "privateTokenA1"
-        cursor = manager.redaction_cursor("docs2", renamed)
-        env, headers = manager.redaction_maps_since("docs2", renamed, cursor)
-        assert "privateTokenA1" in {*env.values(), *headers.values()}
-    finally:
-        manager.close()
+    _env, headers = manager.resolved_maps("docs2", renamed)
+    assert headers["Authorization"] == "privateTokenA1"
+    cursor = manager.redaction_cursor("docs2", renamed)
+    env, headers = manager.redaction_maps_since("docs2", renamed, cursor)
+    assert "privateTokenA1" in {*env.values(), *headers.values()}
 
 
 def test_credential_redaction_history_survives_child_process_writer(tmp_path):
@@ -790,46 +750,41 @@ def test_mcp_manager_retains_credential_redaction_history_across_operations(
     new_token = "newRetiredC3"
     store.set_tokens("docs", token(old_token))
     manager = AgentMcpClientManager(1, store)
-    try:
-        baseline = manager.redaction_cursor("docs", server)
-        assert baseline == 0
+    baseline = manager.redaction_cursor("docs", server)
+    assert baseline == 0
 
-        store.set_tokens("docs", token(mid_token))
-        first_values = set(
-            manager.redaction_maps_since("docs", server, baseline)[0].values()
-        )
-        assert {old_token, mid_token} <= first_values
+    store.set_tokens("docs", token(mid_token))
+    first_values = set(
+        manager.redaction_maps_since("docs", server, baseline)[0].values()
+    )
+    assert {old_token, mid_token} <= first_values
 
-        assert manager.redaction_cursor("docs", server) == baseline
-        store.set_tokens("docs", token(new_token))
-        second_values = set(
-            manager.redaction_maps_since("docs", server, baseline)[0].values()
-        )
-        assert {old_token, mid_token, new_token} <= second_values
+    assert manager.redaction_cursor("docs", server) == baseline
+    store.set_tokens("docs", token(new_token))
+    second_values = set(
+        manager.redaction_maps_since("docs", server, baseline)[0].values()
+    )
+    assert {old_token, mid_token, new_token} <= second_values
 
-        third_cursor = manager.redaction_cursor("docs", server)
-        assert third_cursor == baseline
-        third_values = set(
-            manager.redaction_maps_since("docs", server, third_cursor)[
-                0
-            ].values()
-        )
-        assert {old_token, mid_token, new_token} <= third_values
+    third_cursor = manager.redaction_cursor("docs", server)
+    assert third_cursor == baseline
+    third_values = set(
+        manager.redaction_maps_since("docs", server, third_cursor)[0].values()
+    )
+    assert {old_token, mid_token, new_token} <= third_values
 
-        external_token = "externalRetiredD4"
-        external_store.set_tokens("docs", token(external_token))
-        assert manager.redaction_cursor("docs", server) == baseline
-        external_values = set(
-            manager.redaction_maps_since("docs", server, baseline)[0].values()
-        )
-        assert {
-            old_token,
-            mid_token,
-            new_token,
-            external_token,
-        } <= external_values
-    finally:
-        manager.close()
+    external_token = "externalRetiredD4"
+    external_store.set_tokens("docs", token(external_token))
+    assert manager.redaction_cursor("docs", server) == baseline
+    external_values = set(
+        manager.redaction_maps_since("docs", server, baseline)[0].values()
+    )
+    assert {
+        old_token,
+        mid_token,
+        new_token,
+        external_token,
+    } <= external_values
 
 
 def test_mcp_manager_anchors_redaction_from_zero_before_initial_authorization(
@@ -846,23 +801,20 @@ def test_mcp_manager_anchors_redaction_from_zero_before_initial_authorization(
         }
     )
     manager = AgentMcpClientManager(1, service_store)
-    try:
-        assert manager.redaction_cursor("docs", server) == 0
-        cli_store.set_tokens(
-            "docs",
-            OAuthToken.model_validate(
-                {"access_token": "firstAuthorizedA1", "token_type": "Bearer"}
-            ),
-        )
+    assert manager.redaction_cursor("docs", server) == 0
+    cli_store.set_tokens(
+        "docs",
+        OAuthToken.model_validate(
+            {"access_token": "firstAuthorizedA1", "token_type": "Bearer"}
+        ),
+    )
 
-        baseline = manager.redaction_cursor("docs", server)
-        assert baseline == 0
-        values = set(
-            manager.redaction_maps_since("docs", server, baseline)[0].values()
-        )
-        assert "firstAuthorizedA1" in values
-    finally:
-        manager.close()
+    baseline = manager.redaction_cursor("docs", server)
+    assert baseline == 0
+    values = set(
+        manager.redaction_maps_since("docs", server, baseline)[0].values()
+    )
+    assert "firstAuthorizedA1" in values
 
 
 def test_mcp_manager_reconstructs_durable_redaction_history_after_restart(
@@ -888,26 +840,20 @@ def test_mcp_manager_reconstructs_durable_redaction_history_after_restart(
     store = AgentAuthStore(root)
     store.set_tokens("docs", token(old_token))
     first_manager = AgentMcpClientManager(1, store)
-    try:
-        assert first_manager.redaction_cursor("docs", server) == 0
-        store.set_tokens("docs", token(mid_token))
-        store.set_tokens("docs", token(new_token))
-    finally:
-        first_manager.close()
+    assert first_manager.redaction_cursor("docs", server) == 0
+    store.set_tokens("docs", token(mid_token))
+    store.set_tokens("docs", token(new_token))
 
     restarted_store = AgentAuthStore(root)
     restarted_manager = AgentMcpClientManager(1, restarted_store)
-    try:
-        baseline = restarted_manager.redaction_cursor("docs", server)
-        assert baseline == 0
-        values = set(
-            restarted_manager.redaction_maps_since("docs", server, baseline)[
-                0
-            ].values()
-        )
-        assert {old_token, mid_token, new_token} <= values
-    finally:
-        restarted_manager.close()
+    baseline = restarted_manager.redaction_cursor("docs", server)
+    assert baseline == 0
+    values = set(
+        restarted_manager.redaction_maps_since("docs", server, baseline)[
+            0
+        ].values()
+    )
+    assert {old_token, mid_token, new_token} <= values
 
 
 def test_mcp_manager_fails_closed_when_durable_revision_history_is_missing(
@@ -934,13 +880,10 @@ def test_mcp_manager_fails_closed_when_durable_revision_history_is_missing(
         }
     )
     manager = AgentMcpClientManager(1, AgentAuthStore(root))
-    try:
-        with pytest.raises(
-            AgentAuthRedactionHistoryLostError, match="history unavailable"
-        ):
-            manager.redaction_cursor("docs", server)
-    finally:
-        manager.close()
+    with pytest.raises(
+        AgentAuthRedactionHistoryLostError, match="history unavailable"
+    ):
+        manager.redaction_cursor("docs", server)
 
 
 @pytest.mark.asyncio
@@ -1050,11 +993,8 @@ async def test_stdio_transport_receives_resolved_secret_env(
     )
 
     manager = AgentMcpClientManager(1, store)
-    try:
-        assert await manager.list_tools("stdio", server) == []
-        assert captured["env"] == {"TOKEN": "private-value"}
-    finally:
-        manager.close()
+    assert await manager.list_tools("stdio", server) == []
+    assert captured["env"] == {"TOKEN": "private-value"}
 
 
 @pytest.mark.asyncio

@@ -144,7 +144,7 @@ Dynamic tools are convenient, but they make the exposed tool list change with co
 
 ## Security notes
 
-- Stdio servers run in the `workgate` server environment.
+- Stdio servers run on the executor selected by `session_id`, using that session's current workdir. Explicit server/tool discovery opens short-lived MCP subprocesses to inspect their live status or schemas. Ordinary calls only read configured server ownership and start the selected MCP subprocess once; process-local state is not retained between calls or shared between Workgate sessions.
 - HTTP and SSE servers use the server's network access, not the MCP client's.
 - An upstream server can use any secret or OAuth scope granted to it. Configure only trusted servers and use the narrowest credentials possible.
 - Keep the entire service state directory private and back it up only through a secure process.
