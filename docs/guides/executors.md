@@ -28,9 +28,6 @@ Use `--default-workdir /path` only when the executor should start somewhere
 other than its normal default. Re-running bootstrap reuses the existing paired
 identity when it is still valid.
 
-The narrower Cloudflare hosted adapter does not proxy release artifacts; install
-Workgate normally before pairing an executor there.
-
 ## Pair an already-installed executor
 
 Install Workgate on the machine, configure its local machine settings, then run:

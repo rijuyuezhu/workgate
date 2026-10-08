@@ -63,7 +63,6 @@ nav:
       - Standalone local mode: getting-started/standalone.md
       - VPS deployment: getting-started/vps.md
       - Cloudflare Tunnel: getting-started/cloudflare-tunnel.md
-      - Cloudflare hosted: getting-started/cloudflare-hosted.md
       - ChatGPT connector: getting-started/chatgpt-connector.md
       - Install options: getting-started/install-options.md
   - Guides:
@@ -83,7 +82,6 @@ nav:
   - Architecture:
       - Implementation boundaries: architecture.md
       - Control/executor contract: architecture/control-executor.md
-      - Hosted / Cloudflare: architecture/hosted-cloudflare.md
   - Development: development.md
   - Maintenance:
       - Product comparison: comparison.md

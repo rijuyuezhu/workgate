@@ -404,11 +404,6 @@ architecture on loopback under a lifecycle-only supervisor. Plain HTTP executor
 transport is therefore valid only on loopback; a remote executor bearer must
 never be sent over cleartext HTTP.
 
-The Cloudflare-hosted control is an optional adapter with an intentionally
-smaller feature surface; it adapts to these contracts rather than defining a
-second core architecture. See
-[Hosted / Cloudflare architecture](hosted-cloudflare.md).
-
 Explicit non-goals include active-active control, distributed leader election,
 generic durable command queues, transparent ordinary-RPC restart recovery,
 distributed exactly-once execution, universal workflow orchestration, live

@@ -78,7 +78,6 @@ For the browser interface, open `/ui` on the same control origin.
 
 - Need a stable public control on a Linux server? Use [VPS deployment](vps.md).
 - Keeping control local but need public HTTPS? Use [Cloudflare Tunnel](cloudflare-tunnel.md).
-- Want the Cloudflare Workers/Durable Object adapter? Use [Cloudflare hosted](cloudflare-hosted.md).
 - Connecting ChatGPT? After you have a public MCP URL, follow [ChatGPT connector](chatgpt-connector.md).
 
 For standalone trust, state ownership, restart behavior, and recovery details,
