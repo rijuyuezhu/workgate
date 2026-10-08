@@ -232,6 +232,7 @@ class ControlAgentBridgeService:
                 name=name,
                 config=config,
                 owner_type="network",
+                auth_dir=self._settings.agent_auth_dir,
             )
         else:
             if session_id is None:

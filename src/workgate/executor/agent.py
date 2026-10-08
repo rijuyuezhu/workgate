@@ -222,6 +222,7 @@ class ExecutorAgentBridgeService:
             name=name,
             config=parsed,
             owner_type="stdio",
+            auth_dir=self._config.agent_auth_dir,
         )
 
     async def call_tool(

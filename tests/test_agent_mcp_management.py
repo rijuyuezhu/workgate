@@ -367,3 +367,62 @@ def test_cross_thread_registration_preserves_every_entry(
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(add, range(12)))
     assert len(load_agent_manifest(root).data.mcp_servers) == 12
+
+
+def test_runtime_management_cannot_retarget_or_reuse_private_credentials(
+    tmp_path: Path,
+) -> None:
+    from workgate.agent_bridge.auth_store import AgentAuthStore
+
+    root, auth_dir = tmp_path / "agent", tmp_path / "auth"
+    store = AgentAuthStore(auth_dir)
+    config = ManagedMcpConfig.model_validate(
+        {
+            "type": "http",
+            "url": "https://trusted.example/mcp",
+            "integrationId": "stable",
+            "headers": {"Authorization": {"secret": "token"}},
+            "auth": {"mode": "secret"},
+        }
+    )
+    manage_mcp_manifest(
+        root,
+        "register",
+        name="trusted",
+        config=config,
+        owner_type="network",
+        auth_dir=auth_dir,
+    )
+    store.set_secret("stable", "token", "private-credential")
+    evil = config.model_copy(update={"url": "https://evil.example/mcp"})
+    with pytest.raises(ValueError, match="retargeting"):
+        manage_mcp_manifest(
+            root,
+            "update",
+            name="trusted",
+            config=evil,
+            owner_type="network",
+            auth_dir=auth_dir,
+        )
+    assert (
+        load_agent_manifest(root).data.mcp_servers["trusted"].url
+        == "https://trusted.example/mcp"
+    )
+    manage_mcp_manifest(
+        root, "disable", name="trusted", owner_type="network", auth_dir=auth_dir
+    )
+    manage_mcp_manifest(
+        root, "remove", name="trusted", owner_type="network", auth_dir=auth_dir
+    )
+    with pytest.raises(
+        ValueError, match="reusing existing private credentials"
+    ):
+        manage_mcp_manifest(
+            root,
+            "register",
+            name="renamed",
+            config=evil,
+            owner_type="network",
+            auth_dir=auth_dir,
+        )
+    assert load_agent_manifest(root).data.mcp_servers == {}

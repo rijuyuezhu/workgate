@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..app_paths import ensure_private_directory
 from ..utils.private_files import atomic_write_private_text, private_file_lock
+from .auth_store import AgentAuthStore
 from .models import (
     AgentMcpAuthConfig,
     AgentMcpServerConfig,
@@ -98,6 +99,7 @@ def manage_mcp_manifest(
     name: str | None = None,
     config: ManagedMcpConfig | None = None,
     owner_type: Literal["network", "stdio"],
+    auth_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Read or atomically mutate one owner's existing config.json."""
     if action not in {
@@ -168,6 +170,29 @@ def manage_mcp_manifest(
             return {"server": _safe_row(name, current)}
         if action == "register" or action == "update":
             assert config is not None
+            if auth_dir is not None and config.integration_id:
+                auth_store = AgentAuthStore(auth_dir)
+                identity = config.integration_id
+                already_authorized = bool(
+                    auth_store.list_secrets(identity)
+                ) or (
+                    auth_store.get_tokens(identity) is not None
+                    or auth_store.get_client_info(identity) is not None
+                )
+                if already_authorized:
+                    if action == "register":
+                        raise ValueError(
+                            "reusing existing private credentials requires owner-private configuration"
+                        )
+                    assert current is not None
+                    if (
+                        current.url != config.url
+                        or current.command != config.command
+                        or current.args != config.args
+                    ):
+                        raise ValueError(
+                            "retargeting a credential-bearing integration requires owner-private configuration"
+                        )
             if action == "update":
                 assert current is not None
                 if current.type != config.type:
