@@ -94,7 +94,7 @@ async def browser_snapshot(
     screenshot_path: BrowserScreenshotPathArg = None,
     full_page: BrowserFullPageArg = False,
 ) -> BrowserSnapshotOutput:
-    """Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir."""
+    """Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. screenshot_path optionally writes a new PNG; relative paths resolve from the session workdir."""
     del (
         session_id,
         browser_session_id,

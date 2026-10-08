@@ -50,6 +50,7 @@ from workgate.protocol.credentials import (
 )
 from workgate.protocol.ids import new_executor_id
 from workgate.schemas.input_models.browser import BrowserActionsArg
+from workgate.schemas.result_models.browser import BrowserSnapshotOutput
 
 pytestmark = pytest.mark.browser
 
@@ -1631,5 +1632,115 @@ async def test_browser_run_script_rejects_missing_browser_and_session(
                 "browser_run_script",
                 {"session_id": "sess_invalid", "script": "print(1)"},
             )
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_network_timeline_tracks_responses_across_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+    site = tmp_path / "network-site"
+    site.mkdir()
+    (site / "index.html").write_text(
+        "<title>Network test</title>", encoding="utf-8"
+    )
+    try:
+        with _serve_site(site) as base_url:
+            started = await service.start(
+                session_id, url=f"{base_url}/index.html"
+            )
+            browser_id = str(started["browser_session_id"])
+            page_id = str(started["current_page_id"])
+            state = service._sessions[browser_id]
+            page = state.pages[page_id].page
+
+            async def respond(route):
+                status = 503 if route.request.url.endswith("/bad") else 201
+                await route.fulfill(
+                    status=status,
+                    content_type="text/plain",
+                    body="not-retained-response-body",
+                    headers={"x-secret-test": "not-retained-header"},
+                )
+
+            await state.context.route("**/api/**", respond)
+            await page.evaluate(
+                """async () => {
+                    await fetch('/api/good', {method: 'POST'});
+                    await fetch('/api/bad');
+                }"""
+            )
+            snapshot = await service.snapshot(session_id, browser_id)
+            BrowserSnapshotOutput.model_validate(snapshot)
+            network = [
+                row for row in snapshot["network"] if "/api/" in row["url"]
+            ]
+            assert [(row["method"], row["status"]) for row in network] == [
+                ("POST", 201),
+                ("GET", 503),
+            ]
+            assert {row["page_id"] for row in network} == {page_id}
+            assert all("not-retained" not in str(row) for row in network)
+            assert any(
+                row["kind"] == "http_error" for row in snapshot["errors"]
+            )
+
+            created = await service.act(
+                session_id,
+                browser_id,
+                [{"action": "new_page", "url": f"{base_url}/index.html"}],
+            )
+            new_page_id = str(created["results"][0]["page_id"])
+            assert new_page_id != page_id
+            await state.pages[new_page_id].page.evaluate("fetch('/api/good')")
+            updated = await service.snapshot(session_id, browser_id)
+            assert any(
+                row["page_id"] == new_page_id and "/api/good" in row["url"]
+                for row in updated["network"]
+            )
+            await service.close(session_id, browser_id)
+            assert service._sessions == {}
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_browser_network_timeline_bounds_and_drops_body_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    _require_chromium(monkeypatch)
+    service, _config, _store, session_id, _workspace = _service(tmp_path)
+    try:
+        started = await service.start(session_id)
+        browser_id = str(started["browser_session_id"])
+        page_id = str(started["current_page_id"])
+        state = service._sessions[browser_id]
+        for index in range(80):
+            request = SimpleNamespace(
+                method="M" * 100, headers={"token": "must-not-retain"}
+            )
+            response = SimpleNamespace(
+                request=request,
+                status=200,
+                url=f"https://example.test/{index}/" + "x" * 9000,
+                headers={"private": "must-not-retain"},
+                body="must-not-retain",
+            )
+            service._record_response(state, page_id, response)
+        assert len(state.network) == browser_ops._MAX_NETWORK_EVENTS
+        snapshot = await service.snapshot(session_id, browser_id)
+        assert len(snapshot["network"]) == 30
+        assert snapshot["network"][0]["url"].startswith(
+            "https://example.test/50/"
+        )
+        assert len(snapshot["network"][-1]["url"]) == 8192
+        assert len(snapshot["network"][-1]["method"]) == 32
+        assert "must-not-retain" not in str(snapshot["network"])
+        assert snapshot["errors"] == []
     finally:
         await service.aclose()

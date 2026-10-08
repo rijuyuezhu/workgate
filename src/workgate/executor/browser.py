@@ -34,6 +34,7 @@ _MAX_SNAPSHOT_TEXT_CHARS = 100_000
 _MAX_ELEMENT_METADATA_CHARS = 2_000
 _MAX_EVENT_CHARS = 2_000
 _MAX_EVENTS = 50
+_MAX_NETWORK_EVENTS = 30
 _MAX_TIMEOUT_MS = 120_000
 _MAX_WAIT_MS = 30_000
 _MAX_FULL_PAGE_SCREENSHOT_DIMENSION = 16_384
@@ -129,6 +130,9 @@ class BrowserSessionState:
     pages: dict[str, BrowserPageState] = field(default_factory=dict)
     errors: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=_MAX_EVENTS)
+    )
+    network: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=_MAX_NETWORK_EVENTS)
     )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -543,6 +547,7 @@ class BrowserService:
                 "text_truncated": text_truncated,
                 "interactive_elements": elements,
                 "errors": list(state.errors),
+                "network": list(state.network),
                 "screenshot_path": rendered_path,
             }
 
@@ -1259,21 +1264,36 @@ class BrowserService:
         )
         page.on(
             "response",
-            lambda response, pid=page_state.page_id: (
-                state.errors.append(
-                    {
-                        "page_id": pid,
-                        "kind": "http_error",
-                        "method": _bounded(response.request.method, 32),
-                        "url": _bounded(response.url, 8192),
-                        "message": f"HTTP {response.status}",
-                    }
-                )
-                if response.status >= 400
-                else None
+            lambda response, pid=page_state.page_id: self._record_response(
+                state, pid, response
             ),
         )
         return page_state
+
+    @staticmethod
+    def _record_response(
+        state: BrowserSessionState, page_id: str, response: Any
+    ) -> None:
+        method = _bounded(response.request.method, 32)
+        url = _bounded(response.url, 8192)
+        state.network.append(
+            {
+                "page_id": page_id,
+                "method": method,
+                "status": response.status,
+                "url": url,
+            }
+        )
+        if response.status >= 400:
+            state.errors.append(
+                {
+                    "page_id": page_id,
+                    "kind": "http_error",
+                    "method": method,
+                    "url": url,
+                    "message": f"HTTP {response.status}",
+                }
+            )
 
     @staticmethod
     def _record_console_error(
