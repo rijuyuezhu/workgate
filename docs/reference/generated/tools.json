@@ -423,7 +423,7 @@
               }
             ]
           },
-          "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. For arbitrary Python code, use the separate browser_run_script tool with shell execution scope."
+          "Act on a session-owned browser using fresh snapshot element refs or an unambiguous CSS selector. Use browser_run_script for custom Python."
         ],
         [
           {
@@ -461,7 +461,7 @@
               }
             ]
           },
-          "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."
+          "Run standalone Python Playwright code on the bound executor. This does not attach to browser_session; use browser_act for existing managed browser sessions."
         ],
         [
           {
@@ -548,7 +548,7 @@
               }
             ]
           },
-          "Start, list, or close Chromium sessions owned by one Workgate session. Ordinary sessions are ephemeral. action=start may explicitly reuse one executor-local durable profile_id or import Playwright storage_state_path; those two start modes are mutually exclusive. action=close may explicitly export storage state to save_storage_state_path. Storage-state paths are relative to the owning Workgate session workdir, and auth payloads are never returned. Live browser resources remain session-owned and are closed by session_end; explicitly persisted auth state is not deleted."
+          "Start, list, or close session-owned Chromium browsers. Ephemeral state ends with the Workgate session; an explicitly saved profile or storage state persists. profile_id and storage_state_path cannot be combined; authentication data is never returned."
         ],
         [
           {
@@ -621,7 +621,7 @@
               }
             ]
           },
-          "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. A screenshot is saved by default to a managed executor-local artifact; screenshot=false skips it. screenshot_path optionally writes to a new user-managed PNG; relative paths resolve from the session workdir."
+          "Capture bounded browser page state and element references. Refresh the snapshot after navigation or DOM changes before acting on refs. By default saves a screenshot; screenshot_path chooses a user-managed PNG."
         ]
       ]
     },
@@ -685,7 +685,7 @@
               }
             ]
           },
-          "Create a temporary tokenized URL for an immutable snapshot of one regular file in an execution session. Snapshot creation reads through the bound executor; afterward the URL is independent of executor availability. The bearer URL is returned once and link_id is used for later management. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap."
+          "Create a temporary bearer URL for an immutable file snapshot. The URL grants access to its holder and remains available after the executor disconnects; retain link_id for revocation."
         ],
         [
           {
@@ -871,7 +871,7 @@
               }
             ]
           },
-          "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. The bound executor applies its configured write limit."
+          "Replace an inclusive 1-based line range when exact positions and replacement are already known. Supply the snapshot_id from read/search to reject stale or unseen ranges; prefer hashline_edit for ordinary grounded edits."
         ],
         [
           {
@@ -895,7 +895,7 @@
               }
             ]
           },
-          "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit."
+          "Default grounded edit for existing files. Copy fresh [path#snapshot_id] and line:text rows from read/search; add +final-content rows or use SWAP/INSERT directives as described in the input schema. Rejects stale snapshots and overlapping/unseen ranges."
         ],
         [
           {
@@ -1021,7 +1021,7 @@
               }
             ]
           },
-          "Perform bounded native GUI actions against one fresh gui_state observation. The state_id is single-use; semantic targets are preferred over window-relative coordinate fallback. Actions execute sequentially, not transactionally: once execution starts, the state is consumed and earlier side effects are not rolled back if a later action fails, so re-observe after any error."
+          "Act on a fresh, single-use gui_state. Actions are sequential, not transactional: earlier side effects are not rolled back on error; observe again before retrying."
         ],
         [
           {
@@ -1090,7 +1090,7 @@
               }
             ]
           },
-          "Observe one native desktop window. Returns bounded accessibility state, an optional native screenshot, and a short-lived single-use state_id. Prefer element ids; coordinate actions are window-relative."
+          "Observe bounded native window state and optional screenshot. The returned state_id is single-use; prefer accessibility element IDs over window-relative coordinates."
         ]
       ]
     },
@@ -1197,7 +1197,7 @@
               }
             ]
           },
-          "Inspect durable output, progress/results, stop, or retry tracked work owned by an execution session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy` creates a control-managed transfer job by default, owned by the source session; `background=false` is the explicit synchronous opt-in. Tracked calls return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a control-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call."
+          "List, poll, cancel, or retry durable jobs by session_id and job_id. Includes bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available."
         ]
       ]
     },
@@ -1516,7 +1516,7 @@
               }
             ]
           },
-          "Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated."
+          "Change the execution workdir for this session; task identity and executor binding stay unchanged."
         ],
         [
           {
@@ -1582,7 +1582,7 @@
               }
             ]
           },
-          "Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Existing destinations are preserved unless overwrite=true is explicit. By default this starts a durable managed job owned by src_session_id; use job with that source session to poll, cancel, or retry it. Set background=false explicitly for a synchronous copy."
+          "Copy files or directories between sessions, including across executors. Runs as a managed job by default; set background=false for a synchronous result. Overwrite may replace the destination."
         ],
         [
           {
@@ -1606,7 +1606,7 @@
               }
             ]
           },
-          "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted."
+          "End one execution session and stop its owned work. An attached task remains available; files are not deleted."
         ],
         [
           {
@@ -1644,7 +1644,7 @@
               }
             ]
           },
-          "Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."
+          "Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir."
         ]
       ]
     },
@@ -1736,7 +1736,7 @@
               }
             ]
           },
-          "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; relative cwd overrides resolve from it. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
+          "Run a command using session_id on the session's bound executor for builds, tests, git, or scripts. Bounded mode returns output; async_=true starts a tracked job_id for job, while pty=true starts an interactive shell_id for persistent-shell tools. PTY takes precedence if both are set. The executor enforces its timeout limits."
         ],
         [
           {
@@ -1760,7 +1760,7 @@
               }
             ]
           },
-          "Terminate a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use for manually managed shells such as servers, watches, REPLs, or stuck interactive commands. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files."
+          "Terminate a session-owned PTY shell_id (destructive to that process, not its files). For async jobs use job(cancel=[...])."
         ],
         [
           {
@@ -1777,7 +1777,7 @@
               }
             ]
           },
-          "List active persistent shells owned by the explicit session_id. Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. Returned shell_id values are persistent-shell handles scoped by the owning session. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs."
+          "List session-owned PTY shell_id handles; async jobs are listed through job instead."
         ],
         [
           {
@@ -1808,7 +1808,7 @@
               }
             ]
           },
-          "Read recent output from a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context."
+          "Read recent output from a session-owned PTY shell_id without blocking. For async job_id output, use job(poll=[...]) instead."
         ],
         [
           {
@@ -1846,7 +1846,7 @@
               }
             ]
           },
-          "Resize a persistent PTY shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport."
+          "Resize an existing session-owned PTY shell_id to the specified terminal rows and columns."
         ],
         [
           {
@@ -1926,7 +1926,7 @@
               }
             ]
           },
-          "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; relative cwd overrides resolve from it. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout."
+          "Run an ad hoc Python script on the session's executor without managing a temporary file. Supports bounded, async job, and interactive PTY modes like bash; use bash for existing commands."
         ],
         [
           {
@@ -1964,7 +1964,7 @@
               }
             ]
           },
-          "Send input to an existing persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline."
+          "Send input to the session-owned PTY shell_id from bash(pty=true); enter=false omits the newline. Async jobs use job instead."
         ]
       ]
     },
@@ -2948,7 +2948,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; relative cwd overrides resolve from it. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+      "description": "Run a command using session_id on the session's bound executor for builds, tests, git, or scripts. Bounded mode returns output; async_=true starts a tracked job_id for job, while pty=true starts an interactive shell_id for persistent-shell tools. PTY takes precedence if both are set. The executor enforces its timeout limits.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -3117,7 +3117,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. For arbitrary Python code, use the separate browser_run_script tool with shell execution scope.",
+      "description": "Act on a session-owned browser using fresh snapshot element refs or an unambiguous CSS selector. Use browser_run_script for custom Python.",
       "inputSchema": {
         "$defs": {
           "BrowserClosePageAction": {
@@ -3684,7 +3684,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations.",
+      "description": "Run standalone Python Playwright code on the bound executor. This does not attach to browser_session; use browser_act for existing managed browser sessions.",
       "inputSchema": {
         "properties": {
           "max_output_bytes": {
@@ -3800,7 +3800,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start, list, or close Chromium sessions owned by one Workgate session. Ordinary sessions are ephemeral. action=start may explicitly reuse one executor-local durable profile_id or import Playwright storage_state_path; those two start modes are mutually exclusive. action=close may explicitly export storage state to save_storage_state_path. Storage-state paths are relative to the owning Workgate session workdir, and auth payloads are never returned. Live browser resources remain session-owned and are closed by session_end; explicitly persisted auth state is not deleted.",
+      "description": "Start, list, or close session-owned Chromium browsers. Ephemeral state ends with the Workgate session; an explicitly saved profile or storage state persists. profile_id and storage_state_path cannot be combined; authentication data is never returned.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -4140,7 +4140,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. A screenshot is saved by default to a managed executor-local artifact; screenshot=false skips it. screenshot_path optionally writes to a new user-managed PNG; relative paths resolve from the session workdir.",
+      "description": "Capture bounded browser page state and element references. Refresh the snapshot after navigation or DOM changes before acting on refs. By default saves a screenshot; screenshot_path chooses a user-managed PNG.",
       "inputSchema": {
         "properties": {
           "browser_session_id": {
@@ -4634,7 +4634,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Create a temporary tokenized URL for an immutable snapshot of one regular file in an execution session. Snapshot creation reads through the bound executor; afterward the URL is independent of executor availability. The bearer URL is returned once and link_id is used for later management. Current TTL default/cap: 3600/604800 seconds. Current file-size cap: 0 bytes, with 0 meaning no configured cap.",
+      "description": "Create a temporary bearer URL for an immutable file snapshot. The URL grants access to its holder and remains available after the executor disconnects; retain link_id for revocation.",
       "inputSchema": {
         "properties": {
           "filename": {
@@ -4919,7 +4919,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. The bound executor applies its configured write limit.",
+      "description": "Replace an inclusive 1-based line range when exact positions and replacement are already known. Supply the snapshot_id from read/search to reject stale or unseen ranges; prefer hashline_edit for ordinary grounded edits.",
       "inputSchema": {
         "properties": {
           "end_line": {
@@ -5672,7 +5672,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Perform bounded native GUI actions against one fresh gui_state observation. The state_id is single-use; semantic targets are preferred over window-relative coordinate fallback. Actions execute sequentially, not transactionally: once execution starts, the state is consumed and earlier side effects are not rolled back if a later action fails, so re-observe after any error.",
+      "description": "Act on a fresh, single-use gui_state. Actions are sequential, not transactional: earlier side effects are not rolled back on error; observe again before retrying.",
       "inputSchema": {
         "$defs": {
           "GuiDragAction": {
@@ -6210,7 +6210,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Observe one native desktop window. Returns bounded accessibility state, an optional native screenshot, and a short-lived single-use state_id. Prefer element ids; coordinate actions are window-relative.",
+      "description": "Observe bounded native window state and optional screenshot. The returned state_id is single-use; prefer accessibility element IDs over window-relative coordinates.",
       "inputSchema": {
         "properties": {
           "include_elements": {
@@ -6363,7 +6363,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit.",
+      "description": "Default grounded edit for existing files. Copy fresh [path#snapshot_id] and line:text rows from read/search; add +final-content rows or use SWAP/INSERT directives as described in the input schema. Rejects stale snapshots and overlapping/unseen ranges.",
       "inputSchema": {
         "properties": {
           "input": {
@@ -6659,7 +6659,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Inspect durable output, progress/results, stop, or retry tracked work owned by an execution session.\n\n`bash(async_=true)` creates tracked shell jobs. `session_copy` creates a control-managed transfer job by default, owned by the source session; `background=false` is the explicit synchronous opt-in. Tracked calls return job_id values managed through this companion. Shell exit state and bounded logs remain durable after completion and server restart; managed jobs additionally retain bounded progress, durable payload, and structured result, while their live task remains process-local. If a control-managed task disappears after process loss, it becomes `lost` and may be retried from its stored payload while the owning sessions remain available. Starting work belongs in `bash` or `session_copy`, not `job`.\n\nPass the session_id from session_start. Call with no action, or with `list_jobs=true`, to list jobs owned by that session. Use `poll=[id]` to inspect output, progress, result, and status; `cancel=[id]` to stop work and trigger transactional cleanup; or `retry=[id]` to restart from the original shell command or managed payload. Lists merge executor-owned shell jobs with control-managed jobs, and control-managed jobs remain inspectable when the executor is offline. Do not combine actions in one call.",
+      "description": "List, poll, cancel, or retry durable jobs by session_id and job_id. Includes bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available.",
       "inputSchema": {
         "properties": {
           "cancel": {
@@ -7243,7 +7243,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Terminate a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use for manually managed shells such as servers, watches, REPLs, or stuck interactive commands. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files.",
+      "description": "Terminate a session-owned PTY shell_id (destructive to that process, not its files). For async jobs use job(cancel=[...]).",
       "inputSchema": {
         "properties": {
           "session_id": {
@@ -7801,7 +7801,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "List active persistent shells owned by the explicit session_id. Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. Returned shell_id values are persistent-shell handles scoped by the owning session. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs.",
+      "description": "List session-owned PTY shell_id handles; async jobs are listed through job instead.",
       "inputSchema": {
         "properties": {
           "session_id": {
@@ -8484,7 +8484,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read recent output from a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context.",
+      "description": "Read recent output from a session-owned PTY shell_id without blocking. For async job_id output, use job(poll=[...]) instead.",
       "inputSchema": {
         "properties": {
           "lines": {
@@ -8684,7 +8684,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Resize a persistent PTY shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport.",
+      "description": "Resize an existing session-owned PTY shell_id to the specified terminal rows and columns.",
       "inputSchema": {
         "properties": {
           "cols": {
@@ -8846,7 +8846,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; relative cwd overrides resolve from it. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+      "description": "Run an ad hoc Python script on the session's executor without managing a temporary file. Supports bounded, async job, and interactive PTY modes like bash; use bash for existing commands.",
       "inputSchema": {
         "properties": {
           "async_": {
@@ -9662,7 +9662,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Send input to an existing persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline.",
+      "description": "Send input to the session-owned PTY shell_id from bash(pty=true); enter=false omits the newline. Async jobs use job instead.",
       "inputSchema": {
         "properties": {
           "enter": {
@@ -9745,7 +9745,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated.",
+      "description": "Change the execution workdir for this session; task identity and executor binding stay unchanged.",
       "inputSchema": {
         "properties": {
           "session_id": {
@@ -10282,7 +10282,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Existing destinations are preserved unless overwrite=true is explicit. By default this starts a durable managed job owned by src_session_id; use job with that source session to poll, cancel, or retry it. Set background=false explicitly for a synchronous copy.",
+      "description": "Copy files or directories between sessions, including across executors. Runs as a managed job by default; set background=false for a synchronous result. Overwrite may replace the destination.",
       "inputSchema": {
         "properties": {
           "background": {
@@ -10786,7 +10786,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted.",
+      "description": "End one execution session and stop its owned work. An attached task remains available; files are not deleted.",
       "inputSchema": {
         "properties": {
           "force": {
@@ -10893,7 +10893,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online.",
+      "description": "Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir.",
       "inputSchema": {
         "properties": {
           "executor_id": {

@@ -220,11 +220,9 @@ async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
         "read",
         "search",
         "hashline_edit",
-        "snapshot_id",
-        "line:text",
-        "edit_lines",
     ):
         assert concept in mcp.instructions
+    assert len(mcp.instructions) < 3000
 
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     descriptions = {
@@ -247,6 +245,14 @@ async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
         assert concept in descriptions["edit_lines"]
     for concept in ("read", "search", "snapshot", "SWAP", "INSERT"):
         assert concept in descriptions["hashline_edit"]
+    for name in ("hashline_edit", "edit_lines"):
+        assert len(descriptions[name]) < 300
+    assert (
+        "SWAP"
+        in tools["hashline_edit"].inputSchema["properties"]["input"][
+            "description"
+        ]
+    )
 
 
 def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):

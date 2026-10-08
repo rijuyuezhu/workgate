@@ -46,12 +46,12 @@ def _write_file_description(context: McpToolContext) -> str:
 
 def _edit_lines_description(context: McpToolContext) -> str:
     del context
-    return """Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. The bound executor applies its configured write limit."""
+    return """Replace an inclusive 1-based line range when exact positions and replacement are already known. Supply the snapshot_id from read/search to reject stale or unseen ranges; prefer hashline_edit for ordinary grounded edits."""
 
 
 def _hashline_edit_description(context: McpToolContext) -> str:
     del context
-    return """Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit."""
+    return """Default grounded edit for existing files. Copy fresh [path#snapshot_id] and line:text rows from read/search; add +final-content rows or use SWAP/INSERT directives as described in the input schema. Rejects stale snapshots and overlapping/unseen ranges."""
 
 
 @file_tool(

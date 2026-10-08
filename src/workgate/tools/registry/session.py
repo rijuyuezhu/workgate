@@ -41,19 +41,19 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online."""
+    return """Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir."""
 
 
 def _session_change_workdir_description(_context: McpToolContext) -> str:
-    return """Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated."""
+    return """Change the execution workdir for this session; task identity and executor binding stay unchanged."""
 
 
 def _session_copy_description(_context: McpToolContext) -> str:
-    return """Copy one file or directory between two existing execution sessions. Relative paths resolve from their session workdirs. Existing destinations are preserved unless overwrite=true is explicit. By default this starts a durable managed job owned by src_session_id; use job with that source session to poll, cancel, or retry it. Set background=false explicitly for a synchronous copy."""
+    return """Copy files or directories between sessions, including across executors. Runs as a managed job by default; set background=false for a synchronous result. Overwrite may replace the destination."""
 
 
 def _session_end_description(_context: McpToolContext) -> str:
-    return """End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted."""
+    return """End one execution session and stop its owned work. An attached task remains available; files are not deleted."""
 
 
 @session_tool(

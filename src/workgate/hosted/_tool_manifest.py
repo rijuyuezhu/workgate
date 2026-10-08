@@ -459,7 +459,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Low-level structured line edit for callers that already have exact path/start_line/end_line/replacement data. Do not use this as the normal model editing path from read/search output; use hashline_edit for copied `[path#snapshot_id]` plus `line:text` rows. If you do call edit_lines, pass the same session_id and the snapshot_id from the read/search result so stale files or unseen ranges are rejected. The range is inclusive, 1-based, and should cover only lines being changed; use an empty replacement to delete. The bound executor applies its configured write limit.",
+    "description": "Replace an inclusive 1-based line range when exact positions and replacement are already known. Supply the snapshot_id from read/search to reject stale or unseen ranges; prefer hashline_edit for ordinary grounded edits.",
     "inputSchema": {
       "properties": {
         "end_line": {
@@ -635,7 +635,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Default model-facing edit tool for existing UTF-8 files. Copy the `[path#snapshot_id]` header and relevant `line:text` rows from the latest read/search output; never invent snapshot ids/tags. Then provide the final new content as `+text` rows. Supported hunk forms: copied rows followed by `+replacement` rows; copied rows with no `+` rows to delete; `SWAP start[-end]:` followed by `+replacement` rows; and `INSERT [BEFORE|AFTER] line:` followed by `+inserted` rows. To apply multiple non-overlapping hunks, separate hunk bodies with a blank line under the same header or repeat a `[path#snapshot_id]` header for another section or file. Body rows are final content only: use `+` for blank lines, preserve indentation after `+`, and do not write `-old` rows or bare context lines. Keep hunks tight. Line numbers refer to the original displayed snapshot; stale files, wrong paths, overlapping hunks, or unseen ranges are rejected. After every edit, use the returned fresh hunk contexts or run read/search again before the next edit. The bound executor applies its configured write limit.",
+    "description": "Default grounded edit for existing files. Copy fresh [path#snapshot_id] and line:text rows from read/search; add +final-content rows or use SWAP/INSERT directives as described in the input schema. Rejects stale snapshots and overlapping/unseen ranges.",
     "inputSchema": {
       "properties": {
         "input": {
@@ -2093,7 +2093,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Start an execution session on one executor. Omit workdir to use the executor's effective default; relative workdirs resolve from that default. Optionally attach an existing task_id. Omit executor_id only when exactly one eligible executor is online.",
+    "description": "Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir.",
     "inputSchema": {
       "properties": {
         "executor_id": {
@@ -2646,7 +2646,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Change an execution session's workdir. Relative paths resolve against the executor's effective default workdir, and old grounding snapshots are invalidated.",
+    "description": "Change the execution workdir for this session; task identity and executor binding stay unchanged.",
     "inputSchema": {
       "properties": {
         "session_id": {
@@ -3173,7 +3173,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "End one executor-backed execution session. This stops owned work and releases execution capacity; an attached task remains independently readable and mutable. Files are not deleted.",
+    "description": "End one execution session and stop its owned work. An attached task remains available; files are not deleted.",
     "inputSchema": {
       "properties": {
         "force": {
@@ -3270,7 +3270,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Run terminal commands inside an execution session for builds, tests, package managers, git inspection, one-off scripts, and other work that genuinely needs a shell. Pass the session_id returned by session_start. cwd defaults to the session workdir; relative cwd overrides resolve from it. Prefer specialized tools for file context and edits: use read/search/tree_view/glob_search/list_files for inspection, hashline_edit when editing copied read/search rows, edit_lines for structured snapshot-grounded precise edits, write_file only for new files or intentional whole-file replacements, and delete_file_or_dir only for intentional removals. Use bash when the task is a command, not when a structured tool can do the job more safely.\n\nDefault mode is bounded and returns captured stdout/stderr. Use run_python_code instead of bash when you want to execute an ad hoc Python snippet without manually writing a script file. Set async_=true for long-running non-interactive work; this returns a job_id owned by the same session_id and must be managed with the job companion. Set pty=true for executor-side interactive programs, REPLs, servers, or commands that need later input; this returns a shell_id for persistent-shell companion tools. Persistent-shell companion tools require both the owning session_id and the returned shell_id. Do not use shell_id with job. If both async_ and pty are true, PTY mode is used. Use env for multiline, quote-heavy, or caller-provided values instead of embedding them directly in the command. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+    "description": "Run a command using session_id on the session's bound executor for builds, tests, git, or scripts. Bounded mode returns output; async_=true starts a tracked job_id for job, while pty=true starts an interactive shell_id for persistent-shell tools. PTY takes precedence if both are set. The executor enforces its timeout limits.",
     "inputSchema": {
       "properties": {
         "async_": {
@@ -3428,7 +3428,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Write Python code to a temporary file and execute it inside an execution session. Pass the session_id returned by session_start. This is a convenience wrapper over bash that runs `python3 <temporary-script>` and supports the same cwd, timeout_s, max_output_bytes, env, async_, pty, and name controls. Use it for quick Python calculations, project-aware scripts, or structured file analysis where Python is clearer than a shell pipeline. Use bash instead when you already have a concrete terminal command; use read/search/hashline_edit/edit_lines/write_file when the task is file inspection or editing rather than script execution.\n\ncwd defaults to the session workdir; relative cwd overrides resolve from it. Default mode is bounded and returns captured stdout/stderr under result. Set async_=true for a non-interactive background job owned by the same session_id and managed with job. Set pty=true for executor-side Python processes that need an interactive terminal, returning shell_id for persistent-shell companion tools. Omit timeout_s to use the bound executor default; the executor enforces its own maximum timeout.",
+    "description": "Run an ad hoc Python script on the session's executor without managing a temporary file. Supports bounded, async job, and interactive PTY modes like bash; use bash for existing commands.",
     "inputSchema": {
       "properties": {
         "async_": {
@@ -3592,7 +3592,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Send input to an existing persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use this only for interactive or manually managed shells that need later input, such as REPLs, prompts, or development servers. Jobs started with bash(async_=true) are non-interactive background jobs; use the job companion for those instead. Set enter=false only when intentionally sending partial input without a newline.",
+    "description": "Send input to the session-owned PTY shell_id from bash(pty=true); enter=false omits the newline. Async jobs use job instead.",
     "inputSchema": {
       "properties": {
         "enter": {
@@ -3664,7 +3664,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Resize a persistent PTY shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Supply the visible terminal width and height so terminal UIs and interactive full-screen programs can track the client viewport.",
+    "description": "Resize an existing session-owned PTY shell_id to the specified terminal rows and columns.",
     "inputSchema": {
       "properties": {
         "cols": {
@@ -3752,7 +3752,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Read recent output from a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use after send_persistent_shell_input to inspect an interactive or manually managed shell without blocking. For tracked non-interactive jobs from bash(async_=true), use job(poll=[...]) because it works from job_id and refreshes job status. lines defaults to 200 and controls how many recent terminal lines are returned; increase it only when needed for context.",
+    "description": "Read recent output from a session-owned PTY shell_id without blocking. For async job_id output, use job(poll=[...]) instead.",
     "inputSchema": {
       "properties": {
         "lines": {
@@ -3839,7 +3839,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": true,
       "readOnlyHint": false
     },
-    "description": "Terminate a persistent shell created by bash(pty=true). Pass the owning session_id and shell_id returned by bash PTY mode or list_persistent_shells. Use for manually managed shells such as servers, watches, REPLs, or stuck interactive commands. For tracked non-interactive jobs from bash(async_=true), use job(cancel=[...]) so the job record is updated. This is destructive for that shell process but does not delete files.",
+    "description": "Terminate a session-owned PTY shell_id (destructive to that process, not its files). For async jobs use job(cancel=[...]).",
     "inputSchema": {
       "properties": {
         "session_id": {
@@ -3927,7 +3927,7 @@ HOSTED_TOOL_MANIFEST: tuple[dict[str, object], ...] = tuple(
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "List active persistent shells owned by the explicit session_id. Use this when you need the shell_id before reading, sending input, or killing a manually managed shell. Returned shell_id values are persistent-shell handles scoped by the owning session. Async bash jobs are not listed here; use job(session_id, list_jobs=true) to inspect bash(async_=true) background jobs.",
+    "description": "List session-owned PTY shell_id handles; async jobs are listed through job instead.",
     "inputSchema": {
       "properties": {
         "session_id": {

@@ -63,7 +63,7 @@ async def browser_session(
     storage_state_path: BrowserStorageStatePathArg = None,
     save_storage_state_path: BrowserStorageStatePathArg = None,
 ) -> BrowserSessionOutput:
-    """Start, list, or close Chromium sessions owned by one Workgate session. Ordinary sessions are ephemeral. action=start may explicitly reuse one executor-local durable profile_id or import Playwright storage_state_path; those two start modes are mutually exclusive. action=close may explicitly export storage state to save_storage_state_path. Storage-state paths are relative to the owning Workgate session workdir, and auth payloads are never returned. Live browser resources remain session-owned and are closed by session_end; explicitly persisted auth state is not deleted."""
+    """Start, list, or close session-owned Chromium browsers. Ephemeral state ends with the Workgate session; an explicitly saved profile or storage state persists. profile_id and storage_state_path cannot be combined; authentication data is never returned."""
     del (
         session_id,
         action,
@@ -96,7 +96,7 @@ async def browser_snapshot(
     screenshot_path: BrowserScreenshotPathArg = None,
     full_page: BrowserFullPageArg = False,
 ) -> BrowserSnapshotOutput:
-    """Capture bounded page state from a browser owned by the Workgate session. The snapshot returns visible text, recent errors and network response metadata, page metadata, and short refs such as e1 for visible interactive elements. Re-snapshot after navigation or DOM replacement before reusing refs. A screenshot is saved by default to a managed executor-local artifact; screenshot=false skips it. screenshot_path optionally writes to a new user-managed PNG; relative paths resolve from the session workdir."""
+    """Capture bounded browser page state and element references. Refresh the snapshot after navigation or DOM changes before acting on refs. By default saves a screenshot; screenshot_path chooses a user-managed PNG."""
     del (
         session_id,
         browser_session_id,
@@ -123,7 +123,7 @@ async def browser_act(
     page_id: BrowserPageIdArg = None,
     timeout_ms: BrowserTimeoutMsArg = 30_000,
 ) -> BrowserActOutput:
-    """Perform bounded high-level browser actions on an owned browser session. Use fresh snapshot refs for element targets when possible, or a bounded CSS selector matching exactly one element. For arbitrary Python code, use the separate browser_run_script tool with shell execution scope."""
+    """Act on a session-owned browser using fresh snapshot element refs or an unambiguous CSS selector. Use browser_run_script for custom Python."""
     del session_id, browser_session_id, actions, page_id, timeout_ms
     raise RuntimeError("browser_act requires control routing")
 
@@ -139,6 +139,6 @@ async def browser_run_script(
     timeout_s: ShellTimeoutArg = 60,
     max_output_bytes: ShellMaxOutputBytesArg = None,
 ) -> RunPythonCodeOutput:
-    """Run a complete Python Playwright script in a separate Chromium-capable subprocess on the bound executor. Uses the Workgate session workdir and runtime Python (configured Python for frozen executables); the caller must import and launch Playwright. Reuses bounded shell timeout, output and process cleanup; does not attach to an existing browser_session. Prefer browser_act for structured operations."""
+    """Run standalone Python Playwright code on the bound executor. This does not attach to browser_session; use browser_act for existing managed browser sessions."""
     del session_id, script, timeout_s, max_output_bytes
     raise RuntimeError("browser_run_script requires control routing")

@@ -52,7 +52,7 @@ async def gui_state(
     max_elements: GuiMaxElementsArg = 300,
     max_depth: GuiMaxDepthArg = 12,
 ) -> GuiStateOutput:
-    """Observe one native desktop window. Returns bounded accessibility state, an optional native screenshot, and a short-lived single-use state_id. Prefer element ids; coordinate actions are window-relative."""
+    """Observe bounded native window state and optional screenshot. The returned state_id is single-use; prefer accessibility element IDs over window-relative coordinates."""
     del (
         session_id,
         window_id,
@@ -76,6 +76,6 @@ async def gui_action(
     state_id: GuiStateIdArg,
     actions: GuiActionsArg,
 ) -> GuiActionOutput:
-    """Perform bounded native GUI actions against one fresh gui_state observation. The state_id is single-use; semantic targets are preferred over window-relative coordinate fallback. Actions execute sequentially, not transactionally: once execution starts, the state is consumed and earlier side effects are not rolled back if a later action fails, so re-observe after any error."""
+    """Act on a fresh, single-use gui_state. Actions are sequential, not transactional: earlier side effects are not rolled back on error; observe again before retrying."""
     del session_id, window_id, state_id, actions
     raise RuntimeError("gui_action requires control routing")

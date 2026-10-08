@@ -168,19 +168,19 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
 
     mcp, harness = build_paired_mcp(get_settings())
     assert mcp.instructions is not None
-    assert "You are a coding agent aiming to help the user" in mcp.instructions
-    assert "Do not commit, push, amend, create PRs, release" in mcp.instructions
-    assert "secret_scan is heuristic" in mcp.instructions
-    assert (
-        "A task attachment never chooses or changes the executor/workdir"
-        in mcp.instructions
-    )
-    assert "`session_end` ends only that execution context" in mcp.instructions
-    assert (
-        "`bash(async_=true)` and default `session_copy` return `job_id`"
-        in mcp.instructions
-    )
-    assert "`bash(pty=true)` returns a `shell_id`" in mcp.instructions
+    assert "You are a coding agent" in mcp.instructions
+    for text in (
+        "Do not commit, push, amend, create PRs, release",
+        "secret_scan` is heuristic",
+        "task does not select an executor or workdir",
+        "`session_end` ends the session, not the task",
+        "`bash(async_=true)`",
+        "`job_id`",
+        "`bash(pty=true)`",
+        "`shell_id`",
+    ):
+        assert text in mcp.instructions
+    assert len(mcp.instructions) < 3000
 
     transport_security = mcp.settings.transport_security
     assert transport_security is not None
