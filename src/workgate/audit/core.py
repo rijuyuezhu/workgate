@@ -476,7 +476,6 @@ def _enforce_audit_retention(
 
 
 _AUDIT_SOURCE_INDEXES = "_source_indexes"
-_AUDIT_QUERY_MAX_BYTES = 4_000_000
 _AUDIT_QUERY_MAX_ENTRIES = 2_000
 _AUDIT_LIFECYCLE_EVENTS = frozenset({"tool_call_start", "tool_call_end"})
 
@@ -855,24 +854,20 @@ def audit_query_snapshot(
 
 
 def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
-    """Read a bounded, consistent tail of the private JSONL audit log."""
+    """Read the retained hot log, bounded by its configured storage budget."""
     settings = get_role_config()
     path = path or StateLayout(settings.state_dir).audit_log_path
-    configured_limit = int(settings.max_audit_log_bytes)
-    max_bytes = _AUDIT_QUERY_MAX_BYTES
-    if configured_limit > 0:
-        max_bytes = min(max_bytes, configured_limit)
-    max_bytes = max(1, max_bytes)
+    max_bytes = int(settings.max_audit_log_bytes)
 
     with _audit_transaction(path):
         if not path.exists():
             return []
         size = path.stat().st_size
         with path.open("rb") as handle:
-            if size > max_bytes:
+            if max_bytes > 0 and size > max_bytes:
                 handle.seek(size - max_bytes)
                 handle.readline()
-            raw = handle.read(max_bytes)
+            raw = handle.read(max_bytes if max_bytes > 0 else -1)
 
     records: list[dict[str, Any]] = []
     for line in raw.splitlines():

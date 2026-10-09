@@ -357,6 +357,77 @@ def test_browser_audit_keeps_arbitrary_shapes_and_non_http_urls(
     assert _records(path)[0]["input"]["actions"] == actions
 
 
+def test_queries_cover_retained_hot_log_beyond_last_four_mb(
+    tmp_path, monkeypatch
+):
+    path = _configure_audit(tmp_path, monkeypatch, max_log_bytes=8_000_000)
+    session_id = "session-with-hot-history"
+    records = [
+        {
+            "id": "early-event",
+            "ts": 1,
+            "event": "early_marker",
+            "session": session_id,
+        },
+        {
+            "id": "early-start",
+            "ts": 2,
+            "event": "tool_call_start",
+            "tool": "bash",
+            "call_id": "early-call",
+            "session": session_id,
+            "input": {"command": "echo first"},
+        },
+        *(
+            {
+                "id": f"filler-{index}",
+                "ts": 3 + index,
+                "event": "filler",
+                "session": session_id,
+                "payload": "x" * 900_000,
+            }
+            for index in range(6)
+        ),
+        {
+            "id": "late-end",
+            "ts": 10,
+            "event": "tool_call_end",
+            "tool": "bash",
+            "call_id": "early-call",
+            "session": session_id,
+            "ok": True,
+            "output": {"result": "finished"},
+        },
+    ]
+    raw = "".join(json.dumps(record) + "\n" for record in records).encode()
+    assert 5_000_000 < len(raw) < get_settings().max_audit_log_bytes
+    session_path = tmp_path / ".state" / "sessions" / session_id / "audit.jsonl"
+    for target in (path, session_path):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+
+    for listing, detail in (
+        (query_audit, get_audit_entry),
+        (
+            lambda **filters: query_session_audit(session_id, **filters),
+            lambda entry_id: get_session_audit_entry(session_id, entry_id),
+        ),
+    ):
+        assert [
+            row["id"] for row in listing(event="early_marker")["entries"]
+        ] == ["early-event"]
+        assert detail("early-event")["event"] == "early_marker"
+        paired = listing(event="tool_call", search="early-call")["entries"]
+        assert len(paired) == 1
+        assert paired[0]["id"] == "call:early-call"
+        assert paired[0]["paired"] is True
+        assert paired[0]["input"] == {"command": "echo first"}
+        assert paired[0]["output"] == {"result": "finished"}
+        assert detail("call:early-call")["output"] == {"result": "finished"}
+        assert listing(limit=2)["count"] == 2
+        assert listing(limit=2)["total_matched"] == 8
+
+
 def test_audit_values_are_portable_and_cycle_safe(tmp_path, monkeypatch):
     path = _configure_audit(tmp_path, monkeypatch)
     cycle: dict[str, Any] = {}
