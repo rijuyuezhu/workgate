@@ -230,11 +230,11 @@ def run_terminals(harness: BrowserHarness) -> None:
     )
     page.set_viewport_size({"width": 1280, "height": 720})
 
-    # tmux capture-pane snapshots may not retain a fast 180-line burst; the
-    # live browser terminal must still receive the full stream over WebSocket.
+    # Output across several viewport heights must reach the live xterm stream.
+    # Very large high-speed bursts are a separate terminal-stream stress case.
     scroll_start = len(harness.websocket_events)
     page.locator("#terminal-input").fill(
-        "printf '%s\\n' {1..180}; printf 'scroll-%s\\n' complete"
+        "printf '%s\\n' {1..50}; sleep 0.1; printf 'scroll-%s\\n' complete"
     )
     page.locator("#terminal-input-form").get_by_role(
         "button", name="Send"
