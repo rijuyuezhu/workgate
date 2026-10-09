@@ -35,6 +35,8 @@ Approve pairing requests, inspect or rename executors, see whether they are onli
 
 Create, attach to, resize, and close persistent terminals. A persistent shell continues after the browser tab disconnects. Closing a client view does not necessarily terminate the underlying shell; use the explicit terminate action when you are finished.
 
+Click the terminal for direct interactive keyboard input, or use the command box to submit whole lines. Select terminal text and choose **Copy** (Ctrl+Shift+C), or choose **Paste** (Ctrl+Shift+V) to insert clipboard text using the terminal's bracketed-paste mode when enabled. Use **Reconnect** to reattach the selected persistent shell without creating a new one; scrollback is available through the terminal's scrollbar. Terminal dimensions track container resizing, including narrow browser layouts.
+
 Browser terminal traffic uses the executor's outbound stream path. If the bound executor is offline or streaming is unavailable, the UI reports the terminal as unavailable instead of falling back to a second transport.
 
 ### Files

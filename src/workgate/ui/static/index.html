@@ -317,7 +317,13 @@
               <strong id="terminal-title">No terminal selected</strong>
               <span id="terminal-state" class="muted">Disconnected</span>
             </div>
+            <div class="terminal-console-actions">
+              <button id="terminal-reconnect" type="button" disabled>Reconnect</button>
+              <button id="terminal-copy" type="button" title="Copy selected terminal text (Ctrl+Shift+C)" disabled>Copy</button>
+              <button id="terminal-paste" type="button" title="Paste clipboard into terminal (Ctrl+Shift+V)" disabled>Paste</button>
+            </div>
           </div>
+          <span id="terminal-feedback" class="terminal-feedback" role="status" aria-live="polite"></span>
           <div id="terminal-xterm" class="terminal-xterm" role="application" aria-label="Interactive terminal" hidden></div>
           <pre id="terminal-output" tabindex="0" aria-live="off" aria-label="Terminal output">Select or create a terminal session.</pre>
           <div id="terminal-keyboard" class="terminal-keyboard" aria-label="Terminal special keys">
@@ -325,11 +331,14 @@
             <button type="button" data-terminal-key="tab" disabled>Tab</button>
             <button type="button" data-terminal-key="up" aria-label="Arrow up" disabled>↑</button>
             <button type="button" data-terminal-key="down" aria-label="Arrow down" disabled>↓</button>
+            <button type="button" data-terminal-key="left" aria-label="Arrow left" disabled>←</button>
+            <button type="button" data-terminal-key="right" aria-label="Arrow right" disabled>→</button>
+            <button type="button" data-terminal-key="enter" disabled>Enter</button>
             <button type="button" data-terminal-key="ctrl-c" disabled>Ctrl-C</button>
             <button type="button" data-terminal-key="ctrl-d" disabled>Ctrl-D</button>
           </div>
           <form id="terminal-input-form" class="terminal-input-form">
-            <input id="terminal-input" name="terminal-input" type="text" placeholder="Type a command and press Enter" autocomplete="off" spellcheck="false" disabled>
+            <input id="terminal-input" name="terminal-input" type="text" placeholder="Send a whole command (or type directly in the terminal)" autocomplete="off" spellcheck="false" disabled>
             <button type="submit" disabled>Send</button>
           </form>
         </div>

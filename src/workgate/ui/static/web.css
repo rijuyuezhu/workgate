@@ -514,14 +514,8 @@ h2 {
 
 .terminal-xterm .xterm-viewport {
   border-radius: 0.35rem;
-  scrollbar-width: none !important;
-  -ms-overflow-style: none;
-}
-
-.terminal-xterm .xterm-viewport::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(137, 186, 207, 0.45) transparent;
 }
 
 #terminal-output {
@@ -584,7 +578,7 @@ h2 {
 
 .terminal-keyboard {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.45rem;
   margin-top: 0.65rem;
 }
@@ -2385,4 +2379,30 @@ h2 {
 .file-list-options #file-clipboard-state {
   margin-left: auto;
   font-size: 0.8rem;
+}
+
+.terminal-console-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.terminal-console-actions button { padding: 0.4rem 0.6rem; }
+
+.terminal-feedback {
+  display: block;
+  min-height: 1.1rem;
+  color: #91a4b7;
+  font-size: 0.73rem;
+}
+
+@media (max-width: 780px) {
+  .terminal-xterm {
+    height: min(55dvh, 30rem);
+    min-height: 14rem;
+    padding: 0.25rem;
+  }
+  .terminal-keyboard { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .terminal-console-header { flex-wrap: wrap; }
 }
