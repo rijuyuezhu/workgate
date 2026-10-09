@@ -225,5 +225,17 @@ jobs:
           test -n "$rebuilt"
           test "$(find /tmp/workgate-sdist-wheel -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
           [[ "${rebuilt##*/}" == *-py3-none-any.whl ]]
+      - name: Install wheel in a clean virtualenv
+        run: |
+          python -m venv /tmp/workgate-wheel-venv
+          /tmp/workgate-wheel-venv/bin/python -m pip install --upgrade pip
+          /tmp/workgate-wheel-venv/bin/python -m pip install dist/*.whl
+          /tmp/workgate-wheel-venv/bin/workgate --version
+          /tmp/workgate-wheel-venv/bin/workgate version
+
+  release-matrix:
+    name: Release matrix check
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v6
       - run: python scripts/validation/check-release-matrix.py
