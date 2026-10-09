@@ -21,6 +21,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     assert colors["body"] == "rgb(245, 246, 250)"
     assert colors["sidebar"] == "rgb(17, 24, 39)"
     assert colors["panel"] == "rgb(255, 255, 255)"
+    expect(page.locator(".token-row")).to_have_css("display", "flex")
 
     for view in VIEWS:
         harness.navigate(view)

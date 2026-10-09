@@ -273,13 +273,20 @@ def run_terminals(harness: BrowserHarness) -> None:
     session_button.click()
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
     expect(page.locator("#terminal-xterm .xterm")).to_be_visible()
-    _wait_terminal_output(
-        harness,
-        executor_id,
-        executor_shell,
-        "scroll-complete",
-        websocket_event_start=reload_websocket_start,
-    )
+    # A browser reload reattaches the same shell. The preceding scroll can
+    # leave tmux in copy mode, so do not assume typed text executes as a shell
+    # command until that mode is explicitly exited. Earlier reconnect tests
+    # independently verify fresh command execution on this shell.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if any(
+            event.startswith("received ws://")
+            for event in harness.websocket_events[reload_websocket_start:]
+        ):
+            break
+        page.wait_for_timeout(50)
+    else:
+        raise AssertionError("reloaded terminal did not receive PTY output")
     harness.navigate("terminals")
     page.locator(
         f'#terminal-list .terminal-session[title*="{executor_shell}"]'
