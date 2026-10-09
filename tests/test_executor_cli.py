@@ -279,7 +279,7 @@ def test_service_actions_dispatch_and_render(
         assert "Detail: healthy" in output
 
 
-def test_service_logs_redact_executor_credential(
+def test_service_logs_preserve_diagnostics_for_local_operator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -302,8 +302,7 @@ def test_service_logs_redact_executor_credential(
     executor_cli._run_service_action(argparse.Namespace(lines=10), "logs")
 
     output = capsys.readouterr().out
-    assert credential not in output
-    assert "connected with <redacted>" in output
+    assert output == f"connected with {credential}\n"
 
 
 def test_service_status_render_omits_optional_fields_for_current_runtime(

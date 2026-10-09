@@ -1257,7 +1257,7 @@
           {
             "code": "true"
           },
-          "Store large sanitized audit field values as private content-addressed payloads."
+          "Store large audit field values as private content-addressed payloads."
         ],
         [
           {
@@ -1277,7 +1277,7 @@
           {
             "code": "16384"
           },
-          "Maximum canonical JSON bytes kept inline for one sanitized audit field value."
+          "Maximum canonical JSON bytes kept inline for one audit field value."
         ],
         [
           {
@@ -1297,7 +1297,7 @@
           {
             "code": "67108864"
           },
-          "Maximum canonical JSON bytes accepted for one recoverable sanitized audit payload."
+          "Maximum canonical JSON bytes accepted for one recoverable audit payload."
         ],
         [
           {
@@ -2787,7 +2787,7 @@
       "cli": "--audit-payloads-enabled",
       "default": true,
       "default_display": "true",
-      "description": "Store large sanitized audit field values as private content-addressed payloads.",
+      "description": "Store large audit field values as private content-addressed payloads.",
       "env": "WORKGATE_AUDIT_PAYLOADS_ENABLED",
       "name": "audit_payloads_enabled",
       "nullable": false,
@@ -2800,7 +2800,7 @@
       "cli": "--audit-inline-value-bytes",
       "default": 16384,
       "default_display": "16384",
-      "description": "Maximum canonical JSON bytes kept inline for one sanitized audit field value.",
+      "description": "Maximum canonical JSON bytes kept inline for one audit field value.",
       "env": "WORKGATE_AUDIT_INLINE_VALUE_BYTES",
       "name": "audit_inline_value_bytes",
       "nullable": false,
@@ -2813,7 +2813,7 @@
       "cli": "--max-audit-payload-bytes",
       "default": 67108864,
       "default_display": "67108864",
-      "description": "Maximum canonical JSON bytes accepted for one recoverable sanitized audit payload.",
+      "description": "Maximum canonical JSON bytes accepted for one recoverable audit payload.",
       "env": "WORKGATE_MAX_AUDIT_PAYLOAD_BYTES",
       "name": "max_audit_payload_bytes",
       "nullable": false,

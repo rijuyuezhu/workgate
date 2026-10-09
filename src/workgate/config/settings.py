@@ -213,15 +213,15 @@ class Settings(BaseSettings):
     max_audit_event_bytes: _PositiveInt = 1_000_000
     """Maximum encoded bytes retained for one audit event before preview truncation."""
     audit_payloads_enabled: bool = True
-    """Store large sanitized audit field values as private content-addressed payloads."""
+    """Store large audit field values as private content-addressed payloads."""
     audit_inline_value_bytes: int = Field(
         default=16 * 1024, ge=256, le=16_000_000
     )
-    """Maximum canonical JSON bytes kept inline for one sanitized audit field value."""
+    """Maximum canonical JSON bytes kept inline for one audit field value."""
     max_audit_payload_bytes: int = Field(
         default=64 * 1024 * 1024, ge=1_024, le=1_000_000_000
     )
-    """Maximum canonical JSON bytes accepted for one recoverable sanitized audit payload."""
+    """Maximum canonical JSON bytes accepted for one recoverable audit payload."""
     max_audit_payload_store_bytes: int = Field(
         default=256 * 1024 * 1024, ge=1_024, le=4_000_000_000
     )

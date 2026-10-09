@@ -6,7 +6,6 @@ import os
 import sys
 from typing import Any
 
-from ..agent_bridge.redaction import _redact_text
 from ..app_paths import app_paths
 from ..config.cli import register_config_and_setting_args, settings_from_args
 from ..config.executor import EXECUTOR_SETTING_NAMES, resolve_executor_config
@@ -37,7 +36,7 @@ def _run_async(coro: Any) -> Any:
         raise SystemExit(130) from None
     except Exception as exc:
         print(
-            f"Status: executor command failed: {_redact_text(str(exc))}",
+            f"Status: executor command failed: {str(exc)}",
             file=sys.stderr,
             flush=True,
         )
@@ -154,10 +153,6 @@ def _service_manager(args: argparse.Namespace) -> ExecutorServiceManager:
     return ExecutorServiceManager(resolve_executor_config(settings))
 
 
-def _redact_service_text(value: str) -> str:
-    return _redact_text(value)
-
-
 def _print_service_status(status: ExecutorServiceStatus) -> None:
     print(f"State: {status.state.value}")
     print(f"Backend: {status.backend}")
@@ -179,12 +174,9 @@ def _print_service_status(status: ExecutorServiceStatus) -> None:
             f"(target {target})"
         )
         if status.runtime_update_detail:
-            print(
-                f"Runtime update detail: "
-                f"{_redact_service_text(status.runtime_update_detail)}"
-            )
+            print(f"Runtime update detail: {status.runtime_update_detail}")
     if status.detail:
-        print(f"Detail: {_redact_service_text(status.detail)}")
+        print(f"Detail: {status.detail}")
 
 
 def _run_service_action(args: argparse.Namespace, action: str) -> None:
@@ -220,14 +212,14 @@ def _run_service_action(args: argparse.Namespace, action: str) -> None:
         if action == "logs":
             output = manager.logs(lines=int(args.lines))
             if output:
-                print(_redact_service_text(output))
+                print(output)
             return
         raise AssertionError(action)
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     except Exception as exc:
         print(
-            f"Status: executor command failed: {_redact_text(str(exc))}",
+            f"Status: executor command failed: {str(exc)}",
             file=sys.stderr,
             flush=True,
         )

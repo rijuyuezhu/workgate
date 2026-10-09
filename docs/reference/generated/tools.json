@@ -309,7 +309,7 @@
                 "note": "(string / null, optional)"
               },
               {
-                "description": "Resolve retained sanitized payload objects. Requires audit:full and entry_id.",
+                "description": "Resolve retained audit payload objects. Requires audit:full and entry_id.",
                 "head": {
                   "code": "include_full_payloads"
                 },
@@ -2757,7 +2757,7 @@
           },
           "include_full_payloads": {
             "default": false,
-            "description": "Resolve retained sanitized payload objects. Requires audit:full and entry_id.",
+            "description": "Resolve retained audit payload objects. Requires audit:full and entry_id.",
             "title": "Include Full Payloads",
             "type": "boolean"
           },

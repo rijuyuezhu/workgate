@@ -138,11 +138,11 @@ max_http_request_bytes: 16000000
 max_audit_log_bytes: 20000000
 # Maximum encoded bytes retained for one audit event before preview truncation.
 max_audit_event_bytes: 1000000
-# Store large sanitized audit field values as private content-addressed payloads.
+# Store large audit field values as private content-addressed payloads.
 audit_payloads_enabled: true
-# Maximum canonical JSON bytes kept inline for one sanitized audit field value.
+# Maximum canonical JSON bytes kept inline for one audit field value.
 audit_inline_value_bytes: 16384
-# Maximum canonical JSON bytes accepted for one recoverable sanitized audit payload.
+# Maximum canonical JSON bytes accepted for one recoverable audit payload.
 max_audit_payload_bytes: 67108864
 # Maximum compressed bytes retained in the private audit payload store.
 max_audit_payload_store_bytes: 268435456

@@ -95,7 +95,7 @@ def test_externalize_handles_compressed_object_limit_and_directory_collision(
     monkeypatch.setattr(
         payloads, "_deterministic_gzip", lambda _data: b"x" * 1_025
     )
-    omitted = payloads.externalize_sanitized_value(
+    omitted = payloads.externalize_audit_value(
         {"body": "z" * 500},
         settings=settings,
         preview="preview",
@@ -111,7 +111,7 @@ def test_externalize_handles_compressed_object_limit_and_directory_collision(
     digest = hashlib.sha256(encoded).hexdigest()
     payloads._prepare_payload_root(settings)
     payloads._payload_path(settings, digest).mkdir()
-    failed = payloads.externalize_sanitized_value(
+    failed = payloads.externalize_audit_value(
         value,
         settings=settings,
         preview="preview",
@@ -275,7 +275,7 @@ def test_recursive_resolution_handles_lists(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     monkeypatch.setattr(payloads.time, "time", lambda: 1.0)
     value = {"body": "list-value-" * 80}
-    reference = payloads.externalize_sanitized_value(
+    reference = payloads.externalize_audit_value(
         value, settings=settings, preview="preview", created_at=1.0
     )
     resolved = payloads.resolve_payload_references(

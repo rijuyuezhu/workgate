@@ -1,10 +1,9 @@
-"""Append redacted, portable, bounded audit events to a private JSONL log."""
+"""Append portable, resource-bounded audit events to a private JSONL log."""
 
 import contextlib
 import hashlib
 import json
 import math
-import re
 import threading
 import time
 import uuid
@@ -15,16 +14,9 @@ from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
-from ..agent_bridge.redaction import (
-    SENSITIVE_FLAG_RE,
-    SENSITIVE_KEY_RE,
-    _redact_text,
-    redact_configured_values,
-)
 from ..config.role_config import SharedRoleConfig, get_role_config
 from ..persistence import StateLayout, get_state_store
 from ..tools.session_args import tool_input_session_ids
@@ -34,16 +26,12 @@ from ..utils.private_files import (
     private_file_lock,
 )
 from .payloads import (
-    externalize_sanitized_value,
+    externalize_audit_value,
     payload_file_sizes,
     payload_reference_digests,
     payload_reference_metadata,
     prune_payload_files,
     resolve_payload_references,
-)
-
-DOWNLOAD_URL_TOKEN_RE = re.compile(
-    r"(?P<prefix>(?:https?://[^\s/?#]+)?/download/)[A-Za-z0-9_-]+"
 )
 
 _AUDIT_THREAD_LOCK = threading.RLock()
@@ -67,229 +55,14 @@ _AUDIT_PREVIEW_STRING_CHARS = 512
 _AUDIT_TRUNCATED_KEY = "$workgate_audit_truncated"
 _AUDIT_BINARY_KEY = "$workgate_audit_binary"
 _AUDIT_CYCLE_KEY = "$workgate_audit_cycle"
-_AUDIT_SAFE_IDENTIFIER_SUFFIXES = ("_sha256", "_fingerprint", "_token_id")
-_AUDIT_REDACTED_TOOL_PAYLOADS = frozenset(
-    {
-        "gui_action",
-        "gui_list",
-        "gui_state",
-        "task",
-        "task_plan",
-        "read_todos",
-        "write_todos",
-        "workspace_continuation",
-    }
-)
-
-
-def _tool_audit_projection(tool: str, value: Any) -> Any:
-    if tool in _AUDIT_REDACTED_TOOL_PAYLOADS:
-        return None if value is None else "<redacted>"
-    return value
-
-
-def _redact_browser_action_input(value: Any) -> Any:
-    """Remove browser-entered values before generic audit sanitization."""
-    if not isinstance(value, Mapping):
-        return value
-    copied = dict(value)
-    actions = copied.get("actions")
-    if not isinstance(actions, list):
-        return copied
-    redacted_actions: list[Any] = []
-    for item in actions:
-        if not isinstance(item, Mapping):
-            redacted_actions.append(item)
-            continue
-        action = dict(item)
-        action_name = str(action.get("action") or "").strip().lower()
-        if action_name in {"fill", "type", "select"} and "value" in action:
-            action["value"] = "<redacted>"
-        if action_name == "wait_for_text" and "text" in action:
-            action["text"] = "<redacted>"
-        if action_name == "press" and "key" in action:
-            action["key"] = "<redacted>"
-        if "url" in action:
-            action["url"] = _redact_browser_url(action["url"])
-        if "target" in action:
-            target = str(action["target"])
-            action["target"] = (
-                target
-                if re.fullmatch(r"e[1-9][0-9]*", target)
-                else "<selector>"
-            )
-        redacted_actions.append(action)
-    copied["actions"] = redacted_actions
-    return copied
-
-
-def _redact_browser_url(value: Any) -> Any:
-    """Keep only browser URL origin, never credentials/path/query/fragment data."""
-    if not isinstance(value, str):
-        return value
-    if value == "about:blank":
-        return value
-    try:
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
-            return "<redacted-url>"
-        host = parsed.hostname
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-        if parsed.port is not None:
-            host = f"{host}:{parsed.port}"
-        return urlunsplit((parsed.scheme, host, "", "", ""))
-    except TypeError, ValueError:
-        return "<redacted-url>"
-
-
-def _redact_browser_tool_input(tool: str, value: Any) -> Any:
-    """Retain browser intent without storing entered secrets or URL credentials."""
-    if tool == "browser_act":
-        return _redact_browser_action_input(value)
-    if tool != "browser_session" or not isinstance(value, Mapping):
-        return value
-    copied = dict(value)
-    if "url" in copied:
-        copied["url"] = _redact_browser_url(copied["url"])
-    return copied
-
-
-def _redact_browser_tool_output(tool: str, value: Any) -> Any:
-    """Retain browser audit shape without persisting page bodies/form content."""
-    if tool not in {"browser_session", "browser_snapshot", "browser_act"}:
-        return value
-    if not isinstance(value, Mapping):
-        return value
-    copied = dict(value)
-    if tool == "browser_session":
-        for key in ("storage_state", "cookies", "origins"):
-            copied.pop(key, None)
-    if "title" in copied:
-        copied["title"] = "<omitted-from-audit>"
-    if "url" in copied:
-        copied["url"] = _redact_browser_url(copied["url"])
-    pages = copied.get("pages")
-    if isinstance(pages, list):
-        copied["pages"] = [_redact_browser_page_summary(page) for page in pages]
-    sessions = copied.get("sessions")
-    if isinstance(sessions, list):
-        sanitized_sessions: list[Any] = []
-        for item in sessions:
-            if not isinstance(item, Mapping):
-                sanitized_sessions.append(item)
-                continue
-            row = dict(item)
-            nested_pages = row.get("pages")
-            if isinstance(nested_pages, list):
-                row["pages"] = [
-                    _redact_browser_page_summary(page) for page in nested_pages
-                ]
-            sanitized_sessions.append(row)
-        copied["sessions"] = sanitized_sessions
-    if tool == "browser_snapshot":
-        text = copied.pop("text", None)
-        copied["text_omitted_from_audit"] = text is not None
-        elements = copied.pop("interactive_elements", None)
-        copied["interactive_element_count"] = (
-            len(elements) if isinstance(elements, list) else 0
-        )
-        errors = copied.get("errors")
-        if isinstance(errors, list):
-            copied["errors"] = [
-                {
-                    "page_id": item.get("page_id"),
-                    "kind": item.get("kind"),
-                    "method": item.get("method"),
-                    "url": _redact_browser_url(item.get("url")),
-                }
-                if isinstance(item, Mapping)
-                else item
-                for item in errors
-            ]
-    elif tool == "browser_act":
-        results = copied.get("results")
-        if isinstance(results, list):
-            sanitized: list[Any] = []
-            for item in results:
-                if not isinstance(item, Mapping):
-                    sanitized.append(item)
-                    continue
-                row = dict(item)
-                if "url" in row:
-                    row["url"] = _redact_browser_url(row["url"])
-                if "target" in row:
-                    target = str(row["target"])
-                    row["target"] = (
-                        target
-                        if re.fullmatch(r"e[1-9][0-9]*", target)
-                        else "<selector>"
-                    )
-                sanitized.append(row)
-            copied["results"] = sanitized
-    return copied
-
-
-def _redact_browser_tool_error(tool: str, value: Any) -> Any:
-    """Retain only browser error identity, never backend diagnostics or page data."""
-    if tool not in {"browser_session", "browser_snapshot", "browser_act"}:
-        return value
-    if not isinstance(value, Mapping):
-        return {"details_omitted_from_audit": True}
-    error_type = value.get("type")
-    return {
-        "type": (
-            str(error_type)[:256]
-            if isinstance(error_type, str) and error_type
-            else "browser_error"
-        ),
-        "details_omitted_from_audit": True,
-    }
-
-
-def _redact_browser_page_summary(value: Any) -> Any:
-    """Remove page-content-bearing fields while retaining page identity for audit."""
-    if not isinstance(value, Mapping):
-        return value
-    copied = dict(value)
-    if "title" in copied:
-        copied["title"] = "<omitted-from-audit>"
-    if "url" in copied:
-        copied["url"] = _redact_browser_url(copied["url"])
-    return copied
-
-
-def _audit_key_is_sensitive(name: str) -> bool:
-    """Treat credential values as sensitive while retaining irreversible identifiers."""
-    normalized = name.casefold()
-    if normalized.endswith(_AUDIT_SAFE_IDENTIFIER_SUFFIXES):
-        return False
-    return bool(SENSITIVE_KEY_RE.search(name))
-
-
-def _configured_secret_maps() -> tuple[dict[str, str], ...]:
-    """Return configured secrets that must be removed wherever rendered."""
-    settings = get_role_config()
-    secrets: dict[str, str] = {}
-    oauth_admin_pin = getattr(settings, "oauth_admin_pin", None)
-    if isinstance(oauth_admin_pin, str) and oauth_admin_pin:
-        secrets["oauth_admin_pin"] = oauth_admin_pin
-    return (secrets,) if secrets else ()
-
-
-def _redact_download_urls(value: str) -> str:
-    """Mask tokenized download URL path segments in audit text."""
-    return DOWNLOAD_URL_TOKEN_RE.sub(r"\g<prefix><redacted>", value)
 
 
 def _bounded_text(value: str, max_chars: int) -> str:
-    """Redact one free-form string and bound its retained character count."""
-    redacted = redact_configured_values(value, *_configured_secret_maps())
-    redacted = _redact_download_urls(_redact_text(redacted))
-    if len(redacted) <= max_chars:
-        return redacted
-    omitted = len(redacted) - max_chars
-    return f"{redacted[:max_chars]}…<truncated {omitted} chars>"
+    """Retain text verbatim up to the configured character bound."""
+    if len(value) <= max_chars:
+        return value
+    omitted = len(value) - max_chars
+    return f"{value[:max_chars]}…<truncated {omitted} chars>"
 
 
 def _safe_repr(value: Any) -> str:
@@ -310,20 +83,16 @@ def _omitted_items(total: int | None, retained: int) -> dict[str, Any]:
     }
 
 
-def _sanitize_audit_value(
+def _normalize_audit_value(
     value: Any,
     *,
-    field_name: str | None = None,
     depth: int = 0,
     seen: set[int] | None = None,
     max_depth: int = _AUDIT_MAX_DEPTH,
     max_items: int = _AUDIT_MAX_ITEMS,
     max_string_chars: int = _AUDIT_MAX_STRING_CHARS,
 ) -> Any:
-    """Convert arbitrary values into redacted, portable, resource-bounded JSON data."""
-    normalized_name = field_name or ""
-    if normalized_name and _audit_key_is_sensitive(normalized_name):
-        return "<redacted>"
+    """Convert arbitrary values into portable, resource-bounded JSON data."""
     if depth > max_depth:
         return {
             _AUDIT_TRUNCATED_KEY: {
@@ -353,9 +122,8 @@ def _sanitize_audit_value(
     if isinstance(value, Path):
         return _bounded_text(str(value), max_string_chars)
     if isinstance(value, Enum):
-        return _sanitize_audit_value(
+        return _normalize_audit_value(
             value.value,
-            field_name=field_name,
             depth=depth,
             seen=seen,
             max_depth=max_depth,
@@ -398,9 +166,8 @@ def _sanitize_audit_value(
                 key_text = _bounded_text(str(key), 256)
                 if key_text in result:
                     key_text = f"{key_text}#{retained + 1}"
-                result[key_text] = _sanitize_audit_value(
+                result[key_text] = _normalize_audit_value(
                     child,
-                    field_name=str(key),
                     depth=depth + 1,
                     seen=seen,
                     max_depth=max_depth,
@@ -411,15 +178,10 @@ def _sanitize_audit_value(
 
         if isinstance(value, list | tuple):
             result_list: list[Any] = []
-            redact_next = False
             total = len(value)
             for child in value[:max_items]:
-                if redact_next:
-                    result_list.append("<redacted>")
-                    redact_next = False
-                    continue
                 result_list.append(
-                    _sanitize_audit_value(
+                    _normalize_audit_value(
                         child,
                         depth=depth + 1,
                         seen=seen,
@@ -428,17 +190,13 @@ def _sanitize_audit_value(
                         max_string_chars=max_string_chars,
                     )
                 )
-                if isinstance(child, str) and SENSITIVE_FLAG_RE.fullmatch(
-                    child
-                ):
-                    redact_next = True
             if total > max_items:
                 result_list.append(_omitted_items(total, max_items))
             return result_list
 
         if isinstance(value, set | frozenset):
             ordered = sorted(value, key=_safe_repr)
-            return _sanitize_audit_value(
+            return _normalize_audit_value(
                 ordered,
                 depth=depth,
                 seen=seen,
@@ -454,8 +212,8 @@ def _sanitize_audit_value(
 
 
 def _preview_audit_value(value: Any) -> Any:
-    """Return a compact already-redacted preview for an oversized event."""
-    return _sanitize_audit_value(
+    """Return a compact size-bounded preview for an oversized event."""
+    return _normalize_audit_value(
         value,
         max_depth=_AUDIT_PREVIEW_DEPTH,
         max_items=_AUDIT_PREVIEW_ITEMS,
@@ -720,7 +478,6 @@ def _enforce_audit_retention(
 _AUDIT_SOURCE_INDEXES = "_source_indexes"
 _AUDIT_QUERY_MAX_BYTES = 4_000_000
 _AUDIT_QUERY_MAX_ENTRIES = 2_000
-_AUDIT_HIDDEN_EVENTS = frozenset({"auth_ok"})
 _AUDIT_LIFECYCLE_EVENTS = frozenset({"tool_call_start", "tool_call_end"})
 
 _AUDIT_FILE_TOOLS = frozenset(
@@ -978,8 +735,6 @@ def _coalesce_audit_records(
 
     for index, record in enumerate(records):
         event = str(record.get("event") or "")
-        if event in _AUDIT_HIDDEN_EVENTS:
-            continue
         parent_call_id = str(record.get("parent_call_id") or "")
         if parent_call_id:
             parent = entries_by_id.get(parent_call_id)
@@ -1285,7 +1040,7 @@ def get_audit_entry(
     exclude_call_id: str | None = None,
     _path: Path | None = None,
 ) -> dict[str, Any]:
-    """Return one coalesced audit entry, optionally resolving sanitized payloads."""
+    """Return one coalesced audit entry, optionally resolving retained payloads."""
     normalized = str(entry_id).strip()
     if not normalized:
         raise ValueError("audit entry id is required")
@@ -1465,7 +1220,7 @@ def _audit_record_task_ids(
 def _append_session_audit_records(
     session_ids: tuple[str, ...], encoded: bytes, settings: SharedRoleConfig
 ) -> None:
-    """Append one sanitized record to each existing owning session log."""
+    """Append one bounded record to each existing owning session log."""
     state_store = get_state_store()
     for session_id in session_ids:
         try:
@@ -1485,7 +1240,7 @@ def _append_session_audit_records(
 
 
 def audit(event: str, **fields: Any) -> None:
-    """Append one uniformly redacted, bounded, private audit record."""
+    """Append one bounded, private audit record without content masking."""
     settings = get_role_config()
     parent_call_id = current_audit_call_id()
     if parent_call_id and "parent_call_id" not in fields:
@@ -1510,10 +1265,9 @@ def audit(event: str, **fields: Any) -> None:
     full_string_chars = max(
         _AUDIT_MAX_STRING_CHARS, int(recoverable_string_chars)
     )
-    sanitized = {
-        str(name): _sanitize_audit_value(
+    normalized = {
+        str(name): _normalize_audit_value(
             value,
-            field_name=str(name),
             max_string_chars=full_string_chars,
         )
         for name, value in fields.items()
@@ -1521,13 +1275,13 @@ def audit(event: str, **fields: Any) -> None:
     path: Path = StateLayout(settings.state_dir).audit_log_path
     with _audit_transaction(path):
         externalized = {
-            name: externalize_sanitized_value(
+            name: externalize_audit_value(
                 value,
                 settings=settings,
                 preview=_preview_audit_value(value),
                 created_at=created_at,
             )
-            for name, value in sanitized.items()
+            for name, value in normalized.items()
         }
         record = {
             "id": uuid.uuid4().hex,
@@ -1563,12 +1317,11 @@ def audit_tool_call_start(
     input: Any,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Record one tool-call start and return its execution/task identities."""
-    audit_input = _redact_browser_tool_input(tool, input)
     fields: dict[str, Any] = {
         "call_id": call_id,
         "transport": transport,
         "tool": tool,
-        "input": _tool_audit_projection(tool, audit_input),
+        "input": input,
     }
     session_ids = tool_input_session_ids(input)
     task_ids = _audit_tool_input_task_ids(input, session_ids)
@@ -1614,8 +1367,7 @@ def audit_tool_call_end(
         fields["task"] = task_ids[0]
         fields["task_ids"] = list(task_ids)
     if error is not None:
-        fields["error"] = _redact_browser_tool_error(tool, error)
+        fields["error"] = error
     else:
-        audit_output = _redact_browser_tool_output(tool, output)
-        fields["output"] = _tool_audit_projection(tool, audit_output)
+        fields["output"] = output
     audit("tool_call_end", **fields)

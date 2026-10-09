@@ -207,458 +207,154 @@ def test_audit_skips_invalid_session_ids_without_leaving_running_calls(
     assert not (tmp_path / ".state" / "sessions" / "bad").exists()
 
 
-def test_audit_uniformly_redacts_secrets_but_retains_fingerprints(
+def test_audit_retains_text_fields_and_credential_like_names(
     tmp_path, monkeypatch
 ):
     path = _configure_audit(tmp_path, monkeypatch)
-    pin = "correct-horse-battery-staple"
-    raw_token = "ghp_1234567890abcdef1234567890abcdef"
-    fingerprint = "0123456789abcdef"
-    monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", pin)
-    clear_settings_cache()
-
-    audit(
-        "security_event",
-        command=f"echo safe --api-key={raw_token} {pin}",
-        headers={"Authorization": f"Bearer {raw_token}"},
-        token=raw_token,
-        token_sha256=fingerprint,
-        token_fingerprint=fingerprint,
-        url="https://files.test/download/sensitive-link-token",
-        nested={"password": "hidden", "detail": f"Bearer {raw_token}"},
-    )
-
-    text = path.read_text(encoding="utf-8")
-    record = _records(path)[0]
-    assert raw_token not in text
-    assert pin not in text
-    assert "sensitive-link-token" not in text
-    assert "/download/<redacted>" in text
-    assert "echo safe" in record["command"]
-    assert record["headers"]["Authorization"] == "<redacted>"
-    assert record["token"] == "<redacted>"
-    assert record["token_sha256"] == fingerprint
-    assert record["token_fingerprint"] == fingerprint
-    assert record["nested"]["password"] == "<redacted>"
-
-
-def test_gui_tool_payloads_are_fully_redacted_from_audit(
-    tmp_path, monkeypatch
-) -> None:
-    audit_path = _configure_audit(tmp_path, monkeypatch)
-    marker = "gui-private-screen-marker"
-
-    for index, tool in enumerate(("gui_list", "gui_state", "gui_action")):
-        call_id = f"gui-redaction-{index}"
-        session_ids, task_ids = audit_tool_call_start(
-            call_id=call_id,
-            transport="mcp",
-            tool=tool,
-            input={
-                "session_id": "sess_gui_redaction",
-                "window_id": "window-1",
-                "text": marker,
-                "actions": [{"type": "type", "text": marker}],
-            },
-        )
-        audit_tool_call_end(
-            call_id=call_id,
-            transport="mcp",
-            tool=tool,
-            ok=True,
-            duration_ms=1,
-            output={
-                "content": [
-                    {
-                        "type": "image",
-                        "data": marker,
-                        "mimeType": "image/png",
-                    }
-                ],
-                "structuredContent": {
-                    "window": {"title": marker},
-                    "elements": [{"name": marker, "value": marker}],
-                },
-            },
-            session_ids=session_ids,
-            task_ids=task_ids,
-        )
-
-    text = audit_path.read_text(encoding="utf-8")
-    assert marker not in text
-    records = [json.loads(line) for line in text.splitlines() if line]
-    for tool in ("gui_list", "gui_state", "gui_action"):
-        starts = [
-            row
-            for row in records
-            if row.get("event") == "tool_call_start" and row.get("tool") == tool
-        ]
-        ends = [
-            row
-            for row in records
-            if row.get("event") == "tool_call_end" and row.get("tool") == tool
-        ]
-        assert starts and all(row["input"] == "<redacted>" for row in starts)
-        assert ends and all(row["output"] == "<redacted>" for row in ends)
-
-
-def test_browser_action_values_are_redacted_before_audit_storage(
-    tmp_path, monkeypatch
-):
-    path = _configure_audit(tmp_path, monkeypatch)
-    secret = "browser-entered-secret"
-    selected = "private-select-value"
-    pressed = "private-key-value"
-
-    audit_tool_call_start(
-        call_id="browser-redaction",
-        transport="mcp",
-        tool="browser_act",
-        input={
-            "actions": [
-                {
-                    "action": "fill",
-                    "target": "e1",
-                    "value": secret,
-                },
-                {
-                    "action": "select",
-                    "target": "e2",
-                    "value": [selected],
-                },
-                {"action": "click", "target": "e3"},
-                {"action": "press", "target": "e4", "key": pressed},
-            ]
-        },
-    )
-
-    text = path.read_text(encoding="utf-8")
-    record = _records(path)[0]
-    assert secret not in text
-    assert selected not in text
-    assert pressed not in text
-    assert record["input"]["actions"][0]["value"] == "<redacted>"
-    assert record["input"]["actions"][1]["value"] == "<redacted>"
-    assert record["input"]["actions"][2]["target"] == "e3"
-    assert record["input"]["actions"][3]["key"] == "<redacted>"
-
-
-def test_browser_audit_omits_page_body_and_url_secrets(tmp_path, monkeypatch):
-    path = _configure_audit(tmp_path, monkeypatch)
-    page_secret = "page-body-secret"
-    query_secret = "query-secret"
-    form_secret = "form-secret"
-    call_id = "browser-output-redaction"
-
-    session_ids, _ = audit_tool_call_start(
-        call_id=call_id,
-        transport="mcp",
-        tool="browser_act",
-        input={
-            "session_id": "sess_0000000000000000000001",
-            "actions": [
-                {
-                    "action": "navigate",
-                    "url": f"https://user:pass@example.test/path?token={query_secret}#frag",
-                },
-                {
-                    "action": "fill",
-                    "target": "input[name='password']",
-                    "value": form_secret,
-                },
-            ],
-        },
-    )
-    audit_tool_call_end(
-        call_id=call_id,
-        transport="mcp",
-        tool="browser_snapshot",
-        ok=True,
-        duration_ms=1,
-        output={
-            "url": f"https://example.test/path?token={query_secret}",
-            "title": page_secret,
-            "pages": [
-                {
-                    "page_id": "page_12345678",
-                    "title": page_secret,
-                    "url": f"https://example.test/page?token={query_secret}",
-                }
-            ],
-            "text": page_secret,
-            "interactive_elements": [
-                {"ref": "e1", "text": page_secret, "href": None}
-            ],
-            "errors": [
-                {
-                    "page_id": "page_12345678",
-                    "kind": "console",
-                    "message": page_secret,
-                    "url": f"https://example.test/fail?token={query_secret}",
-                }
-            ],
-        },
-        session_ids=session_ids,
-    )
-
-    raw = path.read_text(encoding="utf-8")
-    assert page_secret not in raw
-    assert query_secret not in raw
-    assert form_secret not in raw
-    assert "user:pass" not in raw
-    assert "input[name='password']" not in raw
-    records = _records(path)
-    start = next(item for item in records if item["event"] == "tool_call_start")
-    end = next(item for item in records if item["event"] == "tool_call_end")
-    assert start["input"]["actions"][0]["url"] == "https://example.test"
-    assert start["input"]["actions"][1]["target"] == "<selector>"
-    assert end["output"]["text_omitted_from_audit"] is True
-    assert end["output"]["interactive_element_count"] == 1
-    assert end["output"]["title"] == "<omitted-from-audit>"
-    assert end["output"]["pages"] == [
-        {
-            "page_id": "page_12345678",
-            "title": "<omitted-from-audit>",
-            "url": "https://example.test",
-        }
-    ]
-    assert end["output"]["errors"] == [
-        {
-            "page_id": "page_12345678",
-            "kind": "console",
-            "method": None,
-            "url": "https://example.test",
-        }
-    ]
-
-
-def test_browser_session_url_is_origin_only_in_audit(tmp_path, monkeypatch):
-    path = _configure_audit(tmp_path, monkeypatch)
-    secret = "path-and-query-secret"
-
-    audit_tool_call_start(
-        call_id="browser-session-url-redaction",
-        transport="mcp",
-        tool="browser_session",
-        input={
-            "session_id": "sess_0000000000000000000001",
-            "action": "start",
-            "url": f"https://user:pass@example.test/{secret}?token={secret}",
-        },
-    )
-
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    assert "user:pass" not in raw
-    record = _records(path)[0]
-    assert record["input"]["url"] == "https://example.test"
-
-
-def test_browser_session_list_audit_redacts_nested_page_content(
-    tmp_path, monkeypatch
-):
-    path = _configure_audit(tmp_path, monkeypatch)
-    secret = "nested-page-secret"
-
-    audit_tool_call_end(
-        call_id="browser-session-list-output",
-        transport="mcp",
-        tool="browser_session",
-        ok=True,
-        duration_ms=1,
-        output={
-            "sessions": [
-                {
-                    "browser_session_id": "browser_test_session",
-                    "pages": [
-                        {
-                            "page_id": "page_12345678",
-                            "title": secret,
-                            "url": f"https://example.test/{secret}?token={secret}",
-                        }
-                    ],
-                }
-            ]
-        },
-    )
-
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    output = _records(path)[0]["output"]
-    assert output["sessions"][0]["pages"] == [
-        {
-            "page_id": "page_12345678",
-            "title": "<omitted-from-audit>",
-            "url": "https://example.test",
-        }
-    ]
-
-
-def test_browser_action_output_redacts_urls_and_preserves_refs(
-    tmp_path, monkeypatch
-):
-    path = _configure_audit(tmp_path, monkeypatch)
-    secret = "browser-action-output-secret"
-
-    audit_tool_call_end(
-        call_id="browser-action-output",
-        transport="mcp",
-        tool="browser_act",
-        ok=True,
-        duration_ms=1,
-        output={
-            "results": [
-                {
-                    "url": f"https://example.test/path?token={secret}",
-                    "target": "e1",
-                },
-                "opaque-result",
-            ]
-        },
-    )
-
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    results = _records(path)[0]["output"]["results"]
-    assert results == [
-        {"url": "https://example.test", "target": "e1"},
-        "opaque-result",
-    ]
-
-
-def test_browser_audit_malformed_shapes_are_fail_safe(tmp_path, monkeypatch):
-    path = _configure_audit(tmp_path, monkeypatch)
-    secret = "malformed-browser-secret"
-
-    audit_tool_call_start(
-        call_id="browser-malformed-actions",
-        transport="mcp",
-        tool="browser_act",
-        input={
-            "actions": [
-                "opaque-action",
-                {"action": "wait_for_text", "text": secret},
-                {"action": "navigate", "url": "about:blank"},
-                {"action": "navigate", "url": f"file:///{secret}"},
-                {
-                    "action": "navigate",
-                    "url": f"http://[::1]:8080/path?token={secret}",
-                },
-                {
-                    "action": "navigate",
-                    "url": f"http://example.test:notaport/{secret}",
-                },
-            ]
-        },
-    )
-    audit_tool_call_start(
-        call_id="browser-malformed-action-list",
-        transport="mcp",
-        tool="browser_act",
-        input={"actions": "not-a-list"},
-    )
-    audit_tool_call_end(
-        call_id="browser-malformed-session-output",
-        transport="mcp",
-        tool="browser_session",
-        ok=True,
-        duration_ms=1,
-        output={
-            "url": "http://[::1]:8080/path",
-            "sessions": [
-                "opaque-session",
-                {"pages": ["opaque-page"]},
-            ],
-        },
-    )
-    audit_tool_call_end(
-        call_id="browser-malformed-snapshot-output",
-        transport="mcp",
-        tool="browser_snapshot",
-        ok=True,
-        duration_ms=1,
-        output="opaque-output",
-    )
-
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    records = {item["call_id"]: item for item in _records(path)}
-    actions = records["browser-malformed-actions"]["input"]["actions"]
-    assert actions[0] == "opaque-action"
-    assert actions[1]["text"] == "<redacted>"
-    assert actions[2]["url"] == "about:blank"
-    assert actions[3]["url"] == "<redacted-url>"
-    assert actions[4]["url"] == "http://[::1]:8080"
-    assert actions[5]["url"] == "<redacted-url>"
-    assert records["browser-malformed-action-list"]["input"] == {
-        "actions": "not-a-list"
+    fields = {
+        "command": "echo --api-key=sample-key --header sample-header",
+        "headers": {"Authorization": "Bearer sample-token"},
+        "token": "sample-token",
+        "token_sha256": "sample-fingerprint",
+        "url": "https://example.test/download/sample-link?mode=full",
+        "nested": {"password": "sample-password", "details": "sample-data"},
+        "args": ["--password", "sample-pass", "--mode", "normal"],
     }
-    session_output = records["browser-malformed-session-output"]["output"]
-    assert session_output["url"] == "http://[::1]:8080"
-    assert session_output["sessions"] == [
-        "opaque-session",
-        {"pages": ["opaque-page"]},
-    ]
+    audit("diagnostic", **fields)
+    record = _records(path)[0]
+    for key, value in fields.items():
+        assert record[key] == value
     assert (
-        records["browser-malformed-snapshot-output"]["output"]
-        == "opaque-output"
+        get_audit_entry(query_audit(event="diagnostic")["entries"][0]["id"])[
+            "command"
+        ]
+        == fields["command"]
     )
 
 
-def test_browser_session_audit_drops_auth_payload_fields(
-    tmp_path, monkeypatch
-) -> None:
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "gui_list",
+        "gui_state",
+        "gui_action",
+        "task",
+        "task_plan",
+        "read_todos",
+        "write_todos",
+    ],
+)
+def test_audit_retains_tool_payloads_without_tool_exceptions(
+    tmp_path, monkeypatch, tool
+):
     path = _configure_audit(tmp_path, monkeypatch)
+    payload = {"text": "visible-content", "nested": {"token": "sample-value"}}
+    audit_tool_call_start(
+        call_id="simple-call", transport="mcp", tool=tool, input=payload
+    )
     audit_tool_call_end(
-        call_id="browser-auth-redaction",
+        call_id="simple-call",
         transport="mcp",
-        tool="browser_session",
+        tool=tool,
         ok=True,
         duration_ms=1,
-        output={
-            "browser_session_id": "browser_auth_redaction",
-            "profile_id": "login-profile",
-            "storage_state_path": "auth-state.json",
-            "storage_state": {"cookies": [{"value": "secret-cookie"}]},
-            "cookies": [{"value": "secret-cookie"}],
-            "origins": [{"localStorage": [{"value": "secret-origin"}]}],
-        },
+        output=payload,
     )
-
-    record = _records(path)[-1]
-    assert record["output"]["profile_id"] == "login-profile"
-    assert record["output"]["storage_state_path"] == "auth-state.json"
-    assert "storage_state" not in record["output"]
-    assert "cookies" not in record["output"]
-    assert "origins" not in record["output"]
-    assert "secret-cookie" not in str(record)
-    assert "secret-origin" not in str(record)
+    start, end = _records(path)
+    assert start["input"] == payload
+    assert end["output"] == payload
 
 
-def test_browser_error_audit_omits_backend_diagnostics(tmp_path, monkeypatch):
+def test_browser_audit_round_trips_inputs_outputs_and_errors(
+    tmp_path, monkeypatch
+):
     path = _configure_audit(tmp_path, monkeypatch)
-    secret = "sensitive-playwright-error-detail"
-
+    full_url = "https://user:pass@example.test/path?token=example#frag"
+    selector = "input[name='password']"
+    actions = [
+        {"action": "fill", "target": selector, "value": "typed-value"},
+        {"action": "navigate", "url": full_url},
+        {"action": "wait_for_text", "text": "private text"},
+        {"action": "press", "key": "Enter"},
+    ]
+    audit_tool_call_start(
+        call_id="browse",
+        transport="mcp",
+        tool="browser_act",
+        input={"actions": actions},
+    )
+    output = {
+        "url": full_url,
+        "title": "page-title",
+        "text": "page-content",
+        "pages": [{"url": full_url, "title": "page-title"}],
+        "interactive_elements": [{"ref": "e1", "text": "page-content"}],
+        "errors": [{"url": full_url, "message": "browser diagnostic"}],
+    }
     audit_tool_call_end(
-        call_id="browser-error-redaction",
+        call_id="browse",
+        transport="mcp",
+        tool="browser_snapshot",
+        ok=True,
+        duration_ms=2,
+        output=output,
+    )
+    failure = {
+        "type": "TimeoutError",
+        "message": full_url,
+        "repr": "some error text",
+    }
+    audit_tool_call_end(
+        call_id="fail",
         transport="mcp",
         tool="browser_act",
         ok=False,
         duration_ms=1,
-        error={
-            "type": "TimeoutError",
-            "message": f"navigation failed for https://example.test/?token={secret}",
-            "repr": f"TimeoutError(locator=input[name='{secret}'])",
-        },
+        error=failure,
     )
+    start, success, error = _records(path)
+    assert start["input"]["actions"] == actions
+    assert success["output"] == output
+    assert error["error"] == failure
 
-    raw = path.read_text(encoding="utf-8")
-    assert secret not in raw
-    record = _records(path)[0]
-    assert record["error"] == {
-        "type": "TimeoutError",
-        "details_omitted_from_audit": True,
+
+def test_browser_session_audit_keeps_returned_auth_fields(
+    tmp_path, monkeypatch
+):
+    path = _configure_audit(tmp_path, monkeypatch)
+    output = {
+        "storage_state_path": "auth-state.json",
+        "storage_state": {"cookies": [{"value": "sample-cookie"}]},
+        "cookies": [{"value": "sample-cookie"}],
+        "origins": [{"localStorage": [{"value": "sample-value"}]}],
     }
+    audit_tool_call_end(
+        call_id="browser-profile",
+        transport="mcp",
+        tool="browser_session",
+        ok=True,
+        duration_ms=1,
+        output=output,
+    )
+    assert _records(path)[0]["output"] == output
+
+
+def test_browser_audit_keeps_arbitrary_shapes_and_non_http_urls(
+    tmp_path, monkeypatch
+):
+    path = _configure_audit(tmp_path, monkeypatch)
+    actions = [
+        "opaque-action",
+        {"action": "navigate", "url": "file:///tmp/demo"},
+        {"action": "navigate", "url": "about:blank"},
+    ]
+    audit_tool_call_start(
+        call_id="browser-shape",
+        transport="mcp",
+        tool="browser_act",
+        input={"actions": actions},
+    )
+    assert _records(path)[0]["input"]["actions"] == actions
 
 
 def test_audit_values_are_portable_and_cycle_safe(tmp_path, monkeypatch):
@@ -841,7 +537,7 @@ def test_audit_retention_keeps_completed_tool_calls_paired(
     )
 
 
-def test_query_audit_pairs_calls_folds_children_and_hides_auth(
+def test_query_audit_pairs_calls_folds_children_and_keeps_auth(
     tmp_path, monkeypatch
 ):
     _configure_audit(tmp_path, monkeypatch)
@@ -871,9 +567,9 @@ def test_query_audit_pairs_calls_folds_children_and_hides_auth(
 
     result = query_audit()
 
-    assert result["count"] == 1
-    assert result["total_matched"] == 1
-    entry = result["entries"][0]
+    assert result["count"] == 2
+    assert result["total_matched"] == 2
+    entry = next(row for row in result["entries"] if row["id"] == "call:call-1")
     assert entry["id"] == "call:call-1"
     assert entry["operation"] == "files"
     assert entry["session"] == "session-a"
@@ -882,9 +578,10 @@ def test_query_audit_pairs_calls_folds_children_and_hides_auth(
     assert entry["input"]["path"] == "notes.txt"
     assert entry["output"] == {"path": "notes.txt"}
     assert entry["related_events"][0]["event"] == "file_link_created"
-    assert entry["related_events"][0]["url"].endswith("/download/<redacted>")
+    assert entry["related_events"][0]["url"].endswith("/download/private-token")
     assert "_source_indexes" not in entry
     assert get_audit_entry("call:call-1") == entry
+    assert any(row["event"] == "auth_ok" for row in result["entries"])
 
 
 def test_audit_query_snapshot_summarizes_list_and_keeps_selected_preview():
@@ -1063,7 +760,7 @@ def test_coalesce_audit_records_supports_legacy_calls_without_ids():
     assert rows[0]["error"] == {"message": "missing"}
 
 
-def test_audit_payload_round_trip_is_deduplicated_private_and_redacted(
+def test_audit_payload_round_trip_is_deduplicated_private_and_truthful(
     tmp_path, monkeypatch
 ):
     _configure_audit(
@@ -1085,14 +782,11 @@ def test_audit_payload_round_trip_is_deduplicated_private_and_redacted(
     assert listing["count"] == 2
     reference = listing["entries"][0]["payload"]
     assert AUDIT_PAYLOAD_KEY in reference
-    assert "top-secret-token" not in json.dumps(reference)
+    assert "top-secret-token" in json.dumps(reference)
     full = get_audit_entry(
         listing["entries"][0]["id"], include_full_payloads=True
     )
-    assert full["payload"] == {
-        "token": "<redacted>",
-        "body": payload["body"],
-    }
+    assert full["payload"] == payload
 
     files = list(get_settings().audit_payload_dir.glob("*.json.gz"))
     assert len(files) == 1
@@ -1273,7 +967,7 @@ def test_audit_payload_cross_process_deduplicates_and_recovers(
     for entry in listing["entries"]:
         full = get_audit_entry(entry["id"], include_full_payloads=True)
         assert full["payload"] == {
-            "token": "<redacted>",
+            "token": "cross-process-secret",
             "body": "shared-process-payload-" * 1_000,
         }
 
@@ -1344,7 +1038,7 @@ def test_audit_payload_decompression_bomb_is_bounded(tmp_path, monkeypatch):
     assert full["payload"][AUDIT_PAYLOAD_KEY]["status"] == "corrupt"
 
 
-def test_browser_css_selector_audit_redacts_selector_and_entered_value(
+def test_browser_css_selector_audit_retains_selector_and_entered_value(
     tmp_path, monkeypatch
 ) -> None:
     path = _configure_audit(tmp_path, monkeypatch)
@@ -1367,12 +1061,12 @@ def test_browser_css_selector_audit_redacts_selector_and_entered_value(
         output={"results": [{"action": "fill", "target": selector}]},
     )
     content = path.read_text(encoding="utf-8")
-    assert secret not in content
-    assert "sensitive-selector" not in content
+    assert secret in content
+    assert "sensitive-selector" in content
     starts, ends = _records(path)
-    assert starts["input"]["actions"][0]["target"] == "<selector>"
-    assert starts["input"]["actions"][0]["value"] == "<redacted>"
-    assert ends["output"]["results"][0]["target"] == "<selector>"
+    assert starts["input"]["actions"][0]["target"] == selector
+    assert starts["input"]["actions"][0]["value"] == secret
+    assert ends["output"]["results"][0]["target"] == selector
 
 
 def test_browser_run_script_audit_records_input_output_and_errors(

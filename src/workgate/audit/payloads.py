@@ -1,4 +1,4 @@
-"""Private content-addressed storage for sanitized audit payload values."""
+"""Private content-addressed storage for audit payload values."""
 
 import contextlib
 import gzip
@@ -23,7 +23,7 @@ _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def canonical_json_bytes(value: Any) -> bytes:
-    """Encode sanitized JSON data canonically for stable content addressing."""
+    """Encode normalized JSON data canonically for stable content addressing."""
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -106,14 +106,14 @@ def payload_reference_digests(value: Any) -> set[str]:
     return found
 
 
-def externalize_sanitized_value(
+def externalize_audit_value(
     value: Any,
     *,
     settings: SharedRoleConfig,
     preview: Any,
     created_at: float,
 ) -> Any:
-    """Keep one sanitized value inline or replace it with a recoverable reference."""
+    """Keep one normalized value inline or replace it with a recoverable reference."""
     encoded = canonical_json_bytes(value)
     if (
         not settings.audit_payloads_enabled

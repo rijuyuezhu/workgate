@@ -75,7 +75,7 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
     assert ends[0]["duration_ms"] >= 0
 
 
-def test_task_tool_audit_redacts_durable_report_and_plan_prose(
+def test_task_tool_audit_records_durable_report_and_plan_prose(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
@@ -171,10 +171,12 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
     )
 
     audit_text = settings.audit_log_path.read_text(encoding="utf-8")
-    assert marker not in audit_text
+    assert marker in audit_text
+    retained_payloads = []
     for payload_path in settings.audit_payload_dir.glob("*.json.gz"):
-        with gzip.open(payload_path, "rt", encoding="utf-8") as payload_file:
-            assert marker not in payload_file.read()
+        with gzip.open(payload_path, "rt", encoding="utf-8") as handle:
+            retained_payloads.append(handle.read())
+    assert any(marker in data for data in retained_payloads)
 
     records = _audit_records(settings.audit_log_path)
     task_starts, task_ends = _tool_call_pairs(records, "task", transport="http")
@@ -182,10 +184,12 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
     assert len(task_ends) == 3
     assert all(row.get("task") == task_id for row in task_ends)
     report_start = next(
-        row for row in task_starts if row.get("task") == task_id
+        row
+        for row in task_starts
+        if row.get("input", {}).get("action") == "report"
     )
-    assert report_start["input"] == "<redacted>"
-    assert all(row["output"] == "<redacted>" for row in task_ends)
+    assert report_start["input"]["summary"] == f"{marker}-summary"
+    assert all(row["output"] != "<redacted>" for row in task_ends)
 
     plan_starts, plan_ends = _tool_call_pairs(
         records, "task_plan", transport="http"
@@ -193,16 +197,16 @@ def test_task_tool_audit_redacts_durable_report_and_plan_prose(
     assert len(plan_starts) == 2
     assert len(plan_ends) == 2
     assert all(row["task"] == task_id for row in plan_starts)
-    assert all(row["input"] == "<redacted>" for row in plan_starts)
-    assert plan_ends[0]["output"] == "<redacted>"
+    assert all(row["input"] != "<redacted>" for row in plan_starts)
+    assert plan_ends[0]["output"] != "<redacted>"
     assert plan_ends[1]["ok"] is False
 
     todo_starts, todo_ends = _tool_call_pairs(
         records, "write_todos", transport="http"
     )
     assert todo_starts[0]["task"] == task_id
-    assert todo_starts[0]["input"] == "<redacted>"
-    assert todo_ends[0]["output"] == "<redacted>"
+    assert todo_starts[0]["input"] != "<redacted>"
+    assert todo_ends[0]["output"] != "<redacted>"
 
 
 @pytest.mark.asyncio
