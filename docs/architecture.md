@@ -345,8 +345,8 @@ Rejected ownership alternatives:
 ### `ui/http`: WebUI delivery adapters
 
 The `ui/http` package owns Starlette request parsing, authorization checks,
-response normalization, route composition, and WebSocket delivery for the Human
-UI. It may consume transport-neutral UI core and domain capabilities, but it must
+response normalization, route composition, and WebSocket delivery for the
+WebUI. It may consume transport-neutral UI core and domain capabilities, but it must
 not depend on either control delivery adapter. The REST control adapter consumes only
 `ui.http.routes.human_ui_routes` during application composition; no intermediate
 `server` namespace remains.

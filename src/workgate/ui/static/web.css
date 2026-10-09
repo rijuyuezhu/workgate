@@ -43,8 +43,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .controller-card { margin: 0 4px 13px; padding: 13px; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.06); border-radius: 11px; }
 .controller-row { display: flex; gap: 10px; align-items: flex-start; }
 .controller-row strong { display: block; color: #e9edf5; font-size: 13px; font-weight: 650; }
-.controller-row span:not(.status-orb) { display: block; margin-top: 3px; color: #737f95; font-size: 12px; }
-.controller-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 13px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.055); color: #657187; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.controller-row span { display: block; margin-top: 3px; color: #737f95; font-size: 12px; }
 .sidebar-footer { display: flex; gap: 6px; align-items: center; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.06); }
 .main-content { grid-column: 2; padding: 28px 32px 26px; min-width: 0; }
 .topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-bottom: 23px; }

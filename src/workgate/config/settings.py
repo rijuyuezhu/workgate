@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     forwarded_allow_ips: str = "127.0.0.1"
     """Comma-separated proxy addresses/networks trusted for forwarded HTTP headers."""
 
-    # Human interface.
+    # WebUI.
     ui_enabled: bool = True
     """Mount the browser WebUI and its authenticated API on the HTTP server."""
     ui_path: str = "/ui"
