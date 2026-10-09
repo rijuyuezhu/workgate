@@ -404,7 +404,6 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
         config_dir=workgate_config,
         state_dir=tmp_path / "state",
         data_dir=tmp_path / "data",
-        cache_dir=tmp_path / "cache",
         runtime_dir=tmp_path / "runtime",
     )
     monkeypatch.setattr(settings_module, "app_paths", lambda: paths)

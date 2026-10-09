@@ -1175,11 +1175,6 @@
       "num_statements": 120,
       "percent_covered": 90.384615
     },
-    "src/workgate/ui/http/image_preview.py": {
-      "num_branches": 10,
-      "num_statements": 32,
-      "percent_covered": 76.190476
-    },
     "src/workgate/ui/http/live_state.py": {
       "num_branches": 24,
       "num_statements": 109,
@@ -1229,11 +1224,6 @@
       "num_branches": 0,
       "num_statements": 0,
       "percent_covered": 100.0
-    },
-    "src/workgate/utils/image_preview.py": {
-      "num_branches": 6,
-      "num_statements": 43,
-      "percent_covered": 89.795918
     },
     "src/workgate/utils/image_types.py": {
       "num_branches": 8,

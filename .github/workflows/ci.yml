@@ -208,7 +208,6 @@ jobs:
           test -f "$source_dir/scripts/validation/coverage-baseline.json"
           test -f "$source_dir/tests/test_coverage_gate.py"
           test -f "$source_dir/tests/test_tmux_helper.py"
-          test -f "$source_dir/src/workgate/helpers/README.md"
           test ! -e "$source_dir/.coverage"
           test ! -e "$source_dir/coverage.json"
           test ! -e "$source_dir/coverage.xml"

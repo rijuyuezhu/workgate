@@ -189,7 +189,6 @@ def test_settings_expose_platform_owned_namespaces() -> None:
 
     assert settings.config_dir == paths.config_dir
     assert settings.data_dir == paths.data_dir
-    assert settings.cache_dir == paths.cache_dir
 
 
 def test_data_dir_can_be_overridden_without_platform_specific_env(

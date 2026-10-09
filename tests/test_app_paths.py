@@ -12,7 +12,6 @@ def test_linux_paths_follow_absolute_xdg_roots(tmp_path: Path) -> None:
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
-        "XDG_CACHE_HOME": str(tmp_path / "cache"),
     }
 
     paths = resolve_app_paths(
@@ -25,7 +24,6 @@ def test_linux_paths_follow_absolute_xdg_roots(tmp_path: Path) -> None:
     assert paths.config_dir == tmp_path / "config" / "workgate"
     assert paths.state_dir == tmp_path / "state" / "workgate"
     assert paths.data_dir == tmp_path / "data" / "workgate"
-    assert paths.cache_dir == tmp_path / "cache" / "workgate"
 
 
 def test_linux_relative_xdg_roots_fall_back(tmp_path: Path) -> None:
@@ -35,7 +33,6 @@ def test_linux_relative_xdg_roots_fall_back(tmp_path: Path) -> None:
             "XDG_CONFIG_HOME": "relative-config",
             "XDG_STATE_HOME": "relative-state",
             "XDG_DATA_HOME": "relative-data",
-            "XDG_CACHE_HOME": "relative-cache",
             "XDG_RUNTIME_DIR": "relative-runtime",
         },
         home=home,
@@ -46,7 +43,6 @@ def test_linux_relative_xdg_roots_fall_back(tmp_path: Path) -> None:
     assert paths.config_dir == home / ".config" / "workgate"
     assert paths.state_dir == home / ".local" / "state" / "workgate"
     assert paths.data_dir == home / ".local" / "share" / "workgate"
-    assert paths.cache_dir == home / ".cache" / "workgate"
     assert paths.runtime_dir.parent == tmp_path / "tmp"
     assert paths.runtime_dir.name.startswith("workgate-")
 
@@ -148,10 +144,9 @@ def test_windows_uses_native_roaming_and_local_namespaces(
     assert paths.config_dir == roaming / "workgate" / "config"
     assert paths.state_dir == local / "workgate" / "state"
     assert paths.data_dir == local / "workgate" / "data"
-    assert paths.cache_dir == local / "workgate" / "cache"
     assert paths.runtime_dir.parent == tmp_path / "tmp" / "workgate"
     assert paths.runtime_dir.name.startswith("runtime-")
-    assert len({paths.state_dir, paths.data_dir, paths.cache_dir}) == 3
+    assert paths.state_dir != paths.data_dir
 
 
 def test_runtime_fallback_nonce_is_lazy_and_reused(

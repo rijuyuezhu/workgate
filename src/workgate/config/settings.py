@@ -320,11 +320,6 @@ class Settings(BaseSettings):
         return app_paths().config_dir
 
     @property
-    def cache_dir(self) -> Path:
-        """Platform-native Workgate regenerable-cache namespace."""
-        return app_paths().cache_dir
-
-    @property
     def runtime_dir(self) -> Path:
         """Private safely disposable Workgate runtime namespace."""
         return app_paths().runtime_dir

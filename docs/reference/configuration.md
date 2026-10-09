@@ -49,7 +49,6 @@ Linux defaults are:
 | config | `${XDG_CONFIG_HOME:-~/.config}/workgate` | control `config.yaml` and `agent/`; executor `executor/config.yaml` and `executor/agent/` |
 | state | `${XDG_STATE_HOME:-~/.local/state}/workgate` | control state; executor defaults to `executor-runtime/` |
 | data | `${XDG_DATA_HOME:-~/.local/share}/workgate` | control-owned persistent payload/data |
-| cache | `${XDG_CACHE_HOME:-~/.cache}/workgate` | regenerable native UI materialization |
 | runtime/temp | `$XDG_RUNTIME_DIR/workgate` when suitable, otherwise a private per-user temp root | disposable scratch files |
 
 Only absolute XDG base-directory values are honored. macOS and Windows use

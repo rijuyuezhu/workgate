@@ -36,11 +36,6 @@ from .common import (
 from .common import (
     json_error as _json_error,
 )
-from .image_preview import (
-    UiImagePreviewRequest,
-    image_preview_request,
-    terminal_image_fields,
-)
 
 UI_AUDIT_ENTRY_ID_MAX_BYTES = 512
 UI_AUDIT_FILTER_MAX_BYTES = 1_024
@@ -207,10 +202,7 @@ def _normalize_entry(node: str, value: Any) -> dict[str, Any]:
     return entry
 
 
-def _audit_view_image_detail(
-    entry: dict[str, Any],
-    preview_request: UiImagePreviewRequest | None = None,
-) -> dict[str, Any]:
+def _audit_view_image_detail(entry: dict[str, Any]) -> dict[str, Any]:
     """Replace inline image bytes with a bounded UI preview representation."""
     if str(entry.get("tool") or "") != "view_image":
         return entry
@@ -266,7 +258,6 @@ def _audit_view_image_detail(
             "bytes": len(raw),
             "mime_type": mime_type,
             "data_base64": base64.b64encode(raw).decode("ascii"),
-            **terminal_image_fields(raw, preview_request),
         }
     except (ValueError, OSError, binascii.Error) as exc:
         detail["image_preview_error"] = str(exc)
@@ -445,7 +436,6 @@ async def api_audit(request: Request) -> Response:
                 result["entry"] = await asyncio.to_thread(
                     _audit_view_image_detail,
                     entry,
-                    image_preview_request(request.query_params),
                 )
         return _json_ok(_payload(result, scope=scope))
     except HTTPException:
@@ -499,10 +489,7 @@ async def api_audit_detail(request: Request) -> Response:
                 include_full_payloads=True,
                 log_session_id=scoped_session_id,
             )
-        preview_request = image_preview_request(request.query_params)
-        entry = await asyncio.to_thread(
-            _audit_view_image_detail, entry, preview_request
-        )
+        entry = await asyncio.to_thread(_audit_view_image_detail, entry)
         return _json_ok(_payload({"entry": entry}, scope=scope))
     except HTTPException:
         raise

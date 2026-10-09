@@ -86,7 +86,6 @@ source-include = [
     "scripts/validation/coverage-baseline.json",
     "tests/test_coverage_gate.py",
     "tests/test_tmux_helper.py",
-    "src/workgate/helpers/README.md",
 ]
 source-exclude = [
     "/ui-terminal/node_modules",

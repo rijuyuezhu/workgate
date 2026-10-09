@@ -83,13 +83,6 @@ def main() -> int:
                 raise SystemExit(
                     f"missing universal release contract: {fragment}"
                 )
-    for source in (ci, release):
-        if re.search(
-            r"(?:build-platform-wheel:|platform-wheel:|python-wheel-\*)", source
-        ):
-            raise SystemExit(
-                "native TUI/platform wheel release machinery remains"
-            )
     print(
         "Release matrix: one universal Python wheel + sdist and five standalone binaries"
     )

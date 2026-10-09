@@ -303,28 +303,11 @@ Rejected ownership alternatives:
 
 ## `ui`: transport-neutral Human UI core
 
-The `ui` package owns Human UI view models, native-client runtime contracts, and
-UI-specific security behavior. UI core must not import control delivery adapters
+The `ui` package owns Human UI view models and UI-specific security behavior.
+UI core must not import control delivery adapters
 or HTTP route adapters. Control-side adapters may invoke UI core capabilities
 when serving the Human UI, but those capabilities remain internal rather than
 public tools.
-
-Rejected ownership alternatives:
-
-- top-level `dashboard.py`: the name exposes no package boundary and previously
-  mixed generic host sampling with UI projection.
-- `telemetry`: audit activity labels, alerts, health presentation, and redaction
-  choices are view-model policy rather than raw observations.
-- `control/http`: Dashboard projection and image decoding belong below the
-  delivery adapter because they are independent of query parameters and JSON
-  response construction.
-- top-level `image_preview.py`: a package-root file hid that thumbnail generation
-  is a Human UI rendering capability rather than a project-wide utility.
-- top-level `ui_security.py`: the old location obscured that the local-token
-  bypass is narrowly scoped Human UI policy, not a general authentication or
-  transport-security facility.
-- `oauth`: OAuth middleware consumes the UI trust decision, but credential
-  creation and loopback UI namespace rules must remain owned by the UI domain.
 
 ### `ui/static`: packaged browser assets
 

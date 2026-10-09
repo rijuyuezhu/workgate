@@ -690,19 +690,7 @@ def test_webui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):
     document.write_text("first\n", encoding="utf-8")
     client = _client(monkeypatch, workspace)
 
-    preview = client.get(
-        "/api/ui/files/preview",
-        params={
-            "path": "pixel.png",
-            "columns": 10,
-            "rows": 5,
-            "cell_aspect": 2,
-        },
-    )
-    invalid = client.get(
-        "/api/ui/files/preview",
-        params={"path": "pixel.png", "columns": 1, "rows": 5},
-    )
+    preview = client.get("/api/ui/files/preview", params={"path": "pixel.png"})
     content = client.get(
         "/api/ui/files/content", params={"path": "document.txt"}
     ).json()["data"]
@@ -732,13 +720,9 @@ def test_webui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):
     assert preview.status_code == 200
     data = preview.json()["data"]
     assert data["kind"] == "image"
-    rgba = base64.b64decode(data["rgba"])
-    assert data["width"] >= 1
-    assert data["height"] >= 1
-    assert len(rgba) == data["width"] * data["height"] * 4
-    assert data["cell_width"] >= 1
-    assert data["cell_height"] >= 1
-    assert invalid.status_code == 400
+    assert base64.b64decode(data["data_base64"]) == image_path.read_bytes()
+    assert "rgba" not in data
+    assert "cell_width" not in data
     assert saved.status_code == 200
     assert stale.status_code == 400
     assert "reload before saving" in stale.json()["message"]
