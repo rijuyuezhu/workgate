@@ -1498,7 +1498,7 @@ def test_real_supervisor_restarts_control_and_executor_independently(
     os.name == "nt",
     reason="real standalone owner-action process exit is exercised on POSIX",
 )
-def test_real_standalone_leaves_executor_offline_when_control_trust_is_lost(
+def test_real_standalone_requires_repair_after_complete_trust_reset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1523,7 +1523,15 @@ def test_real_standalone_leaves_executor_offline_when_control_trust_is_lost(
         cleanup_standalone_runtime_files(first)
 
     control_store = FileStateStore(lambda: first.child_config.control_state_dir)
-    control_store.remove(control_store.layout.control_executors_path)
+    # A missing primary alone is now recovered from the fenced backup. This
+    # scenario intentionally erases *all* trust authority, like a full reset.
+    primary = control_store.layout.control_executors_path
+    for path in (
+        primary,
+        primary.with_name(primary.name + ".bak"),
+        primary.with_name(primary.name + ".generation"),
+    ):
+        control_store.remove(path)
 
     second = prepare_standalone(settings)
     second_supervisor = StandaloneSupervisor(second)
