@@ -16,6 +16,7 @@ export function createFilesController({
     fileListGeneration: 0,
     filePreviewGeneration: 0,
     fileEditorPath: "",
+    fileEditorSha256: "",
     fileMutationBusy: false,
     fileExecutorStates: new Map(),
     fileMutations: {
@@ -153,6 +154,8 @@ export function createFilesController({
     elements.fileExecutor.disabled = busy;
     elements.filePath.disabled = busy;
     elements.fileRefresh.disabled = busy;
+    elements.fileEditorCancel.disabled = busy;
+    elements.fileEditorReload.disabled = busy;
     elements.fileShowHidden.disabled = busy;
     const goButton = elements.filePathForm.querySelector('button[type="submit"]');
     if (goButton) goButton.disabled = busy;
@@ -165,6 +168,7 @@ export function createFilesController({
 
   function clearFileEditor() {
     controllerState.fileEditorPath = "";
+    controllerState.fileEditorSha256 = "";
     elements.fileEditor.value = "";
     elements.fileEditorForm.hidden = true;
     elements.filePreviewBody.hidden = false;
@@ -416,6 +420,7 @@ export function createFilesController({
       const payload = await request(fileQuery("/files/content", entry.path));
       if (generation !== controllerState.filePreviewGeneration || controllerState.selectedFilePath !== entry.path) return;
       controllerState.fileEditorPath = entry.path;
+      controllerState.fileEditorSha256 = String(payload.file_sha256 || "");
       elements.fileEditor.value = text(payload.content, "");
       elements.filePreviewBody.hidden = true;
       elements.fileEditorForm.hidden = false;
@@ -588,9 +593,18 @@ export function createFilesController({
     if (entry) void previewFile(entry);
     else showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileExecutorId}.`);
   });
+  elements.fileEditorReload.addEventListener("click", () => {
+    if (controllerState.fileMutationBusy || !controllerState.fileEditorPath) return;
+    if (!globalThis.confirm("Reload file from disk? Your unsaved edits will be discarded.")) return;
+    void openFileEditor();
+  });
   elements.fileEditorForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!controllerState.fileEditorPath || !controllerState.fileMutations.write) return;
+    if (!controllerState.fileEditorPath || !controllerState.fileMutations.write || controllerState.fileMutationBusy) return;
+    if (!/^[0-9a-f]{64}$/.test(controllerState.fileEditorSha256)) {
+      elements.fileState.textContent = "File revision unavailable; reload before saving.";
+      return;
+    }
     const path = controllerState.fileEditorPath;
     const button = elements.fileEditorForm.querySelector('button[type="submit"]');
     button.disabled = true;
@@ -601,6 +615,7 @@ export function createFilesController({
         path,
         content: elements.fileEditor.value,
         overwrite: true,
+        expected_sha256: controllerState.fileEditorSha256,
       });
       controllerState.selectedFilePath = path;
       clearFileEditor();
@@ -609,7 +624,13 @@ export function createFilesController({
       if (entry) await previewFile(entry);
       elements.fileState.textContent = `Saved ${controllerState.fileExecutorId}:${path}`;
     } catch (error) {
-      elements.fileState.textContent = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("File changed; reload before saving")) {
+        elements.fileState.textContent = "File changed on disk; your edits are preserved.";
+        elements.filePreviewMeta.textContent = "Copy your edits before using Reload from disk to reconcile changes.";
+      } else {
+        elements.fileState.textContent = message;
+      }
     } finally {
       setFileMutationBusy(false);
       button.disabled = false;

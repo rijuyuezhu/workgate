@@ -32,6 +32,47 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "edited by Chromium\n"
     )
 
+    # A second writer changes the file after the browser editor opened it.
+    # The server must reject a stale save without losing either version.
+    page.locator("#file-edit").click()
+    expect(page.locator("#file-editor-form")).to_be_visible()
+    page.locator("#file-editor").fill("unsaved Chromium draft\n")
+    harness.executor_workspace.joinpath("notes.txt").write_text(
+        "external update\n", encoding="utf-8"
+    )
+    page.locator("#file-editor-form").get_by_role(
+        "button", name="Save file"
+    ).click()
+    expect(page.locator("#file-state")).to_contain_text(
+        "File changed on disk; your edits are preserved."
+    )
+    expect(page.locator("#file-editor-form")).to_be_visible()
+    expect(page.locator("#file-editor")).to_have_value(
+        "unsaved Chromium draft\n"
+    )
+    assert harness.executor_workspace.joinpath("notes.txt").read_text() == (
+        "external update\n"
+    )
+
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    page.locator("#file-editor-reload").click()
+    expect(page.locator("#file-editor")).to_have_value(
+        "unsaved Chromium draft\n"
+    )
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#file-editor-reload").click()
+    expect(page.locator("#file-editor")).to_have_value("external update\n")
+    page.locator("#file-editor").fill("edited by Chromium\n")
+    page.locator("#file-editor-form").get_by_role(
+        "button", name="Save file"
+    ).click()
+    expect(page.locator("#file-state")).to_contain_text(
+        f"Saved {harness.executor_id}:notes.txt"
+    )
+    assert harness.executor_workspace.joinpath("notes.txt").read_text() == (
+        "edited by Chromium\n"
+    )
+
     delayed = False
 
     def delay_stale_preview(route: Route) -> None:
