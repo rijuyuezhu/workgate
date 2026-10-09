@@ -1,4 +1,4 @@
-"""Lifecycle ownership for control-side Human UI live connection state."""
+"""Lifecycle ownership for control-side WebUI live connection state."""
 
 import asyncio
 import itertools
@@ -10,7 +10,7 @@ from typing import Any
 
 
 class UiTerminalConnectionRegistry:
-    """Own active Human UI terminal connection admission for one control runtime."""
+    """Own active WebUI terminal connection admission for one control runtime."""
 
     def __init__(self) -> None:
         self._connection_ids = itertools.count(1)
@@ -22,13 +22,11 @@ class UiTerminalConnectionRegistry:
     async def start(self) -> None:
         """Bind active connection tasks to the control runtime's owning event loop."""
         if self._closed:
-            raise RuntimeError(
-                "Human UI terminal connection registry is closed"
-            )
+            raise RuntimeError("WebUI terminal connection registry is closed")
         loop = asyncio.get_running_loop()
         if self._loop is not None and self._loop is not loop:
             raise RuntimeError(
-                "Human UI terminal connection registry cannot span event loops"
+                "WebUI terminal connection registry cannot span event loops"
             )
         self._loop = loop
 
@@ -49,7 +47,7 @@ class UiTerminalConnectionRegistry:
                 and self._loop is not loop
             ):
                 raise RuntimeError(
-                    "Human UI terminal connection registry cannot span event loops"
+                    "WebUI terminal connection registry cannot span event loops"
                 )
             marker = next(self._connection_ids)
             self._active[marker] = task
@@ -74,7 +72,7 @@ class UiTerminalConnectionRegistry:
         loop = asyncio.get_running_loop()
         if self._loop is not None and self._loop is not loop:
             raise RuntimeError(
-                "Human UI terminal connection registry must close on its owning event loop"
+                "WebUI terminal connection registry must close on its owning event loop"
             )
         self.stop_admission()
         current = asyncio.current_task()
@@ -98,7 +96,7 @@ class UiTerminalConnectionRegistry:
 
 @dataclass
 class HumanUiRuntime:
-    """Own control-side Human UI connection admission state."""
+    """Own control-side WebUI connection admission state."""
 
     terminal_connections: UiTerminalConnectionRegistry
     _closed: bool = field(default=False, init=False, repr=False)
@@ -115,7 +113,7 @@ class HumanUiRuntime:
             raise
 
     def stop_admission(self) -> None:
-        """Stop Human UI connections from accepting new work."""
+        """Stop WebUI connections from accepting new work."""
         self.terminal_connections.stop_admission()
 
     async def aclose(self) -> None:
@@ -126,7 +124,7 @@ class HumanUiRuntime:
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncGenerator[HumanUiRuntime]:
-        """Run one explicit Human UI live-state ownership scope."""
+        """Run one explicit WebUI live-state ownership scope."""
         try:
             await self.start()
             yield self
@@ -135,5 +133,5 @@ class HumanUiRuntime:
 
 
 def build_human_ui_runtime() -> HumanUiRuntime:
-    """Construct fresh control-side Human UI live state."""
+    """Construct fresh control-side WebUI live state."""
     return HumanUiRuntime(terminal_connections=UiTerminalConnectionRegistry())

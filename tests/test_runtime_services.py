@@ -184,12 +184,12 @@ async def test_control_human_ui_start_failure_rolls_back_control_dependencies(
     )
 
     async def fail_ui_start() -> None:
-        raise RuntimeError("Human UI start failed")
+        raise RuntimeError("WebUI start failed")
 
     monkeypatch.setattr(runtime.human_ui_runtime, "start", fail_ui_start)
     try:
         with use_state_store(outer_state_store), use_oauth_state(outer_oauth):
-            with pytest.raises(RuntimeError, match="Human UI start failed"):
+            with pytest.raises(RuntimeError, match="WebUI start failed"):
                 await runtime.start()
             assert get_state_store() is outer_state_store
             assert oauth_state() is outer_oauth

@@ -12,7 +12,7 @@ _PACKAGE_ROOT = _PROJECT_ROOT / "src" / "workgate"
 _PACKAGE_NAME = "workgate"
 
 # `main` composes only domain CLI registrars. Each HTTP-capable control adapter consumes
-# exactly one shared Human UI route-composition contract.
+# exactly one shared WebUI route-composition contract.
 _ALLOWED_HTTP_CONTROL_UI_IMPORTS = frozenset(
     {
         (

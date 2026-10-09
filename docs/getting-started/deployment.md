@@ -2,7 +2,7 @@
 
 Workgate has two runtime roles:
 
-- **control** exposes MCP, OAuth, the Human UI, pairing, and orchestration;
+- **control** exposes MCP, OAuth, the WebUI, pairing, and orchestration;
 - **executor** owns working directories, files, shells, processes, PTYs, and machine-local integrations.
 
 Choose where those roles run. The protocol and trust model stay the same.

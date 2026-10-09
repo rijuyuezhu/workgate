@@ -1,4 +1,4 @@
-"""Authenticated Human UI Files adapter over final executor RPC."""
+"""Authenticated WebUI Files adapter over final executor RPC."""
 
 from typing import Any, cast
 
@@ -56,7 +56,7 @@ def _require_file_scopes(*, write: bool = False) -> None:
 def _runtime(request: Request) -> Any:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI Files requires the control runtime")
+        raise RuntimeError("WebUI Files requires the control runtime")
     return runtime
 
 
@@ -64,7 +64,7 @@ def _payload(
     value: JsonValue, executor_id: str, *, include_executor: bool = False
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise RuntimeError("executor returned malformed Human UI Files payload")
+        raise RuntimeError("executor returned malformed WebUI Files payload")
     payload = cast(dict[str, Any], dict(value))
     if include_executor:
         payload.setdefault("executor_id", executor_id)
@@ -88,7 +88,7 @@ async def _call(
 
 
 async def api_files(request: Request) -> Response:
-    """List one bounded executor filesystem directory for the Human UI."""
+    """List one bounded executor filesystem directory for the WebUI."""
     try:
         executor_id = _executor_id_arg(request.query_params.get("executor_id"))
         _require_file_scopes()

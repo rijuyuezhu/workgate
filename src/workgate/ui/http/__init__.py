@@ -1,1 +1,1 @@
-"""Human UI HTTP and WebSocket adapters."""
+"""WebUI HTTP and WebSocket adapters."""

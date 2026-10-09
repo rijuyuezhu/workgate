@@ -8,7 +8,7 @@ trust, session, and failure contracts live in
 ## Dependency direction
 
 The application structure separates process entry points, control delivery
-adapters, shared HTTP infrastructure, Human UI behavior, transport-neutral
+adapters, shared HTTP infrastructure, WebUI behavior, transport-neutral
 operations, and domain services:
 
 ```text
@@ -26,8 +26,8 @@ workgate/
     ...                    files/search/shell/integration implementations
   http/                    transport-neutral ASGI and HTTP infrastructure
   ui/
-    ...                    transport-neutral Human UI core and runtimes
-    http/                  Human UI HTTP adapters and routes
+    ...                    transport-neutral WebUI core and runtimes
+    http/                  WebUI HTTP adapters and routes
   tools/                   public tool contracts, metadata, and registration
   jobs/                    process-neutral/control-managed job mechanisms
   schemas/                 shared cross-domain contracts
@@ -41,7 +41,7 @@ process composition owner and all machine-authoritative session, filesystem,
 shell/job, PTY, and local-integration implementations live under `executor`.
 The standalone supervisor may compose process lifecycle and private launcher
 material, but it is not a third authority and must not import control/executor
-machine implementations to perform work. Human UI delivery adapters live in `ui/http`, and transport-neutral ASGI
+machine implementations to perform work. WebUI delivery adapters live in `ui/http`, and transport-neutral ASGI
 infrastructure lives in `http`. The obsolete `executors` and `server` packages
 have been removed and must not be restored.
 
@@ -58,7 +58,7 @@ General rules:
   routing, shared HTTP infrastructure, control-owned integrations, and UI route
   contributions. They must not import executor implementation modules or read
   executor filesystem state or machine-local command/configuration details.
-- `http` must not import control delivery adapters or Human UI implementations.
+- `http` must not import control delivery adapters or WebUI implementations.
 - UI core must not import control delivery adapters. `ui/http` may depend on UI
   core and explicit control-side adapter seams.
 - `tools`, `jobs`, and `agent_bridge` are shared mechanism/contract layers.
@@ -120,7 +120,7 @@ adapter.
 trust/revocation and control session binding/lifecycle facts before live actors
 start; executor bearer plaintext and presence are not part of that registry.
 Approved OAuth clients use that same store, while authorization codes remain in
-the process-local `OAuthState`. Human UI connection/session registries and other
+the process-local `OAuthState`. WebUI connection/session registries and other
 ordinary live coordination are likewise rebuilt empty after control restart;
 this persistence seam is intentionally not a command database or workflow log.
 
@@ -165,7 +165,7 @@ policy. It converts transport-neutral tool registries and shared services into a
 FastMCP server, then runs that server over stdio or wraps the MCP SDK's ASGI app
 for HTTP delivery. The HTTP wrapper installs the same `ui/http` routes used by
 the REST control adapter before the catch-all MCP mount. The browser shell and assets
-remain public, while Human UI APIs retain their OAuth and session access checks.
+remain public, while WebUI APIs retain their OAuth and session access checks.
 
 Allowed dependencies include tools, operations, OAuth adapters, remote route
 contributions, the shared `ui/http/routes.py` route contract, delivery-adapter-neutral
@@ -176,7 +176,7 @@ selects and invokes it after argparse dispatch; `main.py` imports only that regi
 Rejected ownership alternatives:
 
 - `server/mcp`: “server” obscures that this is one selectable control adapter beside
-  REST/tool HTTP delivery and Human UI delivery.
+  REST/tool HTTP delivery and WebUI delivery.
 - `http`: stdio execution, FastMCP registration, MCP sessions, and MCP tool
   wrappers are MCP delivery-adapter concerns, not shared HTTP infrastructure.
 - `tools`: tool declarations are transport-neutral; FastMCP registration and
@@ -196,21 +196,21 @@ composition contract. Lower-level packages must not import this control adapter.
 
 Rejected ownership alternatives:
 
-- `server/http`: “server” conflates executable REST composition with Human UI
+- `server/http`: “server” conflates executable REST composition with WebUI
   delivery and shared HTTP infrastructure.
 - top-level `http`: generic request limits, health, and download response
   mechanics are shared; REST tool registration and error envelopes are not.
 - `tools`: REST route generation consumes transport-neutral tool registries;
   putting it in `tools` would make the domain layer own a specific delivery adapter.
 - `ui/http`: the REST control adapter consumes UI route contributions, but it also runs
-  correctly without Human UI and owns all non-UI REST tool behavior.
+  correctly without WebUI and owns all non-UI REST tool behavior.
 
 ## `http`: delivery-adapter-neutral HTTP infrastructure
 
 The `http` package contains ASGI and HTTP behavior needed by more than one control
 delivery adapter. It does not decide which adapter runs and does not own REST tools,
 MCP protocol behavior, OAuth business rules, executor business logic, or
-Human UI workflows.
+WebUI workflows.
 
 Allowed dependencies include configuration contracts, audit recording,
 transport-neutral operations, version reporting, and Starlette ASGI types.
@@ -301,12 +301,12 @@ Rejected ownership alternatives:
 - `ops`: collecting observations is a capability, not a user-triggered tool use
   case or command workflow.
 
-## `ui`: transport-neutral Human UI core
+## `ui`: transport-neutral WebUI core
 
-The `ui` package owns Human UI view models and UI-specific security behavior.
+The `ui` package owns WebUI view models and UI-specific security behavior.
 UI core must not import control delivery adapters
 or HTTP route adapters. Control-side adapters may invoke UI core capabilities
-when serving the Human UI, but those capabilities remain internal rather than
+when serving the WebUI, but those capabilities remain internal rather than
 public tools.
 
 ### `ui/static`: packaged browser assets
@@ -317,7 +317,7 @@ license, syntax-highlighting, and terminal-rendering assets served by
 ownership explicit while preserving their package-data role; they contain no
 Python modules and are not imported by executor machine-runtime logic.
 
-The directory contains exactly the browser shell (`index.html`), Human UI styles
+The directory contains exactly the browser shell (`index.html`), WebUI styles
 (`web.css`), the bootstrap controller (`web.js`), feature modules such as
 `dashboard.js`, `executors.js`, `audit.js`, `tasks.js`, `terminal.js`,
 and `files.js`, plus `audit_view.js`, `syntax_highlight.js`, the vendored xterm bundle and stylesheet, and their
@@ -336,13 +336,13 @@ that is not scoped to one session.
 Rejected ownership alternatives:
 
 - top-level `ui_static`: the name exposed package mechanics without expressing
-  that these files belong exclusively to the Human UI product surface.
+  that these files belong exclusively to the WebUI product surface.
 - `ui/http/static`: HTTP adapters serve the files, but the same assets are UI
   product resources packaged independently of any specific control delivery adapter.
 - `control/http`: the REST control adapter composes routes and middleware; it must not
   own browser presentation resources.
 
-### `ui/http`: Human UI delivery adapters
+### `ui/http`: WebUI delivery adapters
 
 The `ui/http` package owns Starlette request parsing, authorization checks,
 response normalization, route composition, and WebSocket delivery for the Human
@@ -356,16 +356,16 @@ Rejected ownership alternatives:
 - `server/http`: that path mixed one product surface with a generic “server”
   namespace and obscured the separation between MCP and REST control adapters.
 - `control/http`: the REST control adapter assembles middleware and route contributions;
-  it should not own Human UI feature adapters or static assets.
+  it should not own WebUI feature adapters or static assets.
 - transport-neutral `ui` core modules: Starlette requests, responses, scopes, and
   WebSockets are delivery details and must not leak into reusable UI contracts.
-- `utils`: validation and normalization here implement the Human UI HTTP schema,
+- `utils`: validation and normalization here implement the WebUI HTTP schema,
   not generally reusable primitives.
 
 ## `executor/terminal`: interactive terminal backends and lifecycle
 
 The `executor/terminal` package owns terminal-emulation backends and the bounded lifecycle
-operations used by executor shell tools and Human UI terminal adapters. It
+operations used by executor shell tools and WebUI terminal adapters. It
 may depend on configuration, audit, schemas, and low-level operation helpers, but
 it must not depend on control delivery adapters, HTTP route adapters, or UI presentation.
 
@@ -378,7 +378,7 @@ Rejected ownership alternatives:
   stream lifecycles rather than reusable stateless helpers.
 - public tool registries: shell declarations select an operation but should not
   own backend implementations or terminal lifecycle state.
-- `ui/http`: Human UI adapters consume terminal bridges, but executor terminal
+- `ui/http`: WebUI adapters consume terminal bridges, but executor terminal
   lifetime remains below HTTP delivery.
 
 ## `audit`: bounded event persistence and query
@@ -390,7 +390,7 @@ history for query/detail and payload references. Session-local append logs
 remain convenience copies; session/task history queries filter the canonical
 global authority, including ended sessions. Audit may consume configuration,
 persistence primitives, execution-session identity, and the payload store; it
-must not depend on control delivery adapters, HTTP route adapters, Human UI
+must not depend on control delivery adapters, HTTP route adapters, WebUI
 presentation, or terminal implementations.
 
 Rejected ownership alternatives:
@@ -454,7 +454,7 @@ Accepted decompositions preserve stable facades rather than moving code by size 
 
 - `jobs/runtime.py` composes dedicated lifecycle, shell, managed, persistence,
   recovery, state, and runner modules while preserving the durable job format.
-- Human UI terminal resource operations live in `terminals.py`, with bounded
+- WebUI terminal resource operations live in `terminals.py`, with bounded
   response normalization in `terminal_protocol.py`. Interactive terminal bytes and
   resize/input control use only the control StreamHub and executor-initiated outbound
   terminal stream; there is no snapshot WebSocket fallback through ordinary RPC.

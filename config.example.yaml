@@ -15,18 +15,15 @@ log_level: "warning"
 # Comma-separated proxy addresses/networks trusted for forwarded HTTP headers.
 forwarded_allow_ips: "127.0.0.1"
 
-# Human interface.
-# Mount the browser Human UI and its authenticated API on the HTTP server.
+# WebUI.
+# Mount the browser WebUI and its authenticated API on the HTTP server.
 ui_enabled: true
-# Non-root URL path where the browser Human UI is mounted.
+# Non-root URL path where the browser WebUI is mounted.
 ui_path: "/ui"
-# Idle timeout for authenticated Human UI terminal WebSockets; 0 disables idle expiry.
+# Idle timeout for authenticated WebUI terminal WebSockets; 0 disables idle expiry.
 ui_terminal_idle_timeout_s: 3600
-# Maximum concurrent Human UI terminal WebSocket connections.
+# Maximum concurrent WebUI terminal WebSocket connections.
 ui_terminal_max_connections: 8
-# Browser Human UI background treatment; no external network image is fetched.
-# Choices: aurora, grid, none.
-ui_wallpaper: "aurora"
 
 # Paths and state.
 # Default executor working directory; missing defaults fall back to the filesystem root.

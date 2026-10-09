@@ -22,7 +22,7 @@ workgate executor --help
 |---|---|
 | `mcp` | Serve MCP over HTTP at `/mcp`. This is the default public connector mode. |
 | `stdio` | Run a stdio MCP control process for local MCP clients. |
-| `http` | Start the REST/debug and Human UI HTTP service. |
+| `http` | Start the REST/debug and WebUI HTTP service. |
 | `both` | Reserved and exits with an error. Run separate processes if both transports are needed. |
 
 The control CLI intentionally does **not** expose executor machine

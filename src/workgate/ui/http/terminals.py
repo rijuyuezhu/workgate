@@ -1,4 +1,4 @@
-"""Authenticated Human UI terminal adapter over final executor RPC."""
+"""Authenticated WebUI terminal adapter over final executor RPC."""
 
 from typing import Any
 
@@ -65,7 +65,7 @@ def _require_terminal_scopes(*, execute: bool = False) -> None:
 def _runtime(source: Request) -> Any:
     runtime = getattr(source.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI terminals require the control runtime")
+        raise RuntimeError("WebUI terminals require the control runtime")
     return runtime
 
 

@@ -200,7 +200,7 @@ class ShellService:
         return tuple(shells), jobs
 
     async def list_all(self) -> ListPersistentShellsOutput:
-        """List executor-local Human UI shells without private job runners."""
+        """List executor-local WebUI shells without private job runners."""
         output = await list_persistent_shells_execute(self.config, self.store)
         reserved = self.jobs.reserved_shell_ids()
         return ListPersistentShellsOutput(
@@ -262,7 +262,7 @@ class ShellService:
         return stopped
 
     async def start_unowned(self, args: dict[str, Any]) -> Any:
-        """Start an executor-local Human UI shell without public session ownership."""
+        """Start an executor-local WebUI shell without public session ownership."""
         return await start_persistent_shell_execute(
             self.config,
             self.store,

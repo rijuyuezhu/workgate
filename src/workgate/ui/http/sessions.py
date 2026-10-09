@@ -1,4 +1,4 @@
-"""Human UI projection and actions for retained execution sessions."""
+"""WebUI projection and actions for retained execution sessions."""
 
 import asyncio
 from typing import Any
@@ -51,7 +51,7 @@ def _final_session_payload(
 def _control_runtime(request: Request) -> Any:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI Sessions requires the control runtime")
+        raise RuntimeError("WebUI Sessions requires the control runtime")
     return runtime
 
 

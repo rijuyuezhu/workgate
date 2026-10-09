@@ -313,15 +313,13 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             "action": "report",
             "task_id": task_id,
             "objective": "Browser durable task",
-            "summary": "Visible in the Human UI",
+            "summary": "Visible in the WebUI",
         },
     )
     assert reported["status"] == 200
     page.locator("#todo-refresh").click()
     expect(page.locator("#task-objective")).to_have_text("Browser durable task")
-    expect(page.locator("#task-summary")).to_have_text(
-        "Visible in the Human UI"
-    )
+    expect(page.locator("#task-summary")).to_have_text("Visible in the WebUI")
 
     completed = harness.api(
         "POST",
@@ -587,7 +585,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     task_workspace_bottom = (
         task_workspace_box["y"] + task_workspace_box["height"]
     )
-    assert abs(task_list_bottom - task_workspace_bottom) < 1
+    assert abs(task_list_bottom - task_workspace_bottom) < 1, (
+        task_list_box,
+        task_workspace_box,
+    )
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel").nth(0)
     ).to_contain_text("Call request")

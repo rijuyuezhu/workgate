@@ -1,7 +1,7 @@
 """Connection-scoped raw PTY bridges for persistent shells.
 
 The public persistent-shell tools intentionally remain snapshot based. This
-module is an internal Human UI transport. POSIX bridges start a short-lived
+module is an internal WebUI transport. POSIX bridges start a short-lived
 ``tmux attach-session`` client; Windows bridges subscribe to the existing
 ConPTY session's shared reader. Closing either bridge removes only the raw
 client and preserves the underlying persistent shell.

@@ -22,7 +22,7 @@ After connecting an MCP client, start an execution session and ask it to:
 - keep long-running jobs or persistent terminals;
 - copy data between sessions on the same or different executors;
 - keep durable task objectives, progress reports, findings, blockers, and structured plans across control/executor restarts;
-- review task/plan state and Audit history in the Human UI;
+- review task/plan state and Audit history in the WebUI;
 - use configured Skills or upstream MCP servers.
 
 See [Common workflows](guides/common-workflows.md) for examples and the
@@ -30,7 +30,7 @@ generated [Tool reference](reference/tools.md) for exact tool contracts.
 
 The browser interface is available at `/ui`; an optional terminal client
 provides the same main management areas. See
-[Human interface](guides/human-interface.md).
+[WebUI](guides/webui.md).
 
 !!! warning
     An executor can access any filesystem location permitted to its OS account.

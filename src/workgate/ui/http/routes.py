@@ -1,4 +1,4 @@
-"""Browser Human UI routes backed by the control service."""
+"""Browser WebUI routes backed by the control service."""
 
 import hashlib
 import html
@@ -51,7 +51,7 @@ from .todos import api_todos
 
 
 def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    """Return the stable Human UI success envelope."""
+    """Return the stable WebUI success envelope."""
     return JSONResponse({"ok": True, "message": message, "data": data})
 
 
@@ -91,8 +91,8 @@ def _ui_index_html(settings: ControlConfig, origin: str) -> str:
     if not path.is_file():
         return (
             '<!doctype html><html><head><meta charset="utf-8">'
-            "<title>Workgate Human UI</title></head>"
-            "<body><h1>Human UI assets are not installed</h1></body></html>"
+            "<title>Workgate WebUI</title></head>"
+            "<body><h1>WebUI assets are not installed</h1></body></html>"
         )
     oauth = None
     if settings.auth_mode == "oauth":
@@ -115,7 +115,6 @@ def _ui_index_html(settings: ControlConfig, origin: str) -> str:
                 "assetRevision": asset_revision,
                 "apiPrefix": UI_API_PREFIX,
                 "authMode": settings.auth_mode,
-                "wallpaper": settings.ui_wallpaper,
                 "csrfCookieName": ui_csrf_cookie_name(origin),
                 "csrfHeaderName": UI_CSRF_HEADER,
                 "sessionBindingHeaderName": UI_SESSION_BINDING_HEADER,
@@ -157,7 +156,7 @@ async def ui_index(request: Request) -> Response:
     try:
         origin = ui_request_origin(request)
     except UnicodeError, ValueError:
-        return Response("Invalid Human UI request origin", status_code=400)
+        return Response("Invalid WebUI request origin", status_code=400)
     return HTMLResponse(
         _ui_index_html(settings, origin),
         headers=_index_headers(),
@@ -191,12 +190,12 @@ async def ui_asset(request: Request) -> Response:
 def _control_runtime(request: Request) -> Any:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI requires the control runtime")
+        raise RuntimeError("WebUI requires the control runtime")
     return runtime
 
 
 async def _executor_targets(request: Request) -> dict[str, Any]:
-    """Return trusted executor targets used by Human UI machine-facing views."""
+    """Return trusted executor targets used by WebUI machine-facing views."""
     runtime = _control_runtime(request)
     records = sorted(
         (
@@ -270,7 +269,6 @@ async def api_bootstrap(request: Request) -> Response:
                     "file_preview": True,
                     "syntax_highlighting": True,
                     "audit_image_preview": True,
-                    "wallpaper": settings.ui_wallpaper,
                     "file_editor": True,
                     "file_upload": True,
                     "file_mkdir": True,
@@ -291,7 +289,7 @@ async def api_bootstrap(request: Request) -> Response:
 def human_ui_routes(
     settings: ControlConfig,
 ) -> tuple[list[BaseRoute], list[BaseRoute]]:
-    """Return all Human UI routes and the subset that must remain public."""
+    """Return all WebUI routes and the subset that must remain public."""
     if not settings.ui_enabled:
         return [], []
     ui_path = settings.ui_path

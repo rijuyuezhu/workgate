@@ -1,4 +1,4 @@
-"""Authenticated Human UI APIs for control-owned Audit records."""
+"""Authenticated WebUI APIs for control-owned Audit records."""
 
 import asyncio
 import base64

@@ -1,4 +1,4 @@
-"""Authenticated Human UI API for executor Dashboard telemetry."""
+"""Authenticated WebUI API for executor Dashboard telemetry."""
 
 import math
 from typing import Any
@@ -281,7 +281,7 @@ def _normalize_snapshot(executor_id: str, value: Any) -> dict[str, Any]:
 async def _snapshot(request: Request, executor_id: str) -> dict[str, Any]:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI Dashboard requires the control runtime")
+        raise RuntimeError("WebUI Dashboard requires the control runtime")
     resolved_executor_id, value = await call_ui_executor(
         runtime,
         executor_id,

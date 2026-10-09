@@ -89,7 +89,7 @@ class ControlStreamHub:
                 None if self._reserve_slot is None else self._reserve_slot()
             )
             if self._reserve_slot is not None and admission_marker is None:
-                raise RuntimeError("Too many Human UI terminal connections")
+                raise RuntimeError("Too many WebUI terminal connections")
             while True:
                 stream_id = "stream_" + secrets.token_urlsafe(_STREAM_ID_BYTES)
                 if stream_id not in self._streams:

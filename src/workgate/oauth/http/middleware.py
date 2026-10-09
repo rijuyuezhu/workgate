@@ -59,13 +59,13 @@ class AuthMiddleware:
                 claims = ui_session_claims(request)
             except jwt.PyJWTError:
                 response = JSONResponse(
-                    {"detail": "Invalid Human UI session"}, status_code=401
+                    {"detail": "Invalid WebUI session"}, status_code=401
                 )
                 await response(scope, receive, send)
                 return
             if claims is not None and not has_valid_ui_csrf(request, claims):
                 response = JSONResponse(
-                    {"detail": "Human UI CSRF validation failed"},
+                    {"detail": "WebUI CSRF validation failed"},
                     status_code=403,
                 )
                 await response(scope, receive, send)

@@ -247,7 +247,7 @@ async def test_stream_hub_shares_human_ui_terminal_admission() -> None:
     )
 
     with pytest.raises(
-        RuntimeError, match="Too many Human UI terminal connections"
+        RuntimeError, match="Too many WebUI terminal connections"
     ):
         await hub.create("exec-1")
 

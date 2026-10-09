@@ -1,4 +1,4 @@
-"""Narrow control-side routing for Human UI operations owned by executors."""
+"""Narrow control-side routing for WebUI operations owned by executors."""
 
 from typing import Any, cast
 
@@ -11,7 +11,7 @@ from .runtime_types import ControlRuntimeLike
 async def resolve_ui_executor(
     runtime: ControlRuntimeLike, executor_id: str | None
 ) -> str:
-    """Resolve an explicit or uniquely eligible executor for a Human UI call."""
+    """Resolve an explicit or uniquely eligible executor for a WebUI call."""
     return await runtime.session_coordinator.select_executor(executor_id)
 
 

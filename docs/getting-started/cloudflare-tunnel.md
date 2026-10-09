@@ -110,7 +110,7 @@ https://mcp.example.com/mcp
 ```
 
 Pair executors against `https://mcp.example.com`; executor traffic, MCP, OAuth,
-and the Human UI all use the same control origin.
+and the WebUI all use the same control origin.
 
 ## Common mistakes
 

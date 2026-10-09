@@ -25,10 +25,6 @@ void (async () => {
   ]);
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
   const oauth = config.oauth && typeof config.oauth === "object" ? config.oauth : null;
-  const wallpaper = ["aurora", "grid", "none"].includes(String(config.wallpaper || ""))
-    ? String(config.wallpaper)
-    : "aurora";
-  document.body.dataset.wallpaper = wallpaper;
   const legacyTokenStorageKey = "workgate-ui-access-token";
   const pendingStorageKey = "workgate-ui-oauth-pending";
   const pendingMaxAgeMs = 10 * 60 * 1000;
@@ -105,6 +101,7 @@ void (async () => {
     appNavItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
     pageDescription: document.getElementById("page-description"),
+    pageLocation: document.getElementById("page-location"),
     pageTitle: document.getElementById("page-title"),
     dashboardActivity: document.getElementById("dashboard-activity"),
     dashboardAlertCount: document.getElementById("dashboard-alert-count"),
@@ -429,6 +426,7 @@ void (async () => {
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
     elements.pageDescription.textContent = definition.description;
+    elements.pageLocation.textContent = definition.title;
     document.title = `${definition.title} · Workgate`;
 
     for (const item of elements.appNavItems) {
@@ -907,7 +905,7 @@ void (async () => {
       });
       const result = await responsePayload(response);
       if (!response.ok || !result.ok) {
-        throw new Error(result.message || result.detail || "Unable to establish Human UI session.");
+        throw new Error(result.message || result.detail || "Unable to establish WebUI session.");
       }
       announceSessionEstablished();
       elements.tokenInput.value = "";

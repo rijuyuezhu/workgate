@@ -1,4 +1,4 @@
-"""Task-first Human UI inventory over canonical task and session state."""
+"""Task-first WebUI inventory over canonical task and session state."""
 
 from typing import Any
 
@@ -26,7 +26,7 @@ def _require_scopes() -> None:
 def _runtime(request: Request) -> Any:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI Tasks requires the control runtime")
+        raise RuntimeError("WebUI Tasks requires the control runtime")
     return runtime
 
 

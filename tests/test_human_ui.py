@@ -100,7 +100,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     index = client.get("/ui")
     assert index.status_code == 200
     assert 'class="app-shell"' in index.text
-    assert 'class="app-sidebar"' in index.text
+    assert "<title>Workgate WebUI</title>" in index.text
+    assert 'class="topbar"' in index.text
+    assert 'id="page-location"' in index.text
+    assert 'data-view="console"' not in index.text
+    assert 'class="sidebar"' in index.text
     assert 'data-view="overview"' in index.text
     assert 'data-view="tasks"' in index.text
     assert 'data-view="audit"' in index.text
@@ -132,7 +136,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="file-move"' in index.text
     assert 'id="file-rename"' in index.text
     assert "Migration status" not in index.text
-    assert "Human UI foundation active" not in index.text
+    assert "WebUI foundation active" not in index.text
     assert "__WORKGATE_UI_PATH__" not in index.text
     assert "__WORKGATE_UI_ASSET_REV__" not in index.text
     asset_revision = re.search(r"assets/web\.js\?v=([0-9a-f]{16})", index.text)
@@ -475,7 +479,7 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
         },
     )
     assert invalid_session.status_code == 401
-    assert invalid_session.json()["detail"] == "Invalid Human UI session"
+    assert invalid_session.json()["detail"] == "Invalid WebUI session"
 
     callback = f"{browser_origin}/ui/callback"
     registration = client.post(
@@ -594,7 +598,7 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
         },
     )
     assert csrf_rejected.status_code == 403
-    assert csrf_rejected.json()["detail"] == "Human UI CSRF validation failed"
+    assert csrf_rejected.json()["detail"] == "WebUI CSRF validation failed"
 
     unrelated = client.get("/tools/list_persistent_shells")
     assert unrelated.status_code == 401
@@ -803,11 +807,11 @@ def test_malformed_ui_host_cannot_establish_cookie_authentication(
             "query_string": b"",
         }
     )
-    with pytest.raises(ValueError, match="Invalid Human UI request host"):
+    with pytest.raises(ValueError, match="Invalid WebUI request host"):
         ui_request_origin(request)
     assert not has_valid_ui_origin(request)
     with pytest.raises(
-        jwt.InvalidTokenError, match="Invalid Human UI request origin"
+        jwt.InvalidTokenError, match="Invalid WebUI request origin"
     ):
         ui_session_claims(request)
     assert not has_valid_ui_csrf(request, {})
@@ -903,9 +907,7 @@ def test_existing_bearer_can_be_converted_without_exposing_it_to_storage(
         headers={"Origin": base_url, "Authorization": f"Bearer {token}"},
     )
     assert missing_binding.status_code == 400
-    assert (
-        missing_binding.json()["detail"] == "Invalid Human UI session binding"
-    )
+    assert missing_binding.json()["detail"] == "Invalid WebUI session binding"
 
     converted = client.post(
         "/api/ui/session/token",
@@ -969,7 +971,6 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
     assert match is not None
     runtime = json.loads(html.unescape(match.group(1)))
     assert runtime["oauth"] is None
-    assert runtime["wallpaper"] == "aurora"
 
     payload = client.get("/api/ui/bootstrap").json()["data"]
     assert payload["ui"] == {
@@ -984,7 +985,6 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
             "file_preview": True,
             "syntax_highlighting": True,
             "audit_image_preview": True,
-            "wallpaper": "aurora",
             "file_editor": True,
             "file_upload": True,
             "file_mkdir": True,

@@ -68,7 +68,7 @@ Use `journalctl -u workgate-control` for service logs.
 
 ## 3. Add public HTTPS
 
-The same public origin serves MCP/OAuth, the Human UI, executor traffic,
+The same public origin serves MCP/OAuth, the WebUI, executor traffic,
 downloads, and terminal WebSockets.
 
 ### Caddy
@@ -121,7 +121,7 @@ After TLS is live:
 curl --fail https://control.example.com/healthz
 ```
 
-The MCP endpoint is `https://control.example.com/mcp`; the Human UI is
+The MCP endpoint is `https://control.example.com/mcp`; the WebUI is
 `https://control.example.com/ui`.
 
 ## 4. Pair an executor

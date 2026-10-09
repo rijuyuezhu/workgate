@@ -761,7 +761,7 @@ def _nested_audit_event(record: dict[str, Any]) -> dict[str, Any] | None:
 def _coalesce_audit_records(
     records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Pair tool calls and fold child events into stable Human UI rows."""
+    """Pair tool calls and fold child events into stable WebUI rows."""
     rows: list[dict[str, Any]] = []
     pending_by_id: dict[str, dict[str, Any]] = {}
     entries_by_id: dict[str, dict[str, Any]] = {}
@@ -988,7 +988,7 @@ def query_audit(
     exclude_call_id: str | None = None,
     _path: Path | None = None,
 ) -> dict[str, Any]:
-    """Read, pair, filter, and sort bounded audit rows for a Human UI client."""
+    """Read, pair, filter, and sort bounded audit rows for a WebUI client."""
     bounded_limit = max(1, min(int(limit), _AUDIT_QUERY_MAX_ENTRIES))
     normalized_sort = str(sort).casefold()
     if normalized_sort not in {"asc", "desc"}:

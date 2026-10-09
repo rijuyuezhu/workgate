@@ -1,4 +1,4 @@
-"""Control-owned Human UI Dashboard projections over canonical Audit metadata."""
+"""Control-owned WebUI Dashboard projections over canonical Audit metadata."""
 
 import math
 import time

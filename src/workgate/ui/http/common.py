@@ -1,4 +1,4 @@
-"""Shared stateless validation and response helpers for Human UI adapters."""
+"""Shared stateless validation and response helpers for WebUI adapters."""
 
 from collections.abc import Callable
 from typing import Any
@@ -7,7 +7,7 @@ from starlette.responses import JSONResponse
 
 
 def json_error(exc: Exception, status_code: int = 400) -> JSONResponse:
-    """Return the common Human UI exception envelope."""
+    """Return the common WebUI exception envelope."""
     return JSONResponse(
         {
             "ok": False,

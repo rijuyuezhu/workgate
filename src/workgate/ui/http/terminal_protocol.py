@@ -1,4 +1,4 @@
-"""Validation and wire contracts for Human UI terminal transports."""
+"""Validation and wire contracts for WebUI terminal transports."""
 
 import re
 from typing import Any
