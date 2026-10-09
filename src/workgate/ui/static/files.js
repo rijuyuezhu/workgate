@@ -18,6 +18,9 @@ export function createFilesController({
     fileEditorPath: "",
     fileEditorSha256: "",
     fileMutationBusy: false,
+    fileClipboard: null,
+    fileDialogAction: "",
+    fileSortDescending: false,
     fileExecutorStates: new Map(),
     fileMutations: {
       write: true,
@@ -48,12 +51,15 @@ export function createFilesController({
     controllerState.fileParentPath = ".";
     controllerState.fileEntries = [];
     controllerState.selectedFilePath = "";
+    controllerState.fileClipboard = null;
+    renderClipboard();
     controllerState.fileListGeneration += 1;
     controllerState.filePreviewGeneration += 1;
     clearFileEditor();
     controllerState.fileMutations = defaultFileMutations(controllerState.fileExecutorId);
     elements.fileExecutor.value = controllerState.fileExecutorId;
     elements.filePath.value = ".";
+    renderBreadcrumbs();
     renderFileList();
     showFilePreviewMessage("No file selected", `Select a file or directory on ${controllerState.fileExecutorId}.`);
   }
@@ -157,9 +163,14 @@ export function createFilesController({
     elements.fileEditorCancel.disabled = busy;
     elements.fileEditorReload.disabled = busy;
     elements.fileShowHidden.disabled = busy;
+    elements.fileUpload.disabled = busy;
+    elements.fileNewFolder.disabled = busy;
+    elements.fileOperationCancel.disabled = busy;
+    elements.filePaste.disabled = busy || !fileExecutorOnline() || !controllerState.fileClipboard;
     const goButton = elements.filePathForm.querySelector('button[type="submit"]');
     if (goButton) goButton.disabled = busy;
     setFileControls();
+    renderBreadcrumbs();
   }
 
   function currentFileEntry() {
@@ -178,6 +189,10 @@ export function createFilesController({
     const entry = currentFileEntry();
     const unavailable = !fileExecutorOnline();
     elements.fileNew.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.write;
+    elements.fileNewFolder.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.mkdir;
+    elements.fileUpload.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.write;
+    elements.filePaste.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileClipboard ||
+      !controllerState.fileMutations[controllerState.fileClipboard.mode];
     elements.fileOpen.disabled = unavailable || controllerState.fileMutationBusy || !entry || entry.type !== "dir";
     elements.fileEdit.disabled =
       unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.write || !entry || entry.type !== "file";
@@ -206,12 +221,51 @@ export function createFilesController({
   }
 
   function visibleFileEntries() {
-    return controllerState.fileEntries.filter((entry) => elements.fileShowHidden.checked || !entry.hidden);
+    const needle = elements.fileFilter.value.trim().toLocaleLowerCase();
+    const key = elements.fileSort.value;
+    const direction = controllerState.fileSortDescending ? -1 : 1;
+    return controllerState.fileEntries
+      .filter((entry) => (elements.fileShowHidden.checked || !entry.hidden) &&
+        (!needle || String(entry.name).toLocaleLowerCase().includes(needle)))
+      .sort((a, b) => {
+        if (a.type === "dir" && b.type !== "dir") return -1;
+        if (b.type === "dir" && a.type !== "dir") return 1;
+        const delta = key === "name" ? 0 : Number(a[key] || 0) - Number(b[key] || 0);
+        return delta ? delta * direction : String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }) * direction;
+      });
+  }
+
+  function renderBreadcrumbs() {
+    elements.fileBreadcrumbs.replaceChildren();
+    const path = controllerState.filePath.replace(/\\/g, "/");
+    const absolute = path.startsWith("/");
+    const parts = path.split("/").filter((part) => part && part !== ".");
+    const segments = [{ label: absolute ? "/" : "Workspace", path: absolute ? "/" : "." }];
+    let current = absolute ? "" : ".";
+    for (const part of parts) {
+      current = current === "" ? `/${part}` : current === "." ? part : `${current}/${part}`;
+      segments.push({ label: part, path: current });
+    }
+    for (const segment of segments) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = segment.label;
+      button.disabled = controllerState.fileMutationBusy || segment.path === controllerState.filePath;
+      button.addEventListener("click", () => void navigateFiles(segment.path));
+      elements.fileBreadcrumbs.append(button);
+    }
+  }
+
+  function renderClipboard() {
+    const clipboard = controllerState.fileClipboard;
+    elements.fileClipboardState.textContent = clipboard
+      ? `${clipboard.mode === "copy" ? "Copy" : "Cut"}: ${splitFilePath(clipboard.path).name}`
+      : "Clipboard empty";
   }
 
   function renderFileList() {
     const visible = visibleFileEntries();
-    if (controllerState.selectedFilePath && !visible.some((entry) => entry.path === controllerState.selectedFilePath)) {
+    if (controllerState.selectedFilePath && !controllerState.fileEntries.some((entry) => entry.path === controllerState.selectedFilePath)) {
       controllerState.selectedFilePath = "";
       controllerState.filePreviewGeneration += 1;
       clearFileEditor();
@@ -370,6 +424,7 @@ export function createFilesController({
       };
       elements.fileExecutor.value = controllerState.fileExecutorId;
       elements.filePath.value = controllerState.filePath;
+      renderBreadcrumbs();
       const selected = currentFileEntry();
       if (!selected) {
         controllerState.selectedFilePath = "";
@@ -437,47 +492,61 @@ export function createFilesController({
     }
   }
 
-  async function createFile() {
-    const name = globalThis.prompt("New file name or relative path:");
-    if (name === null || !name.trim()) return;
-    const path = joinFilePath(controllerState.filePath, name.trim());
-    setFileMutationBusy(true);
-    try {
-      await fileAction("write", { path, content: "", overwrite: false });
-      controllerState.selectedFilePath = path;
-      await refreshFiles({ previewSelection: true });
-      await openFileEditor();
-    } catch (error) {
-      elements.fileState.textContent = error instanceof Error ? error.message : String(error);
-    } finally {
-      setFileMutationBusy(false);
-    }
+  function validFileName(name) {
+    return name && name !== "." && name !== ".." && !/[\\/\0]/.test(name) &&
+      new TextEncoder().encode(name).length <= 255;
+  }
+
+  function showFileDialog(action, title, name) {
+    controllerState.fileDialogAction = action;
+    elements.fileOperationTitle.textContent = title;
+    elements.fileOperationLabel.firstChild.textContent = action === "paste" ? "Destination name " : "Name ";
+    elements.fileOperationName.value = name;
+    elements.fileOperationDialog.showModal();
+    elements.fileOperationName.select();
   }
 
   async function finishFileMutation(destination, message) {
     const target = splitFilePath(destination);
-    const opened = await navigateFiles(target.parent, destination);
-    if (opened) elements.fileState.textContent = message;
+    if (await navigateFiles(target.parent, destination)) elements.fileState.textContent = message;
   }
 
-  async function copySelectedFile() {
+  async function submitFileDialog(event) {
+    event.preventDefault();
+    if (controllerState.fileMutationBusy) return;
+    const name = elements.fileOperationName.value.trim();
+    if (!validFileName(name)) {
+      elements.fileState.textContent = "Use one valid filename (up to 255 UTF-8 bytes).";
+      return;
+    }
+    const action = controllerState.fileDialogAction;
     const entry = currentFileEntry();
-    if (!entry) return;
-    const current = splitFilePath(entry.path);
-    const suggested = joinFilePath(current.parent, `${current.name}.copy`);
-    const destination = globalThis.prompt("Copy to path:", suggested);
-    if (destination === null || !destination.trim()) return;
-    const target = destination.trim();
+    const clipboard = controllerState.fileClipboard;
+    const target = joinFilePath(controllerState.filePath, name);
     setFileMutationBusy(true);
-    controllerState.filePreviewGeneration += 1;
-    clearFileEditor();
     try {
-      const result = await fileAction("copy", {
-        path: entry.path,
-        destination: target,
-      });
-      const copied = text(result.destination, target);
-      await finishFileMutation(copied, `Copied ${entry.path} to ${copied}`);
+      if (action === "new-file") {
+        await fileAction("write", { path: target, content: "", overwrite: false });
+      } else if (action === "new-folder") {
+        await fileAction("mkdir", { path: target });
+      } else if (action === "rename") {
+        if (!entry || !controllerState.fileMutations.rename) return;
+        const result = await fileAction("rename", { path: entry.path, name });
+        await finishFileMutation(text(result.destination, target), `Renamed ${entry.path}`);
+      } else if (action === "paste") {
+        if (!clipboard || !controllerState.fileMutations[clipboard.mode]) return;
+        const result = await fileAction(clipboard.mode, { path: clipboard.path, destination: target });
+        if (clipboard.mode === "move") controllerState.fileClipboard = null;
+        renderClipboard();
+        await finishFileMutation(text(result.destination, target), `${clipboard.mode === "copy" ? "Copied" : "Moved"} ${clipboard.path}`);
+      }
+      elements.fileOperationDialog.close();
+      if (action === "new-file" || action === "new-folder") {
+        controllerState.selectedFilePath = target;
+        await refreshFiles({ previewSelection: true });
+        if (action === "new-file") await openFileEditor();
+        elements.fileState.textContent = `Created ${target}`;
+      }
     } catch (error) {
       elements.fileState.textContent = error instanceof Error ? error.message : String(error);
     } finally {
@@ -485,49 +554,58 @@ export function createFilesController({
     }
   }
 
-  async function moveSelectedFile() {
+  function stageFileClipboard(mode) {
     const entry = currentFileEntry();
-    if (!entry) return;
-    const destination = globalThis.prompt("Move to path:", entry.path);
-    if (destination === null || !destination.trim()) return;
-    const target = destination.trim();
-    setFileMutationBusy(true);
-    controllerState.filePreviewGeneration += 1;
-    clearFileEditor();
-    try {
-      const result = await fileAction("move", {
-        path: entry.path,
-        destination: target,
-      });
-      const moved = text(result.destination, target);
-      await finishFileMutation(moved, `Moved ${entry.path} to ${moved}`);
-    } catch (error) {
-      elements.fileState.textContent = error instanceof Error ? error.message : String(error);
-    } finally {
-      setFileMutationBusy(false);
-    }
+    if (!entry || !controllerState.fileMutations[mode]) return;
+    controllerState.fileClipboard = { mode, path: entry.path };
+    renderClipboard();
+    elements.fileState.textContent = `${mode === "copy" ? "Copy" : "Cut"} ${entry.path}; navigate to the destination folder and choose Paste.`;
+    setFileControls();
   }
 
-  async function renameSelectedFile() {
-    const entry = currentFileEntry();
-    if (!entry) return;
-    const current = splitFilePath(entry.path);
-    const name = globalThis.prompt("New name:", current.name);
-    if (name === null || !name.trim()) return;
-    const nextName = name.trim();
-    const destination = joinFilePath(current.parent, nextName);
+  function pasteFile() {
+    const clipboard = controllerState.fileClipboard;
+    if (!clipboard) return;
+    showFileDialog("paste", clipboard.mode === "copy" ? "Paste copy" : "Move here", splitFilePath(clipboard.path).name);
+  }
+
+  function uploadFileBytes(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
+      reader.onerror = () => reject(reader.error || new Error("Unable to read local file"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function uploadSelectedFiles() {
+    const files = Array.from(elements.fileUploadInput.files || []);
+    elements.fileUploadInput.value = "";
+    if (!files.length || controllerState.fileMutationBusy) return;
+    if (files.length > 8 || files.some((file) => file.size > 2_000_000 || !validFileName(file.name))) {
+      elements.fileState.textContent = "Upload up to 8 files, at most 2 MB each, with valid names.";
+      return;
+    }
+    const destination = controllerState.filePath;
     setFileMutationBusy(true);
-    controllerState.filePreviewGeneration += 1;
-    clearFileEditor();
     try {
-      const result = await fileAction("rename", {
-        path: entry.path,
-        name: nextName,
-      });
-      const renamed = text(result.destination, destination);
-      await finishFileMutation(renamed, `Renamed ${entry.path} to ${renamed}`);
+      for (const file of files) {
+        elements.fileState.textContent = `Uploading ${file.name}`;
+        await fileAction("upload", {
+          path: joinFilePath(destination, file.name),
+          data_base64: await uploadFileBytes(file),
+        });
+      }
+      controllerState.selectedFilePath = joinFilePath(destination, files[files.length - 1].name);
+      await refreshFiles({ previewSelection: true });
+      elements.fileState.textContent = `Uploaded ${files.length} file(s)`;
     } catch (error) {
-      elements.fileState.textContent = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await refreshFiles();
+      } finally {
+        elements.fileState.textContent = `Upload failed: ${message}`;
+      }
     } finally {
       setFileMutationBusy(false);
     }
@@ -578,12 +656,31 @@ export function createFilesController({
       void previewFile(entry);
     }
   });
-  elements.fileNew.addEventListener("click", () => void createFile());
+  elements.fileFilter.addEventListener("input", renderFileList);
+  elements.fileSort.addEventListener("change", renderFileList);
+  elements.fileSortDirection.addEventListener("click", () => {
+    controllerState.fileSortDescending = !controllerState.fileSortDescending;
+    elements.fileSortDirection.textContent = controllerState.fileSortDescending ? "Descending" : "Ascending";
+    renderFileList();
+  });
+  elements.fileOperationCancel.addEventListener("click", () => elements.fileOperationDialog.close());
+  elements.fileOperationDialog.addEventListener("cancel", (event) => {
+    if (controllerState.fileMutationBusy) event.preventDefault();
+  });
+  elements.fileOperationForm.addEventListener("submit", (event) => void submitFileDialog(event));
+  elements.fileNew.addEventListener("click", () => showFileDialog("new-file", "New file", ""));
+  elements.fileNewFolder.addEventListener("click", () => showFileDialog("new-folder", "New folder", ""));
+  elements.fileUpload.addEventListener("click", () => elements.fileUploadInput.click());
+  elements.fileUploadInput.addEventListener("change", () => void uploadSelectedFiles());
   elements.fileOpen.addEventListener("click", openSelectedFile);
   elements.fileEdit.addEventListener("click", () => void openFileEditor());
-  elements.fileCopy.addEventListener("click", () => void copySelectedFile());
-  elements.fileMove.addEventListener("click", () => void moveSelectedFile());
-  elements.fileRename.addEventListener("click", () => void renameSelectedFile());
+  elements.fileCopy.addEventListener("click", () => stageFileClipboard("copy"));
+  elements.fileMove.addEventListener("click", () => stageFileClipboard("move"));
+  elements.filePaste.addEventListener("click", pasteFile);
+  elements.fileRename.addEventListener("click", () => {
+    const entry = currentFileEntry();
+    if (entry) showFileDialog("rename", "Rename", text(entry.name, ""));
+  });
   elements.fileDelete.addEventListener("click", () => void deleteSelectedFile());
   elements.fileEditorCancel.addEventListener("click", () => {
     const entry = currentFileEntry();

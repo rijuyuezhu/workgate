@@ -359,13 +359,24 @@
           <button id="file-refresh" type="button">Refresh</button>
           <label class="file-hidden-toggle"><input id="file-show-hidden" type="checkbox"> Hidden</label>
           <button id="file-new" type="button">New file</button>
+          <button id="file-new-folder" type="button">New folder</button>
+          <button id="file-upload" type="button" title="Up to 8 local files, 2 MB each; existing files are never overwritten">Upload</button>
+          <input id="file-upload-input" type="file" multiple hidden>
           <button id="file-open" type="button" disabled>Open</button>
           <button id="file-edit" type="button" disabled>Edit</button>
           <button id="file-copy" type="button" disabled>Copy</button>
-          <button id="file-move" type="button" disabled>Move</button>
+          <button id="file-move" type="button" disabled>Cut</button>
+          <button id="file-paste" type="button" disabled>Paste</button>
           <button id="file-rename" type="button" disabled>Rename</button>
           <button id="file-delete" type="button" disabled>Delete</button>
         </div>
+      </div>
+      <nav id="file-breadcrumbs" class="file-breadcrumbs" aria-label="File path breadcrumbs"></nav>
+      <div class="file-list-options">
+        <label>Filter <input id="file-filter" type="search" placeholder="Search in this folder" autocomplete="off"></label>
+        <label>Sort <select id="file-sort"><option value="name">Name</option><option value="modified">Modified</option><option value="size">Size</option></select></label>
+        <button id="file-sort-direction" type="button" aria-label="Reverse file sort">Ascending</button>
+        <span id="file-clipboard-state" class="muted" aria-live="polite">Clipboard empty</span>
       </div>
       <div class="file-layout">
         <nav id="file-list" class="file-list" aria-label="Executor files" aria-live="polite">
@@ -389,6 +400,18 @@
           </form>
         </article>
       </div>
+      <dialog id="file-operation-dialog" class="executor-dialog">
+        <form id="file-operation-form">
+          <h2 id="file-operation-title">File operation</h2>
+          <label id="file-operation-label" for="file-operation-name">Name
+            <input id="file-operation-name" required maxlength="255" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="dialog-actions">
+            <button id="file-operation-cancel" type="button">Cancel</button>
+            <button type="submit">Confirm</button>
+          </div>
+        </form>
+      </dialog>
     </section>
 
     <section id="tasks-panel" class="panel tasks-panel app-view" data-app-view="tasks" hidden>

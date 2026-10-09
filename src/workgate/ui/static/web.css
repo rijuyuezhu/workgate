@@ -2356,3 +2356,33 @@ h2 {
 .syntax-punctuation { color: #b9c8d6; }
 .syntax-diff-add { color: #a9f4d0; background: rgba(57, 166, 106, 0.12); }
 .syntax-diff-delete { color: #ffc3c3; background: rgba(190, 70, 70, 0.12); }
+
+.file-breadcrumbs, .file-list-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.file-breadcrumbs button {
+  padding: 0.3rem 0.6rem;
+}
+
+.file-list-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.file-list-options input, .file-list-options select, #file-operation-name {
+  padding: 0.45rem;
+  border-radius: 0.4rem;
+  min-width: 0;
+}
+
+.file-list-options #file-clipboard-state {
+  margin-left: auto;
+  font-size: 0.8rem;
+}

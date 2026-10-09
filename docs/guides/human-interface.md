@@ -41,6 +41,8 @@ Browser terminal traffic uses the executor's outbound stream path. If the bound 
 
 Browse the selected executor filesystem, preview supported files, edit bounded UTF-8 text files, create files, and perform the operations offered by the selected machine. The editor checks the file revision before saving; if it changed elsewhere, your draft remains visible. Copy or reconcile your edits before choosing **Reload from disk**, which discards the draft only after confirmation.
 
+Use **New folder** or **New file** to create entries, **Upload** for up to eight local files (2 MB each, including binary files), and breadcrumbs, filter, and sort to browse. Copy or cut a selected entry, navigate to the destination, then choose **Paste** to name the destination. File operations use in-app dialogs rather than browser destination-path prompts; uploads refuse to overwrite existing files. Upload is a Human UI-only feature, not a model-facing file tool.
+
 Some executor file operations may be unavailable when the bound executor is offline or lacks the needed capability. The UI shows the available actions instead of emulating missing operations with control-local shell commands. Use `session_copy` through an MCP client for cross-workspace transfers.
 
 ### Task progress and plan

@@ -293,9 +293,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "executor_id: controllerState.fileExecutorId" in files_script.text
     assert "renderFileExecutors" in files_script.text
     assert "controllerState.fileMutations" in files_script.text
-    assert 'fileAction("copy"' in files_script.text
-    assert 'fileAction("move"' in files_script.text
+    assert 'stageFileClipboard("copy")' in files_script.text
+    assert 'stageFileClipboard("move")' in files_script.text
+    assert "fileAction(clipboard.mode" in files_script.text
     assert 'fileAction("rename"' in files_script.text
+    assert 'fileAction("upload"' in files_script.text
     protected = client.get("/api/ui/bootstrap")
     assert protected.status_code == 401
 
@@ -984,6 +986,9 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
             "audit_image_preview": True,
             "wallpaper": "aurora",
             "file_editor": True,
+            "file_upload": True,
+            "file_mkdir": True,
+            "file_clipboard": True,
             "file_copy": True,
             "file_move": True,
             "file_rename": True,

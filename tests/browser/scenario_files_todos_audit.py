@@ -94,22 +94,100 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     page.unroute("**/api/ui/files/preview**", delay_stale_preview)
 
+    # File-manager operations stay in browser controls; no destination prompts.
+    page.locator("#file-new-folder").click()
+    expect(page.locator("#file-operation-dialog")).to_be_visible()
+    page.locator("#file-operation-name").fill("archive")
+    page.locator("#file-operation-form button[type=submit]").click()
+    expect(_file_entry(harness, "archive")).to_be_visible()
+    assert harness.executor_workspace.joinpath("archive").is_dir()
+
+    page.locator("#file-filter").fill("copy-")
+    expect(_file_entry(harness, "copy-source.txt")).to_be_visible()
+    expect(_file_entry(harness, "notes.txt")).to_have_count(0)
+    page.locator("#file-filter").clear()
+    page.locator("#file-sort").select_option("size")
+    page.locator("#file-sort-direction").click()
+    expect(page.locator("#file-sort-direction")).to_have_text("Descending")
+    displayed = page.locator('#file-list .file-entry[title$=".txt"]')
+    order = [entry.get_attribute("title") or "" for entry in displayed.all()]
+    assert order and all(order)
+    sizes = [
+        harness.executor_workspace.joinpath(name).stat().st_size
+        for name in order
+    ]
+    assert sizes == sorted(sizes, reverse=True)
+    page.locator("#file-sort").select_option("name")
+
     _file_entry(harness, "copy-source.txt").click()
-    page.once("dialog", lambda dialog: dialog.accept("copied.txt"))
     page.locator("#file-copy").click()
-    expect(_file_entry(harness, "copied.txt")).to_be_visible()
-
-    page.once("dialog", lambda dialog: dialog.accept("moved.txt"))
-    page.locator("#file-move").click()
-    expect(_file_entry(harness, "moved.txt")).to_be_visible()
-    assert not harness.executor_workspace.joinpath("copied.txt").exists()
-
-    page.once("dialog", lambda dialog: dialog.accept("renamed.txt"))
-    page.locator("#file-rename").click()
-    expect(_file_entry(harness, "renamed.txt")).to_be_visible()
-    assert harness.executor_workspace.joinpath("renamed.txt").read_text() == (
-        "copy source\n"
+    expect(page.locator("#file-clipboard-state")).to_contain_text("Copy")
+    _file_entry(harness, "archive").dblclick()
+    expect(page.locator("#file-breadcrumbs")).to_contain_text("archive")
+    page.locator("#file-paste").click()
+    page.locator("#file-operation-name").fill("copied.txt")
+    page.locator("#file-operation-form button[type=submit]").click()
+    expect(_file_entry(harness, "archive/copied.txt")).to_be_visible()
+    assert (
+        harness.executor_workspace.joinpath("archive/copied.txt").read_text()
+        == "copy source\n"
     )
+
+    _file_entry(harness, "archive/copied.txt").click()
+    page.locator("#file-move").click()
+    expect(page.locator("#file-clipboard-state")).to_contain_text("Cut")
+    page.locator("#file-breadcrumbs").get_by_role(
+        "button", name="Workspace"
+    ).click()
+    page.locator("#file-paste").click()
+    page.locator("#file-operation-name").fill("moved.txt")
+    page.locator("#file-operation-form button[type=submit]").click()
+    expect(_file_entry(harness, "moved.txt")).to_be_visible()
+    assert not harness.executor_workspace.joinpath(
+        "archive/copied.txt"
+    ).exists()
+
+    page.locator("#file-rename").click()
+    page.locator("#file-operation-name").fill("renamed.txt")
+    page.locator("#file-operation-form button[type=submit]").click()
+    expect(_file_entry(harness, "renamed.txt")).to_be_visible()
+    assert (
+        harness.executor_workspace.joinpath("renamed.txt").read_text()
+        == "copy source\n"
+    )
+
+    page.locator("#file-upload-input").set_input_files(
+        {
+            "name": "binary-upload.bin",
+            "mimeType": "application/octet-stream",
+            "buffer": b"\x00\x80\xffBROWSER",
+        }
+    )
+    expect(_file_entry(harness, "binary-upload.bin")).to_be_visible()
+    assert (
+        harness.executor_workspace.joinpath("binary-upload.bin").read_bytes()
+        == b"\x00\x80\xffBROWSER"
+    )
+
+    # An existing binary file cannot be silently overwritten by upload.
+    page.locator("#file-upload-input").set_input_files(
+        {
+            "name": "binary-upload.bin",
+            "mimeType": "application/octet-stream",
+            "buffer": b"replacement",
+        }
+    )
+    expect(page.locator("#file-state")).to_contain_text("Upload failed")
+    assert harness.executor_workspace.joinpath(
+        "binary-upload.bin"
+    ).read_bytes() == (b"\x00\x80\xffBROWSER")
+
+    page.locator("#file-new").click()
+    page.locator("#file-operation-name").fill("created.txt")
+    page.locator("#file-operation-form button[type=submit]").click()
+    expect(harness.page.locator("#file-editor-form")).to_be_visible()
+    assert harness.executor_workspace.joinpath("created.txt").exists()
+    page.locator("#file-editor-cancel").click()
 
     task = harness.api(
         "POST",

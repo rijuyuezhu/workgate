@@ -168,6 +168,13 @@ async def api_file_action(request: Request) -> Response:
                     ),
                 }
             )
+        elif action == "upload":
+            data_base64 = body.get("data_base64")
+            if not isinstance(data_base64, str):
+                raise ValueError("data_base64 must be a string")
+            if len(data_base64) > 4 * ((2_000_000 + 2) // 3):
+                raise ValueError("Upload exceeds 2000000 bytes")
+            args["data_base64"] = data_base64
         elif action == "mkdir":
             pass
         elif action == "delete":

@@ -23,6 +23,7 @@ from .files import (
 )
 from .tool_session.store import ToolSessionStore, file_sha256
 
+UI_FILE_UPLOAD_MAX_BYTES = 2_000_000
 UI_FILE_PREVIEW_MAX_LINES = 400
 UI_FILE_DIRECTORY_MAX_ENTRIES = 1_000
 UI_FILE_BINARY_PREVIEW_BYTES = 256
@@ -455,6 +456,32 @@ class UiFilesService:
             expected_sha256,
         )
 
+    def upload(self, path: str, data_base64: str) -> dict[str, Any]:
+        """Create one bounded binary file for the browser-only upload action."""
+        limit = min(UI_FILE_UPLOAD_MAX_BYTES, self.config.max_file_write_bytes)
+        if len(data_base64) > 4 * ((limit + 2) // 3):
+            raise ValueError(f"Upload exceeds {limit} bytes")
+        try:
+            data = base64.b64decode(data_base64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("Invalid base64 upload") from exc
+        if len(data) > limit:
+            raise ValueError(f"Upload exceeds {limit} bytes")
+        destination = self._destination_entry(path)
+        with path_locks([destination]):
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(destination, flags, 0o666)
+            try:
+                with os.fdopen(fd, "wb") as output:
+                    output.write(data)
+                    output.flush()
+                    os.fsync(output.fileno())
+            except BaseException:
+                destination.unlink(missing_ok=True)
+                raise
+        return {"path": self._display(destination), "bytes": len(data)}
+
     def mkdir(self, path: str) -> dict[str, Any]:
         resolved = self._ensure_mutable(path, follow_final_symlink=False)
         with path_locks([resolved]):
@@ -486,6 +513,11 @@ class UiFilesService:
                 bool(args.get("overwrite", True)),
                 None if expected is None else str(expected),
             )
+        if op == "ui.files.upload":
+            data_base64 = args.get("data_base64")
+            if not isinstance(data_base64, str):
+                raise ValueError("data_base64 must be a string")
+            return self.upload(str(args["path"]), data_base64)
         if op == "ui.files.mkdir":
             return self.mkdir(str(args["path"]))
         if op == "ui.files.delete":
