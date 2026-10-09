@@ -91,6 +91,7 @@ def resolve_executor_config(settings: Settings) -> ExecutorConfig:
         max_file_write_bytes=settings.max_file_write_bytes,
         max_view_image_bytes=settings.max_view_image_bytes,
         max_audit_log_bytes=settings.max_audit_log_bytes,
+        max_audit_archive_bytes=settings.max_audit_archive_bytes,
         max_audit_event_bytes=settings.max_audit_event_bytes,
         audit_payloads_enabled=settings.audit_payloads_enabled,
         audit_inline_value_bytes=settings.audit_inline_value_bytes,

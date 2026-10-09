@@ -25,6 +25,7 @@ from ..utils.private_files import (
     atomic_write_private_bytes,
     private_file_lock,
 )
+from .archive import archive_evicted, archived_records, prune_archives
 from .payloads import (
     externalize_audit_value,
     payload_file_sizes,
@@ -359,7 +360,9 @@ def _retention_units(lines: list[bytes]) -> list[list[tuple[int, bytes]]]:
     return units
 
 
-def _enforce_audit_log_limit(path: Path, max_bytes: int) -> bool:
+def _enforce_audit_log_limit(
+    path: Path, max_bytes: int, *, settings: SharedRoleConfig | None = None
+) -> bool:
     """Atomically retain recent complete records within the configured log budget."""
     if max_bytes <= 0 or not path.exists() or path.stat().st_size <= max_bytes:
         return False
@@ -378,6 +381,16 @@ def _enforce_audit_log_limit(path: Path, max_bytes: int) -> bool:
         if selected_bytes >= target_bytes:
             break
     selected.sort(key=lambda item: item[0])
+    kept_indexes = {index for index, _ in selected}
+    if settings is not None:
+        archive_evicted(
+            [
+                line
+                for index, line in enumerate(lines)
+                if index not in kept_indexes
+            ],
+            settings,
+        )
     atomic_write_private_bytes(path, b"".join(line for _, line in selected))
     return True
 
@@ -408,7 +421,9 @@ def _enforce_audit_retention(
     path: Path, settings: SharedRoleConfig, *, payload_changed: bool
 ) -> None:
     """Retain paired JSONL units and referenced payloads without rescanning every event."""
-    log_changed = _enforce_audit_log_limit(path, settings.max_audit_log_bytes)
+    log_changed = _enforce_audit_log_limit(
+        path, settings.max_audit_log_bytes, settings=settings
+    )
     payload_root_exists = StateLayout(
         settings.state_dir
     ).audit_payload_dir.exists()
@@ -423,7 +438,12 @@ def _enforce_audit_retention(
         return
     _AUDIT_PAYLOAD_SWEEP_TIMES[sweep_key] = monotonic_now
     if not path.exists():
-        prune_payload_files(settings, referenced=set(), active_references=set())
+        referenced, active = _record_payload_activity(
+            archived_records(settings), settings
+        )
+        prune_payload_files(
+            settings, referenced=referenced, active_references=active
+        )
         return
 
     lines = path.read_bytes().splitlines(keepends=True)
@@ -456,6 +476,18 @@ def _enforce_audit_retention(
             else set()
         )
     if len(selected) != len(units):
+        evicted = [
+            raw
+            for _, raw in sorted(
+                (
+                    item
+                    for unit in units[: len(units) - len(selected)]
+                    for item in unit
+                ),
+                key=lambda item: item[0],
+            )
+        ]
+        archive_evicted(evicted, settings)
         kept = sorted(
             (item for unit in selected for item in unit),
             key=lambda item: item[0],
@@ -469,7 +501,10 @@ def _enforce_audit_retention(
             value = json.loads(raw_line)
             if isinstance(value, dict):
                 records.append(value)
-    referenced, active = _record_payload_activity(records, settings)
+    cold_records = prune_archives(settings)
+    referenced, active = _record_payload_activity(
+        [*cold_records, *records], settings
+    )
     prune_payload_files(
         settings, referenced=referenced, active_references=active
     )
@@ -860,23 +895,42 @@ def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
     max_bytes = int(settings.max_audit_log_bytes)
 
     with _audit_transaction(path):
-        if not path.exists():
-            return []
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            if max_bytes > 0 and size > max_bytes:
-                handle.seek(size - max_bytes)
-                handle.readline()
-            raw = handle.read(max_bytes if max_bytes > 0 else -1)
+        cold = (
+            archived_records(settings)
+            if path == StateLayout(settings.state_dir).audit_log_path
+            else []
+        )
+        raw = b""
+        if path.exists():
+            size = path.stat().st_size
+            with path.open("rb") as handle:
+                if max_bytes > 0 and size > max_bytes:
+                    handle.seek(size - max_bytes)
+                    handle.readline()
+                raw = handle.read(max_bytes if max_bytes > 0 else -1)
 
     records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for record in cold:
+        record_id = str(record.get("id") or "")
+        if record_id and record_id in seen:
+            continue
+        records.append(record)
+        if record_id:
+            seen.add(record_id)
     for line in raw.splitlines():
         try:
             record = json.loads(line)
         except json.JSONDecodeError, UnicodeDecodeError:
             continue
         if isinstance(record, dict):
-            records.append(record)
+            record_id = str(record.get("id") or "")
+            if not record_id or record_id not in seen:
+                records.append(record)
+                if record_id:
+                    seen.add(record_id)
+    if cold:
+        records.sort(key=lambda record: _audit_timestamp(record.get("ts")))
     return records
 
 
@@ -1055,10 +1109,7 @@ def query_session_audit(
     **filters: Any,
 ) -> dict[str, Any]:
     """Query the dedicated append-only audit log for one durable session."""
-    return query_audit(
-        **filters,
-        _path=get_state_store().layout.session_audit_path(session_id),
-    )
+    return query_audit(**filters, session=session_id)
 
 
 def get_session_audit_entry(
@@ -1068,10 +1119,13 @@ def get_session_audit_entry(
     include_full_payloads: bool = False,
 ) -> dict[str, Any]:
     """Return one entry from a session's dedicated audit log."""
-    return get_audit_entry(
-        entry_id,
-        include_full_payloads=include_full_payloads,
-        _path=get_state_store().layout.session_audit_path(session_id),
+    entry = get_audit_entry(entry_id)
+    if session_id not in _audit_sessions(entry):
+        raise ValueError(f"Unknown audit entry: {entry_id}")
+    return (
+        resolve_payload_references(entry, get_role_config())
+        if include_full_payloads
+        else entry
     )
 
 

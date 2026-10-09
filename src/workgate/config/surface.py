@@ -336,6 +336,9 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
         "max_audit_log_bytes", "Safety and resource limits", metavar="BYTES"
     ),
     SettingSpec(
+        "max_audit_archive_bytes", "Safety and resource limits", metavar="BYTES"
+    ),
+    SettingSpec(
         "max_audit_event_bytes", "Safety and resource limits", metavar="BYTES"
     ),
     SettingSpec("audit_payloads_enabled", "Safety and resource limits"),

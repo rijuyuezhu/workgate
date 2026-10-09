@@ -210,6 +210,8 @@ class Settings(BaseSettings):
     """Maximum inbound HTTP request-body bytes; 0 disables the shared limit."""
     max_audit_log_bytes: _NonNegativeInt = 20_000_000
     """Maximum active audit JSONL bytes before recent-record retention; 0 disables this size cap."""
+    max_audit_archive_bytes: _NonNegativeInt = 128_000_000
+    """Total compressed cold Audit archive budget; zero disables cold retention."""
     max_audit_event_bytes: _PositiveInt = 1_000_000
     """Maximum encoded bytes retained for one audit event before preview truncation."""
     audit_payloads_enabled: bool = True

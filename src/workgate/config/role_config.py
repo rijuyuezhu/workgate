@@ -18,6 +18,7 @@ class SharedRoleConfig:
     max_jobs: int
     max_view_image_bytes: int
     max_audit_log_bytes: int
+    max_audit_archive_bytes: int
     max_audit_event_bytes: int
     audit_payloads_enabled: bool
     audit_inline_value_bytes: int
@@ -58,6 +59,7 @@ def resolve_shared_role_config(settings) -> SharedRoleConfig:
         max_jobs=settings.max_jobs,
         max_view_image_bytes=settings.max_view_image_bytes,
         max_audit_log_bytes=settings.max_audit_log_bytes,
+        max_audit_archive_bytes=settings.max_audit_archive_bytes,
         max_audit_event_bytes=settings.max_audit_event_bytes,
         audit_payloads_enabled=settings.audit_payloads_enabled,
         audit_inline_value_bytes=settings.audit_inline_value_bytes,
