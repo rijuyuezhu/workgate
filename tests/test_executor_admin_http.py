@@ -6,13 +6,11 @@ from workgate import __version__
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.runtime import build_control_runtime
+from workgate.oauth.core.scopes import default_scope
+from workgate.oauth.protocol.token_codec import issue_access_token
 from workgate.protocol.executor import (
     ExecutorHelloRequest,
     ExecutorRuntimeSummary,
-)
-from workgate.ui.security import (
-    UI_LOCAL_TOKEN_HEADER,
-    get_or_create_ui_local_token,
 )
 
 
@@ -77,8 +75,14 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
             base_url="https://control.test",
             client=("127.0.0.1", 50000),
         ) as client:
-            token = get_or_create_ui_local_token()
-            owner_headers = {UI_LOCAL_TOKEN_HEADER: token}
+            owner_headers = {
+                "Authorization": "Bearer "
+                + issue_access_token(
+                    client_id="admin-api-test",
+                    scope=default_scope(),
+                    resource="https://control.test/mcp",
+                )
+            }
 
             started = client.post(
                 "/executor/v1/pair/start",
@@ -264,7 +268,12 @@ def test_owner_executor_admin_rejects_invalid_requests(
             client=("127.0.0.1", 50000),
         ) as client:
             owner_headers = {
-                UI_LOCAL_TOKEN_HEADER: get_or_create_ui_local_token()
+                "Authorization": "Bearer "
+                + issue_access_token(
+                    client_id="admin-api-test",
+                    scope=default_scope(),
+                    resource="https://control.test/mcp",
+                )
             }
 
             missing_code = client.get(

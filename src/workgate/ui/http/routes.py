@@ -1,4 +1,4 @@
-"""Fork-native Human UI routes shared by browser and future OpenTUI clients."""
+"""Browser Human UI routes backed by the control service."""
 
 import hashlib
 import html
@@ -15,13 +15,12 @@ from starlette.responses import (
     JSONResponse,
     Response,
 )
-from starlette.routing import BaseRoute, Route, WebSocketRoute
+from starlette.routing import BaseRoute, Route
 
 from ...config.control import ControlConfig
 from ...oauth.core.scopes import default_scope
 from ...oauth.core.urls import issuer_url, resource_url
 from ...version import version_info
-from ..runtime import tui_runtime_available
 from ..security import UI_API_PREFIX
 from ..session import (
     UI_CSRF_HEADER,
@@ -39,7 +38,6 @@ from .files import (
     api_file_preview,
     api_files,
 )
-from .opentui import ui_opentui_websocket
 from .session import (
     api_ui_session_logout,
     api_ui_session_oauth,
@@ -79,7 +77,6 @@ def _ui_asset_revision() -> str:
         "tasks.js",
         "terminal.js",
         "files.js",
-        "opentui_console.js",
     ):
         digest.update(name.encode("utf-8"))
         digest.update(b"\0")
@@ -119,7 +116,6 @@ def _ui_index_html(settings: ControlConfig, origin: str) -> str:
                 "apiPrefix": UI_API_PREFIX,
                 "authMode": settings.auth_mode,
                 "wallpaper": settings.ui_wallpaper,
-                "opentuiAvailable": tui_runtime_available(settings),
                 "csrfCookieName": ui_csrf_cookie_name(origin),
                 "csrfHeaderName": UI_CSRF_HEADER,
                 "sessionBindingHeaderName": UI_SESSION_BINDING_HEADER,
@@ -275,7 +271,6 @@ async def api_bootstrap(request: Request) -> Response:
                     "syntax_highlighting": True,
                     "audit_image_preview": True,
                     "wallpaper": settings.ui_wallpaper,
-                    "opentui": tui_runtime_available(settings),
                     "file_editor": True,
                     "file_copy": True,
                     "file_move": True,
@@ -320,7 +315,6 @@ def human_ui_routes(
         ),
     ]
     protected_routes: list[BaseRoute] = [
-        WebSocketRoute(ui_path + "/ws/opentui", ui_opentui_websocket),
         Route(UI_API_PREFIX + "/bootstrap", api_bootstrap, methods=["GET"]),
         Route(UI_API_PREFIX + "/dashboard", api_dashboard, methods=["GET"]),
         Route(UI_API_PREFIX + "/tasks", api_tasks, methods=["GET"]),

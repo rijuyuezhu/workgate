@@ -1,4 +1,4 @@
-"""Bounded RGBA thumbnails for terminal-native image previews."""
+"""Bounded RGBA thumbnails for browser image previews."""
 
 from dataclasses import dataclass
 from io import BytesIO
@@ -11,7 +11,7 @@ SUPER_SAMPLE_PIXELS_PER_CELL = 2
 
 @dataclass(frozen=True)
 class ImagePreview:
-    """One RGBA thumbnail sized for OpenTUI's supersampled pixel buffer."""
+    """One RGBA thumbnail sized for the browser preview pixel buffer."""
 
     rgba: bytes
     """Raw row-major RGBA8 thumbnail bytes."""

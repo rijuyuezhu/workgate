@@ -87,7 +87,6 @@ nav:
       - Product comparison: comparison.md
       - Historical fork/upstream audit: maintenance/fork-upstream-differences.md
       - Historical upstream commit review: maintenance/upstream-commit-review.md
-      - Native artifact provenance: maintenance/native-artifact-provenance.md
   - Community:
       - Contributing: community/contributing.md
       - Support: community/support.md

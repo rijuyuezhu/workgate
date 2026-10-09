@@ -1,9 +1,10 @@
 # Historical fork and upstream differences
 
-This document preserves a pre-control/executor architecture and migration
+This document preserves a pre-control/executor and pre-TUI-removal migration
 snapshot from the upstream-porting audit. Names such as remote worker,
 `target="remote"`, and `remote_admin` below are historical evidence, not the
-current Workgate API or architecture. For current behavior, use
+current Workgate API or architecture. The optional OpenTUI, browser Console, and
+platform wheels described below were deliberately removed by #192. For current behavior, use
 [Comparison with upstream](../comparison.md) and
 [Control/executor architecture](../architecture/control-executor.md). The
 corresponding commit-by-commit decisions remain in

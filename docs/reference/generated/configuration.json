@@ -184,29 +184,6 @@
         ],
         [
           {
-            "code": "ui_tui_command"
-          },
-          {
-            "lines": [
-              {
-                "code": "--ui-tui-command"
-              },
-              {
-                "code": "--unset-ui-tui-command clears the value"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_UI_TUI_COMMAND"
-          },
-          "string",
-          {
-            "code": "unset"
-          },
-          "Optional administrator-supplied OpenTUI executable command."
-        ],
-        [
-          {
             "code": "ui_terminal_idle_timeout_s"
           },
           {
@@ -2138,19 +2115,6 @@
       "section": "Human interface",
       "type": "string",
       "unset_cli": null
-    },
-    {
-      "choices": [],
-      "cli": "--ui-tui-command",
-      "default": null,
-      "default_display": "unset",
-      "description": "Optional administrator-supplied OpenTUI executable command.",
-      "env": "WORKGATE_UI_TUI_COMMAND",
-      "name": "ui_tui_command",
-      "nullable": true,
-      "section": "Human interface",
-      "type": "string",
-      "unset_cli": "--unset-ui-tui-command"
     },
     {
       "choices": [],

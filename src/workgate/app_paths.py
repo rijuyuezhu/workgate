@@ -83,11 +83,6 @@ class AppPaths:
         return self.config_dir / "agent"
 
     @property
-    def ui_runtime_dir(self) -> Path:
-        """Return the regenerable native Human UI materialization directory."""
-        return self.cache_dir / "ui-runtime"
-
-    @property
     def temp_dir(self) -> Path:
         """Return the safely disposable Workgate scratch directory."""
         return self.runtime_dir / "tmp"

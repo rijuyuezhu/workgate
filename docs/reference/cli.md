@@ -13,7 +13,6 @@ exact parser surface:
 ```bash
 workgate --help
 workgate control --help
-workgate tui --help
 workgate executor --help
 ```
 

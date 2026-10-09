@@ -1,7 +1,4 @@
-# Bundled helper notices
+# Helper runtime policy
 
-This directory contains third-party notices that accompany packaged native UI
-artifacts. Generated native executables are not checked into the source tree.
-
-Persistent POSIX shells use a host-provided tmux executable. The default is
-`tmux` from `PATH`; set `WORKGATE_TMUX_BIN` to use another executable.
+Persistent POSIX shells use host-provided tmux (or the executable configured via
+`WORKGATE_TMUX_BIN`). No native Human UI executable is bundled.

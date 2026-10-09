@@ -54,15 +54,6 @@ _ALLOWED_UI_HTTP_TO_CONTROL_IMPORTS = frozenset(
         ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
     }
 )
-_ALLOWED_RELEASE_IMPORTS = frozenset(
-    {
-        (
-            "workgate.release.platform_wheel",
-            "workgate.ui.contracts",
-        ),
-    }
-)
-
 # Keep dependency cycles explicit. The current architecture has none.
 _ALLOWED_DEPENDENCY_CYCLES: frozenset[frozenset[str]] = frozenset()
 
@@ -378,26 +369,6 @@ def test_patch_mechanics_stay_below_delivery_layers() -> None:
         for importer, target in _local_imports()
         if importer == f"{_PACKAGE_NAME}.executor.patch.envelope"
         and target.startswith(forbidden_prefixes)
-    )
-
-    assert actual == frozenset()
-
-
-def test_release_uses_only_the_ui_artifact_contract() -> None:
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.release")
-    )
-
-    assert actual == _ALLOWED_RELEASE_IMPORTS
-
-
-def test_ui_artifact_contract_is_a_dependency_leaf() -> None:
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer == f"{_PACKAGE_NAME}.ui.contracts"
     )
 
     assert actual == frozenset()

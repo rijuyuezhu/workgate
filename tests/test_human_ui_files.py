@@ -681,7 +681,7 @@ def test_file_http_helpers_reject_bad_runtime_and_payload() -> None:
         ui_files_module._payload("not-a-mapping", "exec_test")
 
 
-def test_opentui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):
+def test_webui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     image_path = workspace / "pixel.png"

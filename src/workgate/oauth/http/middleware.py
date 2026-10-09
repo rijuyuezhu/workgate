@@ -9,11 +9,7 @@ from starlette.routing import BaseRoute, Match
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ...ui.http.session import has_valid_ui_csrf, ui_session_claims
-from ...ui.security import (
-    has_valid_ui_local_token,
-    is_loopback_connection,
-    is_ui_api_path,
-)
+from ...ui.security import is_ui_api_path
 from ..core.context import bind_oauth_claims, reset_oauth_claims
 from .auth import request_authentication_is_bypassed, verify_request
 
@@ -53,14 +49,6 @@ class AuthMiddleware:
 
         request = Request(scope, receive)
         ui_request = is_ui_api_path(str(scope.get("path") or ""))
-        if (
-            ui_request
-            and is_loopback_connection(request)
-            and has_valid_ui_local_token(request)
-        ):
-            await self.app(scope, receive, send)
-            return
-
         claims = None
         if (
             ui_request
