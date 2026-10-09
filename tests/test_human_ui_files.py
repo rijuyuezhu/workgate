@@ -250,6 +250,31 @@ def test_file_preview_supports_text_binary_directory_and_raster_images(
     assert "data_base64" not in svg
 
 
+def test_file_preview_respects_image_read_limit_and_editor_rejects_directory(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image = workspace / "oversized.png"
+    image.write_bytes(PNG_1X1 + b"x" * 100)
+    (workspace / "folder").mkdir()
+    client = _client(monkeypatch, workspace, max_file_read_bytes=64)
+
+    response = client.get(
+        "/api/ui/files/preview", params={"path": "oversized.png"}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["kind"] == "image"
+    assert data["inline"] is False
+    assert "data_base64" not in data
+    assert "64 bytes" in data["message"]
+
+    directory = client.get("/api/ui/files/content", params={"path": "folder"})
+    assert directory.status_code == 400
+    assert "Only regular text files" in directory.json()["message"]
+
+
 def test_local_file_preview_handles_utf8_split_at_binary_probe_boundary(
     monkeypatch, tmp_path
 ):
