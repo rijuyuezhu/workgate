@@ -4,6 +4,7 @@ export function createExecutorsController({
   authMode,
   isAuthenticated,
   reloadApp,
+  onInventory,
 }) {
   const state = {
     executors: [],
@@ -160,6 +161,7 @@ export function createExecutorsController({
     elements.executorState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     renderList();
     renderDetails();
+    onInventory(state.executors);
   }
 
   async function refresh({ force = false } = {}) {

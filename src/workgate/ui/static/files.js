@@ -17,6 +17,7 @@ export function createFilesController({
     filePreviewGeneration: 0,
     fileEditorPath: "",
     fileMutationBusy: false,
+    fileExecutorStates: new Map(),
     fileMutations: {
       write: true,
       delete: true,
@@ -34,6 +35,10 @@ export function createFilesController({
       move: true,
       rename: true,
     };
+  }
+
+  function fileExecutorOnline() {
+    return controllerState.fileExecutorStates.get(controllerState.fileExecutorId) === "online";
   }
 
   function resetFileWorkspace(executorId = "") {
@@ -54,31 +59,45 @@ export function createFilesController({
 
   function renderFileExecutors(targets) {
     const available = Array.isArray(targets) ? targets : [];
+    const wasOnline = fileExecutorOnline();
+    controllerState.fileExecutorStates = new Map();
     elements.fileExecutor.replaceChildren();
     let currentAvailable = false;
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
       if (!executorId) continue;
       const online = executor.status === "online";
+      controllerState.fileExecutorStates.set(executorId, executor.status);
       const option = document.createElement("option");
       option.value = executorId;
       const label = text(executor.name, executorId);
       option.textContent = online ? label : `${label} (${text(executor.status, "offline")})`;
       option.disabled = !online;
       option.selected = executorId === controllerState.fileExecutorId;
-      if (option.selected) currentAvailable = true;
+      if (option.selected && online) currentAvailable = true;
       elements.fileExecutor.append(option);
     }
     if (!currentAvailable) {
       if (controllerState.fileExecutorPinned && controllerState.fileExecutorId) {
-        const option = document.createElement("option");
-        option.value = controllerState.fileExecutorId;
-        option.textContent = `${controllerState.fileExecutorId} (unavailable)`;
-        option.disabled = true;
-        option.selected = true;
-        elements.fileExecutor.append(option);
+        if (!controllerState.fileExecutorStates.has(controllerState.fileExecutorId)) {
+          const option = document.createElement("option");
+          option.value = controllerState.fileExecutorId;
+          option.textContent = `${controllerState.fileExecutorId} (unavailable)`;
+          option.disabled = true;
+          elements.fileExecutor.append(option);
+        }
+        if (wasOnline) {
+          controllerState.fileListGeneration += 1;
+          controllerState.filePreviewGeneration += 1;
+          controllerState.fileEntries = [];
+          controllerState.selectedFilePath = "";
+          clearFileEditor();
+          renderFileList();
+        }
         elements.fileExecutor.value = controllerState.fileExecutorId;
         elements.fileState.textContent = `Executor unavailable · ${controllerState.fileExecutorId}`;
+        setFileControls();
+        elements.fileRefresh.disabled = true;
         return;
       }
       const firstOnline = available.find((item) => item.status === "online");
@@ -89,6 +108,8 @@ export function createFilesController({
       return;
     }
     elements.fileExecutor.value = controllerState.fileExecutorId;
+    if (!wasOnline) void refreshFiles();
+    setFileControls();
   }
 
 
@@ -101,6 +122,7 @@ export function createFilesController({
   }
 
   function fileAction(action, body) {
+    if (!fileExecutorOnline()) throw new Error("Executor unavailable");
     return request(`/files/${encodeURIComponent(action)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -150,15 +172,16 @@ export function createFilesController({
 
   function setFileControls() {
     const entry = currentFileEntry();
-    elements.fileNew.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.write;
-    elements.fileOpen.disabled = controllerState.fileMutationBusy || !entry || entry.type !== "dir";
+    const unavailable = !fileExecutorOnline();
+    elements.fileNew.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.write;
+    elements.fileOpen.disabled = unavailable || controllerState.fileMutationBusy || !entry || entry.type !== "dir";
     elements.fileEdit.disabled =
-      controllerState.fileMutationBusy || !controllerState.fileMutations.write || !entry || entry.type !== "file";
-    elements.fileCopy.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.copy || !entry;
-    elements.fileMove.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.move || !entry;
-    elements.fileRename.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.rename || !entry;
-    elements.fileDelete.disabled = controllerState.fileMutationBusy || !controllerState.fileMutations.delete || !entry;
-    elements.fileUp.disabled = controllerState.fileMutationBusy || controllerState.filePath === controllerState.fileParentPath;
+      unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.write || !entry || entry.type !== "file";
+    elements.fileCopy.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.copy || !entry;
+    elements.fileMove.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.move || !entry;
+    elements.fileRename.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.rename || !entry;
+    elements.fileDelete.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.delete || !entry;
+    elements.fileUp.disabled = unavailable || controllerState.fileMutationBusy || controllerState.filePath === controllerState.fileParentPath;
     elements.fileCopy.title = "";
     elements.fileMove.title = "";
     elements.fileRename.title = "";
@@ -320,7 +343,7 @@ export function createFilesController({
   }
 
   async function refreshFiles({ previewSelection = false } = {}) {
-    if (!controllerState.fileExecutorId) {
+    if (!fileExecutorOnline()) {
       elements.fileState.textContent = "No online executor available";
       renderFileList({ entries: [] });
       return null;
@@ -356,7 +379,7 @@ export function createFilesController({
       return payload;
     } finally {
       if (generation === controllerState.fileListGeneration) {
-        elements.fileRefresh.disabled = controllerState.fileMutationBusy;
+        elements.fileRefresh.disabled = controllerState.fileMutationBusy || !fileExecutorOnline();
       }
     }
   }

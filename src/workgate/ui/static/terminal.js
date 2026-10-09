@@ -254,6 +254,7 @@ export function createTerminalController({
 
   function renderTerminalExecutors(targets) {
     const available = Array.isArray(targets) ? targets : [];
+    const wasOnline = terminalExecutorOnline();
     controllerState.terminalExecutorStates = new Map();
     elements.terminalExecutor.replaceChildren();
     let currentAvailable = false;
@@ -268,17 +269,19 @@ export function createTerminalController({
       option.textContent = state === "online" ? label : `${label} (${state})`;
       option.disabled = state !== "online";
       option.selected = executorId === controllerState.terminalExecutorId;
-      if (option.selected) currentAvailable = true;
+      if (option.selected && state === "online") currentAvailable = true;
       elements.terminalExecutor.append(option);
     }
     if (!currentAvailable) {
       if (controllerState.terminalExecutorPinned && controllerState.terminalExecutorId) {
-        const option = document.createElement("option");
-        option.value = controllerState.terminalExecutorId;
-        option.textContent = `${controllerState.terminalExecutorId} (unavailable)`;
-        option.disabled = true;
-        option.selected = true;
-        elements.terminalExecutor.append(option);
+        if (!controllerState.terminalExecutorStates.has(controllerState.terminalExecutorId)) {
+          const option = document.createElement("option");
+          option.value = controllerState.terminalExecutorId;
+          option.textContent = `${controllerState.terminalExecutorId} (unavailable)`;
+          option.disabled = true;
+          elements.terminalExecutor.append(option);
+        }
+        if (wasOnline) resetTerminalWorkspace(controllerState.terminalExecutorId);
         elements.terminalExecutor.value = controllerState.terminalExecutorId;
         elements.terminalState.textContent = `Executor unavailable · ${controllerState.terminalExecutorId}`;
         setTerminalControls(false);
@@ -292,6 +295,7 @@ export function createTerminalController({
       return;
     }
     elements.terminalExecutor.value = controllerState.terminalExecutorId;
+    if (!wasOnline) refreshTerminalsInBackground({ force: true });
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
 

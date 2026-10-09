@@ -25,6 +25,7 @@ The `ui_path` and `ui_enabled` settings control the browser UI. See [Configurati
 ### Dashboard
 
 View health, resource usage, recent activity, and alerts for the selected executor. Missing metrics are shown as unavailable rather than guessed.
+Executor status and names refresh automatically across Dashboard, Files, Terminals, and Sessions. Offline or revoked executors cannot be used for new file or terminal operations; a deep-linked executor stays selected as unavailable instead of silently switching machines.
 
 ### Executors
 
