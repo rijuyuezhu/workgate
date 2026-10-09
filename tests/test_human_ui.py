@@ -10,6 +10,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
@@ -29,6 +30,12 @@ from workgate.protocol.credentials import (
     new_executor_credential,
 )
 from workgate.protocol.ids import new_executor_id
+from workgate.ui.http.session import (
+    has_valid_ui_csrf,
+    has_valid_ui_origin,
+    ui_request_origin,
+    ui_session_claims,
+)
 from workgate.ui.session import (
     UI_CSRF_HEADER,
     UI_SESSION_BINDING_HEADER,
@@ -775,6 +782,33 @@ def test_ui_origins_use_browser_canonicalization(monkeypatch, tmp_path):
         canonical
     )
     assert ui_csrf_cookie_name(configured) == ui_csrf_cookie_name(canonical)
+
+
+def test_malformed_ui_host_cannot_establish_cookie_authentication(
+    monkeypatch, tmp_path
+):
+    _configure_ui(monkeypatch, tmp_path, auth_mode="oauth")
+    request = Request(
+        {
+            "type": "http",
+            "scheme": "https",
+            "method": "POST",
+            "path": "/api/ui/session/logout",
+            "headers": [
+                (b"host", b"admin.example/attacker"),
+                (b"origin", b"https://admin.example"),
+            ],
+            "query_string": b"",
+        }
+    )
+    with pytest.raises(ValueError, match="Invalid Human UI request host"):
+        ui_request_origin(request)
+    assert not has_valid_ui_origin(request)
+    with pytest.raises(
+        jwt.InvalidTokenError, match="Invalid Human UI request origin"
+    ):
+        ui_session_claims(request)
+    assert not has_valid_ui_csrf(request, {})
 
 
 def test_ui_session_cookie_cannot_be_replayed_without_origin_binding(
