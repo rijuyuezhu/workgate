@@ -19,6 +19,7 @@ export function createTerminalController({
     terminalReady: false,
     terminalXterm: null,
     terminalFitAddon: null,
+    terminalResizeObserver: null,
     terminalXtermData: null,
     terminalXtermBinary: null,
     selectedShellId: text(initialShellId, ""),
@@ -39,6 +40,9 @@ export function createTerminalController({
     down: "\u001b[B",
     "ctrl-c": "\u0003",
     "ctrl-d": "\u0004",
+    left: "\u001b[D",
+    right: "\u001b[C",
+    enter: "\r",
   });
   const terminalHistoryLimit = 100;
 
@@ -79,6 +83,42 @@ export function createTerminalController({
     );
   }
 
+  function showTerminalFeedback(message) {
+    elements.terminalFeedback.textContent = message;
+  }
+
+  async function copyTerminalSelection() {
+    const selection = controllerState.terminalXterm?.getSelection();
+    if (!selection) {
+      showTerminalFeedback("Select text in the terminal to copy.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(selection);
+      showTerminalFeedback("Copied terminal selection.");
+    } catch {
+      showTerminalFeedback("Copy unavailable: allow clipboard access.");
+    }
+    controllerState.terminalXterm?.focus();
+  }
+
+  async function pasteTerminalClipboard() {
+    if (!controllerState.terminalReady || !terminalSocketCurrent()) return;
+    const generation = controllerState.terminalGeneration;
+    try {
+      const value = await navigator.clipboard.readText();
+      // xterm.paste applies bracketed-paste delimiters when the PTY enabled them.
+      // An async clipboard read must never paste into a newly selected shell.
+      if (value && generation === controllerState.terminalGeneration && controllerState.terminalReady && terminalSocketCurrent()) {
+        controllerState.terminalXterm.paste(value);
+        showTerminalFeedback("Pasted into terminal.");
+      }
+    } catch {
+      showTerminalFeedback("Paste unavailable: allow clipboard access.");
+    }
+    controllerState.terminalXterm?.focus();
+  }
+
   function terminalSocketCurrent() {
     return Boolean(
       controllerState.terminalSocket &&
@@ -116,7 +156,7 @@ export function createTerminalController({
         activate: () => {},
         allowNonHttpProtocols: false,
       },
-      scrollback: 5000,
+      scrollback: 10000,
       theme: {
         background: "#07111f",
         foreground: "#d8e9f5",
@@ -148,6 +188,22 @@ export function createTerminalController({
     controllerState.terminalFitAddon = new api.FitAddon();
     controllerState.terminalXterm.loadAddon(controllerState.terminalFitAddon);
     controllerState.terminalXterm.open(elements.terminalXterm);
+    controllerState.terminalXterm.attachCustomKeyEventHandler((event) => {
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey) return true;
+      const key = event.key.toLowerCase();
+      if (key !== "c" && key !== "v") return true;
+      if (event.type === "keydown") {
+        if (key === "c") void copyTerminalSelection();
+        else void pasteTerminalClipboard();
+      }
+      return false;
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      controllerState.terminalResizeObserver = new ResizeObserver(() => {
+        window.requestAnimationFrame(sendTerminalResize);
+      });
+      controllerState.terminalResizeObserver.observe(elements.terminalXterm);
+    }
     controllerState.terminalXtermData = controllerState.terminalXterm.onData((data) => {
       sendTerminalBytes(encoder.encode(data));
     });
@@ -216,6 +272,9 @@ export function createTerminalController({
     elements.terminalInputForm.querySelector("button").disabled = !connected;
     for (const button of elements.terminalKeyButtons) button.disabled = !connected;
     elements.terminalKill.disabled = controllerState.terminalLoading || !online || !controllerState.selectedShellId;
+    elements.terminalReconnect.disabled = controllerState.terminalLoading || !online || !controllerState.selectedShellId;
+    elements.terminalCopy.disabled = !connected;
+    elements.terminalPaste.disabled = !connected;
   }
 
   function closeTerminalSocket() {
@@ -228,6 +287,7 @@ export function createTerminalController({
     }
     controllerState.terminalMode = "message";
     controllerState.terminalReady = false;
+    showTerminalFeedback("");
     elements.terminalXterm.hidden = true;
     elements.terminalOutput.hidden = false;
     controllerState.terminalXterm?.reset();
@@ -360,15 +420,18 @@ export function createTerminalController({
       .slice(0, 4096);
   }
 
-  async function connectTerminal(shellId) {
+  async function connectTerminal(shellId, { reconnect = false } = {}) {
     const requestedExecutor = controllerState.terminalExecutorId;
     if (
       !shellId ||
-      !terminalExecutorOnline(requestedExecutor) ||
-      (shellId === controllerState.selectedShellId &&
-        controllerState.terminalSocketExecutorId === requestedExecutor &&
-        controllerState.terminalSocket?.readyState === WebSocket.OPEN)
+      !terminalExecutorOnline(requestedExecutor)
     ) return;
+    if (!reconnect && shellId === controllerState.selectedShellId &&
+        controllerState.terminalSocketExecutorId === requestedExecutor &&
+        controllerState.terminalSocket?.readyState === WebSocket.OPEN) {
+      controllerState.terminalXterm?.focus();
+      return;
+    }
     closeTerminalSocket();
     controllerState.selectedShellId = shellId;
     const generation = controllerState.terminalGeneration;
@@ -560,6 +623,12 @@ export function createTerminalController({
 
 
   function bind() {
+    elements.terminalReconnect.addEventListener("click", () => {
+      if (controllerState.selectedShellId) void connectTerminal(controllerState.selectedShellId, { reconnect: true });
+    });
+    elements.terminalCopy.addEventListener("click", () => void copyTerminalSelection());
+    elements.terminalPaste.addEventListener("click", () => void pasteTerminalClipboard());
+    elements.terminalXterm.addEventListener("click", () => controllerState.terminalXterm?.focus());
   elements.terminalStartForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = elements.terminalStartForm.querySelector("button");
@@ -586,6 +655,7 @@ export function createTerminalController({
     if (!sendTerminalData(value, true)) return;
     rememberTerminalCommand(value);
     elements.terminalInput.value = "";
+    controllerState.terminalXterm?.focus();
   });
 
   elements.terminalInput.addEventListener("keydown", (event) => {
@@ -663,6 +733,11 @@ export function createTerminalController({
     renderExecutors: renderTerminalExecutors,
     reset: resetTerminalWorkspace,
     resize: sendTerminalResize,
+    focus: () => {
+      if (controllerState.terminalMode === "pty" && controllerState.terminalReady) {
+        controllerState.terminalXterm?.focus();
+      }
+    },
     showMessage: showTerminalMessage,
   };
 }

@@ -155,8 +155,8 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert client.get("/ui/assets/xterm.css").status_code == 200
     web_css = client.get("/ui/assets/web.css")
     assert web_css.status_code == 200
-    assert "scrollbar-width: none !important" in web_css.text
-    assert ".terminal-xterm .xterm-viewport::-webkit-scrollbar" in web_css.text
+    assert "scrollbar-width: thin" in web_css.text
+    assert ".terminal-xterm .xterm-viewport" in web_css.text
     license_text = client.get("/ui/assets/xterm.LICENSE.txt")
     assert license_text.status_code == 200
     assert "Permission is hereby granted" in license_text.text

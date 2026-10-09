@@ -248,6 +248,8 @@ void (async () => {
     executorTotal: document.getElementById("executor-total"),
     refresh: document.getElementById("refresh"),
     signOut: document.getElementById("sign-out"),
+    terminalCopy: document.getElementById("terminal-copy"),
+    terminalFeedback: document.getElementById("terminal-feedback"),
     terminalInput: document.getElementById("terminal-input"),
     terminalInputForm: document.getElementById("terminal-input-form"),
     terminalKeyButtons: Array.from(document.querySelectorAll("[data-terminal-key]")),
@@ -256,6 +258,8 @@ void (async () => {
     terminalExecutor: document.getElementById("terminal-executor"),
     terminalName: document.getElementById("terminal-name"),
     terminalOutput: document.getElementById("terminal-output"),
+    terminalPaste: document.getElementById("terminal-paste"),
+    terminalReconnect: document.getElementById("terminal-reconnect"),
     terminalXterm: document.getElementById("terminal-xterm"),
     terminalStartForm: document.getElementById("terminal-start-form"),
     terminalState: document.getElementById("terminal-state"),
@@ -442,7 +446,10 @@ void (async () => {
       if (replaceHash) history.replaceState({}, "", url);
       else history.pushState({}, "", url);
     }
-    window.requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("resize"));
+      if (view === "terminals") terminal.focus();
+    });
   }
 
   function setConnection(label, state) {
