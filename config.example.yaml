@@ -136,6 +136,8 @@ max_todo_bytes: 1000000
 max_http_request_bytes: 16000000
 # Maximum active audit JSONL bytes before recent-record retention; 0 disables this size cap.
 max_audit_log_bytes: 20000000
+# Total compressed cold Audit archive budget; zero disables cold retention.
+max_audit_archive_bytes: 128000000
 # Maximum encoded bytes retained for one audit event before preview truncation.
 max_audit_event_bytes: 1000000
 # Store large audit field values as private content-addressed payloads.

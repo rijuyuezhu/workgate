@@ -132,6 +132,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         max_view_image_bytes=settings.max_view_image_bytes,
         max_http_request_bytes=settings.max_http_request_bytes,
         max_audit_log_bytes=settings.max_audit_log_bytes,
+        max_audit_archive_bytes=settings.max_audit_archive_bytes,
         max_audit_event_bytes=settings.max_audit_event_bytes,
         audit_payloads_enabled=settings.audit_payloads_enabled,
         audit_inline_value_bytes=settings.audit_inline_value_bytes,

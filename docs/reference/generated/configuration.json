@@ -1221,6 +1221,26 @@
         ],
         [
           {
+            "code": "max_audit_archive_bytes"
+          },
+          {
+            "lines": [
+              {
+                "code": "--max-audit-archive-bytes"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_MAX_AUDIT_ARCHIVE_BYTES"
+          },
+          "integer",
+          {
+            "code": "128000000"
+          },
+          "Total compressed cold Audit archive budget; zero disables cold retention."
+        ],
+        [
+          {
             "code": "max_audit_event_bytes"
           },
           {
@@ -2761,6 +2781,19 @@
       "description": "Maximum active audit JSONL bytes before recent-record retention; 0 disables this size cap.",
       "env": "WORKGATE_MAX_AUDIT_LOG_BYTES",
       "name": "max_audit_log_bytes",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--max-audit-archive-bytes",
+      "default": 128000000,
+      "default_display": "128000000",
+      "description": "Total compressed cold Audit archive budget; zero disables cold retention.",
+      "env": "WORKGATE_MAX_AUDIT_ARCHIVE_BYTES",
+      "name": "max_audit_archive_bytes",
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",

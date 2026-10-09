@@ -411,12 +411,13 @@ Rejected ownership alternatives:
 
 The `audit` package owns the transport-neutral lifecycle of bounded audit
 events without content masking. Every session-owned event is appended to both the global log and
-that session's colocated log; events without a session remain global-only. The
-global log remains authoritative for payload-object retention, while local logs
-provide direct per-session reads without re-scanning unrelated records. Audit may
-consume configuration, persistence primitives, execution-session identity,
-and the current payload store, but it must not depend on control delivery adapters, HTTP
-route adapters, Human UI presentation, or terminal implementations.
+that session's colocated log; events without a session remain global-only. The global log and its private compressed cold segments form one authoritative
+history for query/detail and payload references. Session-local append logs
+remain convenience copies; session/task history queries filter the canonical
+global authority, including ended sessions. Audit may consume configuration,
+persistence primitives, execution-session identity, and the payload store; it
+must not depend on control delivery adapters, HTTP route adapters, Human UI
+presentation, or terminal implementations.
 
 Rejected ownership alternatives:
 
