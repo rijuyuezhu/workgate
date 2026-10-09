@@ -600,8 +600,12 @@ export function createFilesController({
       await refreshFiles({ previewSelection: true });
       elements.fileState.textContent = `Uploaded ${files.length} file(s)`;
     } catch (error) {
-      elements.fileState.textContent = error instanceof Error ? error.message : String(error);
-      await refreshFiles();
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await refreshFiles();
+      } finally {
+        elements.fileState.textContent = `Upload failed: ${message}`;
+      }
     } finally {
       setFileMutationBusy(false);
     }

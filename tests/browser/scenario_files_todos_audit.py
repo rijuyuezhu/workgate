@@ -169,6 +169,19 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         == b"\x00\x80\xffBROWSER"
     )
 
+    # An existing binary file cannot be silently overwritten by upload.
+    page.locator("#file-upload-input").set_input_files(
+        {
+            "name": "binary-upload.bin",
+            "mimeType": "application/octet-stream",
+            "buffer": b"replacement",
+        }
+    )
+    expect(page.locator("#file-state")).to_contain_text("Upload failed")
+    assert harness.executor_workspace.joinpath(
+        "binary-upload.bin"
+    ).read_bytes() == (b"\x00\x80\xffBROWSER")
+
     page.locator("#file-new").click()
     page.locator("#file-operation-name").fill("created.txt")
     page.locator("#file-operation-form button[type=submit]").click()
