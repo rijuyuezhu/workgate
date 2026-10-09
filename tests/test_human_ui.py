@@ -2,9 +2,7 @@ import base64
 import hashlib
 import html
 import json
-import os
 import re
-import stat
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -12,6 +10,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
@@ -31,9 +30,11 @@ from workgate.protocol.credentials import (
     new_executor_credential,
 )
 from workgate.protocol.ids import new_executor_id
-from workgate.ui.security import (
-    UI_LOCAL_TOKEN_HEADER,
-    get_or_create_ui_local_token,
+from workgate.ui.http.session import (
+    has_valid_ui_csrf,
+    has_valid_ui_origin,
+    ui_request_origin,
+    ui_session_claims,
 )
 from workgate.ui.session import (
     UI_CSRF_HEADER,
@@ -69,7 +70,6 @@ def _configure_ui(monkeypatch, tmp_path, *, auth_mode="none", **values):
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
     monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    monkeypatch.setenv("WORKGATE_UI_TUI_COMMAND", "test-opentui")
     for name, value in values.items():
         monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value).lower())
     clear_settings_cache()
@@ -122,9 +122,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
 
     assert "assets/xterm.css" in index.text
     assert "assets/xterm_bundle.js" in index.text
-    assert "assets/opentui_console.js" in index.text
-    assert 'id="opentui-panel"' in index.text
-    assert 'id="opentui-terminal"' in index.text
+    assert "opentui" not in index.text.lower()
+    assert 'data-view="console"' not in index.text
+    assert client.get("/ui/assets/opentui_console.js").status_code == 404
     assert 'id="file-panel"' in index.text
     assert 'id="file-executor"' in index.text
     assert 'id="file-editor-form"' in index.text
@@ -163,13 +163,6 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "@xterm/xterm 5.5.0" in license_text.text
     assert "@xterm/addon-fit 0.10.0" in license_text.text
     assert "@xterm/addon-image 0.8.0" in license_text.text
-    opentui_script = client.get("/ui/assets/opentui_console.js")
-    assert opentui_script.status_code == 200
-    assert opentui_script.headers["x-content-type-options"] == "nosniff"
-    assert "createImageAddon" in opentui_script.text
-    assert opentui_script.text.index("loadAddon(api.createImageAddon())") < (
-        opentui_script.text.index("fitAddon = new api.FitAddon()")
-    )
     script = client.get("/ui/assets/web.js")
     assert script.status_code == 200
     assert script.headers["x-content-type-options"] == "nosniff"
@@ -791,6 +784,33 @@ def test_ui_origins_use_browser_canonicalization(monkeypatch, tmp_path):
     assert ui_csrf_cookie_name(configured) == ui_csrf_cookie_name(canonical)
 
 
+def test_malformed_ui_host_cannot_establish_cookie_authentication(
+    monkeypatch, tmp_path
+):
+    _configure_ui(monkeypatch, tmp_path, auth_mode="oauth")
+    request = Request(
+        {
+            "type": "http",
+            "scheme": "https",
+            "method": "POST",
+            "path": "/api/ui/session/logout",
+            "headers": [
+                (b"host", b"admin.example/attacker"),
+                (b"origin", b"https://admin.example"),
+            ],
+            "query_string": b"",
+        }
+    )
+    with pytest.raises(ValueError, match="Invalid Human UI request host"):
+        ui_request_origin(request)
+    assert not has_valid_ui_origin(request)
+    with pytest.raises(
+        jwt.InvalidTokenError, match="Invalid Human UI request origin"
+    ):
+        ui_session_claims(request)
+    assert not has_valid_ui_csrf(request, {})
+
+
 def test_ui_session_cookie_cannot_be_replayed_without_origin_binding(
     monkeypatch, tmp_path
 ):
@@ -913,27 +933,20 @@ def test_existing_bearer_can_be_converted_without_exposing_it_to_storage(
     )
 
 
-def test_local_ui_token_bypasses_oauth_only_on_loopback(monkeypatch, tmp_path):
+def test_removed_native_ui_token_does_not_bypass_oauth(monkeypatch, tmp_path):
     _configure_ui(monkeypatch, tmp_path, auth_mode="oauth")
-    token = get_or_create_ui_local_token()
-    headers = {UI_LOCAL_TOKEN_HEADER: token}
-
+    headers = {"x-workgate-ui-token": "obsolete-credential-" * 5}
     loopback = TestClient(build_http_app(), client=("127.0.0.1", 50000))
-    response = loopback.get("/api/ui/bootstrap", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["data"]["executor_targets"] == []
-
-    unrelated = loopback.get("/tools/list_persistent_shells", headers=headers)
-    assert unrelated.status_code == 401
-
-    external = TestClient(build_http_app(), client=("203.0.113.10", 50000))
-    rejected = external.get("/api/ui/bootstrap", headers=headers)
-    assert rejected.status_code == 401
-
-    token_path = tmp_path / ".state" / "ui" / "local-token"
-    assert token_path.read_text(encoding="utf-8").strip() == token
-    if os.name != "nt":
-        assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+    assert loopback.get("/api/ui/bootstrap", headers=headers).status_code == 401
+    assert (
+        loopback.get(
+            "/tools/list_persistent_shells", headers=headers
+        ).status_code
+        == 401
+    )
+    remote = TestClient(build_http_app(), client=("203.0.113.10", 50000))
+    assert remote.get("/api/ui/bootstrap", headers=headers).status_code == 401
+    assert not (tmp_path / ".state" / "ui" / "local-token").exists()
 
 
 def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
@@ -970,7 +983,6 @@ def test_human_ui_custom_mount_and_bootstrap(monkeypatch, tmp_path):
             "syntax_highlighting": True,
             "audit_image_preview": True,
             "wallpaper": "aurora",
-            "opentui": True,
             "file_editor": True,
             "file_copy": True,
             "file_move": True,

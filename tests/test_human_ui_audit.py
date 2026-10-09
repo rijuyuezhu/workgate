@@ -310,13 +310,7 @@ async def test_audit_detail_sanitizes_and_previews_view_image(
     )
 
     response = client.get(
-        "/api/ui/audit/detail",
-        params={
-            "id": "call:image-detail",
-            "columns": 10,
-            "rows": 5,
-            "cell_aspect": 2,
-        },
+        "/api/ui/audit/detail", params={"id": "call:image-detail"}
     )
 
     assert response.status_code == 200
@@ -327,10 +321,8 @@ async def test_audit_detail_sanitizes_and_previews_view_image(
     assert preview["path"] == "pixel.png"
     assert preview["bytes"] == len(png)
     assert preview["mime_type"] == "image/png"
-    assert (
-        len(base64.b64decode(preview["rgba"]))
-        == preview["width"] * preview["height"] * 4
-    )
+    assert base64.b64decode(preview["data_base64"]) == png
+    assert "rgba" not in preview
 
 
 @pytest.mark.asyncio

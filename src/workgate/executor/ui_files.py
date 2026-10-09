@@ -11,7 +11,6 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from ..utils.image_preview import make_image_preview
 from ..utils.path_locks import path_locks
 from .files import (
     FilesConfig,
@@ -145,14 +144,7 @@ class UiFilesService:
             probe = handle.read(sample_bytes + 3)
         return probe[:sample_bytes], probe[sample_bytes:]
 
-    def preview(
-        self,
-        path: str,
-        *,
-        columns: int | None = None,
-        rows: int | None = None,
-        cell_aspect: float | None = None,
-    ) -> dict[str, Any]:
+    def preview(self, path: str) -> dict[str, Any]:
         resolved = self._resolve(path, must_exist=True)
         if resolved.is_dir():
             return {
@@ -185,7 +177,7 @@ class UiFilesService:
                     ),
                 }
             data = resolved.read_bytes()
-            payload: dict[str, Any] = {
+            return {
                 "kind": "image",
                 "path": self._display(resolved),
                 "bytes": size,
@@ -193,25 +185,6 @@ class UiFilesService:
                 "inline": True,
                 "data_base64": base64.b64encode(data).decode("ascii"),
             }
-            if columns is not None or rows is not None:
-                preview = make_image_preview(
-                    data,
-                    80 if columns is None else columns,
-                    24 if rows is None else rows,
-                    2.0 if cell_aspect is None else cell_aspect,
-                )
-                payload.update(
-                    {
-                        "rgba": base64.b64encode(preview.rgba).decode("ascii"),
-                        "width": preview.width,
-                        "height": preview.height,
-                        "cell_width": preview.cell_width,
-                        "cell_height": preview.cell_height,
-                        "original_width": preview.original_width,
-                        "original_height": preview.original_height,
-                    }
-                )
-            return payload
 
         if self._looks_binary(sample, continuation=continuation):
             return {
@@ -499,12 +472,7 @@ class UiFilesService:
         if op == "ui.files.list":
             return self.list_payload(str(args.get("path") or "."))
         if op == "ui.files.preview":
-            return self.preview(
-                str(args["path"]),
-                columns=_optional_int(args.get("columns")),
-                rows=_optional_int(args.get("rows")),
-                cell_aspect=_optional_float(args.get("cell_aspect")),
-            )
+            return self.preview(str(args["path"]))
         if op == "ui.files.content":
             return self.content(str(args["path"]))
         if op == "ui.files.write":
@@ -536,15 +504,3 @@ class UiFilesService:
         raise NotImplementedError(
             f"unsupported executor UI file operation: {op}"
         )
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def _optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    return float(value)

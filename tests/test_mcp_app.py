@@ -15,10 +15,6 @@ from workgate.control.mcp.session_limits import (
 from workgate.http.request_limits import RequestBodyLimitMiddleware
 from workgate.oauth.http.middleware import AuthMiddleware
 from workgate.persistence import FileStateStore
-from workgate.ui.security import (
-    UI_LOCAL_TOKEN_HEADER,
-    get_or_create_ui_local_token,
-)
 from workgate.ui.session import (
     UI_SESSION_BINDING_HEADER,
     issue_ui_session,
@@ -100,7 +96,7 @@ def test_build_mcp_http_app_wraps_mcp_with_oauth_route_app():
     assert paths[-1] == ""
 
 
-def test_mcp_http_app_serves_public_ui_and_native_tui_api(tmp_path):
+def test_mcp_http_app_rejects_removed_native_ui_token(tmp_path):
     settings = Settings(
         mode="mcp",
         auth_mode="oauth",
@@ -115,17 +111,15 @@ def test_mcp_http_app_serves_public_ui_and_native_tui_api(tmp_path):
     with TestClient(app, client=("127.0.0.1", 4242)) as client:
         page = client.get("/ui")
         unauthenticated_api = client.get("/api/ui/bootstrap")
-        token = get_or_create_ui_local_token()
         native_api = client.get(
             "/api/ui/bootstrap",
-            headers={UI_LOCAL_TOKEN_HEADER: token},
+            headers={"x-workgate-ui-token": "obsolete-token" * 8},
         )
 
     assert page.status_code == 200
     assert "workgate" in page.text
     assert unauthenticated_api.status_code == 401
-    assert native_api.status_code == 200
-    assert native_api.json()["data"]["executor_targets"] == []
+    assert native_api.status_code == 401
 
 
 def test_build_mcp_http_app_supports_sdk_sse_fallback():

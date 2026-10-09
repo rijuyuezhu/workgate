@@ -94,8 +94,6 @@ class Settings(BaseSettings):
     """Mount the browser Human UI and its authenticated API on the HTTP server."""
     ui_path: str = "/ui"
     """Non-root URL path where the browser Human UI is mounted."""
-    ui_tui_command: str | None = None
-    """Optional administrator-supplied OpenTUI executable command."""
     ui_terminal_idle_timeout_s: _NonNegativeInt = 3600
     """Idle timeout for authenticated Human UI terminal WebSockets; 0 disables idle expiry."""
     ui_terminal_max_connections: int = Field(default=8, ge=1, le=128)
@@ -320,11 +318,6 @@ class Settings(BaseSettings):
     def config_dir(self) -> Path:
         """Platform-native Workgate configuration namespace."""
         return app_paths().config_dir
-
-    @property
-    def cache_dir(self) -> Path:
-        """Platform-native Workgate regenerable-cache namespace."""
-        return app_paths().cache_dir
 
     @property
     def runtime_dir(self) -> Path:

@@ -31,7 +31,6 @@ from tests.e2e_helpers import (
     provision_executor_pair,
 )
 from workgate.oauth.core.scopes import default_scope
-from workgate.ui.contracts import POSIX_TUI_EXECUTABLE_NAME
 from workgate.ui.session import (
     UI_CSRF_HEADER,
     UI_SESSION_BINDING_HEADER,
@@ -105,7 +104,6 @@ class BrowserHarness:
     base_url: str
     admin_pin: str
     executor_id: str
-    opentui_crash_marker: Path
     playwright: Playwright
     browser: Browser
     context: BrowserContext
@@ -141,26 +139,6 @@ class BrowserHarness:
         (executor_workspace / "copy-source.txt").write_text(
             "copy source\n", encoding="utf-8"
         )
-        opentui_crash_marker = root / "opentui-crash-next"
-        opentui_wrapper = root / "opentui-wrapper.py"
-        opentui_binary = (
-            PROJECT_ROOT / "ui-opentui" / "dist" / POSIX_TUI_EXECUTABLE_NAME
-        )
-        opentui_wrapper.write_text(
-            "#!/usr/bin/env python3\n"
-            "import os\n"
-            "from pathlib import Path\n"
-            f"marker = Path({str(opentui_crash_marker)!r})\n"
-            f"binary = {str(opentui_binary)!r}\n"
-            "if marker.exists():\n"
-            "    marker.unlink()\n"
-            "    print('intentional browser e2e OpenTUI crash', flush=True)\n"
-            "    raise SystemExit(17)\n"
-            "os.execv(binary, [binary])\n",
-            encoding="utf-8",
-        )
-        opentui_wrapper.chmod(0o755)
-
         port = free_tcp_port()
         base_url = f"http://127.0.0.1:{port}"
         admin_pin = "browser-e2e-pin-924681"
@@ -185,7 +163,6 @@ class BrowserHarness:
                 "WORKGATE_OAUTH_ADMIN_PIN": admin_pin,
                 "WORKGATE_AGENT_BRIDGE_ENABLED": "false",
                 "WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S": "120",
-                "WORKGATE_UI_TUI_COMMAND": str(opentui_wrapper),
             }
         )
         server = _start_logged_process(
@@ -245,7 +222,6 @@ class BrowserHarness:
                 base_url=base_url,
                 admin_pin=admin_pin,
                 executor_id=executor_id,
-                opentui_crash_marker=opentui_crash_marker,
                 playwright=playwright,
                 browser=browser,
                 context=context,
@@ -622,6 +598,10 @@ class BrowserHarness:
 
         self.api_token = self.issue_token(default_scope())
         self.wait_executor_online()
+        # The first bootstrap can precede executor registration; reload with an
+        # online executor for the dashboard fixture (#193 covers live updates).
+        self.page.reload(wait_until="domcontentloaded")
+        expect(self.page.locator("#connection-state")).to_have_text("Connected")
         self.console_errors = [
             line
             for line in self.console_errors
@@ -641,7 +621,6 @@ class BrowserHarness:
                 "terminals": "Terminals",
                 "files": "Files",
                 "audit": "Audit",
-                "console": "OpenTUI",
             }[view]
         )
 

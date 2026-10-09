@@ -80,7 +80,7 @@ arguments, settings loading, runtime imports, or `argv[0]` special cases. The
 private durable-job runner is also a normal argparse subcommand and is labeled
 internal in help rather than parsed by a separate code path.
 
-Runtime commands are explicit: `standalone`, `control`, `tui`, `mcp`,
+Runtime commands are explicit: `standalone`, `control`, `mcp`,
 `executor`, `version`, and the labeled internal `job-runner`. Running `workgate`
 without a command is an argparse error. The former `server` and `worker`
 commands are not compatibility aliases.
@@ -165,7 +165,7 @@ policy. It converts transport-neutral tool registries and shared services into a
 FastMCP server, then runs that server over stdio or wraps the MCP SDK's ASGI app
 for HTTP delivery. The HTTP wrapper installs the same `ui/http` routes used by
 the REST control adapter before the catch-all MCP mount. The browser shell and assets
-remain public, while Human UI APIs retain OAuth or trusted-loopback TUI checks.
+remain public, while Human UI APIs retain their OAuth and session access checks.
 
 Allowed dependencies include tools, operations, OAuth adapters, remote route
 contributions, the shared `ui/http/routes.py` route contract, delivery-adapter-neutral
@@ -303,36 +303,11 @@ Rejected ownership alternatives:
 
 ## `ui`: transport-neutral Human UI core
 
-The `ui` package owns Human UI view models, native-client runtime contracts, and
-UI-specific security behavior. UI core must not import control delivery adapters
+The `ui` package owns Human UI view models and UI-specific security behavior.
+UI core must not import control delivery adapters
 or HTTP route adapters. Control-side adapters may invoke UI core capabilities
 when serving the Human UI, but those capabilities remain internal rather than
 public tools.
-
-Rejected ownership alternatives:
-
-- top-level `dashboard.py`: the name exposes no package boundary and previously
-  mixed generic host sampling with UI projection.
-- `telemetry`: audit activity labels, alerts, health presentation, and redaction
-  choices are view-model policy rather than raw observations.
-- `control/http`: Dashboard projection and image decoding belong below the
-  delivery adapter because they are independent of query parameters and JSON
-  response construction.
-- top-level `image_preview.py`: a package-root file hid that thumbnail generation
-  is a Human UI rendering capability rather than a project-wide utility.
-- top-level `ui_security.py`: the old location obscured that the local-token
-  bypass is narrowly scoped Human UI policy, not a general authentication or
-  transport-security facility.
-- top-level `tui_runtime.py`: package-root placement hid that executable
-  discovery, embedded-payload extraction, and process launch are one native UI
-  runtime contract.
-- `release`: release code builds and embeds the sidecar, but runtime resolution
-  and extraction policy belongs to the client that consumes it.
-- duplicated runtime/release literals: executable names are a cross-layer artifact
-  contract, so `ui/contracts.py` owns them and the Bun-side mirror is generated and
-  checked rather than maintained as an independent source of truth.
-- `oauth`: OAuth middleware consumes the UI trust decision, but credential
-  creation and loopback UI namespace rules must remain owned by the UI domain.
 
 ### `ui/static`: packaged browser assets
 
@@ -345,8 +320,7 @@ Python modules and are not imported by executor machine-runtime logic.
 The directory contains exactly the browser shell (`index.html`), Human UI styles
 (`web.css`), the bootstrap controller (`web.js`), feature modules such as
 `dashboard.js`, `executors.js`, `audit.js`, `tasks.js`, `terminal.js`,
-and `files.js`, plus `audit_view.js`, `opentui_console.js`,
-`syntax_highlight.js`, the vendored xterm bundle and stylesheet, and their
+and `files.js`, plus `audit_view.js`, `syntax_highlight.js`, the vendored xterm bundle and stylesheet, and their
 license notice. Build and architecture gates reject symlinks, Python files,
 unexpected assets, and restoration of the former top-level `ui_static` path.
 
@@ -471,22 +445,6 @@ runtime carries a resolved `ControlConfig` that intentionally has no
 `default_workdir`, shell executable, or executor file/search limits. Public
 machine-tool descriptions therefore state that the bound executor enforces its
 own policy instead of advertising the control host's values.
-
-## `release`: artifact construction and verification
-
-The `release` package owns build-time artifact assembly and validation. It is
-outside runtime execution paths and must not depend on control delivery adapters,
-HTTP adapters, executor runtime state, or tool operations. Its only project-local
-dependency is the dependency-leaf OpenTUI filename contract in `ui/contracts.py`.
-
-Rejected ownership alternatives:
-
-- top-level `platform_wheel.py`: package-root placement made release tooling look
-  like a runtime capability.
-- `ui` or `terminal`: those packages consume the native assets at runtime, while
-  release code constructs and proves the distributable payloads.
-- `utils`: wheel metadata, binary format validation, deterministic archives, and
-  release locking form one build-time domain rather than general helpers.
 
 ## Large-module reassessment
 

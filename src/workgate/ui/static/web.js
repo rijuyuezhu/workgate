@@ -98,10 +98,6 @@ void (async () => {
       title: "Audit",
       description: "Search control-owned product and tool activity.",
     },
-    console: {
-      title: "OpenTUI",
-      description: "Run the optional terminal-native interface inside the browser.",
-    },
   });
   const encoder = new TextEncoder();
   let authenticated = config.authMode !== "oauth";
@@ -387,7 +383,6 @@ void (async () => {
   function normalizeView(value) {
     const candidate = String(value || "").replace(/^#/, "");
     if (!Object.prototype.hasOwnProperty.call(viewDefinitions, candidate)) return "overview";
-    if (candidate === "console" && !config.opentuiAvailable) return "overview";
     return candidate;
   }
 
@@ -928,10 +923,6 @@ void (async () => {
       }
       setActiveView(item.dataset.view);
     });
-  }
-  if (!config.opentuiAvailable) {
-    const consoleNav = elements.appNavItems.find((item) => item.dataset.view === "console");
-    if (consoleNav) consoleNav.hidden = true;
   }
   const restoreViewFromLocation = () => setActiveView(viewFromLocation(), { syncHash: false });
   window.addEventListener("popstate", restoreViewFromLocation);

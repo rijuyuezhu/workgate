@@ -13,7 +13,6 @@ import workgate.executor.cli as executor_cli
 import workgate.executor.jobs.cli as jobs_cli
 import workgate.main as cli
 import workgate.standalone.cli as standalone_cli
-import workgate.ui.cli as tui_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.app_paths import AppPaths, app_paths
@@ -220,7 +219,6 @@ def test_root_help_lists_registered_commands():
     for command in (
         "standalone",
         "control",
-        "tui",
         "mcp",
         "executor",
         "version",
@@ -229,6 +227,9 @@ def test_root_help_lists_registered_commands():
         assert command in help_text
         assert command in subparsers.choices
     assert "server" not in subparsers.choices
+    assert "tui" not in subparsers.choices
+    with pytest.raises(SystemExit):
+        parser.parse_args(["tui"])
     assert "Run one durable job attempt (internal)" in help_text
 
 
@@ -403,7 +404,6 @@ def test_control_and_executor_discover_distinct_default_yaml_files(
         config_dir=workgate_config,
         state_dir=tmp_path / "state",
         data_dir=tmp_path / "data",
-        cache_dir=tmp_path / "cache",
         runtime_dir=tmp_path / "runtime",
     )
     monkeypatch.setattr(settings_module, "app_paths", lambda: paths)
@@ -593,60 +593,6 @@ def test_executor_connect_subcommand_parses_final_pairing_contract():
     assert args.name == "npu-4card"
     assert args.default_workdir == "/home/user/project"
     assert not hasattr(args, "invite")
-
-
-def test_tui_subcommand_parses_loopback_api_base():
-    args = cli._build_parser().parse_args(
-        ["tui", "--port", "9443", "--api-base", "https://localhost:9443/api/ui"]
-    )
-
-    assert args.handler is tui_cli.run_tui_from_args
-    assert args.port == 9443
-    assert args.api_base == "https://localhost:9443/api/ui"
-
-
-def test_tui_cli_exposes_only_control_role_settings():
-    parser = _command_parser("tui")
-    option_strings = {
-        option for action in parser._actions for option in action.option_strings
-    }
-    for spec in SETTING_SPECS:
-        assert (spec.cli_flag in option_strings) == (
-            spec.name in CONTROL_SETTING_NAMES
-        )
-
-
-def test_tui_handler_uses_configured_port_and_settings(monkeypatch, tmp_path):
-    from workgate.config.control import get_control_config
-    from workgate.persistence import get_state_store
-
-    calls = []
-
-    def fake_run(api_base, *, settings):
-        assert get_control_config() is settings
-        assert get_state_store().layout.root == settings.state_dir
-        calls.append((api_base, settings.port, settings.ui_tui_command))
-        return 0
-
-    monkeypatch.setattr(tui_cli, "run_tui", fake_run)
-    state_dir = tmp_path / "tui-state"
-    args = cli._build_parser().parse_args(
-        [
-            "tui",
-            "--port",
-            "9555",
-            "--state-dir",
-            str(state_dir),
-            "--ui-tui-command",
-            "/opt/tui",
-        ]
-    )
-
-    with pytest.raises(SystemExit) as exc_info:
-        args.handler(args)
-
-    assert exc_info.value.code == 0
-    assert calls == [("http://127.0.0.1:9555/api/ui", 9555, "/opt/tui")]
 
 
 def test_main_dispatches_to_argparse_handler(monkeypatch):

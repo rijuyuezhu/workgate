@@ -98,20 +98,8 @@ jobs:
       - name: Build wheel and source distribution
         run: uv build
 
-      - name: Inspect universal wheel and source distribution
-        run: |
-          uv run python - <<'PY'
-          from pathlib import Path
-
-          from workgate.release.platform_wheel import inspect_sdist, inspect_wheel
-
-          wheels = list(Path("dist").glob("*.whl"))
-          sdists = list(Path("dist").glob("*.tar.gz"))
-          if len(wheels) != 1 or len(sdists) != 1:
-              raise SystemExit("expected exactly one universal wheel and one sdist")
-          inspect_wheel(wheels[0], target=None)
-          inspect_sdist(sdists[0])
-          PY
+      - name: Check universal wheel and source distribution
+        run: python scripts/validation/check-python-dist.py dist
 
       - name: Generate checksums
         shell: bash
@@ -123,85 +111,6 @@ jobs:
         with:
           name: python-dist
           path: dist/*
-          if-no-files-found: error
-
-  build-platform-wheel:
-    name: Build platform wheel (${{ matrix.artifact }})
-    needs: validate-release
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - artifact: linux-x86_64
-            runner: ubuntu-latest
-            platform_tag: linux_x86_64
-          - artifact: linux-aarch64
-            runner: ubuntu-24.04-arm
-            platform_tag: linux_aarch64
-          - artifact: macos-x86_64
-            runner: macos-15-intel
-            platform_tag: macosx_10_15_x86_64
-          - artifact: macos-aarch64
-            runner: macos-15
-            platform_tag: macosx_11_0_arm64
-          - artifact: windows-x86_64
-            runner: windows-latest
-            platform_tag: win_amd64
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - run: uv sync --locked --group dev
-
-      - working-directory: ui-opentui
-        run: bun install --frozen-lockfile
-
-      - name: Build and inspect platform wheel
-        shell: bash
-        run: >-
-          uv run python scripts/release/build-platform-wheel.py
-          --platform-tag "${{ matrix.platform_tag }}"
-          --output-dir dist
-
-      - name: Install wheel without Bun or sidecar
-        shell: bash
-        run: |
-          set -euo pipefail
-          venv="$RUNNER_TEMP/platform-wheel-venv"
-          state="$RUNNER_TEMP/platform-wheel-state"
-          work="$RUNNER_TEMP/platform-wheel-work"
-          python -m venv "$venv"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            python_bin="$venv/Scripts/python.exe"
-            clean_path="$venv/Scripts"
-          else
-            python_bin="$venv/bin/python"
-            clean_path="$venv/bin"
-          fi
-          "$python_bin" -m pip install dist/*.whl
-          PATH="$clean_path" "$python_bin" \
-            "$GITHUB_WORKSPACE/scripts/release/smoke-platform-wheel.py" \
-            --state-dir "$state" \
-            --work-dir "$work"
-          test ! -e src/workgate/ui_runtime
-          test ! -e src/workgate/.platform-wheel-build.lock
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: python-wheel-${{ matrix.artifact }}
-          path: dist/*.whl
           if-no-files-found: error
 
   build-binary:
@@ -243,16 +152,6 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Build OpenTUI sidecar
-        working-directory: ui-opentui
-        run: |
-          bun install --frozen-lockfile
-          bun run build:tui
-
       - name: Build self-contained executable
         shell: bash
         run: |
@@ -274,15 +173,9 @@ jobs:
             "${PYINSTALLER_ARGS[@]}" \
             scripts/release/pyinstaller-entry.py
 
-      - name: Smoke test executables
+      - name: Smoke test executable
         shell: bash
-        run: |
-          ./dist/${{ matrix.binary }} --help
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            ./ui-opentui/dist/workgate-tui.exe --version
-          else
-            ./ui-opentui/dist/workgate-tui --version
-          fi
+        run: ./dist/${{ matrix.binary }} --help
 
       - name: Package executable
         shell: bash
@@ -290,16 +183,7 @@ jobs:
           set -euo pipefail
           mkdir -p release/workgate-${{ matrix.artifact }}
           cp dist/${{ matrix.binary }} release/workgate-${{ matrix.artifact }}/
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            cp ui-opentui/dist/workgate-tui.exe release/workgate-${{ matrix.artifact }}/
-          else
-            cp ui-opentui/dist/workgate-tui release/workgate-${{ matrix.artifact }}/
-          fi
           cp README.md LICENSE release/workgate-${{ matrix.artifact }}/
-          cp src/workgate/helpers/opentui.NOTICES \
-            release/workgate-${{ matrix.artifact }}/OPENTUI-NOTICES.txt
-          cp src/workgate/helpers/bun-1.3.14.LICENSE.md \
-            release/workgate-${{ matrix.artifact }}/BUN-1.3.14-LICENSE.md
           cat > release/workgate-${{ matrix.artifact }}/QUICKSTART.txt <<'EOF'
           Start the Workgate control:
 
@@ -312,9 +196,7 @@ jobs:
 
           POSIX persistent shells require tmux on the executor host.
 
-          Open the native terminal UI in another terminal:
-
-            ./workgate tui
+          Open the browser UI by starting control in HTTP mode and visiting /ui.
 
           Useful control environment variables:
 
@@ -358,7 +240,6 @@ jobs:
     needs:
       - validate-release
       - build-python-package
-      - build-platform-wheel
       - build-binary
     steps:
       - name: Download Python package artifacts
@@ -366,13 +247,6 @@ jobs:
         with:
           name: python-dist
           path: dist
-
-      - name: Download platform wheel artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: python-wheel-*
-          path: dist
-          merge-multiple: true
 
       - name: Download binary artifacts
         uses: actions/download-artifact@v8
@@ -389,18 +263,7 @@ jobs:
       - name: Create release notes
         run: |
           cat > RELEASE_NOTES.md <<EOF
-          Embedded-OpenTUI Python wheels are attached for:
-
-          \`\`\`text
-          linux-x86_64
-          linux-aarch64
-          macos-x86_64
-          macos-aarch64
-          windows-x86_64
-          \`\`\`
-
-          Linux wheels use truthful native \`linux_*\` tags; they do not claim manylinux compatibility.
-          The universal \`py3-none-any\` wheel and source distribution remain payload-free.
+          One universal \`py3-none-any\` Python wheel and one source distribution are attached.
 
           All-in-one executable downloads are attached for:
 
@@ -418,7 +281,7 @@ jobs:
           ./workgate control --mode mcp
           \`\`\`
 
-          Universal and platform Python package artifacts, executable archives, and SHA256 checksums are attached below.
+          Universal Python package artifacts, executable archives, and SHA256 checksums are attached below.
 
           Python package version in \`pyproject.toml\`: \`${{ needs.validate-release.outputs.version }}\`
           EOF

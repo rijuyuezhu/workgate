@@ -7,7 +7,6 @@ from .control.cli import register_control_cli
 from .executor.cli import register_executor_cli
 from .executor.jobs.cli import register_job_runner_cli
 from .standalone.cli import register_standalone_cli
-from .ui.cli import register_tui_cli
 from .version import format_version_info, register_version_cli
 
 
@@ -16,7 +15,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="workgate",
         description=(
-            "Run standalone Workgate, a control process, executor, native TUI, "
+            "Run standalone Workgate, a control process, executor, "
             "or Agent Bridge command."
         ),
     )
@@ -32,7 +31,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     register_standalone_cli(subparsers)
     register_control_cli(subparsers)
-    register_tui_cli(subparsers)
     register_mcp_cli(subparsers)
     register_executor_cli(subparsers)
     register_version_cli(subparsers)

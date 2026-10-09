@@ -76,32 +76,20 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 source-include = [
     "ui-terminal/**",
-    "ui-opentui/**",
-    "scripts/release/build-platform-wheel.py",
-    "scripts/generation/generate-tui-executable-contract.py",
     "deploy/cloudflared/README.md",
     "deploy/cloudflared/workgate-cloudflared.service",
     "scripts/README.md",
     "scripts/validation/check-coverage.py",
-    "scripts/validation/check-native-provenance.py",
     "scripts/validation/check-no-future-annotations.py",
     "scripts/validation/check-release-matrix.py",
-    "scripts/release/smoke-platform-wheel.py",
+    "scripts/validation/check-python-dist.py",
     "scripts/validation/coverage-baseline.json",
     "tests/test_coverage_gate.py",
-    "tests/test_native_provenance.py",
     "tests/test_tmux_helper.py",
-    "src/workgate/helpers/README.md",
-    "src/workgate/helpers/opentui.NOTICES",
-    "src/workgate/helpers/bun-1.3.14.LICENSE.md",
-    "docs/maintenance/native-artifact-provenance.md",
 ]
 source-exclude = [
     "/ui-terminal/node_modules",
     "/ui-terminal/.build-check",
-    "/ui-opentui/node_modules",
-    "/ui-opentui/dist",
-    "/ui-opentui/coverage",
 ]
 
 [project.urls]

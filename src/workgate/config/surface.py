@@ -148,7 +148,6 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("forwarded_allow_ips", "Server", metavar="IPS"),
     SettingSpec("ui_enabled", "Human interface"),
     SettingSpec("ui_path", "Human interface", metavar="PATH"),
-    SettingSpec("ui_tui_command", "Human interface", metavar="COMMAND"),
     SettingSpec(
         "ui_terminal_idle_timeout_s",
         "Human interface",

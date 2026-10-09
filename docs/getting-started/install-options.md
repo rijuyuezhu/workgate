@@ -26,9 +26,8 @@ pipx install workgate
 pip install workgate
 ```
 
-Platform-specific wheels include the native OpenTUI client on supported
-platforms. A universal wheel may omit the native TUI; the browser interface is
-still available.
+The Python distribution contains one universal wheel and one source distribution.
+Use the browser WebUI for interactive management and persistent terminals.
 
 ## Native desktop automation
 

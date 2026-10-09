@@ -49,7 +49,6 @@ class AppPaths:
     config_dir: Path
     state_dir: Path
     data_dir: Path
-    cache_dir: Path
     runtime_dir: Path
 
     @property
@@ -81,11 +80,6 @@ class AppPaths:
     def agent_config_dir(self) -> Path:
         """Return the declarative Agent Bridge configuration directory."""
         return self.config_dir / "agent"
-
-    @property
-    def ui_runtime_dir(self) -> Path:
-        """Return the regenerable native Human UI materialization directory."""
-        return self.cache_dir / "ui-runtime"
 
     @property
     def temp_dir(self) -> Path:
@@ -145,7 +139,6 @@ def resolve_app_paths(
             config_dir=support / "config",
             state_dir=support / "state",
             data_dir=support / "data",
-            cache_dir=user_home / "Library" / "Caches" / _APP_NAME,
             runtime_dir=temporary
             / f"{_APP_NAME}-{_uid_suffix(active_env)}-{_runtime_fallback_nonce()}",
         )
@@ -161,7 +154,6 @@ def resolve_app_paths(
             config_dir=roaming / _APP_NAME / "config",
             state_dir=local / _APP_NAME / "state",
             data_dir=local / _APP_NAME / "data",
-            cache_dir=local / _APP_NAME / "cache",
             runtime_dir=temporary
             / _APP_NAME
             / f"runtime-{_runtime_fallback_nonce()}",
@@ -176,12 +168,10 @@ def resolve_app_paths(
     data_base = _xdg_base(
         active_env, "XDG_DATA_HOME", user_home / ".local" / "share"
     )
-    cache_base = _xdg_base(active_env, "XDG_CACHE_HOME", user_home / ".cache")
     return AppPaths(
         config_dir=config_base / _APP_NAME,
         state_dir=state_base / _APP_NAME,
         data_dir=data_base / _APP_NAME,
-        cache_dir=cache_base / _APP_NAME,
         runtime_dir=_runtime_base(active_env, temporary),
     )
 

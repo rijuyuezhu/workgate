@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
+import jwt
 import pytest
 import yaml
 
@@ -51,7 +52,6 @@ from workgate.standalone.supervisor import (
     prepare_standalone,
     standalone_child_env,
 )
-from workgate.ui.security import UI_LOCAL_TOKEN_HEADER
 
 
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
@@ -1277,15 +1277,13 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         str(config_path),
     ]
     control_state_dir = state_dir / "standalone" / "control"
-    ui_token_path = FileStateStore(
-        lambda: control_state_dir
-    ).layout.ui_local_token_path
-    ui_token_path.parent.mkdir(parents=True, exist_ok=True)
-    ui_token = "standalone-topology-local-ui-token-0000000000000000"
-    ui_token_path.write_text(ui_token + "\n", encoding="utf-8")
+    control_state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    signing_secret_path = control_state_dir / "oauth-jwt-secret"
+    signing_secret_path.write_text(
+        "topology-signing-secret-" * 4 + "\n", encoding="utf-8"
+    )
     if os.name != "nt":
-        ui_token_path.chmod(0o600)
-
+        signing_secret_path.chmod(0o600)
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             argv,
@@ -1327,13 +1325,28 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
         assert pin
         assert pin not in log_path.read_text(encoding="utf-8", errors="replace")
 
+        signing_secret = signing_secret_path.read_text(encoding="utf-8").strip()
+        now = int(time.time())
+        owner_bearer = jwt.encode(
+            {
+                "iss": base_url,
+                "sub": "standalone-test-owner",
+                "aud": base_url + "/mcp",
+                "client_id": "standalone-topology-test",
+                "iat": now,
+                "exp": now + 600,
+                "scope": "executor:use shell:read shell:execute",
+            },
+            signing_secret,
+            algorithm="HS256",
+        )
         with httpx.Client(timeout=1, trust_env=False) as client:
             deadline = time.monotonic() + 10
             executor_online = False
             while time.monotonic() < deadline:
                 listing = client.get(
                     f"{base_url}/api/ui/executors",
-                    headers={UI_LOCAL_TOKEN_HEADER: ui_token},
+                    headers={"Authorization": f"Bearer {owner_bearer}"},
                 )
                 if listing.status_code == 200:
                     rows = listing.json()["data"]["executors"]

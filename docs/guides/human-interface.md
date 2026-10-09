@@ -1,6 +1,6 @@
 # Human interface
 
-The HTTP control process includes a browser interface for managing the control service and paired executors. An optional OpenTUI client provides the same main areas in a terminal.
+The HTTP control process provides a browser WebUI for managing the control service and paired executors.
 
 ## Start the browser interface
 
@@ -20,29 +20,6 @@ When the service is exposed through a public hostname, use the corresponding pub
 
 The `ui_path` and `ui_enabled` settings control the browser UI. See [Configuration](../reference/configuration.md).
 
-## Start OpenTUI
-
-Keep the HTTP control running, then start the terminal client in another terminal:
-
-```bash
-workgate tui
-```
-
-By default it connects to the loopback Human UI API on the configured server port. Use `--api-base` only when the local API is listening at another loopback URL.
-
-OpenTUI availability depends on the installation and platform. If the native
-client is unavailable, use the browser interface or install a supported platform
-build; see [Install options](../getting-started/install-options.md). Source
-contributors should use [Development](../development.md) and
-[Native artifact provenance](../maintenance/native-artifact-provenance.md).
-
-## Browser OpenTUI Console
-
-When an OpenTUI runtime is available, the browser UI can also show an
-**OpenTUI Console**. It launches a separate terminal UI inside the browser;
-closing that console stops only the console client, not the HTTP server or
-existing persistent shells.
-
 ## Main areas
 
 ### Dashboard
@@ -55,7 +32,7 @@ Approve pairing requests, inspect or rename executors, see whether they are onli
 
 ### Terminals
 
-Create, attach to, resize, and close persistent terminals. A persistent shell continues after the browser tab or OpenTUI client disconnects. Closing a client view does not necessarily terminate the underlying shell; use the explicit terminate action when you are finished.
+Create, attach to, resize, and close persistent terminals. A persistent shell continues after the browser tab disconnects. Closing a client view does not necessarily terminate the underlying shell; use the explicit terminate action when you are finished.
 
 Browser terminal traffic uses the executor's outbound stream path. If the bound executor is offline or streaming is unavailable, the UI reports the terminal as unavailable instead of falling back to a second transport.
 
@@ -82,12 +59,9 @@ approval. Sign out from the UI when using a shared browser. A `401` normally
 means the session must authenticate again; a `403` means the current session is
 valid but lacks a required scope.
 
-The native OpenTUI client connects only through the trusted loopback Human UI API. Do not place credentials in `--api-base` or expose that private local API as a public endpoint.
-
 ## Common problems
 
 - **`/ui` returns 404:** confirm the server is in supported `mcp` or `http` mode and the UI is enabled. The reserved `both` mode does not start a server.
-- **OpenTUI cannot start:** use the browser UI, then confirm that your installation contains a platform-native runtime.
 - **An executor-backed panel is unavailable:** verify that the executor is online, the session is bound to it, and it supports the requested operation.
 - **A terminal looks disconnected:** verify the executor connection, then reattach to the persistent shell.
 - **An action is forbidden:** sign in again with the scopes required for that operation.

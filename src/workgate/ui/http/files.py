@@ -11,7 +11,6 @@ from ...control.ui_executor import call_ui_executor
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from .common import json_error as _json_error
-from .image_preview import image_preview_request
 
 UI_FILE_PATH_MAX_BYTES = 4_096
 
@@ -115,18 +114,10 @@ async def api_file_preview(request: Request) -> Response:
         executor_id = _executor_id_arg(request.query_params.get("executor_id"))
         _require_file_scopes()
         path = _path_arg(request.query_params.get("path"))
-        preview = image_preview_request(request.query_params)
-        args: dict[str, JsonValue] = {"path": path}
-        if preview is not None:
-            args.update(
-                {
-                    "columns": preview.columns,
-                    "rows": preview.rows,
-                    "cell_aspect": preview.cell_aspect,
-                }
-            )
         return _json_ok(
-            await _call(request, executor_id, "ui.files.preview", args)
+            await _call(
+                request, executor_id, "ui.files.preview", {"path": path}
+            )
         )
     except HTTPException:
         raise

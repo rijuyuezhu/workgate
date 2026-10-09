@@ -4,7 +4,7 @@
 
 ## Review activity
 
-The browser and OpenTUI **Audit** panels are the easiest way to filter recent activity and inspect an entry.
+The browser **Audit** panel are the easiest way to filter recent activity and inspect an entry.
 
 From an MCP client, use `audit_tail(task_id=...)` for task-wide history, `audit_tail(session_id=...)` for one concrete execution session, or pass both to request their intersection. Neither identity selects or rebinds execution. The default response is a bounded recent list; use filters to narrow it rather than requesting a large history.
 

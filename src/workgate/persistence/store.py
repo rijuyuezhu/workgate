@@ -242,16 +242,6 @@ class StateLayout:
         return self.root / "agent_auth"
 
     @property
-    def ui_dir(self) -> Path:
-        """Return the private Human UI state directory."""
-        return self.root / "ui"
-
-    @property
-    def ui_local_token_path(self) -> Path:
-        """Return the trusted loopback Human UI token path."""
-        return self.ui_dir / "local-token"
-
-    @property
     def locks_dir(self) -> Path:
         """Return the shared directory for private state lock files."""
         return self.root / "locks"

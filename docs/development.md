@@ -49,8 +49,8 @@ coverage JSON report when your change affects coverage policy. The script and
 
 ## Regenerate derived files
 
-Pre-commit checks generated configuration, tool reference, TUI contracts, and
-native provenance. The common manual commands are:
+Pre-commit checks generated configuration, tool reference, and browser
+terminal assets. The common manual commands are:
 
 ```bash
 uv run python scripts/generation/generate-config-examples.py
@@ -69,7 +69,7 @@ editing generated output by hand.
 - `src/workgate/executor/`: filesystem, shells, jobs, PTYs, and machine-local authority
 - `src/workgate/protocol/`: dependency-light control/executor contracts
 - `src/workgate/tools/`: public tool declarations and shared routing contracts
-- `src/workgate/ui/`: browser/OpenTUI application surfaces
+- `src/workgate/ui/`: browser WebUI application
 - `src/workgate/agent_bridge/`: shared Agent Bridge contracts and mechanisms
 
 Keep dependency direction visible: control must not import executor
@@ -80,7 +80,5 @@ config/service graph rather than ambient settings or service locators.
 ## Documentation and release work
 
 Keep user guides task-oriented. Exact settings/options belong in Reference;
-implementation history belongs in Maintenance. See `scripts/README.md` for
-repository automation and
-[Native artifact provenance](maintenance/native-artifact-provenance.md) for
-native release inputs.
+implementation history belongs in Maintenance. See `scripts/README.md` for repository automation and the universal Python
+package plus standalone executable release flow.

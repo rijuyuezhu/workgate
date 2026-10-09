@@ -116,8 +116,7 @@ Each active control-managed job acquires an owner-private liveness lease before 
 
 Raw PTY/ConPTY access is equivalent to interactive shell control with the server
 or selected executor account. Browser terminal WebSockets therefore require both
-`shell:read` and `shell:execute`, plus `executor:use` when controlling a selected executor; the
-private loopback OpenTUI token is never accepted from a browser. Executor bridges
+`shell:read` and `shell:execute`, plus `executor:use` when controlling a selected executor. Executor bridges
 use an opaque control-only capability and allowlisted executor RPCs rather than
 exposing an executor credential or direct WebSocket.
 
@@ -240,25 +239,6 @@ Snapshots, screenshots, and error buffers are bounded. Actions target snapshot r
 Native desktop automation is separately authorized by `gui:use` and additionally requires the bound executor to advertise `gui.v1`. GUI observations are executor-local, short-lived, single-use for actions, and owned by the explicit Workgate session. Screenshots and accessibility metadata are bounded; coordinate actions are window-relative and rejected when the observed window geometry changes. GUI tool Audit records may retain window metadata, element observations, action payloads, and screenshot-related data up to configured limits. The control plane never falls back to its own desktop or another executor. Linux and macOS native backends are supported; Windows native GUI automation is not.
 
 Logs from the executor process can contain tool diagnostics, filesystem paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
-
-## Embedded native UI payloads
-
-Platform wheels may embed one compressed OpenTUI executable selected by an exact
-wheel platform tag. The universal wheel and sdist remain native-payload-free.
-Build and smoke checks validate host platform/architecture, executable magic,
-wheel purity/tag metadata, deterministic-gzip metadata, compressed and expanded
-limits, and embedded SHA-256 before installation or execution. Runtime extraction
-uses an owner-private versioned cache directory, a cross-process lock, digest checks,
-atomic replacement, and executable-permission validation; a caller-supplied
-`ui_tui_command` remains an explicit administrator-controlled override.
-
-Frozen release archives carry the same compiled UI as a sidecar. Release
-checksums, third-party notices, source/toolchain pins, supported platforms, and
-rebuild commands are authoritative in
-[Native artifact provenance](maintenance/native-artifact-provenance.md).
-Treat every native payload as code executing with the local server account, not
-as passive data; do not replace embedded or extracted binaries outside the
-verified build/update path.
 
 ## Audit log handling
 
