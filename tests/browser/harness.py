@@ -598,6 +598,10 @@ class BrowserHarness:
 
         self.api_token = self.issue_token(default_scope())
         self.wait_executor_online()
+        # The first bootstrap can precede executor registration; reload with an
+        # online executor for the dashboard fixture (#193 covers live updates).
+        self.page.reload(wait_until="domcontentloaded")
+        expect(self.page.locator("#connection-state")).to_have_text("Connected")
         self.console_errors = [
             line
             for line in self.console_errors
