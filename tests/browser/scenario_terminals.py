@@ -185,8 +185,10 @@ def run_terminals(harness: BrowserHarness) -> None:
     page.evaluate("window.dispatchEvent(new Event('resize'))")
     _wait_terminal_resize(harness, initial_resize_start)
 
-    hidden_resize_start = len(harness.websocket_events)
     harness.navigate("files")
+    # Count only events emitted after the view has actually become hidden;
+    # an earlier terminal resize can legitimately complete during navigation.
+    hidden_resize_start = len(harness.websocket_events)
     page.wait_for_timeout(250)
     assert not _terminal_resize_events(harness, hidden_resize_start)
 
