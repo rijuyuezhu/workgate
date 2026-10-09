@@ -65,6 +65,9 @@ def run_executor_admin(harness: BrowserHarness) -> None:
     ).click()
     expect(page.locator("#executor-rename-dialog")).to_be_hidden()
     expect(page.locator("#executor-list")).to_contain_text("browser-renamed")
+    for view in ("dashboard", "file", "terminal"):
+        option = page.locator(f'#{view}-executor option[value="{executor_id}"]')
+        expect(option).to_contain_text("browser-renamed")
 
     page.locator("#executor-revoke-open").click()
     expect(page.locator("#executor-revoke-dialog")).to_be_visible()
@@ -77,3 +80,7 @@ def run_executor_admin(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-revoke-dialog")).to_be_hidden()
     expect(page.locator("#executor-detail-status")).to_have_text("revoked")
     expect(page.locator("#executor-revoked")).to_have_text("1")
+    for view in ("dashboard", "file", "terminal"):
+        expect(
+            page.locator(f'#{view}-executor option[value="{executor_id}"]')
+        ).to_have_count(0)

@@ -16,6 +16,7 @@ export function createTasksController({
     tasks: [],
     unattachedSessions: [],
     sessions: [],
+    executorStates: new Map(),
     workspaceLoading: false,
     sessionTerminating: false,
     task: null,
@@ -70,7 +71,21 @@ export function createTasksController({
   }
 
   function sessionAvailability(session = selectedSession()) {
+    if (session && controllerState.executorStates.get(session.executor_id) !== "online") {
+      return "executor_offline";
+    }
     return text(session && session.availability, "");
+  }
+
+  function renderExecutors(targets) {
+    const previous = sessionAvailability();
+    controllerState.executorStates = new Map(
+      targets.map((item) => [item.executor_id, item.status]),
+    );
+    renderSessionDetail();
+    if (previous === "executor_offline" && sessionAvailability() !== "executor_offline") {
+      void refreshWorkspace();
+    }
   }
 
   function sessionUnavailableLabel(session = selectedSession()) {
@@ -1004,6 +1019,7 @@ export function createTasksController({
   return {
     bind,
     invalidate,
+    renderExecutors,
     refresh: refreshWorkspace,
     reset: resetWorkspace,
   };

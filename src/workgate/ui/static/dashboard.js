@@ -5,9 +5,11 @@ export function createDashboardController({
   authMode,
   isAuthenticated,
   onAuthenticationRequired,
+  initialExecutorId = "",
 }) {
   const controllerState = {
-    executorId: "",
+    executorId: initialExecutorId,
+    executorPinned: Boolean(initialExecutorId),
     generation: 0,
     loading: false,
     executorStates: new Map(),
@@ -181,6 +183,7 @@ export function createDashboardController({
 
   function renderDashboardExecutors(targets) {
     const available = Array.isArray(targets) ? targets : [];
+    const wasOnline = dashboardExecutorOnline();
     controllerState.executorStates = new Map();
     elements.dashboardExecutor.replaceChildren();
     for (const executor of available) {
@@ -195,13 +198,28 @@ export function createDashboardController({
       option.disabled = state !== "online";
       elements.dashboardExecutor.append(option);
     }
-    if (!dashboardExecutorOnline()) {
+    const previousExecutorId = controllerState.executorId;
+    if (!dashboardExecutorOnline() && !controllerState.executorPinned) {
       const firstOnline = available.find((item) => item.status === "online");
-      resetDashboardExecutor(firstOnline?.executor_id || "");
-      if (controllerState.executorId) refreshDashboardInBackground({ force: true });
-      return;
+      if (controllerState.executorId !== (firstOnline?.executor_id || "")) {
+        resetDashboardExecutor(firstOnline?.executor_id || "");
+      }
+    }
+    if (controllerState.executorPinned && controllerState.executorId && !controllerState.executorStates.has(controllerState.executorId)) {
+      const option = document.createElement("option");
+      option.value = controllerState.executorId;
+      option.textContent = `${controllerState.executorId} (unavailable)`;
+      option.disabled = true;
+      elements.dashboardExecutor.append(option);
     }
     elements.dashboardExecutor.value = controllerState.executorId;
+    if (!dashboardExecutorOnline() && wasOnline) resetDashboardExecutor(controllerState.executorId);
+    if (dashboardExecutorOnline() && (!wasOnline || previousExecutorId !== controllerState.executorId)) {
+      refreshDashboardInBackground({ force: true });
+    }
+    if (!dashboardExecutorOnline() && controllerState.executorId) {
+      elements.dashboardState.textContent = `Executor unavailable · ${controllerState.executorId}`;
+    }
     setDashboardControls();
   }
 
@@ -385,6 +403,7 @@ export function createDashboardController({
   function bind() {
     elements.dashboardExecutor.addEventListener("change", () => {
       if (controllerState.loading) return;
+      controllerState.executorPinned = true;
       resetDashboardExecutor(elements.dashboardExecutor.value);
       refreshDashboardInBackground({ force: true });
     });

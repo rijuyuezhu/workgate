@@ -368,6 +368,7 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     onAuthenticationRequired: () => void load(),
+    initialExecutorId: deepLink.executorId,
   });
   dashboard.bind();
 
@@ -377,6 +378,16 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     reloadApp: () => load(),
+    onInventory: (rows) => {
+      const targets = rows
+        .filter((row) => !row.revoked_at)
+        .map((row) => ({
+          executor_id: row.executor_id,
+          name: row.name,
+          status: row.online ? "online" : "offline",
+        }));
+      renderExecutorTargets(targets);
+    },
   });
   executors.bind();
 
@@ -764,17 +775,19 @@ void (async () => {
     return `${size.toFixed(size >= 10 ? 1 : 2)} ${unit}`;
   }
 
-  function render(data) {
-    const executorCounts = data.executor_counts || {};
-    const executorTargets = Array.isArray(data.executor_targets) ? data.executor_targets : [];
-    elements.version.textContent = text(data.version && data.version.version);
-    elements.executorTargetTotal.textContent = text(executorCounts.total, executorTargets.length);
-    elements.executorTargetOnline.textContent = text(executorCounts.online, "0");
-    elements.authMode.textContent = text(data.ui && data.ui.auth_mode, config.authMode);
+  function renderExecutorTargets(targets) {
+    elements.executorTargetTotal.textContent = String(targets.length);
+    elements.executorTargetOnline.textContent = String(targets.filter((row) => row.status === "online").length);
+    dashboard.renderExecutors(targets);
+    terminal.renderExecutors(targets);
+    files.renderExecutors(targets);
+    tasks.renderExecutors(targets);
+  }
 
-    dashboard.renderExecutors(executorTargets);
-    terminal.renderExecutors(executorTargets);
-    files.renderExecutors(executorTargets);
+  function render(data) {
+    elements.version.textContent = text(data.version && data.version.version);
+    elements.authMode.textContent = text(data.ui && data.ui.auth_mode, config.authMode);
+    renderExecutorTargets(Array.isArray(data.executor_targets) ? data.executor_targets : []);
     hideAuthentication();
     setConnection("Connected", "online");
   }

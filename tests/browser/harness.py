@@ -324,6 +324,24 @@ class BrowserHarness:
             shutil.rmtree(self.control_tmux_tmpdir, ignore_errors=True)
             shutil.rmtree(self.executor_tmux_tmpdir, ignore_errors=True)
 
+    def stop_executor(self) -> None:
+        _terminate_process(self.executor)
+
+    def restart_executor(self) -> None:
+        environment = executor_env(
+            self.executor_workspace,
+            mode="http",
+            state_dir=self.root / "state-executor",
+        )
+        environment["TMUX_TMPDIR"] = str(self.executor_tmux_tmpdir)
+        self.executor = _start_logged_process(
+            [sys.executable, "-m", "workgate.main", "executor", "run"],
+            cwd=PROJECT_ROOT,
+            env=environment,
+            stdout_path=self.artifacts / "executor.stdout.log",
+            stderr_path=self.artifacts / "executor.stderr.log",
+        )
+
     def wait_executor_online(self) -> None:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -597,11 +615,6 @@ class BrowserHarness:
         self._attach_diagnostics()
 
         self.api_token = self.issue_token(default_scope())
-        self.wait_executor_online()
-        # The first bootstrap can precede executor registration; reload with an
-        # online executor for the dashboard fixture (#193 covers live updates).
-        self.page.reload(wait_until="domcontentloaded")
-        expect(self.page.locator("#connection-state")).to_have_text("Connected")
         self.console_errors = [
             line
             for line in self.console_errors

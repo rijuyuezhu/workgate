@@ -139,6 +139,26 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         )
     ).to_have_attribute("aria-current", "true")
 
+    # Live executor inventory overrides stale retained session availability,
+    # disabling termination without reloading or discarding the task workspace.
+    def offline_session_executor(route):
+        response = route.fetch()
+        payload = response.json()
+        for executor in payload.get("data", {}).get("executors", []):
+            if executor.get("executor_id") == harness.executor_id:
+                executor["online"] = False
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors", offline_session_executor)
+    expect(page.locator("#session-detail-status")).to_contain_text(
+        "executor offline", timeout=12_000
+    )
+    expect(page.locator("#session-terminate")).to_be_disabled()
+    page.unroute("**/api/ui/executors", offline_session_executor)
+    expect(page.locator("#session-detail-status")).not_to_contain_text(
+        "executor offline", timeout=12_000
+    )
+
     # Task selection never chooses an execution session implicitly.
     page.locator(
         f'#task-list .task-entry[data-task-id="{zero_session_task_id}"]'
