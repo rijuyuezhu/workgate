@@ -22,6 +22,8 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     assert colors["sidebar"] == "rgb(17, 24, 39)"
     assert colors["panel"] == "rgb(255, 255, 255)"
     expect(page.locator(".token-row")).to_have_css("display", "flex")
+    # Never claim authentication or a live Control connection from static chrome.
+    expect(page.locator(".status-orb, .controller-meta")).to_have_count(0)
 
     for view in VIEWS:
         harness.navigate(view)
@@ -50,6 +52,23 @@ def run_webui_layout(harness: BrowserHarness) -> None:
         if view in ("overview", "executors", "files", "terminals", "tasks"):
             page.screenshot(
                 path=str(harness.artifacts / f"webui-{view}-mobile.png")
+            )
+    # Cover narrow phones and the tablet/icon-rail breakpoints, not only 390px.
+    for width in (320, 768, 1024):
+        page.set_viewport_size({"width": width, "height": 800})
+        for view in VIEWS:
+            harness.navigate(view)
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= innerWidth + 1"
+            ), (width, view)
+            button = page.locator(f'.nav-item[data-view="{view}"]')
+            expect(button).to_be_visible()
+            bounds = button.bounding_box()
+            assert bounds and bounds["x"] >= 0, (width, view, bounds)
+            assert bounds["x"] + bounds["width"] <= width + 1, (
+                width,
+                view,
+                bounds,
             )
     page.set_viewport_size({"width": 1280, "height": 720})
     harness.navigate("overview")

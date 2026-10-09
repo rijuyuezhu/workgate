@@ -42,7 +42,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .sidebar-spacer { flex: 1; }
 .controller-card { margin: 0 4px 13px; padding: 13px; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.06); border-radius: 11px; }
 .controller-row { display: flex; gap: 10px; align-items: flex-start; }
-.status-orb { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #42d39a; box-shadow: 0 0 0 4px rgba(66,211,154,.11); }
 .controller-row strong { display: block; color: #e9edf5; font-size: 13px; font-weight: 650; }
 .controller-row span:not(.status-orb) { display: block; margin-top: 3px; color: #737f95; font-size: 12px; }
 .controller-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 13px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.055); color: #657187; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -304,8 +303,9 @@ h2 {
 }
 
 .terminal-session[aria-current="true"] {
-  border-color: rgba(105, 199, 232, 0.72);
-  background: rgba(39, 102, 126, 0.92);
+  border-color: #bcb4ef;
+  background: var(--accent-soft);
+  color: #4f43c3;
 }
 
 .terminal-console {
@@ -1590,8 +1590,8 @@ h2 {
 .executor-row:hover,
 .executor-row:focus-visible,
 .executor-row-selected {
-  border-color: rgba(93, 181, 213, 0.5);
-  background: var(--panel);
+  border-color: #bcb4ef;
+  background: var(--accent-soft);
 }
 
 .executor-row-status {
@@ -1733,14 +1733,16 @@ h2 {
 }
 
 .danger-action {
-  border-color: rgba(231, 110, 120, 0.48);
-  color: #ffadb4;
+  border-color: #e6acb4;
+  background: #fff4f5;
+  color: #a13f49;
 }
 
 .danger-action:hover:not(:disabled),
 .danger-action:focus-visible:not(:disabled) {
-  border-color: #a13f49;
-  background: rgba(115, 38, 49, 0.38);
+  border-color: #b4485b;
+  background: #ffeaec;
+  color: #942a40;
 }
 
 .executor-dialog {
@@ -1754,7 +1756,7 @@ h2 {
 }
 
 .executor-dialog::backdrop {
-  background: var(--panel);
+  background: rgba(17, 24, 39, 0.45);
   backdrop-filter: blur(0.15rem);
 }
 
@@ -2215,9 +2217,9 @@ h2 {
 }
 
 /* Upstream v5 native surface controls, adapted to Workgate forms. */
-button:not(.nav-item) { border: 1px solid #dfe3eb; border-radius: 8px; background: #fff; color: #50596a; box-shadow: 0 1px 2px rgba(16,24,40,.035); padding: .55rem .8rem; cursor: pointer; font-size: 12px; font-weight: 650; }
-button:not(.nav-item):hover:not(:disabled) { color: #4f43c3; border-color: #bbb4ef; background: #f8f7ff; }
-button:not(.nav-item):disabled { opacity: .48; cursor: not-allowed; }
+button:where(:not(.nav-item)) { border: 1px solid #dfe3eb; border-radius: 8px; background: #fff; color: #50596a; box-shadow: 0 1px 2px rgba(16,24,40,.035); padding: .55rem .8rem; cursor: pointer; font-size: 12px; font-weight: 650; }
+button:where(:not(.nav-item):hover:not(:disabled)) { color: #4f43c3; border-color: #bbb4ef; background: #f8f7ff; }
+button:where(:not(.nav-item):disabled) { opacity: .48; cursor: not-allowed; }
 button.primary-action { color: #fff; background: #6759e7; border-color: #5e50d6; width: auto; }
 button.primary-action:hover:not(:disabled) { color: white; background: #5e50d6; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #8f84ed; outline-offset: 2px; }

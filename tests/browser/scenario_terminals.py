@@ -131,6 +131,12 @@ def run_terminals(harness: BrowserHarness) -> None:
 
     executor_id = harness.executor_id
     executor_shell = _start_terminal(harness, f"browser-executor-{suffix}")
+    expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
+        "background-color", "rgb(238, 236, 255)"
+    )
+    expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
+        "color", "rgb(79, 67, 195)"
+    )
     _send_terminal(
         harness,
         executor_id,
