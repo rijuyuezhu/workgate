@@ -15,6 +15,7 @@ from pydantic import (
 from ..persistence import StateStore
 from ..protocol.credentials import ExecutorCredentialVerifier
 from ..protocol.ids import ExecutorId, SessionId, TaskId
+from .registry_recovery import load_registry, write_registry
 
 _REGISTRY_VERSION = 1
 Timestamp = Annotated[float, Field(ge=0, allow_inf_nan=False)]
@@ -277,7 +278,10 @@ class ControlState:
     def _load_executors(self) -> dict[str, ExecutorTrustRecord]:
         path = self.state_store.layout.control_executors_path
         with self.state_store.transaction(path):
-            payload = self.state_store.read_json(path)
+            return load_registry(self.state_store, path, self._parse_executors)
+
+    def _parse_executors(self, payload: Any) -> dict[str, ExecutorTrustRecord]:
+        path = self.state_store.layout.control_executors_path
         rows = self._registry_rows(payload, field="executors", path=path)
         records: dict[str, ExecutorTrustRecord] = {}
         try:
@@ -297,7 +301,10 @@ class ControlState:
     def _load_sessions(self) -> dict[str, ControlSessionRecord]:
         path = self.state_store.layout.control_sessions_path
         with self.state_store.transaction(path):
-            payload = self.state_store.read_json(path)
+            return load_registry(self.state_store, path, self._parse_sessions)
+
+    def _parse_sessions(self, payload: Any) -> dict[str, ControlSessionRecord]:
+        path = self.state_store.layout.control_sessions_path
         rows = self._registry_rows(payload, field="sessions", path=path)
         records: dict[str, ControlSessionRecord] = {}
         try:
@@ -341,7 +348,7 @@ class ControlState:
             ],
         }
         with self.state_store.transaction(path):
-            self.state_store.write_json(path, payload)
+            write_registry(self.state_store, path, payload)
 
     def _write_sessions(
         self, records: Mapping[str, ControlSessionRecord]
@@ -354,4 +361,4 @@ class ControlState:
             ],
         }
         with self.state_store.transaction(path):
-            self.state_store.write_json(path, payload)
+            write_registry(self.state_store, path, payload)

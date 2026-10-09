@@ -225,6 +225,8 @@ release artifact by target and SHA-256, extracts only the expected Workgate
 executable, verifies its reported version, and then invokes the same
 `executor connect` flow.
 
+The Control trust registry (`control/executors.json`) and session/task binding registry (`control/sessions.json`) are protected by owner-private `.bak` and `.generation` companions. Mutations write a new generation marker, the atomic primary, then its recovery copy. A damaged primary recovers only from a fully validated backup matching the marker; a stale copy can never undo a revocation or task binding. If the valid primary and generation-compatible backup are both unavailable, Control refuses startup rather than silently resetting identity. Healthy primaries remain authoritative and can repair incomplete recovery metadata. Back up and restore all three files together under the private state directory. Other feature-owned state keeps its own persistence policy.
+
 Executor trust does not expire merely because the machine is suspended, rebooted, or offline for a long time. Temporary transport failures reconnect with the same saved credential. Trust ends only through explicit revoke/replacement, loss/reset of the control trust state, loss of the local executor profile, or a deliberate incompatible trust migration.
 
 Executor machine configuration and machine-local integration secrets remain on the executor. Control routes work to the executor bound to an execution session but does not replicate filesystem/command configuration, shell configuration, stdio credentials, or arbitrary control secrets into that machine. Network/OAuth/SaaS integrations that execute on control keep their credentials on control.

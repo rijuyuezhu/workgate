@@ -410,3 +410,7 @@ distributed exactly-once execution, universal workflow orchestration, live
 session/job/PTY migration, periodic executor credential rotation, and a
 multi-tenant/SaaS trust model. Add such machinery only for a future concrete
 requirement, not pre-emptively.
+
+## Control registry recovery
+
+The canonical executor trust registry and the execution-session/task-binding registry each have a private primary file, same-generation backup, and generation fence. Startup validates the primary before publishing in-memory state; only a validated backup matching the fence can recover a damaged primary. Both registries must load successfully before Control publishes either one. Other task documents, jobs, and downloads retain their separate persistence rules; there is no generic backup layer.
