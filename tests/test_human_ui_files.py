@@ -163,6 +163,45 @@ def test_file_api_can_access_paths_outside_default_workdir(
     assert (outside / "linked.txt").read_text(encoding="utf-8") == "escape"
 
 
+def test_browser_binary_upload_is_bounded_and_does_not_overwrite(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    client = _client(monkeypatch, workspace)
+    source = b"\x00\xff\x80\xfe"
+    body = {
+        "path": "binary.bin",
+        "data_base64": base64.b64encode(source).decode(),
+    }
+
+    created = client.post("/api/ui/files/upload", json=body)
+    duplicate = client.post("/api/ui/files/upload", json=body)
+    bad_encoded = client.post(
+        "/api/ui/files/upload",
+        json={"path": "invalid.bin", "data_base64": "%%%"},
+    )
+    over_limit = client.post(
+        "/api/ui/files/upload",
+        json={"path": "too-large.bin", "data_base64": "A" * 2_666_672},
+    )
+    missing_folder = client.post(
+        "/api/ui/files/upload",
+        json={"path": "missing/file.bin", "data_base64": ""},
+    )
+    assert created.status_code == 200
+    assert created.json()["data"]["bytes"] == len(source)
+    assert workspace.joinpath("binary.bin").read_bytes() == source
+    assert duplicate.status_code == 400
+    assert duplicate.json()["error"] == "FileExistsError"
+    assert bad_encoded.status_code == 400
+    assert "Invalid base64" in bad_encoded.json()["message"]
+    assert over_limit.status_code == 400
+    assert "Upload exceeds" in over_limit.json()["message"]
+    assert missing_folder.status_code == 400
+    assert not workspace.joinpath("too-large.bin").exists()
+
+
 def test_file_api_refuses_filesystem_root_mutations(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
