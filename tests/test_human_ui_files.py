@@ -201,6 +201,32 @@ def test_browser_binary_upload_is_bounded_and_does_not_overwrite(
     assert missing_folder.status_code == 400
     assert not workspace.joinpath("too-large.bin").exists()
 
+    # Base64 can decode to one byte over the bound without exceeding the
+    # maximum encoded string length.
+    decoded_over_limit = client.post(
+        "/api/ui/files/upload",
+        json={
+            "path": "decoded-too-large.bin",
+            "data_base64": base64.b64encode(b"x" * 2_000_001).decode("ascii"),
+        },
+    )
+    assert decoded_over_limit.status_code == 400
+    assert "Upload exceeds" in decoded_over_limit.json()["message"]
+    assert not workspace.joinpath("decoded-too-large.bin").exists()
+
+    def reject_flush(_descriptor: int) -> None:
+        raise OSError("simulated upload write failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(executor_ui_files_module.os, "fsync", reject_flush)
+        failed_write = client.post(
+            "/api/ui/files/upload",
+            json={"path": "failed-write.bin", "data_base64": "YQ=="},
+        )
+    assert failed_write.status_code == 400
+    assert "simulated upload write failure" in failed_write.json()["message"]
+    assert not workspace.joinpath("failed-write.bin").exists()
+
 
 def test_file_api_refuses_filesystem_root_mutations(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
