@@ -38,6 +38,25 @@ def _wait_terminal_output(
     raise AssertionError(f"terminal output did not contain {marker!r}")
 
 
+def _wait_terminal_stream_marker(
+    harness: BrowserHarness, marker: str, *, websocket_event_start: int
+) -> None:
+    """Check the live PTY bytes for a long output burst, not a tmux snapshot."""
+    needle = marker.encode().hex()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if any(
+            event.startswith("received ws://")
+            and needle in event.rsplit(" ", 1)[-1]
+            for event in harness.websocket_events[websocket_event_start:]
+        ):
+            return
+        harness.page.wait_for_timeout(50)
+    raise AssertionError(
+        f"terminal WebSocket output did not contain {marker!r}"
+    )
+
+
 def _terminal_resize_events(harness: BrowserHarness, start: int) -> list[str]:
     return [
         event
@@ -211,12 +230,17 @@ def run_terminals(harness: BrowserHarness) -> None:
     )
     page.set_viewport_size({"width": 1280, "height": 720})
 
-    _send_terminal(
-        harness,
-        executor_id,
-        executor_shell,
-        "printf '%s\\n' {1..180}; printf 'scroll-%s\\n' complete",
-        "scroll-complete",
+    # tmux capture-pane snapshots may not retain a fast 180-line burst; the
+    # live browser terminal must still receive the full stream over WebSocket.
+    scroll_start = len(harness.websocket_events)
+    page.locator("#terminal-input").fill(
+        "printf '%s\\n' {1..180}; printf 'scroll-%s\\n' complete"
+    )
+    page.locator("#terminal-input-form").get_by_role(
+        "button", name="Send"
+    ).click()
+    _wait_terminal_stream_marker(
+        harness, "scroll-complete", websocket_event_start=scroll_start
     )
     viewport = page.locator("#terminal-xterm .xterm-viewport")
     expect(viewport).to_be_visible()
