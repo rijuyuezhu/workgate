@@ -39,7 +39,7 @@ Browser terminal traffic uses the executor's outbound stream path. If the bound 
 
 ### Files
 
-Browse the selected executor filesystem, preview supported files, edit bounded UTF-8 text files, create files, and perform the operations offered by the selected machine. The UI refuses unsafe partial edits and reports when a file changed concurrently.
+Browse the selected executor filesystem, preview supported files, edit bounded UTF-8 text files, create files, and perform the operations offered by the selected machine. The editor checks the file revision before saving; if it changed elsewhere, your draft remains visible. Copy or reconcile your edits before choosing **Reload from disk**, which discards the draft only after confirmation.
 
 Some executor file operations may be unavailable when the bound executor is offline or lacks the needed capability. The UI shows the available actions instead of emulating missing operations with control-local shell commands. Use `session_copy` through an MCP client for cross-workspace transfers.
 

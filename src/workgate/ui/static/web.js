@@ -166,6 +166,7 @@ void (async () => {
     fileEdit: document.getElementById("file-edit"),
     fileEditor: document.getElementById("file-editor"),
     fileEditorCancel: document.getElementById("file-editor-cancel"),
+    fileEditorReload: document.getElementById("file-editor-reload"),
     fileEditorForm: document.getElementById("file-editor-form"),
     fileList: document.getElementById("file-list"),
     fileExecutor: document.getElementById("file-executor"),
