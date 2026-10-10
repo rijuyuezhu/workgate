@@ -316,6 +316,14 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             assert page.evaluate(
                 "document.documentElement.scrollWidth <= innerWidth + 1"
             ), (width, view)
+            if width == 1024 and view == "terminals":
+                # Terminal's later two-column rule still applies at 1024px;
+                # its rail must keep the light right-side divider.
+                assert page.locator(".terminal-rail").evaluate(
+                    "element => getComputedStyle(element).borderRight"
+                ) == page.locator(".terminal-layout").evaluate(
+                    "element => '1px solid ' + getComputedStyle(element).borderTopColor"
+                )
             button = page.locator(f'.nav-item[data-view="{view}"]')
             if page.locator("#nav-toggle").is_visible():
                 page.locator("#nav-toggle").click()

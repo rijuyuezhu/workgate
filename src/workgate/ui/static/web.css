@@ -73,14 +73,8 @@ h2 {
 .section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
 .section-heading h2 { margin: 0; color: #222b3e; font-size: 16px; font-weight: 700; letter-spacing: -.015em; }
 
-.subtitle,
 .muted {
   color: #7a8496;
-}
-
-.subtitle {
-  max-width: 42rem;
-  margin-bottom: 0;
 }
 
 .eyebrow {
@@ -126,8 +120,7 @@ h2 {
   background: #ffebed;
 }
 
-.panel,
-.metric {
+.panel {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
@@ -138,32 +131,6 @@ h2 {
 .panel {
   margin-bottom: 14px;
   padding: 17px;
-}
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.9rem;
-  margin-bottom: 1.25rem;
-}
-
-.metric {
-  min-height: 105px;
-  padding: 16px 17px;
-}
-
-.metric span {
-  display: block;
-  margin-bottom: 12px;
-  color: #737d8f;
-  font-size: 12px;
-  font-weight: 650;
-  text-transform: uppercase;
-}
-
-.metric strong {
-  color: #172033;
-  font-size: 24px;
 }
 
 .auth-panel {
@@ -384,44 +351,6 @@ h2 {
   white-space: pre;
   overflow-wrap: normal;
   tab-size: 8;
-}
-
-.terminal-run {
-  color: var(--ansi-fg, inherit);
-  background-color: var(--ansi-bg, transparent);
-}
-
-.terminal-run.ansi-bold {
-  font-weight: 700;
-}
-
-.terminal-run.ansi-dim {
-  opacity: 0.66;
-}
-
-.terminal-run.ansi-italic {
-  font-style: italic;
-}
-
-.terminal-run.ansi-underline {
-  text-decoration-line: underline;
-}
-
-.terminal-run.ansi-strike {
-  text-decoration-line: line-through;
-}
-
-.terminal-run.ansi-underline.ansi-strike {
-  text-decoration-line: underline line-through;
-}
-
-.terminal-run.ansi-inverse {
-  color: var(--ansi-bg, var(--terminal-background));
-  background-color: var(--ansi-fg, var(--terminal-foreground));
-}
-
-.terminal-run.ansi-hidden {
-  visibility: hidden;
 }
 
 .terminal-keyboard {
@@ -711,32 +640,6 @@ h2 {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.65rem;
-}
-
-.session-control {
-  display: grid;
-  gap: 0.3rem;
-  color: #7b8495;
-  font-size: 0.72rem;
-}
-
-.session-control select {
-  min-width: 10rem;
-  min-height: 2.55rem;
-  border: 1px solid #dfe3eb;
-  border-radius: 0.65rem;
-  color: #30384a;
-  background: var(--panel);
-  padding: 0.7rem 0.8rem;
-}
-
-.session-active-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-height: 2.55rem;
-  color: #a8bbc9;
-  font-size: 0.78rem;
 }
 
 .tasks-layout {
@@ -1536,15 +1439,6 @@ h2 {
   background: var(--panel);
 }
 
-.executor-capabilities > span,
-.executor-reconnect > span {
-  color: #7f94a6;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
 .executors-layout {
   display: grid;
   grid-template-columns: minmax(18rem, 0.9fr) minmax(0, 1.35fr);
@@ -1666,51 +1560,6 @@ h2 {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   line-height: 1.45;
-}
-
-.executor-capabilities {
-  display: grid;
-  gap: 0.55rem;
-  border-top: 1px solid var(--line);
-  padding-top: 0.9rem;
-}
-
-.executor-reconnect {
-  display: grid;
-  gap: 0.55rem;
-  border-top: 1px solid var(--line);
-  margin-top: 0.9rem;
-  padding-top: 0.9rem;
-}
-
-.executor-reconnect pre {
-  max-height: 8rem;
-  overflow: auto;
-  margin: 0;
-  border: 1px solid rgba(93, 181, 213, 0.2);
-  border-radius: 0.55rem;
-  background: var(--panel);
-  padding: 0.7rem;
-  color: #7b8495;
-  font-size: 0.72rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.executor-capability-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.executor-capability {
-  border: 1px solid rgba(93, 181, 213, 0.24);
-  border-radius: 999px;
-  background: var(--panel);
-  padding: 0.25rem 0.5rem;
-  color: #6759e7;
-  font-size: 0.68rem;
 }
 
 .danger-action {
@@ -1881,8 +1730,7 @@ h2 {
   max-height: none;
 }
 
-.dashboard-summary,
-  .metric-grid {
+.dashboard-summary {
   grid-template-columns: 1fr 1fr;
 }
 
@@ -1893,7 +1741,6 @@ h2 {
 
 @media (max-width: 480px) {
 .dashboard-summary,
-  .metric-grid,
   .executor-detail-grid {
   grid-template-columns: 1fr;
 }
@@ -1928,7 +1775,6 @@ h2 {
 
 .dashboard-executor-control,
   .executor-select,
-  .session-control,
   .todo-field-content,
   .todo-field-status,
   .todo-field-priority {
@@ -1938,9 +1784,7 @@ h2 {
 .dashboard-executor-control,
   .dashboard-executor-control select,
   .executor-select,
-  .executor-select select,
-  .session-control,
-  .session-control select {
+  .executor-select select {
   width: 100%;
 }
 
@@ -2251,12 +2095,7 @@ input[type=checkbox] { accent-color: #6759e7; }
   .app-global-status .status { font-size: 11px; padding: 4px 7px; }
   .app-global-status #sign-out { padding: 6px 7px; font-size: 11px; }
   .main-content { padding: 15px 13px 26px; }
-  .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
-@media (max-width: 480px) {
-  .metric-grid { grid-template-columns: 1fr; }
-}
-
 /* Upstream v5 page composition, with Workgate's own task and executor data. */
 .dashboard-panel {
   padding: 0;
@@ -2608,7 +2447,6 @@ input[type=checkbox] { accent-color: #6759e7; }
   .file-executor-control, .file-path-form, .file-actions { flex: 0 0 auto; width: 100%; }
   .file-browser .file-list { min-height: 150px; }
   .tasks-layout, .executors-layout, .audit-layout, .terminal-layout { grid-template-columns: 1fr; }
-  .terminal-rail { border-right: 0; border-bottom: 1px solid #28354d; }
 }
 @media (max-width: 480px) {
   .file-browser { padding: 10px; }
@@ -2622,7 +2460,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 }
 
 /* Reduced, consistent corners. Keep status pills and circular icons round. */
-.brand-mark, .nav-item, .panel, .metric, .dashboard-health-banner,
+.brand-mark, .nav-item, .panel, .dashboard-health-banner,
 .dashboard-summary .dashboard-card, .dashboard-executors-row .dashboard-section,
 .dashboard-system-disclosure,
 .tasks-layout,
