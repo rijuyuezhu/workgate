@@ -141,6 +141,14 @@ def tool_error_payload(
             "original_error": exc.original_error,
         }
 
+    if isinstance(exc, SessionTerminationRequestedError):
+        return {
+            "status": "termination_requested",
+            "error_type": "SessionTerminationRequestedError",
+            "message": str(exc),
+            "session_id": exc.session_id,
+        }
+
     path_error = exc if isinstance(exc, PathNotFoundError) else None
     if isinstance(exc, FileNotFoundError) and path_error is None:
         path_error = syscall_path_not_found_error(exc)
@@ -164,6 +172,11 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
     """Reconstruct typed executor failures at the control session boundary."""
     status = str(data.get("status") or "error")
     message = str(data.get("message") or "remote tool failed")
+    if status == "termination_requested":
+        session_id = data.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("executor termination error requires session_id")
+        return SessionTerminationRequestedError(session_id)
     if status == "executable_not_found":
         return ShellExecutableNotFoundError(
             str(data.get("executable") or "<unknown>"),

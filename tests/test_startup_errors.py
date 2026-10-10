@@ -14,6 +14,7 @@ from tests.helpers import get_test_tool_session_store as get_tool_session_store
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.errors import (
     PathNotFoundError,
+    SessionTerminationRequestedError,
     ShellExecutableNotFoundError,
     exception_from_tool_error,
     process_start_not_found_error,
@@ -127,6 +128,17 @@ def test_tool_error_payload_round_trips_typed_failures(tmp_path: Path) -> None:
     reconstructed_path = exception_from_tool_error(encoded_path)
     assert isinstance(reconstructed_path, PathNotFoundError)
     assert reconstructed_path.path == tmp_path / "missing.txt"
+
+
+def test_executor_termination_roundtrip_keeps_model_stop_instruction():
+    session_id = "sess_123456789123456789123456789"
+    encoded = tool_error_payload(SessionTerminationRequestedError(session_id))
+    assert encoded["status"] == "termination_requested"
+    assert encoded["session_id"] == session_id
+    reconstructed = exception_from_tool_error(encoded)
+    assert isinstance(reconstructed, SessionTerminationRequestedError)
+    assert reconstructed.session_id == session_id
+    assert "Stop immediately" in str(reconstructed)
 
 
 @pytest.mark.asyncio
