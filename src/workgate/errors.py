@@ -24,6 +24,10 @@ class PublicToolValueError(ValueError, PublicToolError):
     """An expected, public invalid-input failure."""
 
 
+class RedactedAgentMcpError(PublicToolValueError):
+    """An Agent Bridge error sanitized before crossing the MCP boundary."""
+
+
 class SessionTerminationRequestedError(ValueError):
     """Raised when a tool call references a session terminating on its owner."""
 
@@ -188,6 +192,7 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
         "TimeoutError": TimeoutError,
         "ValueError": ValueError,
         "PublicToolValueError": PublicToolValueError,
+        "RedactedAgentMcpError": RedactedAgentMcpError,
         "PublicToolRuntimeError": PublicToolRuntimeError,
         "OSError": OSError,
         "RuntimeError": RuntimeError,

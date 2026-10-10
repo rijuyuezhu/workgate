@@ -9,9 +9,6 @@ from starlette.testclient import TestClient
 import workgate.control.mcp.app as mcp_app
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings, configure_settings
-from workgate.control.mcp.session_limits import (
-    McpSessionLimitMiddleware,
-)
 from workgate.http.request_limits import RequestBodyLimitMiddleware
 from workgate.oauth.http.middleware import AuthMiddleware
 from workgate.persistence import FileStateStore
@@ -29,8 +26,6 @@ async def _ok(request):
 class _DummyMcp:
     def __init__(self):
         self.transports = []
-        self._lowlevel_server = SimpleNamespace(session_manager=None)
-        self.settings: Any = SimpleNamespace(streamable_http_path="/mcp")
 
     def streamable_http_app(self, **kwargs):
         self.transport_options = kwargs
@@ -38,11 +33,6 @@ class _DummyMcp:
 
     def run(self, *, transport: str):
         self.transports.append(transport)
-
-
-class _DummySseMcp:
-    def sse_app(self):
-        return Starlette(routes=[Route("/sse", _ok)])
 
 
 class _EmptyCatalog:
@@ -123,15 +113,6 @@ def test_mcp_http_app_rejects_removed_native_ui_token(tmp_path):
     assert native_api.status_code == 401
 
 
-def test_build_mcp_http_app_supports_sdk_sse_fallback():
-    configure_settings(Settings(mode="mcp", auth_mode="none"))
-
-    app = mcp_app.build_mcp_http_app(cast(Any, _DummySseMcp()))
-
-    assert app is not None
-    assert _route_paths(app)[-1] == ""
-
-
 def test_build_mcp_http_app_does_not_restore_legacy_remote_routes():
     configure_settings(Settings(mode="mcp", auth_mode="none"))
 
@@ -185,13 +166,7 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
 
     monkeypatch.setattr(mcp_app, "audit", fake_audit)
     runtime = cast(Any, _runtime_stub(runtime_settings))
-    session_manager = SimpleNamespace(
-        stateless=False,
-        session_idle_timeout=1,
-    )
     dummy = _DummyMcp()
-    dummy._lowlevel_server.session_manager = session_manager
-    dummy.settings = SimpleNamespace(streamable_http_path="/mcp")
 
     app = mcp_app.build_mcp_http_app(cast(Any, dummy), runtime=runtime)
 
@@ -207,7 +182,7 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
     assert "/api/ui/executors/{action}" in paths
     assert dummy.transport_options["session_idle_timeout"] == 10
     assert dummy.transport_options["max_request_body_size"] == 4321
-    assert dummy.transport_options["max_sessions"] is None
+    assert dummy.transport_options["max_sessions"] == 17
     assert observed_audit_context == [
         (
             "mcp_session_idle_timeout_risk",
@@ -229,17 +204,11 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
     assert "/api/ui/pair" not in public_paths
     assert "/api/ui/executors" not in public_paths
     assert "/api/ui/executors/{action}" not in public_paths
-    session_limit = next(
-        entry
-        for entry in app.user_middleware
-        if entry.cls is McpSessionLimitMiddleware
-    )
     request_limit = next(
         entry
         for entry in app.user_middleware
         if entry.cls is RequestBodyLimitMiddleware
     )
-    assert session_limit.kwargs["max_sessions"] == 17
     assert request_limit.kwargs["max_bytes"] == 4321
 
 

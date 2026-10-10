@@ -2,7 +2,6 @@
 
 from typing import Any
 
-from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from ..config.control import ControlConfig
@@ -79,12 +78,3 @@ def tool_safety_annotations(
         idempotent_hint=read_only,
         open_world_hint=open_world,
     )
-
-
-def install_tool_safety_annotations(mcp: MCPServer) -> None:
-    """Annotate every registered tool without relaxing semantics by runtime mode."""
-    for tool in mcp._tool_manager._tools.values():
-        read_only = bool(tool.annotations and tool.annotations.read_only_hint)
-        tool.annotations = tool_safety_annotations(
-            tool.name, read_only=read_only
-        )

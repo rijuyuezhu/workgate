@@ -100,6 +100,8 @@ does not hold a shared mutable runtime `Settings` object with either child.
 The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
 it through the outer Starlette lifespan that also owns the SDK session manager.
+The MCP v2 SDK owns HTTP session capacity and idle expiry via `max_sessions`
+and `session_idle_timeout`; a full session pool receives the SDK-native HTTP 503.
 MCP stdio instead uses MCPServer's low-level server lifespan because stdio has one
 `Server.run()` for the process lifetime. Both `run_http()` and `run_mcp()` require
 the already-composed `ControlRuntime`; they do not reconstruct role authority from

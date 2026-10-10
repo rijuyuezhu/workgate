@@ -228,7 +228,7 @@ class ToolDefinition:
         @wraps(self.func)
         async def mcp_handler(*args: Any, **kwargs: Any) -> Any:
             try:
-                _enforce_oauth_scopes(self.required_oauth_scopes())
+                require_oauth_scopes(self.required_oauth_scopes())
                 result = await self.func(*args, **kwargs)
                 if not has_explicit_tool_text(self.name):
                     return result
@@ -240,18 +240,15 @@ class ToolDefinition:
                     content=[TextContent(type="text", text=text)],
                     structured_content=structured,
                 )
-            except SessionTerminationRequestedError:
-                raise
+            except SessionTerminationRequestedError as exc:
+                raise ToolError(str(exc)) from None
             except MissingOAuthScopeError as exc:
-                raise _oauth_scope_http_error(exc) from exc
+                raise ToolError(str(exc)) from None
             except Exception as exc:
                 if self.mcp_error_handler is not None:
                     return self.mcp_error_handler(exc, args, kwargs)
                 if isinstance(
                     exc, (PublicToolError, ShellExecutableNotFoundError)
-                ) or (
-                    self.name == "call_agent_mcp_tool"
-                    and isinstance(exc, ValueError)
                 ):
                     # Display only errors explicitly public or already redacted.
                     raise ToolError(str(exc)) from None

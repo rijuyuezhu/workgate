@@ -8,12 +8,12 @@ from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
 
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ResourceError
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 
 from ...audit import current_audit_call_id, query_audit
 from ...config.control import ControlConfig
-from ...oauth.core.context import require_oauth_scopes
+from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_READ,
     SCOPE_SHELL_EXECUTE,
@@ -514,6 +514,14 @@ async def live_workspace_end(
     return SessionEndOutput.model_validate(result)
 
 
+def _require_mcp_scopes(scopes: tuple[str, ...]) -> None:
+    """Preserve useful scope denial details on the MCP tool surface."""
+    try:
+        require_oauth_scopes(scopes)
+    except MissingOAuthScopeError as exc:
+        raise ToolError(str(exc)) from None
+
+
 def register_live_workspace(
     mcp: MCPServer, runtime: ControlRuntime | None
 ) -> None:
@@ -566,7 +574,7 @@ def register_live_workspace(
         task_id: TaskIdArg,
         session_id: OptionalSessionIdArg = None,
     ) -> LiveWorkspaceSnapshot:
-        require_oauth_scopes(read_scopes)
+        _require_mcp_scopes(read_scopes)
         return await live_workspace_snapshot(
             runtime,
             str(task_id),
@@ -583,7 +591,7 @@ def register_live_workspace(
         task_id: TaskIdArg,
         session_id: OptionalSessionIdArg = None,
     ) -> LiveWorkspaceSnapshot:
-        require_oauth_scopes(read_scopes)
+        _require_mcp_scopes(read_scopes)
         return await live_workspace_snapshot(
             runtime,
             str(task_id),
@@ -602,7 +610,7 @@ def register_live_workspace(
         session_id: OptionalSessionIdArg = None,
         instruction: str | None = None,
     ) -> LiveWorkspaceSnapshot:
-        require_oauth_scopes(task_write_scopes)
+        _require_mcp_scopes(task_write_scopes)
         return await live_workspace_task_control(
             runtime,
             task_id=str(task_id),
@@ -626,7 +634,7 @@ def register_live_workspace(
         claim_id: str | None = None,
         accepted: bool | None = None,
     ) -> LiveWorkspaceContinuationResult:
-        require_oauth_scopes(read_scopes)
+        _require_mcp_scopes(read_scopes)
         return await live_workspace_continuation(
             runtime,
             task_id=str(task_id),
@@ -646,7 +654,7 @@ def register_live_workspace(
         session_id: SessionIdArg,
         confirm_session_id: str,
     ) -> SessionEndOutput:
-        require_oauth_scopes((SCOPE_SHELL_EXECUTE,))
+        _require_mcp_scopes((SCOPE_SHELL_EXECUTE,))
         return await live_workspace_end(
             runtime,
             task_id=str(task_id),

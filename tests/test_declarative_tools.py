@@ -3,6 +3,8 @@ from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from workgate.oauth.core.context import (
@@ -168,14 +170,12 @@ async def test_mcp_handler_enforces_required_oauth_scopes():
 
     claims_token = bind_oauth_claims({"scope": "shell:read"})
     try:
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(
+            ToolError, match="Missing required OAuth scope: shell:execute"
+        ):
             await handler()
     finally:
         reset_oauth_claims(claims_token)
-    assert exc_info.value.status_code == 403
-    assert (
-        exc_info.value.detail == "Missing required OAuth scope: shell:execute"
-    )
 
     claims_token = bind_oauth_claims({"scope": "shell:read shell:execute"})
     try:
@@ -241,13 +241,10 @@ async def test_dynamic_oauth_scope_failures_use_standard_tool_error_shape():
         definition.register_mcp(cast(Any, mcp), _sample_context())
         assert mcp.handler is not None
         handler = cast(Callable[[], Awaitable[dict[str, bool]]], mcp.handler)
-        with pytest.raises(HTTPException) as mcp_exc:
+        with pytest.raises(
+            ToolError, match="Missing required OAuth scope: shell:execute"
+        ):
             await handler()
-        assert mcp_exc.value.status_code == 403
-        assert (
-            mcp_exc.value.detail
-            == "Missing required OAuth scope: shell:execute"
-        )
     finally:
         reset_oauth_claims(claims_token)
 
@@ -265,3 +262,63 @@ def test_tool_definition_rejects_unknown_annotations():
         ValueError, match="Invalid annotations: future-annotation"
     ):
         definition._mcp_annotations(_sample_context())
+
+
+@pytest.mark.asyncio
+async def test_session_termination_remains_model_visible_on_mcp_v2():
+    from workgate.errors import SessionTerminationRequestedError
+
+    async def stopped(session_id: str) -> str:
+        raise SessionTerminationRequestedError(session_id)
+
+    mcp = MCPServer("termination-test")
+    ToolDefinition(
+        func=stopped, name="stopped", http_method=None, http_path=None
+    ).register_mcp(mcp, _sample_context())
+    with pytest.raises(
+        ToolError, match="Stop immediately.*Do not perform any further work"
+    ):
+        await mcp.call_tool(
+            "stopped", {"session_id": "sess_123456789123456789123456789"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_arbitrary_value_error_is_not_exposed():
+    async def call_agent_mcp_tool(server: str) -> str:
+        raise ValueError("private secret value from unexpected code path")
+
+    mcp = MCPServer("safe-error-test")
+    ToolDefinition(
+        func=call_agent_mcp_tool,
+        name="call_agent_mcp_tool",
+        http_method=None,
+        http_path=None,
+    ).register_mcp(mcp, _sample_context())
+    with pytest.raises(
+        ToolError, match="^Error executing tool call_agent_mcp_tool$"
+    ):
+        await mcp.call_tool("call_agent_mcp_tool", {"server": "docs"})
+
+
+@pytest.mark.asyncio
+async def test_mcp_enforced_scope_explains_denial_to_client():
+    async def protected() -> str:
+        return "not executed"
+
+    mcp = MCPServer("scope-test")
+    ToolDefinition(
+        func=protected,
+        name="protected",
+        http_method=None,
+        http_path=None,
+        oauth_scopes=("shell:read", "shell:write"),
+    ).register_mcp(mcp, _sample_context())
+    token = bind_oauth_claims({"scope": "shell:read"})
+    try:
+        with pytest.raises(
+            ToolError, match="Missing required OAuth scope: shell:write"
+        ):
+            await mcp.call_tool("protected", {})
+    finally:
+        reset_oauth_claims(token)

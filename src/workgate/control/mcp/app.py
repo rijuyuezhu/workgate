@@ -22,7 +22,6 @@ from ...persistence import FileStateStore
 from ...protocol.executor import EXECUTOR_TRANSFER_PREFIX
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import McpToolContext
-from ...tools.metadata import install_tool_safety_annotations
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..execution_context import (
     ControlExecutionContextMiddleware,
@@ -37,9 +36,8 @@ from ..server import run_uvicorn
 from ..tool_timeouts import tool_timeout_s
 from .instructions import SERVER_INSTRUCTIONS
 from .live_workspace import register_live_workspace
-from .session_limits import McpSessionLimitMiddleware
 from .transport_security import transport_security_settings
-from .watchdogs import install_mcp_tool_watchdogs
+from .watchdogs import WorkgateMCPServer
 
 
 def _control_state_store(
@@ -94,8 +92,24 @@ def build_mcp(
         async with runtime.lifespan():
             yield
 
-    mcp = MCPServer(
-        "workgate",
+    state_store = _control_state_store(runtime, settings)
+    mcp = WorkgateMCPServer(
+        name="workgate",
+        config=settings,
+        state_store=state_store,
+        oauth_state=None
+        if runtime is None
+        else getattr(runtime, "oauth_state", None),
+        managed_jobs_runtime=(
+            None
+            if runtime is None
+            else getattr(runtime, "managed_jobs_runtime", None)
+        ),
+        agent_activity_observer=(
+            None
+            if runtime is None or getattr(runtime, "task_service", None) is None
+            else runtime.task_service.observe_agent_activity
+        ),
         version=__version__,
         instructions=SERVER_INSTRUCTIONS,
         lifespan=(
@@ -112,26 +126,6 @@ def build_mcp(
     )
     catalog.register_mcp(mcp, context)
     register_live_workspace(mcp, runtime)
-    install_tool_safety_annotations(mcp)
-    state_store = _control_state_store(runtime, settings)
-    install_mcp_tool_watchdogs(
-        mcp,
-        settings,
-        state_store,
-        oauth_state=None
-        if runtime is None
-        else getattr(runtime, "oauth_state", None),
-        managed_jobs_runtime=(
-            None
-            if runtime is None
-            else getattr(runtime, "managed_jobs_runtime", None)
-        ),
-        agent_activity_observer=(
-            None
-            if runtime is None or getattr(runtime, "task_service", None) is None
-            else runtime.task_service.observe_agent_activity
-        ),
-    )
     return mcp
 
 
@@ -206,8 +200,6 @@ def _add_public_routes_to_mcp_http_app(
 def _build_authenticated_mcp_http_app(
     mcp_app: Starlette,
     *,
-    session_manager: object | None = None,
-    mcp_path: str = "/mcp",
     settings: ControlConfig | None = None,
     runtime: ControlRuntime | None = None,
 ) -> Starlette:
@@ -224,15 +216,6 @@ def _build_authenticated_mcp_http_app(
         settings=active_settings,
         runtime=runtime,
     )
-    if session_manager is not None and not bool(
-        getattr(session_manager, "stateless", False)
-    ):
-        app.add_middleware(
-            McpSessionLimitMiddleware,
-            session_manager=session_manager,
-            max_sessions=active_settings.mcp_max_sessions,
-            mcp_path=mcp_path,
-        )
     install_request_body_limit(
         app,
         max_bytes=active_settings.max_http_request_bytes,
@@ -277,46 +260,28 @@ def build_mcp_http_app(
         if active_runtime is not None
         else resolve_control_config(get_settings())
     )
-    if hasattr(mcp, "streamable_http_app"):
-        inner: Starlette = mcp.streamable_http_app(
-            transport_security=transport_security_settings(settings),
-            max_request_body_size=settings.max_http_request_bytes,
-            session_idle_timeout=settings.mcp_session_idle_timeout_s,
-            max_sessions=None,  # The outer middleware owns admission control.
-        )
-        session_manager = mcp._lowlevel_server.session_manager
-        if session_manager is not None and not bool(
-            getattr(session_manager, "stateless", False)
+    inner: Starlette = mcp.streamable_http_app(
+        transport_security=transport_security_settings(settings),
+        max_request_body_size=settings.max_http_request_bytes,
+        session_idle_timeout=settings.mcp_session_idle_timeout_s,
+        max_sessions=settings.mcp_max_sessions,
+    )
+    idle_timeout_s = settings.mcp_session_idle_timeout_s
+    maximum_tool_watchdog_s = tool_timeout_s("bash", config=settings)
+    if idle_timeout_s <= maximum_tool_watchdog_s:
+        with control_execution_context(
+            config=settings,
+            state_store=_control_state_store(active_runtime, settings),
         ):
-            idle_timeout_s = max(1, settings.mcp_session_idle_timeout_s)
-            maximum_tool_watchdog_s = tool_timeout_s("bash", config=settings)
-            if idle_timeout_s <= maximum_tool_watchdog_s:
-                with control_execution_context(
-                    config=settings,
-                    state_store=_control_state_store(active_runtime, settings),
-                ):
-                    audit(
-                        "mcp_session_idle_timeout_risk",
-                        idle_timeout_s=idle_timeout_s,
-                        maximum_tool_watchdog_s=maximum_tool_watchdog_s,
-                    )
-        mcp_settings = getattr(mcp, "settings", None)
-        return _build_authenticated_mcp_http_app(
-            inner,
-            session_manager=session_manager,
-            mcp_path=str(getattr(mcp_settings, "streamable_http_path", "/mcp")),
-            settings=settings,
-            runtime=active_runtime,
-        )
-    if hasattr(mcp, "sse_app"):
-        inner = mcp.sse_app()
-        return _build_authenticated_mcp_http_app(
-            inner,
-            settings=settings,
-            runtime=active_runtime,
-        )
-    raise RuntimeError(
-        "MCP HTTP ASGI app not available since both streamable_http_app and sse_app are not available"
+            audit(
+                "mcp_session_idle_timeout_risk",
+                idle_timeout_s=idle_timeout_s,
+                maximum_tool_watchdog_s=maximum_tool_watchdog_s,
+            )
+    return _build_authenticated_mcp_http_app(
+        inner,
+        settings=settings,
+        runtime=active_runtime,
     )
 
 
