@@ -16,7 +16,6 @@ from tests.helpers import (
     build_paired_mcp,
     mcp_structured,
 )
-from workgate import __version__
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -48,7 +47,7 @@ from workgate.tools.registry import agent as tools_module
 
 
 def _output_schema(tool: Any) -> dict[str, Any]:
-    schema = tool.outputSchema
+    schema = tool.output_schema
     assert schema is not None
     return schema
 
@@ -198,10 +197,6 @@ async def test_mcp_security_metadata_matches_server_mode(
             assert schemes == [{"type": "noauth"}]
         else:
             assert schemes[0]["scopes"] == scopes_by_tool[name]
-    assert (
-        mcp._mcp_server.create_initialization_options().server_version
-        == __version__
-    )
 
 
 @pytest.mark.asyncio
@@ -228,7 +223,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
         assert text in mcp.instructions
     assert len(mcp.instructions) < 3000
 
-    transport_security = mcp.settings.transport_security
+    transport_security = transport_security_settings(harness.control.config)
     assert transport_security is not None
     assert "workgate.example.com" in transport_security.allowed_hosts
     assert "workgate.example.com:443" in transport_security.allowed_hosts
@@ -238,7 +233,7 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     search_meta = tools["workspace_search"].meta
     session_meta = tools["session_start"].meta
     assert "workdir" not in set(
-        tools["session_start"].inputSchema.get("required", [])
+        tools["session_start"].input_schema.get("required", [])
     )
     assert "environment_info" not in tools
     assert "remote" not in tools
@@ -250,10 +245,6 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     ]
     assert session_meta["securitySchemes"][0]["type"] == "oauth2"
     assert session_meta["securitySchemes"][0]["scopes"] == ["shell:read"]
-    assert (
-        mcp._mcp_server.create_initialization_options().server_version
-        == __version__
-    )
 
     def tool_oauth_scopes(name: str) -> list[str]:
         meta = tools[name].meta
@@ -284,8 +275,8 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     assert tool_oauth_scopes("gui_list") == ["gui:use"]
     assert tool_oauth_scopes("gui_state") == ["gui:use"]
     assert tool_oauth_scopes("gui_action") == ["gui:use"]
-    assert all(tool.outputSchema is not None for tool in tools.values())
-    bash_schema = tools["bash"].outputSchema
+    assert all(tool.output_schema is not None for tool in tools.values())
+    bash_schema = tools["bash"].output_schema
     assert bash_schema is not None
     assert bash_schema["title"] == "ShellExecutionOutput"
     assert set(bash_schema["properties"]) >= {
@@ -294,20 +285,20 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
         "cwd",
         "result",
     }
-    assert "session_id" in tools["bash"].inputSchema["required"]
-    assert "session_id" in tools["run_python_code"].inputSchema["required"]
-    assert set(tools["browser_run_script"].inputSchema["required"]) == {
+    assert "session_id" in tools["bash"].input_schema["required"]
+    assert "session_id" in tools["run_python_code"].input_schema["required"]
+    assert set(tools["browser_run_script"].input_schema["required"]) == {
         "session_id",
         "script",
     }
-    assert "session_id" in tools["tree_view"].inputSchema["required"]
-    assert "session_id" in tools["glob_search"].inputSchema["required"]
-    assert "session_id" in tools["job"].inputSchema["required"]
-    search_schema = tools["search"].outputSchema
+    assert "session_id" in tools["tree_view"].input_schema["required"]
+    assert "session_id" in tools["glob_search"].input_schema["required"]
+    assert "session_id" in tools["job"].input_schema["required"]
+    search_schema = tools["search"].output_schema
     assert search_schema is not None
     assert "matches" in search_schema["properties"]
     assert "numbered_content" in search_schema["properties"]
-    fetch_schema = tools["fetch"].outputSchema
+    fetch_schema = tools["fetch"].output_schema
     assert fetch_schema is not None
     assert set(fetch_schema["properties"]) == {
         "id",
@@ -346,13 +337,13 @@ async def test_shell_tool_schema_exposes_session_and_execution_modes(
     tool = {tool.name: tool for tool in await build_mcp().list_tools()}["bash"]
 
     output_schema = _output_schema(tool)
-    command_input = tool.inputSchema["properties"]["command"]
-    session_input = tool.inputSchema["properties"]["session_id"]
-    timeout_input = tool.inputSchema["properties"]["timeout_s"]
+    command_input = tool.input_schema["properties"]["command"]
+    session_input = tool.input_schema["properties"]["session_id"]
+    timeout_input = tool.input_schema["properties"]["timeout_s"]
     mode_output = output_schema["properties"]["mode"]
     result_output = output_schema["properties"]["result"]
 
-    assert "session_id" in tool.inputSchema["required"]
+    assert "session_id" in tool.input_schema["required"]
     assert command_input["type"] == "string"
     assert session_input["type"] == "string"
     assert timeout_input["default"] is None
@@ -380,16 +371,16 @@ async def test_persistent_shell_tools_require_owning_session_and_shell_id(
     ]
     for name in companion_names:
         tool = tools[name]
-        input_properties = tool.inputSchema["properties"]
+        input_properties = tool.input_schema["properties"]
         output_schema = _output_schema(tool)
 
-        assert {"session_id", "shell_id"} <= set(tool.inputSchema["required"])
+        assert {"session_id", "shell_id"} <= set(tool.input_schema["required"])
         assert {"session_id", "shell_id"} <= set(input_properties)
         assert "shell_id" in output_schema["properties"]
         assert "session_id" not in output_schema["properties"]
 
     list_tool = tools["list_persistent_shells"]
-    assert "session_id" in list_tool.inputSchema["required"]
+    assert "session_id" in list_tool.input_schema["required"]
     list_schema = _output_schema(list_tool)
     assert "shells" in list_schema["properties"]
     assert "sessions" not in list_schema["properties"]
@@ -440,10 +431,10 @@ async def test_file_tool_schema_exposes_grounded_read_contract(
     assert list_files_output_schema["title"] == "ListFilesOutput"
     assert (
         "selector suffix"
-        in read_tool.inputSchema["properties"]["path"]["description"]
+        in read_tool.input_schema["properties"]["path"]["description"]
     )
-    assert "binary_preview" not in read_tool.inputSchema["properties"]
-    assert "binary_preview_bytes" not in read_tool.inputSchema["properties"]
+    assert "binary_preview" not in read_tool.input_schema["properties"]
+    assert "binary_preview_bytes" not in read_tool.input_schema["properties"]
     assert "file" in read_output_schema["properties"]
     assert "directory" in read_output_schema["properties"]
     assert "content" in read_output_schema["properties"]
@@ -467,35 +458,35 @@ async def test_search_tool_schema_exposes_search_and_paging_contract(
     tree_output_schema = _output_schema(tree_tool)
     assert search_output_schema["title"] == "GrepSearchOutput"
     assert tree_output_schema["title"] == "TreeViewOutput"
-    pattern_description = search_tool.inputSchema["properties"]["pattern"][
+    pattern_description = search_tool.input_schema["properties"]["pattern"][
         "description"
     ].lower()
     assert "regular expression" in pattern_description
     assert (
         "case-sensitive"
-        in search_tool.inputSchema["properties"]["case_sensitive"][
+        in search_tool.input_schema["properties"]["case_sensitive"][
             "description"
         ]
     )
     assert (
         "line-scoped file selector"
-        in search_tool.inputSchema["properties"]["paths"]["description"]
+        in search_tool.input_schema["properties"]["paths"]["description"]
     )
     assert (
         "page through noisy searches"
-        in search_tool.inputSchema["properties"]["skip"]["description"]
+        in search_tool.input_schema["properties"]["skip"]["description"]
     )
     assert "matches" in search_output_schema["properties"]
     assert "skipped" in search_output_schema["properties"]
-    assert "session_id" in tree_tool.inputSchema["required"]
-    assert "session_id" in glob_tool.inputSchema["required"]
+    assert "session_id" in tree_tool.input_schema["required"]
+    assert "session_id" in glob_tool.input_schema["required"]
     assert (
         "session workdir"
-        in tree_tool.inputSchema["properties"]["cwd"]["description"]
+        in tree_tool.input_schema["properties"]["cwd"]["description"]
     )
     assert (
         "session workdir"
-        in glob_tool.inputSchema["properties"]["cwd"]["description"]
+        in glob_tool.input_schema["properties"]["cwd"]["description"]
     )
     assert "entries" in tree_output_schema["properties"]
 
@@ -514,7 +505,7 @@ async def test_misc_tool_output_schemas_are_exposed(tmp_path, monkeypatch):
     secret_output_schema = _output_schema(secret_tool)
     assert todo_output_schema["title"] == "WriteTodosOutput"
     assert secret_output_schema["title"] == "SecretScanOutput"
-    assert "todos" in todo_tool.inputSchema["properties"]
+    assert "todos" in todo_tool.input_schema["properties"]
     assert "findings" in secret_output_schema["properties"]
 
 
@@ -536,11 +527,11 @@ async def test_job_tool_schema_exposes_durable_companion_contract(
         word in description for word in ("durable", "retained", "persist")
     )
 
-    lines_schema = companion.inputSchema["properties"]["lines"]
+    lines_schema = companion.input_schema["properties"]["lines"]
     assert lines_schema["minimum"] == 1
     assert lines_schema["maximum"] == 5000
-    assert "session_id" in companion.inputSchema["required"]
-    assert "cancel" in companion.inputSchema["properties"]
+    assert "session_id" in companion.input_schema["required"]
+    assert "cancel" in companion.input_schema["properties"]
 
     output_schema = _output_schema(companion)
     assert output_schema["title"] == "JobOutput"
@@ -623,10 +614,10 @@ def _assert_tool_annotations(
 ):
     annotations = tool.annotations
     assert annotations is not None, tool.name
-    assert annotations.readOnlyHint is read_only, tool.name
-    assert annotations.destructiveHint is destructive, tool.name
-    assert annotations.idempotentHint is idempotent, tool.name
-    assert annotations.openWorldHint is open_world, tool.name
+    assert annotations.read_only_hint is read_only, tool.name
+    assert annotations.destructive_hint is destructive, tool.name
+    assert annotations.idempotent_hint is idempotent, tool.name
+    assert annotations.open_world_hint is open_world, tool.name
 
 
 @pytest.mark.asyncio
@@ -747,7 +738,7 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
     for name in set(tools) - classified:
         annotations = tools[name].annotations
         assert annotations is not None, name
-        assert annotations.readOnlyHint is False, name
+        assert annotations.read_only_hint is False, name
 
 
 @pytest.mark.asyncio

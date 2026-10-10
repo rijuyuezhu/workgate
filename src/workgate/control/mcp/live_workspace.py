@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError
 from mcp.types import ToolAnnotations
 
 from ...audit import current_audit_call_id, query_audit
@@ -88,19 +89,19 @@ def _resource_meta(runtime: ControlRuntime) -> dict[str, Any]:
 
 def _read_only_annotations() -> ToolAnnotations:
     return ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 
 
 def _mutating_annotations(*, destructive: bool) -> ToolAnnotations:
     return ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=destructive,
-        idempotentHint=False,
-        openWorldHint=False,
+        read_only_hint=False,
+        destructive_hint=destructive,
+        idempotent_hint=False,
+        open_world_hint=False,
     )
 
 
@@ -514,7 +515,7 @@ async def live_workspace_end(
 
 
 def register_live_workspace(
-    mcp: FastMCP, runtime: ControlRuntime | None
+    mcp: MCPServer, runtime: ControlRuntime | None
 ) -> None:
     """Register the HTTP-only Live Workspace MCP App."""
 
@@ -544,7 +545,7 @@ def register_live_workspace(
     def versioned_live_workspace_resource(digest: str) -> str:
         # A template handles old content-addressed URIs without alias history.
         if not re.fullmatch(r"[0-9a-f]{16}|unbuilt", digest):
-            raise ValueError("Invalid Live Workspace resource cache key")
+            raise ResourceError("Invalid Live Workspace resource cache key")
         return _resource_html()
 
     read_scopes = (SCOPE_SHELL_READ, SCOPE_AUDIT_READ)

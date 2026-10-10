@@ -2,6 +2,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from mcp.server.mcpserver.exceptions import ResourceError
 
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -54,10 +55,10 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
     assert "workspace_open" in tools
     open_tool = tools["workspace_open"]
     assert open_tool.meta is not None
-    assert "task_id" in open_tool.inputSchema["properties"]
-    assert "task_id" in open_tool.inputSchema["required"]
-    assert "session_id" in open_tool.inputSchema["properties"]
-    assert "session_id" not in open_tool.inputSchema["required"]
+    assert "task_id" in open_tool.input_schema["properties"]
+    assert "task_id" in open_tool.input_schema["required"]
+    assert "session_id" in open_tool.input_schema["properties"]
+    assert "session_id" not in open_tool.input_schema["required"]
 
     open_meta = open_tool.meta
     assert open_meta["ui/resourceUri"].startswith(
@@ -86,7 +87,8 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
     }
     assert "ui://workgate/live-workspace.html" in resources
     templates = {
-        template.uriTemplate for template in await mcp.list_resource_templates()
+        template.uri_template
+        for template in await mcp.list_resource_templates()
     }
     assert "ui://workgate/live-workspace-{digest}.html" in templates
     for uri in (
@@ -94,9 +96,9 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
         "ui://workgate/live-workspace-0123456789abcdef.html",
     ):
         result = await mcp.read_resource(uri)
-        assert "Workgate Live Workspace" in str(next(iter(result)).content)
+        assert "Workgate Live Workspace" in str(result)
     with pytest.raises(
-        ValueError, match="Invalid Live Workspace resource cache key"
+        ResourceError, match="Invalid Live Workspace resource cache key"
     ):
         await mcp.read_resource("ui://workgate/live-workspace-invalid.html")
 

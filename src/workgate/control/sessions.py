@@ -13,6 +13,7 @@ from .. import __version__
 from ..errors import (
     BrowserUnavailableError,
     GuiUnavailableError,
+    PublicToolRuntimeError,
     exception_from_tool_error,
 )
 from ..protocol.executor import (
@@ -183,7 +184,7 @@ class ControlSessionCoordinator:
             if eligible:
                 candidates.append(candidate)
         if len(candidates) != 1:
-            raise RuntimeError(
+            raise PublicToolRuntimeError(
                 "session_start requires exactly one eligible executor or an explicit "
                 "executor_id"
             )
@@ -784,14 +785,14 @@ class ControlSessionCoordinator:
         if availability == "available":
             return
         if availability == "executor_offline":
-            raise RuntimeError(
+            raise PublicToolRuntimeError(
                 f"session {record.session_id!r} executor is offline"
             )
         if availability == "missing_on_executor":
-            raise RuntimeError(
+            raise PublicToolRuntimeError(
                 f"session {record.session_id!r} is missing on executor"
             )
-        raise RuntimeError(
+        raise PublicToolRuntimeError(
             f"session {record.session_id!r} is {availability}; executor work is unavailable"
         )
 

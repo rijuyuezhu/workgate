@@ -34,7 +34,11 @@ async def _echo_body(request: Request) -> JSONResponse:
 
 
 class _DummyMcp:
-    def streamable_http_app(self) -> Starlette:
+    _lowlevel_server = type(
+        "_NoSessionManager", (), {"session_manager": None}
+    )()
+
+    def streamable_http_app(self, **_kwargs) -> Starlette:
         return Starlette(routes=[Route("/mcp", _echo_body, methods=["POST"])])
 
 

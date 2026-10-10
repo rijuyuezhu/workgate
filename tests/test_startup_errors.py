@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 import workgate.executor.terminal.conpty as conpty
 from tests.helpers import (

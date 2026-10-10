@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any, Protocol, cast
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult
 
 from ...audit import (
@@ -43,7 +43,7 @@ class PublicToolTimeoutError(TimeoutError):
 
 
 def _mcp_tool_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-    """Represent FastMCP positional/keyword arguments as the routed tool input payload."""
+    """Represent MCPServer positional/keyword arguments as the routed tool input payload."""
     if kwargs and not args:
         return kwargs
     if args and not kwargs:
@@ -121,7 +121,7 @@ def _mcp_tool_audit_watchdog_wrapper(
             if mcp_error_handler is not None:
                 payload = mcp_error_handler(exc, args, kwargs)
             else:
-                # Let FastMCP report the timeout as a tool execution error.
+                # Let MCPServer report the timeout as a tool execution error.
                 payload = None
             audit_tool_call_end(
                 call_id=call_id,
@@ -160,9 +160,9 @@ def _mcp_tool_audit_watchdog_wrapper(
             raise
         duration_ms = int((time.time() - start) * 1000)
         audit_output = (
-            result.structuredContent
+            result.structured_content
             if isinstance(result, CallToolResult)
-            and result.structuredContent is not None
+            and result.structured_content is not None
             and has_explicit_tool_text(tool_name)
             else result
         )
@@ -186,7 +186,7 @@ def _mcp_tool_audit_watchdog_wrapper(
 
 
 def install_mcp_tool_watchdogs(
-    mcp: FastMCP,
+    mcp: MCPServer,
     config: ControlConfig,
     state_store: StateStore,
     *,

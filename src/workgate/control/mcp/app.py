@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Mount
@@ -55,10 +55,10 @@ def _control_state_store(
 def _make_read_only_tool_annotations() -> ToolAnnotations:
     """Mark a tool as read-only for MCP clients."""
     return ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 
 
@@ -67,7 +67,7 @@ def build_mcp(
     tool_catalog: ToolCatalog | None = None,
     runtime: ControlRuntime | None = None,
     own_runtime_lifespan: bool = False,
-) -> FastMCP:
+) -> MCPServer:
     """Create the MCP server from a routed control runtime or explicit catalog."""
     auto_runtime = runtime is None and tool_catalog is None
     if auto_runtime:
@@ -87,25 +87,23 @@ def build_mcp(
         )
 
     @asynccontextmanager
-    async def runtime_lifespan(_mcp: FastMCP) -> AsyncGenerator[None]:
+    async def runtime_lifespan(_mcp: MCPServer) -> AsyncGenerator[None]:
         if runtime is None:
             yield
             return
         async with runtime.lifespan():
             yield
 
-    mcp = FastMCP(
+    mcp = MCPServer(
         "workgate",
+        version=__version__,
         instructions=SERVER_INSTRUCTIONS,
-        transport_security=transport_security_settings(settings),
         lifespan=(
             runtime_lifespan
             if runtime is not None and own_runtime_lifespan
             else None
         ),
     )
-    # The SDK otherwise reports its own package version during initialize.
-    mcp._mcp_server.version = __version__
     cast(Any, mcp)._workgate_runtime = runtime
     cast(Any, mcp)._workgate_runtime_lifespan_owned = own_runtime_lifespan
     context = McpToolContext(
@@ -262,7 +260,7 @@ def _build_authenticated_mcp_http_app(
 
 
 def build_mcp_http_app(
-    mcp: FastMCP,
+    mcp: MCPServer,
     *,
     runtime: ControlRuntime | None = None,
 ) -> Starlette:
@@ -280,13 +278,17 @@ def build_mcp_http_app(
         else resolve_control_config(get_settings())
     )
     if hasattr(mcp, "streamable_http_app"):
-        inner: Starlette = mcp.streamable_http_app()
-        session_manager = getattr(mcp, "_session_manager", None)
+        inner: Starlette = mcp.streamable_http_app(
+            transport_security=transport_security_settings(settings),
+            max_request_body_size=settings.max_http_request_bytes,
+            session_idle_timeout=settings.mcp_session_idle_timeout_s,
+            max_sessions=None,  # The outer middleware owns admission control.
+        )
+        session_manager = mcp._lowlevel_server.session_manager
         if session_manager is not None and not bool(
             getattr(session_manager, "stateless", False)
         ):
             idle_timeout_s = max(1, settings.mcp_session_idle_timeout_s)
-            session_manager.session_idle_timeout = idle_timeout_s
             maximum_tool_watchdog_s = tool_timeout_s("bash", config=settings)
             if idle_timeout_s <= maximum_tool_watchdog_s:
                 with control_execution_context(

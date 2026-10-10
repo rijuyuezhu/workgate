@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from ..config.control import ControlConfig
@@ -74,17 +74,17 @@ def tool_safety_annotations(
         not read_only and tool_name not in _NON_DESTRUCTIVE_MUTATION_TOOL_NAMES
     )
     return ToolAnnotations(
-        readOnlyHint=read_only,
-        destructiveHint=destructive,
-        idempotentHint=read_only,
-        openWorldHint=open_world,
+        read_only_hint=read_only,
+        destructive_hint=destructive,
+        idempotent_hint=read_only,
+        open_world_hint=open_world,
     )
 
 
-def install_tool_safety_annotations(mcp: FastMCP) -> None:
+def install_tool_safety_annotations(mcp: MCPServer) -> None:
     """Annotate every registered tool without relaxing semantics by runtime mode."""
     for tool in mcp._tool_manager._tools.values():
-        read_only = bool(tool.annotations and tool.annotations.readOnlyHint)
+        read_only = bool(tool.annotations and tool.annotations.read_only_hint)
         tool.annotations = tool_safety_annotations(
             tool.name, read_only=read_only
         )

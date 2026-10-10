@@ -12,6 +12,18 @@ SESSION_TERMINATION_PROMPT = (
 )
 
 
+class PublicToolError(Exception):
+    """Marker for errors explicitly safe to show through MCP."""
+
+
+class PublicToolRuntimeError(RuntimeError, PublicToolError):
+    """An expected, public runtime failure."""
+
+
+class PublicToolValueError(ValueError, PublicToolError):
+    """An expected, public invalid-input failure."""
+
+
 class SessionTerminationRequestedError(ValueError):
     """Raised when a tool call references a session terminating on its owner."""
 
@@ -175,6 +187,8 @@ def exception_from_tool_error(data: dict[str, Any]) -> Exception:
         "PermissionError": PermissionError,
         "TimeoutError": TimeoutError,
         "ValueError": ValueError,
+        "PublicToolValueError": PublicToolValueError,
+        "PublicToolRuntimeError": PublicToolRuntimeError,
         "OSError": OSError,
         "RuntimeError": RuntimeError,
         "BrowserUnavailableError": BrowserUnavailableError,

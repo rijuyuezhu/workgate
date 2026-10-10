@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
+import httpx2
 import pytest
 import yaml
 from mcp import ClientSession
@@ -626,6 +627,9 @@ class RestToolClient:
 class McpSessionToolClient:
     def __init__(self, session: ClientSession):
         self._session = session
+        self.server_version = (
+            session.server_info.version if session.server_info else None
+        )
 
     async def list_tools(self) -> set[str]:
         result = await self._session.list_tools()
@@ -647,11 +651,11 @@ class McpSessionToolClient:
         error_text = (
             getattr(result.content[0], "text", "") if result.content else ""
         )
-        assert not result.isError, error_text
-        if result.structuredContent is not None and has_explicit_tool_text(
+        assert not result.is_error, error_text
+        if result.structured_content is not None and has_explicit_tool_text(
             name
         ):
-            return unwrap_tool_payload(result.structuredContent)
+            return unwrap_tool_payload(result.structured_content)
         assert result.content
         text = getattr(result.content[0], "text", "")
         return unwrap_tool_payload(text)
@@ -662,11 +666,10 @@ async def streamable_http_tool_client(
     base_url: str,
 ) -> AsyncGenerator[McpSessionToolClient]:
     async with (
-        httpx.AsyncClient(timeout=20, trust_env=False) as client,
+        httpx2.AsyncClient(timeout=20, trust_env=False) as client,
         streamable_http_client(f"{base_url}/mcp", http_client=client) as (
             read,
             write,
-            _,
         ),
         ClientSession(read, write) as session,
     ):

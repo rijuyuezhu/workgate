@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 import workgate.control.http.tool_routes as http_tool_routes_module
 import workgate.control.mcp.watchdogs as mcp_watchdogs

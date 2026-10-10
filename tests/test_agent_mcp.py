@@ -32,7 +32,7 @@ def test_normalize_mcp_tool_preserves_schema():
     sdk_tool = SimpleNamespace(
         name="search",
         description="Search docs",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"query": {"type": "string"}},
         },
@@ -52,7 +52,7 @@ def test_normalize_mcp_tool_handles_sdk_tool_model():
     sdk_tool = Tool(
         name="search",
         description="Search docs",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"query": {"type": "string"}},
         },
@@ -71,7 +71,7 @@ def test_normalize_mcp_tool_handles_sdk_tool_model():
 def test_normalize_tool_result_handles_text_content():
     result = SimpleNamespace(
         content=[SimpleNamespace(type="text", text="hello")],
-        structuredContent=None,
+        structured_content=None,
         isError=False,
     )
 
@@ -121,7 +121,7 @@ def test_stdio_connections_end_after_each_discovery_or_call(monkeypatch):
                     SimpleNamespace(
                         name="ping",
                         description="Ping",
-                        inputSchema={"type": "object"},
+                        input_schema={"type": "object"},
                     )
                 ]
             )
@@ -129,7 +129,7 @@ def test_stdio_connections_end_after_each_discovery_or_call(monkeypatch):
         async def call_tool(self, tool, args):
             return SimpleNamespace(
                 content=[SimpleNamespace(type="text", text="done")],
-                structuredContent=None,
+                structured_content=None,
                 isError=False,
             )
 
@@ -242,7 +242,7 @@ async def test_client_manager_list_tools_accumulates_paginated_pages(
                         SimpleNamespace(
                             name="search",
                             description="Search docs",
-                            inputSchema={"type": "object"},
+                            input_schema={"type": "object"},
                         )
                     ],
                     nextCursor="next-page",
@@ -253,7 +253,7 @@ async def test_client_manager_list_tools_accumulates_paginated_pages(
                         SimpleNamespace(
                             name="fetch",
                             description="Fetch doc",
-                            inputSchema={"type": "object"},
+                            input_schema={"type": "object"},
                         )
                     ]
                 )
@@ -290,7 +290,7 @@ async def test_client_manager_call_tool_uses_session_and_normalizes_result(
             self.calls.append((tool, args))
             return SimpleNamespace(
                 content=[SimpleNamespace(type="text", text="done")],
-                structuredContent={"ok": True},
+                structured_content={"ok": True},
                 isError=False,
             )
 

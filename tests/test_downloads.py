@@ -234,19 +234,19 @@ async def test_file_link_tools_are_registered(tmp_path, monkeypatch):
     )
     create_tool = tools["create_file_link"]
     list_tool = tools["list_file_links"]
-    assert create_tool.outputSchema is not None
-    assert list_tool.outputSchema is not None
-    assert create_tool.outputSchema["title"] == "CreateFileLinkOutput"
-    assert list_tool.outputSchema["title"] == "ListFileLinksOutput"
-    description = create_tool.inputSchema["properties"]["path"]["description"]
+    assert create_tool.output_schema is not None
+    assert list_tool.output_schema is not None
+    assert create_tool.output_schema["title"] == "CreateFileLinkOutput"
+    assert list_tool.output_schema["title"] == "ListFileLinksOutput"
+    description = create_tool.input_schema["properties"]["path"]["description"]
     assert "file" in description.lower()
     assert "download" in description.lower()
-    assert create_tool.inputSchema["properties"]["inline"]["default"] is False
-    assert "url" in create_tool.outputSchema["properties"]
-    assert "target" not in create_tool.outputSchema["properties"]
+    assert create_tool.input_schema["properties"]["inline"]["default"] is False
+    assert "url" in create_tool.output_schema["properties"]
+    assert "target" not in create_tool.output_schema["properties"]
     revoke_tool = tools["revoke_file_link"]
-    assert "link_id" in revoke_tool.inputSchema["properties"]
-    assert "token" not in revoke_tool.inputSchema["properties"]
+    assert "link_id" in revoke_tool.input_schema["properties"]
+    assert "token" not in revoke_tool.input_schema["properties"]
 
 
 @pytest.mark.asyncio

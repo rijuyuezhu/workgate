@@ -101,7 +101,7 @@ def test_stateful_mcp_sessions_have_idle_timeout_and_capacity_limit(
 
     mcp = build_mcp()
     app = build_mcp_http_app(mcp)
-    manager = mcp._session_manager
+    manager = mcp._lowlevel_server.session_manager
     assert manager is not None
     assert manager.session_idle_timeout == 7
 

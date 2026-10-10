@@ -29,10 +29,11 @@ async def _ok(request):
 class _DummyMcp:
     def __init__(self):
         self.transports = []
-        self._session_manager: Any = None
+        self._lowlevel_server = SimpleNamespace(session_manager=None)
         self.settings: Any = SimpleNamespace(streamable_http_path="/mcp")
 
-    def streamable_http_app(self):
+    def streamable_http_app(self, **kwargs):
+        self.transport_options = kwargs
         return Starlette(routes=[Route("/mcp", _ok)])
 
     def run(self, *, transport: str):
@@ -189,7 +190,7 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
         session_idle_timeout=1,
     )
     dummy = _DummyMcp()
-    dummy._session_manager = session_manager
+    dummy._lowlevel_server.session_manager = session_manager
     dummy.settings = SimpleNamespace(streamable_http_path="/mcp")
 
     app = mcp_app.build_mcp_http_app(cast(Any, dummy), runtime=runtime)
@@ -204,7 +205,9 @@ def test_build_mcp_http_app_uses_explicit_runtime_settings_not_ambient(
     assert "/api/ui/pair" in paths
     assert "/api/ui/executors" in paths
     assert "/api/ui/executors/{action}" in paths
-    assert session_manager.session_idle_timeout == 10
+    assert dummy.transport_options["session_idle_timeout"] == 10
+    assert dummy.transport_options["max_request_body_size"] == 4321
+    assert dummy.transport_options["max_sessions"] is None
     assert observed_audit_context == [
         (
             "mcp_session_idle_timeout_risk",
@@ -280,7 +283,7 @@ def test_mcp_executor_admin_routes_require_auth_and_ui_csrf(tmp_path):
     assert missing_csrf.json()["detail"] == "WebUI CSRF validation failed"
 
 
-def test_build_mcp_uses_runtime_settings_for_transport_security():
+def test_build_mcp_uses_runtime_settings_for_transport_security(monkeypatch):
     configure_settings(
         Settings(
             mode="mcp",
@@ -296,8 +299,21 @@ def test_build_mcp_uses_runtime_settings_for_transport_security():
     runtime = cast(Any, _runtime_stub(runtime_settings, _EmptyCatalog()))
 
     mcp = mcp_app.build_mcp(runtime=runtime)
+    captured = {}
+    original_app = mcp.streamable_http_app
 
-    security = mcp.settings.transport_security
+    def record_transport_security(**kwargs):
+        captured["security"] = kwargs["transport_security"]
+        return original_app(**kwargs)
+
+    monkeypatch.setattr(mcp, "streamable_http_app", record_transport_security)
+    monkeypatch.setattr(
+        mcp_app,
+        "_build_authenticated_mcp_http_app",
+        lambda inner, **kwargs: inner,
+    )
+    mcp_app.build_mcp_http_app(mcp)
+    security = captured["security"]
     assert security is not None
     assert "runtime.example" in security.allowed_hosts
     assert "https://runtime.example" in security.allowed_origins

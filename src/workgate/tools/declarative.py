@@ -8,12 +8,13 @@ from functools import wraps
 from typing import Any, ClassVar, Literal, Protocol
 
 from fastapi import HTTPException
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
 from ..config.control import ControlConfig, get_control_config
-from ..errors import SessionTerminationRequestedError
+from ..errors import PublicToolError, SessionTerminationRequestedError
 from ..oauth.core.context import (
     MissingOAuthScopeError,
     require_oauth_scopes,
@@ -217,8 +218,8 @@ class ToolDefinition:
         normalized = _normalize_description(description)
         return normalized or None
 
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
-        """Register this tool on the provided FastMCP app."""
+    def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
+        """Register this tool on the provided MCPServer app."""
 
         @wraps(self.func)
         async def mcp_handler(*args: Any, **kwargs: Any) -> Any:
@@ -233,7 +234,7 @@ class ToolDefinition:
                     return result
                 return CallToolResult(
                     content=[TextContent(type="text", text=text)],
-                    structuredContent=structured,
+                    structured_content=structured,
                 )
             except SessionTerminationRequestedError:
                 raise
@@ -242,6 +243,12 @@ class ToolDefinition:
             except Exception as exc:
                 if self.mcp_error_handler is not None:
                     return self.mcp_error_handler(exc, args, kwargs)
+                if isinstance(exc, PublicToolError) or (
+                    self.name == "call_agent_mcp_tool"
+                    and isinstance(exc, ValueError)
+                ):
+                    # Display only errors explicitly public or already redacted.
+                    raise ToolError(str(exc)) from None
                 raise
 
         mcp_handler.__name__ = self.name
@@ -344,8 +351,8 @@ class DeclarativeToolRegistry(ToolRegistry):
             tool.name: tool.http_handler() for tool in self._enabled_tools()
         }
 
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
-        """Register enabled declarative tools on the provided FastMCP app."""
+    def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
+        """Register enabled declarative tools on the provided MCPServer app."""
         self._context = context
         try:
             for tool in self._enabled_tools():

@@ -126,7 +126,7 @@ def _sample_context():
 
     return McpToolContext(
         settings=resolve_control_config(Settings()),
-        read_only_tool_annotations=ToolAnnotations(readOnlyHint=True),
+        read_only_tool_annotations=ToolAnnotations(read_only_hint=True),
     )
 
 
@@ -206,7 +206,7 @@ async def test_explicit_mcp_text_projection_does_not_change_canonical_http_resul
     assert mcp.handler is not None
     handler = cast(Callable[[], Awaitable[CallToolResult]], mcp.handler)
     rendered = await handler()
-    assert rendered.structuredContent == {
+    assert rendered.structured_content == {
         "kind": "file",
         "content": "compact",
     }
