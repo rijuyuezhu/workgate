@@ -8,6 +8,7 @@ export function createAuditController({
   renderAuditDetailInto,
   renderAuditDetailMessage,
   initialSessionId = "",
+  onNavigate = () => {},
 }) {
   const controllerState = {
     auditEntries: [],
@@ -58,6 +59,13 @@ export function createAuditController({
     setAuditControls();
   }
 
+  function showGlobalAudit() {
+    if (!controllerState.auditSessionId) return;
+    controllerState.auditSessionId = "";
+    resetAuditWorkspace();
+    void refreshAudit();
+  }
+
   function renderAuditList() {
     elements.auditList.replaceChildren();
     if (!controllerState.auditEntries.length) {
@@ -75,6 +83,7 @@ export function createAuditController({
           renderAuditList();
           setAuditControls();
           void loadAuditDetail(controllerState.auditSelectedId);
+          onNavigate("detail");
         }),
       );
     }
@@ -253,5 +262,6 @@ export function createAuditController({
     invalidate,
     refresh: refreshAudit,
     reset: resetAuditWorkspace,
+    showGlobalAudit,
   };
 }

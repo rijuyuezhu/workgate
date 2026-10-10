@@ -1004,20 +1004,16 @@ h2 {
   grid-template-columns: minmax(12rem, 1fr) minmax(7.5rem, 9rem) minmax(7.5rem, 9rem);
   min-width: 0;
   align-items: end;
-  column-gap: 0.65rem;
-  row-gap: 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 0.55rem;
-  background: var(--panel);
-  padding: 0.75rem;
+  position: relative;
+  gap: 9px 12px;
+  padding: 12px 13px;
+  border: 1px solid #e0e5ef;
+  border-left: 3px solid #bec5d1;
+  border-radius: 6px;
+  background: #fff;
 }
 
 .todo-row[aria-disabled="true"] { opacity: .7; }
-.todo-row {
-  position: relative; border-color: #e0e5ef; border-left: 3px solid #bec5d1;
-  border-radius: 6px; background: #fff;
-  gap: 9px 12px; padding: 12px 13px;
-}
 .todo-row[data-status="in_progress"] { border-left-color: #7768d7; background: #fcfbff; }
 .todo-row[data-status="completed"] { border-left-color: #20966d; background: #fbfefc; }
 .todo-row[data-status="blocked"] { border-left-color: #c48b33; background: #fffdf8; }
@@ -1843,7 +1839,6 @@ h2 {
 
 .todo-row {
   align-items: stretch;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
 }
 
 .todo-field-content {
@@ -2401,7 +2396,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 }
 .dashboard-executors-row .dashboard-section {
   min-width: 0;
-  min-height: 0;
+  min-height: 190px;
   margin: 0;
   padding: 18px;
   border: 1px solid #dfe4ed;
@@ -2409,7 +2404,6 @@ input[type=checkbox] { accent-color: #6759e7; }
   background: white;
   box-shadow: none;
 }
-.dashboard-executors-row .dashboard-section { min-height: 190px; }
 .dashboard-task-list { display: grid; align-content: start; gap: 4px; }
 .dashboard-task-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-width: 0; width: 100%; padding: 12px; border: 1px solid #e6e8ef; border-radius: 6px; background: white; box-shadow: none; text-align: left; cursor: pointer; }
 .dashboard-task-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
@@ -2617,8 +2611,6 @@ input[type=checkbox] { accent-color: #6759e7; }
   .terminal-rail { border-right: 0; border-bottom: 1px solid #28354d; }
 }
 @media (max-width: 480px) {
-  .dashboard-health-banner { padding: 17px; }
-  .dashboard-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .file-browser { padding: 10px; }
   .file-browser-heading { display: none; }
   .file-column-heading, .file-browser .file-entry { grid-template-columns: minmax(0,1fr) 65px; }
@@ -3058,9 +3050,6 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   }
   .dashboard-summary .dashboard-metric-card > strong {
     margin-top: 6px; font-size: clamp(20px, 6vw, 26px);
-  }
-  .dashboard-summary .dashboard-sparkline {
-    height: 30px;
   }
   .dashboard-metric-card .dashboard-metric-foot {
     min-height: 22px; font-size: 9px;

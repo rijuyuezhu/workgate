@@ -68,8 +68,20 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     step("tasks", "task")
     page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
     step("tasks", "list")
-
+    # Returning to a list must still allow reopening the same selected item.
+    page.locator("#task-list .task-entry").filter(
+        has_text="session"
+    ).first.click()
+    step("tasks", "task")
+    page.locator("#task-tab-sessions").click()
+    page.locator("#session-list .session-entry").first.click()
+    step("tasks", "session")
+    page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
+    step("tasks", "task")
+    page.locator("#session-list .session-entry").first.click()
+    step("tasks", "session")
     harness.navigate("executors")
+
     step("executors", "list")
     expect(page.locator(".executor-details")).to_be_hidden()
     page.locator("#executor-list .executor-row").first.click()
@@ -102,6 +114,21 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
         path=str(harness.artifacts / "mobile-global-audit-record.png")
     )
     page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
+    step("audit", "list")
+
+    # An Audit detail without a persisted record ID is transient. Refresh
+    # must return to the list, not show a different record under "detail".
+    page.locator("#audit-list .audit-entry").nth(2).click()
+    step("audit", "detail")
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#auth-panel")).to_be_hidden()
+    step("audit", "list")
+    expect(page.locator("#audit-list")).to_be_visible()
+    page.locator("#audit-list .audit-entry").first.click()
+    step("audit", "detail")
+    page.locator(".brand-block").click()
+    expect(page.locator("#page-title")).to_have_text("Overview")
+    harness.navigate("audit")
     step("audit", "list")
 
     # Responsive state changes must restore the desktop two-pane layout.

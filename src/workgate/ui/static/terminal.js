@@ -7,6 +7,7 @@ export function createTerminalController({
   initialExecutorId = "",
   initialSessionId = "",
   initialShellId = "",
+  onNavigate = () => {},
 }) {
   const controllerState = {
     terminalSocket: null,
@@ -424,7 +425,10 @@ export function createTerminalController({
       const details = [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean);
       button.title = details.join(" · ");
       button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");
-      button.addEventListener("click", () => connectTerminal(shellId));
+      button.addEventListener("click", () => {
+        onNavigate("detail");
+        void connectTerminal(shellId);
+      });
       elements.terminalList.append(button);
     }
     if (!elements.terminalList.children.length) {
@@ -475,6 +479,7 @@ export function createTerminalController({
     }
     closeTerminalSocket();
     controllerState.selectedShellId = shellId;
+    onNavigate("detail");
     const generation = controllerState.terminalGeneration;
     const selectionCurrent = () =>
       generation === controllerState.terminalGeneration &&

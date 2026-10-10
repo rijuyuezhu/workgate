@@ -8,6 +8,7 @@ export function createTasksController({
   renderAuditDetailInto,
   renderAuditDetailMessage,
   onInventory = () => {},
+  onNavigate = () => {},
   initialTaskId = "",
   initialSessionId = "",
 }) {
@@ -313,10 +314,10 @@ export function createTasksController({
               ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
               : `available · ${sessionActivityTimestamp(session)}`;
         button.append(title, meta);
-        button.addEventListener(
-          "click",
-          () => void selectSession(session.session_id),
-        );
+        button.addEventListener("click", () => {
+          if (session.session_id === controllerState.sessionId) onNavigate("session");
+          else void selectSession(session.session_id);
+        });
         elements.sessionList.append(button);
       }
     }
@@ -373,7 +374,9 @@ export function createTasksController({
       meta.className = "session-entry-meta";
       meta.textContent = taskMeta(task);
       button.append(heading, meta);
-      button.addEventListener("click", () => void selectTask(task.task_id));
+      button.addEventListener("click", () => {
+        void selectTask(task.task_id);
+      });
       elements.taskList.append(button);
     }
     if (!controllerState.unattachedSessions.length) return;
@@ -419,7 +422,7 @@ export function createTasksController({
       url.searchParams.delete("session_id");
     }
     globalThis.history.replaceState(
-      {},
+      globalThis.history.state,
       "",
       `${url.pathname}${url.search}${url.hash}`,
     );
@@ -488,10 +491,13 @@ export function createTasksController({
   async function selectTask(next) {
     if (
       !next ||
-      next === controllerState.taskId ||
       controllerState.todoMutationBusy ||
       controllerState.workspaceLoading
     ) return;
+    if (next === controllerState.taskId && !controllerState.sessionId) {
+      onNavigate("task");
+      return;
+    }
     if (
       controllerState.todoDirty &&
       !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
@@ -514,6 +520,7 @@ export function createTasksController({
     renderTaskList();
     renderSessions(controllerState.sessions);
     syncDeepLink();
+    onNavigate("task");
     await refreshTodos({ force: true });
     if (controllerState.sessionId) await refreshSessionAudit();
   }
@@ -540,6 +547,7 @@ export function createTasksController({
     renderTaskList();
     renderSessions(controllerState.sessions);
     syncDeepLink();
+    onNavigate("session");
     await refreshSessionAudit();
   }
 
@@ -556,6 +564,7 @@ export function createTasksController({
     renderTaskList();
     renderSessions(controllerState.sessions);
     syncDeepLink();
+    onNavigate("session");
     await refreshSessionAudit();
   }
 
@@ -902,6 +911,7 @@ export function createTasksController({
           controllerState.sessionAuditSelectedId = text(entry.id, "");
           renderSessionAuditList();
           void loadSessionAuditDetail(controllerState.sessionAuditSelectedId);
+          onNavigate("session-record");
         }),
       );
     }

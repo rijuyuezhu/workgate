@@ -5,6 +5,7 @@ export function createExecutorsController({
   isAuthenticated,
   reloadApp,
   onInventory,
+  onNavigate = () => {},
 }) {
   const state = {
     executors: [],
@@ -89,6 +90,7 @@ export function createExecutorsController({
         state.selectedId = executor.executor_id;
         renderList();
         renderDetails();
+        onNavigate("detail");
       });
       elements.executorList.append(button);
     }

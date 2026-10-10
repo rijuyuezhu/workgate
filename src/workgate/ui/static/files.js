@@ -5,6 +5,7 @@ export function createFilesController({
   formatFileBytes,
   initialExecutorId = "",
   initialPath = "",
+  onNavigate = () => {},
 }) {
   const controllerState = {
     fileExecutorId: text(initialExecutorId, ""),
@@ -443,6 +444,7 @@ export function createFilesController({
     controllerState.selectedFilePath = entry.path;
     renderFileList();
     void previewFile(entry);
+    onNavigate("detail");
   }
 
   async function refreshFiles({ previewSelection = false } = {}) {
@@ -496,7 +498,7 @@ export function createFilesController({
     showFilePreviewMessage("Loading directory", `${controllerState.fileExecutorId}:${controllerState.filePath}`);
     try {
       await refreshFiles({ previewSelection: Boolean(selection) });
-      document.dispatchEvent(new Event("workgate:files:navigated"));
+      onNavigate("list", { replace: true });
       return true;
     } catch (error) {
       elements.fileState.textContent = "Directory unavailable";

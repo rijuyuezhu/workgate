@@ -338,7 +338,6 @@ void (async () => {
     workdir: deepLinkValue("workdir", 4096),
     shellId: deepLinkValue("shell_id", 255),
   });
-  const deepLinkActive = Object.values(deepLink).some(Boolean);
   const mobileNavigation = createMobileNavigation();
   mobileNavigation.bind();
 
@@ -360,6 +359,7 @@ void (async () => {
     renderAuditDetailInto,
     renderAuditDetailMessage,
     initialSessionId: deepLink.sessionId,
+    onNavigate: (step, options) => mobileNavigation.go("audit", step, options),
   });
   audit.bind();
 
@@ -372,6 +372,7 @@ void (async () => {
     initialExecutorId: deepLink.executorId,
     initialSessionId: deepLink.sessionId,
     initialShellId: deepLink.shellId,
+    onNavigate: (step, options) => mobileNavigation.go("terminals", step, options),
   });
   terminal.bind();
 
@@ -382,6 +383,7 @@ void (async () => {
     formatFileBytes,
     initialExecutorId: deepLink.executorId,
     initialPath: deepLink.workdir,
+    onNavigate: (step, options) => mobileNavigation.go("files", step, options),
   });
   files.bind();
 
@@ -397,6 +399,7 @@ void (async () => {
     onInventory: (items) => dashboard.renderTasks(items),
     initialTaskId: deepLink.taskId,
     initialSessionId: deepLink.sessionId,
+    onNavigate: (step, options) => mobileNavigation.go("tasks", step, options),
   });
   tasks.bind();
 
@@ -410,7 +413,6 @@ void (async () => {
     onOpenTask: (taskId) => {
       document.querySelector('.nav-item[data-view="tasks"]').click();
       void tasks.select(taskId);
-      mobileNavigation.go("tasks", "task");
     },
     initialExecutorId: deepLink.executorId,
   });
@@ -432,6 +434,7 @@ void (async () => {
         }));
       renderExecutorTargets(targets);
     },
+    onNavigate: (step, options) => mobileNavigation.go("executors", step, options),
   });
   executors.bind();
 
@@ -980,11 +983,15 @@ void (async () => {
   for (const item of elements.appNavItems) {
     item.addEventListener("click", () => {
       setNavigationOpen(false);
-      if (deepLinkActive) {
-        location.assign(`${uiPath}#${normalizeView(item.dataset.view)}`);
-        return;
+      const view = normalizeView(item.dataset.view);
+      const url = new URL(location.href);
+      for (const key of ["task_id", "session_id", "executor_id", "workdir", "shell_id"]) {
+        url.searchParams.delete(key);
       }
-      setActiveView(item.dataset.view);
+      url.hash = view;
+      history.pushState({}, "", url);
+      setActiveView(view, { syncHash: false });
+      if (view === "audit") audit.showGlobalAudit();
     });
   }
   elements.navToggle.addEventListener("click", () => {
