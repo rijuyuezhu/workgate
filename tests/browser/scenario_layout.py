@@ -287,16 +287,14 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                 ),
             }
             upper, lower = selectors[view]
-            upper_bounds = page.locator(upper).bounding_box()
-            lower_bounds = page.locator(lower).bounding_box()
-            assert upper_bounds and lower_bounds
-            assert (
-                lower_bounds["y"]
-                >= upper_bounds["y"] + upper_bounds["height"] + 9
+            expect(page.locator(upper)).to_be_visible()
+            expect(page.locator(lower)).to_be_hidden()
+            expect(page.locator(f'[data-app-view="{view}"]')).to_have_attribute(
+                "data-mobile-step", "list"
             )
-            expect(page.locator(lower)).to_have_css("border-top-width", "1px")
-            if view == "audit":
-                assert upper_bounds["height"] <= 350
+        if view == "files":
+            expect(page.locator(".file-browser")).to_be_visible()
+            expect(page.locator(".file-preview")).to_be_hidden()
         if view in ("overview", "executors", "files", "terminals", "tasks"):
             page.screenshot(
                 path=str(harness.artifacts / f"webui-{view}-mobile.png")

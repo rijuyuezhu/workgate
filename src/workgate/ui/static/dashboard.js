@@ -212,23 +212,24 @@ export function createDashboardController({
       elements.dashboardExecutor.append(option);
       const row = document.createElement("button");
       row.type = "button";
-      row.className = "dashboard-machine-row";
+      row.className = "executor-band dashboard-machine-row";
       row.setAttribute("aria-label", `Select ${label}`);
       row.dataset.executorId = executorId;
       row.setAttribute("aria-current", String(executorId === controllerState.executorId));
       row.disabled = state !== "online";
       const avatar = document.createElement("span");
-      avatar.className = "dashboard-machine-avatar";
+      avatar.className = "executor-band-mark";
       avatar.textContent = label.slice(0, 1).toUpperCase();
       const details = document.createElement("span");
-      details.className = "dashboard-machine-details";
+      details.className = "executor-band-main";
       const name = document.createElement("strong");
       name.textContent = label;
       const version = document.createElement("small");
       version.textContent = text(executor.runtime?.workgate_version, "Executor");
       details.append(name, version);
       const status = document.createElement("span");
-      status.className = `dashboard-machine-status ${state === "online" ? "is-online" : ""}`;
+      status.className = "executor-band-state";
+      status.dataset.status = state;
       status.textContent = state;
       row.append(avatar, details, status);
       row.addEventListener("click", () => {

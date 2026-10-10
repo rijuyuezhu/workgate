@@ -239,6 +239,13 @@ def run_terminals(harness: BrowserHarness) -> None:
     expect(page.locator("#terminal-xterm textarea")).to_be_focused()
     # Narrow browser views keep the terminal usable without horizontal overflow.
     page.set_viewport_size({"width": 390, "height": 780})
+    expect(page.locator(".terminal-console")).to_be_hidden()
+    page.locator(
+        f'#terminal-list .terminal-session[title*="{executor_shell}"]'
+    ).click()
+    expect(page.locator("#terminal-panel")).to_have_attribute(
+        "data-mobile-step", "detail"
+    )
     expect(page.locator("#terminal-xterm .xterm-screen")).to_be_visible()
     terminal_bounds = page.locator("#terminal-xterm").bounding_box()
     assert (

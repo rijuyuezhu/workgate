@@ -334,7 +334,7 @@ export function createTasksController({
   function taskMeta(task) {
     const sessions = Array.isArray(task && task.sessions) ? task.sessions : [];
     const count = sessions.length;
-    return `${text(task && task.status, "unknown")} · ${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
+    return `${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
   }
 
   function renderTaskList() {
@@ -362,10 +362,17 @@ export function createTasksController({
       );
       const title = document.createElement("strong");
       title.textContent = taskOptionLabel(task);
+      const heading = document.createElement("span");
+      heading.className = "task-entry-heading";
+      const status = document.createElement("span");
+      status.className = "task-entry-status";
+      status.dataset.status = text(task.status, "unknown");
+      status.textContent = text(task.status, "unknown");
+      heading.append(title, status);
       const meta = document.createElement("span");
       meta.className = "session-entry-meta";
       meta.textContent = taskMeta(task);
-      button.append(title, meta);
+      button.append(heading, meta);
       button.addEventListener("click", () => void selectTask(task.task_id));
       elements.taskList.append(button);
     }
@@ -699,6 +706,8 @@ export function createTasksController({
       const row = document.createElement("article");
       row.className = "todo-row";
       row.dataset.todoId = item.id;
+      row.dataset.status = item.status;
+      row.dataset.priority = item.priority;
 
       const content = document.createElement("input");
       content.type = "text";
@@ -715,6 +724,7 @@ export function createTasksController({
       todoOption(status, item.status, ["pending", "in_progress", "blocked", "completed", "skipped"]);
       status.addEventListener("change", () => {
         controllerState.todoItems[index].status = status.value;
+        row.dataset.status = status.value;
         setTodoDirty();
         renderTodoSummary();
         if (elements.todoFilter.value !== "all") renderTodos();
@@ -724,12 +734,13 @@ export function createTasksController({
       todoOption(priority, item.priority, ["high", "medium", "low"]);
       priority.addEventListener("change", () => {
         controllerState.todoItems[index].priority = priority.value;
+        row.dataset.priority = priority.value;
         setTodoDirty();
       });
 
       const identifier = document.createElement("span");
       identifier.className = "todo-id";
-      identifier.textContent = item.id;
+      identifier.textContent = `Step ${index + 1}`;
       identifier.title = item.id;
 
       const remove = document.createElement("button");
@@ -742,12 +753,14 @@ export function createTasksController({
         renderTodos();
       });
 
+      const heading = document.createElement("div");
+      heading.className = "todo-row-heading";
+      heading.append(identifier, remove);
       row.append(
-        identifier,
+        heading,
         todoField("Content", "todo-field-content", content),
         todoField("Status", "todo-field-status", status),
         todoField("Priority", "todo-field-priority", priority),
-        remove,
       );
       elements.todoList.append(row);
     }

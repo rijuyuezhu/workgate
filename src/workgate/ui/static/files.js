@@ -496,6 +496,7 @@ export function createFilesController({
     showFilePreviewMessage("Loading directory", `${controllerState.fileExecutorId}:${controllerState.filePath}`);
     try {
       await refreshFiles({ previewSelection: Boolean(selection) });
+      document.dispatchEvent(new Event("workgate:files:navigated"));
       return true;
     } catch (error) {
       elements.fileState.textContent = "Directory unavailable";

@@ -14,6 +14,7 @@ void (async () => {
     { createTerminalController },
     { createFilesController },
     { createTasksController },
+    { createMobileNavigation },
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
     import(assetUrl("executors.js")),
@@ -22,6 +23,7 @@ void (async () => {
     import(assetUrl("terminal.js")),
     import(assetUrl("files.js")),
     import(assetUrl("tasks.js")),
+    import(assetUrl("mobile_navigation.js")),
   ]);
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
   const oauth = config.oauth && typeof config.oauth === "object" ? config.oauth : null;
@@ -337,6 +339,8 @@ void (async () => {
     shellId: deepLinkValue("shell_id", 255),
   });
   const deepLinkActive = Object.values(deepLink).some(Boolean);
+  const mobileNavigation = createMobileNavigation();
+  mobileNavigation.bind();
 
   const {
     auditEntryButton,
@@ -406,6 +410,7 @@ void (async () => {
     onOpenTask: (taskId) => {
       document.querySelector('.nav-item[data-view="tasks"]').click();
       void tasks.select(taskId);
+      mobileNavigation.go("tasks", "task");
     },
     initialExecutorId: deepLink.executorId,
   });
@@ -458,6 +463,7 @@ void (async () => {
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
+    mobileNavigation.sync(view);
 
     if (syncHash && location.hash !== `#${view}`) {
       const url = `${location.pathname}${location.search}#${view}`;

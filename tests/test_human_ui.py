@@ -186,6 +186,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'import(assetUrl("tasks.js"))' in script.text
     assert 'import(assetUrl("terminal.js"))' in script.text
     assert 'import(assetUrl("files.js"))' in script.text
+    assert 'import(assetUrl("mobile_navigation.js"))' in script.text
     assert "?v=${assetRevision}" in script.text
     dashboard_script = client.get("/ui/assets/dashboard.js")
     assert dashboard_script.status_code == 200
@@ -220,6 +221,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert files_script.status_code == 200
     assert files_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createFilesController" in files_script.text
+    mobile_script = client.get("/ui/assets/mobile_navigation.js")
+    assert mobile_script.status_code == 200
+    assert mobile_script.headers["x-content-type-options"] == "nosniff"
+    assert "export function createMobileNavigation" in mobile_script.text
     assert 'code_challenge_method", "S256"' in script.text
     assert "crypto.subtle.digest" in script.text
     assert 'resource: String(oauth.resource || "")' in script.text

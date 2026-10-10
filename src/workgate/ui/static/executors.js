@@ -60,41 +60,31 @@ export function createExecutorsController({
     for (const executor of state.executors) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "executor-row";
+      button.className = "executor-band executor-row";
       const selected = executor.executor_id === state.selectedId;
       if (selected) button.classList.add("executor-row-selected");
       button.setAttribute("aria-pressed", selected ? "true" : "false");
 
       const indicator = document.createElement("span");
-      const live = !executor.revoked_at && executor.online === true;
-      indicator.className = live
-        ? "executor-row-status executor-row-status-online"
-        : "executor-row-status";
-      indicator.setAttribute(
-        "aria-label",
-        executor.revoked_at ? "revoked" : live ? "online" : "offline",
-      );
+      indicator.className = "executor-band-mark";
+      indicator.textContent = (executor.name || executor.executor_id).slice(0, 1).toUpperCase();
 
       const main = document.createElement("span");
-      main.className = "executor-row-main";
+      main.className = "executor-band-main";
       const name = document.createElement("strong");
-      name.className = "executor-row-name";
+      name.className = "executor-band-name";
       name.textContent = executor.name || executor.executor_id;
       const meta = document.createElement("span");
-      meta.className = "executor-row-meta";
-      meta.textContent = executor.revoked_at
-        ? "revoked"
-        : executor.draining
-          ? "draining"
-          : executor.online
-            ? "online"
-            : "offline";
+      meta.className = "executor-band-meta";
+      meta.textContent = executor.runtime?.workgate_version || "Executor";
       main.append(name, meta);
 
-      const version = document.createElement("span");
-      version.className = "executor-row-version";
-      version.textContent = executor.runtime?.workgate_version || "version —";
-      button.append(indicator, main, version);
+      const status = document.createElement("span");
+      status.className = "executor-band-state";
+      status.textContent = executor.revoked_at
+        ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline";
+      status.dataset.status = status.textContent;
+      button.append(indicator, main, status);
       button.addEventListener("click", () => {
         state.selectedId = executor.executor_id;
         renderList();
