@@ -5,7 +5,6 @@ export function createDashboardController({
   authMode,
   isAuthenticated,
   onAuthenticationRequired,
-  onOpenExecutor,
   onOpenTask,
   initialExecutorId = "",
 }) {
@@ -160,7 +159,6 @@ export function createDashboardController({
       elements.dashboardCpuValue,
       elements.dashboardMemoryValue,
       elements.dashboardDiskValue,
-      elements.dashboardVersion,
       elements.dashboardPlatform,
       elements.dashboardPython,
       elements.dashboardCpuCount,
@@ -219,7 +217,10 @@ export function createDashboardController({
       const row = document.createElement("button");
       row.type = "button";
       row.className = "dashboard-machine-row";
-      row.setAttribute("aria-label", `Inspect ${label}`);
+      row.setAttribute("aria-label", `Select ${label}`);
+      row.dataset.executorId = executorId;
+      row.setAttribute("aria-current", String(executorId === controllerState.executorId));
+      row.disabled = state !== "online";
       const avatar = document.createElement("span");
       avatar.className = "dashboard-machine-avatar";
       avatar.textContent = label.slice(0, 1).toUpperCase();
@@ -234,7 +235,14 @@ export function createDashboardController({
       status.className = `dashboard-machine-status ${state === "online" ? "is-online" : ""}`;
       status.textContent = state;
       row.append(avatar, details, status);
-      row.addEventListener("click", () => onOpenExecutor(executorId));
+      row.addEventListener("click", () => {
+        if (controllerState.loading || executorId === controllerState.executorId) return;
+        elements.dashboardExecutor.value = executorId;
+        elements.dashboardExecutor.dispatchEvent(new Event("change", { bubbles: true }));
+        for (const item of machineList.children) {
+          item.setAttribute("aria-current", String(item.dataset.executorId === executorId));
+        }
+      });
       machineList.append(row);
     }
     const previousExecutorId = controllerState.executorId;
@@ -252,6 +260,9 @@ export function createDashboardController({
       elements.dashboardExecutor.append(option);
     }
     elements.dashboardExecutor.value = controllerState.executorId;
+    for (const item of machineList.children) {
+      item.setAttribute("aria-current", String(item.dataset.executorId === controllerState.executorId));
+    }
     if (!dashboardExecutorOnline() && wasOnline) resetDashboardExecutor(controllerState.executorId);
     if (dashboardExecutorOnline() && (!wasOnline || previousExecutorId !== controllerState.executorId)) {
       refreshDashboardInBackground({ force: true });
@@ -387,7 +398,6 @@ export function createDashboardController({
       controllerState.history.map((sample) => sample.network),
     );
 
-    elements.dashboardVersion.textContent = text(version.version, text(version.package_version));
     elements.dashboardPlatform.textContent = text(version.platform);
     elements.dashboardPython.textContent = text(version.python);
     elements.dashboardCpuCount.textContent = text(system.cpu_count);

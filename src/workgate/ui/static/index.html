@@ -25,11 +25,8 @@
           <button class="nav-item" type="button" data-view="audit" aria-label="Audit" title="Audit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9M10 18V5M16 18v-7M22 18V3"/></svg><span>Audit</span></button>
         </nav>
       <div class="sidebar-spacer"></div>
-      <div class="controller-card">
-        <div class="controller-row"><div><strong>Workgate Control</strong><span>Tasks · executors · tools</span></div></div>
-      </div>
-      <div class="sidebar-footer"><span class="avatar">WG</span>
-        <span><strong>Workgate</strong><small>Web UI · <span id="auth-mode">—</span></small></span>
+      <div class="sidebar-footer">
+        <span><small><span id="version">—</span> · <span id="auth-mode">—</span></small></span>
       </div>
     </aside>
     <main id="app-main" class="main-content">
@@ -72,7 +69,7 @@
           <h2>System health</h2>
         </div>
         <div class="dashboard-actions">
-          <label class="dashboard-executor-control" for="dashboard-executor">
+          <label class="dashboard-executor-control" for="dashboard-executor" hidden>
             <span>Executor</span>
             <select id="dashboard-executor" name="dashboard-executor"></select>
           </label>
@@ -98,7 +95,6 @@
           <div><strong id="executor-target-total">—</strong><span>Executors</span></div>
           <div><strong id="executor-target-online">—</strong><span>Online</span></div>
           <div><strong id="dashboard-audit-total">—</strong><span>Audit · 24h</span><small id="dashboard-audit-detail" class="visually-hidden">—</small></div>
-          <div><strong id="version">—</strong><span>Version</span></div>
         </div>
       </div>
       <div class="dashboard-summary" aria-label="Resource usage">
@@ -196,7 +192,6 @@
             </div>
           </div>
           <dl class="dashboard-details">
-            <div><dt>Version</dt><dd id="dashboard-version">—</dd></div>
             <div><dt>Platform</dt><dd id="dashboard-platform">—</dd></div>
             <div><dt>Python</dt><dd id="dashboard-python">—</dd></div>
             <div><dt>CPUs</dt><dd id="dashboard-cpu-count">—</dd></div>
@@ -308,7 +303,7 @@
           <h2>Terminals</h2>
         </div>
         <div class="terminal-actions">
-          <label class="executor-select" for="terminal-executor">
+          <label class="executor-select" for="terminal-executor" hidden>
             <span>Executor</span>
             <select id="terminal-executor" name="terminal-executor" aria-label="Terminal executor"></select>
           </label>
@@ -321,6 +316,8 @@
       </div>
       <div class="terminal-layout">
         <aside class="terminal-rail">
+          <div class="terminal-location-heading">Executors</div>
+          <nav id="terminal-executor-locations" class="terminal-executor-locations" aria-label="Terminal executors"></nav>
           <div class="terminal-rail-header"><strong>Sessions</strong><span id="terminal-count">0</span>
             <div><button id="terminal-previous" type="button" aria-label="Previous session" disabled>‹</button><button id="terminal-next" type="button" aria-label="Next session" disabled>›</button></div>
           </div>

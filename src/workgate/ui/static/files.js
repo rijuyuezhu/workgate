@@ -89,6 +89,7 @@ export function createFilesController({
       const location = document.createElement("button");
       location.type = "button";
       location.className = "file-location-row";
+      location.dataset.executorId = executorId;
       location.setAttribute("aria-current", executorId === controllerState.fileExecutorId ? "true" : "false");
       const dot = document.createElement("span");
       dot.className = `file-location-dot ${online ? "online" : ""}`;
@@ -134,6 +135,9 @@ export function createFilesController({
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.fileExecutorId !== nextExecutorId;
       resetFileWorkspace(nextExecutorId);
+      for (const item of locations.children) {
+        item.setAttribute("aria-current", String(item.dataset.executorId === nextExecutorId));
+      }
       if (changed && nextExecutorId) void refreshFiles();
       return;
     }

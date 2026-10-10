@@ -588,6 +588,15 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel")
     ).to_have_count(2)
+    session_request = page.locator(
+        "#session-audit-detail-body .audit-call-panel"
+    ).first
+    expect(session_request.locator(".audit-tree-branch").first).to_be_visible()
+    session_request.get_by_role("button", name="Raw").click()
+    expect(session_request.locator(".audit-detail-json")).to_be_visible()
+    session_request.get_by_role("button", name="Tree").click()
+    expect(session_request.locator(".audit-tree-branch").first).to_be_visible()
+    session_request.get_by_role("button", name="Raw").click()
     task_list_box = page.locator("#task-list").bounding_box()
     task_workspace_box = page.locator(".tasks-workspace").bounding_box()
     assert task_list_box is not None and task_workspace_box is not None
@@ -656,6 +665,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         page.locator("#session-audit-list .audit-entry").first
     ).to_be_visible()
     page.locator("#session-audit-list .audit-entry").first.click()
+    page.locator(
+        "#session-audit-detail-body .audit-call-panel"
+    ).first.get_by_role("button", name="Raw").click()
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel").nth(0)
     ).to_contain_text('"filename": null')
@@ -686,6 +698,15 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#audit-detail-body")).to_contain_text(
         "audit-scope.txt"
     )
+    result_branches = (
+        page.locator("#audit-detail-body .audit-call-panel")
+        .nth(1)
+        .locator("details.audit-tree-branch")
+    )
+    expect(result_branches.first).to_be_visible()
+    if result_branches.count() > 1:
+        result_branches.nth(1).locator("summary").click()
+        expect(result_branches.nth(1)).to_have_attribute("open", "")
 
     empty_write = harness.api(
         "POST",
@@ -703,6 +724,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#audit-list .audit-entry").first).to_be_visible()
     page.locator("#audit-list .audit-entry").first.click()
     request_text = page.locator("#audit-detail-body .audit-call-panel").nth(0)
+    request_text.get_by_role("button", name="Raw").click()
     expect(request_text).to_contain_text("empty-audit.txt")
     expect(request_text).to_contain_text('"content": ""')
 

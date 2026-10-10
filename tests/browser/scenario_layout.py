@@ -56,8 +56,11 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(page.locator("#page-location")).to_have_text("Executors")
     harness.navigate("overview")
     page.locator("#dashboard-machine-list button").first.click()
-    expect(page.locator("#page-location")).to_have_text("Executors")
-    expect(page.locator(".executor-row-selected")).to_be_visible()
+    expect(page.locator("#page-location")).to_have_text("Overview")
+    expect(page.locator(".dashboard-executor-control")).to_be_hidden()
+    expect(
+        page.locator("#dashboard-machine-list button").first
+    ).to_have_attribute("aria-current", "true")
     harness.navigate("overview")
     page.get_by_role("button", name="Open audit activity →").click()
     expect(page.locator("#page-location")).to_have_text("Audit")
@@ -77,11 +80,27 @@ def run_webui_layout(harness: BrowserHarness) -> None:
 
     harness.navigate("files")
     expect(page.locator("#file-location-executors button")).to_have_count(1)
+    expect(page.locator(".file-executor-control")).to_be_hidden()
+    expect(
+        page.locator("#file-location-executors button").first
+    ).to_have_attribute("aria-current", "true")
     expect(page.locator(".file-column-heading span")).to_have_count(3)
     page.keyboard.press("Control+l")
     expect(page.locator("#file-path")).to_be_focused()
     page.keyboard.press("Control+f")
     expect(page.locator("#file-filter")).to_be_focused()
+    harness.navigate("terminals")
+    expect(page.locator(".executor-select")).to_be_hidden()
+    expect(page.locator("#terminal-executor-locations button")).to_have_count(1)
+    expect(
+        page.locator("#terminal-executor-locations button").first
+    ).to_have_attribute("aria-current", "true")
+    assert (
+        page.evaluate(
+            "getComputedStyle(document.querySelector('.dashboard-health-banner')).borderRadius"
+        )
+        == "6px"
+    )
 
     for view in VIEWS:
         harness.navigate(view)
@@ -108,14 +127,10 @@ def run_webui_layout(harness: BrowserHarness) -> None:
         expect(active).to_be_visible()
         expect(active).to_have_attribute("aria-current", "page")
         if view == "files":
-            # A flex-basis measured as column height must not create a giant
-            # empty executor selector and push the file list off-screen.
-            selector_bounds = page.locator(
-                ".file-executor-control"
-            ).bounding_box()
+            # Mobile has no Locations rail, so it keeps the executor selector.
+            expect(page.locator(".file-executor-control")).to_be_visible()
             form_bounds = page.locator("#file-path-form").bounding_box()
             list_bounds = page.locator("#file-list").bounding_box()
-            assert selector_bounds and selector_bounds["height"] < 90
             assert form_bounds and form_bounds["height"] < 70
             assert list_bounds and list_bounds["y"] < 780
         if view in ("overview", "executors", "files", "terminals", "tasks"):

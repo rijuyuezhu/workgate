@@ -317,6 +317,8 @@ export function createTerminalController({
     const wasOnline = terminalExecutorOnline();
     controllerState.terminalExecutorStates = new Map();
     elements.terminalExecutor.replaceChildren();
+    const locations = document.getElementById("terminal-executor-locations");
+    locations.replaceChildren();
     let currentAvailable = false;
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
@@ -331,6 +333,23 @@ export function createTerminalController({
       option.selected = executorId === controllerState.terminalExecutorId;
       if (option.selected && state === "online") currentAvailable = true;
       elements.terminalExecutor.append(option);
+      const location = document.createElement("button");
+      location.type = "button";
+      location.className = "terminal-location-row";
+      location.dataset.executorId = executorId;
+      location.setAttribute("aria-current", String(option.selected));
+      location.disabled = state !== "online";
+      const dot = document.createElement("span");
+      dot.className = `terminal-location-dot ${state === "online" ? "online" : ""}`;
+      const title = document.createElement("span");
+      title.textContent = label;
+      location.append(dot, title);
+      location.addEventListener("click", () => {
+        if (controllerState.terminalLoading || executorId === controllerState.terminalExecutorId) return;
+        elements.terminalExecutor.value = executorId;
+        elements.terminalExecutor.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      locations.append(location);
     }
     if (!currentAvailable) {
       if (controllerState.terminalExecutorPinned && controllerState.terminalExecutorId) {
@@ -351,6 +370,9 @@ export function createTerminalController({
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.terminalExecutorId !== nextExecutorId;
       resetTerminalWorkspace(nextExecutorId);
+      for (const item of locations.children) {
+        item.setAttribute("aria-current", String(item.dataset.executorId === nextExecutorId));
+      }
       if (changed && nextExecutorId) refreshTerminalsInBackground({ force: true });
       return;
     }
@@ -722,6 +744,9 @@ export function createTerminalController({
     controllerState.terminalSessionId = "";
     controllerState.terminalAutoConnectShellId = "";
     resetTerminalWorkspace(elements.terminalExecutor.value);
+    for (const item of document.getElementById("terminal-executor-locations").children) {
+      item.setAttribute("aria-current", String(item.dataset.executorId === controllerState.terminalExecutorId));
+    }
     refreshTerminalsInBackground({ force: true });
   });
   document.getElementById("terminal-search").addEventListener("input", () => {

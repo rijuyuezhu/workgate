@@ -139,7 +139,6 @@ void (async () => {
     dashboardSourceState: document.getElementById("dashboard-source-state"),
     dashboardState: document.getElementById("dashboard-state"),
     dashboardUptime: document.getElementById("dashboard-uptime"),
-    dashboardVersion: document.getElementById("dashboard-version"),
     auditDetailBody: document.getElementById("audit-detail-body"),
     auditDetailMeta: document.getElementById("audit-detail-meta"),
     auditDetailTitle: document.getElementById("audit-detail-title"),
@@ -386,10 +385,6 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     onAuthenticationRequired: () => void load(),
-    onOpenExecutor: (executorId) => {
-      document.querySelector('.nav-item[data-view="executors"]').click();
-      executors.select(executorId);
-    },
     onOpenTask: (taskId) => {
       document.querySelector('.nav-item[data-view="tasks"]').click();
       void tasks.select(taskId);
