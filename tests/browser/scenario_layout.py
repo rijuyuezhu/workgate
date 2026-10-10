@@ -11,6 +11,9 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     page = harness.page
     page.set_viewport_size({"width": 1440, "height": 900})
     expect(page.locator(".app-header")).to_be_visible()
+    expect(page.locator(".brand-block")).to_have_attribute(
+        "data-go-view", "overview"
+    )
     expect(page.locator("#nav-toggle")).to_be_hidden()
     expect(page.locator("#connection-state")).to_be_visible()
     expect(page.locator("#version")).to_be_visible()
@@ -188,6 +191,12 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             page.screenshot(
                 path=str(harness.artifacts / f"webui-{view}-desktop.png")
             )
+
+    page.locator(".brand-block").click()
+    expect(page.locator("#page-title")).to_have_text("Overview")
+    expect(page.locator('.nav-item[data-view="overview"]')).to_have_attribute(
+        "aria-current", "page"
+    )
 
     page.set_viewport_size({"width": 390, "height": 844})
     expect(page.locator("#nav-toggle")).to_be_visible()

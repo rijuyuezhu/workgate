@@ -110,3 +110,14 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     expect(page.locator(".mobile-subpage-bar:visible")).to_have_count(0)
     expect(page.locator("#task-list")).to_be_visible()
     expect(page.locator(".tasks-workspace")).to_be_visible()
+
+    # Branding is a real Home control, including from a nested mobile page.
+    page.set_viewport_size({"width": 390, "height": 844})
+    harness.navigate("audit")
+    page.locator("#audit-list .audit-entry").first.click()
+    step("audit", "detail")
+    page.locator(".brand-block").click()
+    expect(page.locator("#page-title")).to_have_text("Overview")
+    expect(page.locator('.nav-item[data-view="overview"]')).to_have_attribute(
+        "aria-current", "page"
+    )

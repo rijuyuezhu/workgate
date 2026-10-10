@@ -34,7 +34,10 @@ a { color: inherit; text-decoration: none; }
   color: var(--header-text); background: var(--header);
   border-bottom: 1px solid #303b50;
 }
-.brand-block { display: flex; flex: none; align-items: center; gap: 10px; }
+.brand-block { display: flex; flex: none; align-items: center; gap: 10px; padding: 0; border: 0; border-radius: 6px; box-shadow: none; color: inherit; background: transparent; cursor: pointer; }
+.brand-block:hover { background: transparent; }
+.brand-block:hover .brand-name { color: #dcd8ff; }
+.brand-block:focus-visible { outline: 2px solid #b9b0ff; outline-offset: 4px; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; overflow: hidden; border-radius: 6px; color: #fff; background: #5f55cd; font-size: 11px; font-weight: 800; }
 .brand-name { color: #fff; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
 .primary-nav { display: flex; flex: 1 1 auto; align-items: center; gap: 7px; min-width: 0; }
