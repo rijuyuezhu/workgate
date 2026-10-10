@@ -2746,7 +2746,6 @@ button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { bo
 .task-sessions-main .session-audit-toolbar .audit-control span { font-size: 10px; }
 .task-sessions-layout .task-session-list { margin-top: 0; }
 .task-sessions-main .audit-detail-body { min-height: 250px; }
-.task-sessions-layout .session-resource-heading .muted { display: none; }
 @media (max-width: 1150px) {
   .tasks-layout { grid-template-columns: minmax(185px, 235px) minmax(0,1fr); }
   .task-sessions-layout { grid-template-columns: minmax(145px,185px) minmax(0,1fr); }
@@ -2759,4 +2758,69 @@ button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { bo
   .task-detail-tabs button { padding: 9px 12px; }
   .task-tab-panel { padding: 10px; }
   .task-sessions-layout .task-session-list { max-height: 180px; overflow-y: auto; }
+}
+
+/* Visual hierarchy: emphasize the objective and current state, not metadata. */
+.session-task { padding: 0; overflow: hidden; }
+.task-progress-lead {
+  display: flex; align-items: start; justify-content: space-between; gap: 16px;
+  padding: 20px 21px; border-bottom: 1px solid var(--line); background: #faf9ff;
+}
+.task-progress-objective { display: grid; gap: 6px; min-width: 0; }
+.task-progress-objective > span {
+  color: #7c759c; font-size: 10px; font-weight: 700;
+  letter-spacing: .055em; text-transform: uppercase;
+}
+.task-progress-objective > strong {
+  color: #273248; font-size: 17px; font-weight: 700;
+  line-height: 1.4; overflow-wrap: anywhere;
+}
+.task-status-pill {
+  flex: none; padding: 5px 10px; border-radius: 999px;
+  color: #667184; background: #e9edf3;
+  font-size: 11px; font-weight: 700; text-transform: capitalize;
+}
+.task-status-pill[data-status="active"] { color: #18815d; background: #dff5e9; }
+.task-status-pill[data-status="completed"] { color: #56687e; background: #e9eff5; }
+.task-status-pill[data-status="blocked"] { color: #9c661b; background: #fff0d6; }
+.task-status-pill[data-status="cancelled"] { color: #a4414e; background: #fce7eb; }
+.session-task .session-task-grid { margin: 0; padding: 16px 20px 18px; gap: 17px 24px; }
+.session-task .session-task-grid > div {
+  padding: 0; border: 0; background: transparent; border-radius: 0;
+}
+.session-task .session-task-grid dt { color: #8791a3; font-size: 10px; font-weight: 650; }
+.session-task .session-task-grid dd { margin-top: 6px; font-size: 13px; line-height: 1.55; }
+.session-task .task-progress-summary { grid-column: 1 / -1; }
+.session-task .session-task-grid > .task-progress-next { grid-column: 1 / -1; padding: 10px 13px; border-left: 3px solid #897bea; background: #f7f6ff; }
+.session-task .task-progress-next dd { color: #35365c; font-weight: 550; }
+.session-task .task-progress-blockers dd { color: #a4414e; }
+
+/* One quiet selection language across Task, Session and Audit lists. */
+.tasks-layout > .session-list .task-entry[aria-current="true"],
+.task-sessions-layout .session-entry[aria-current="true"],
+.task-sessions-main .audit-entry[aria-current="true"] {
+  border-color: #d8d0fc; background: #f1eeff;
+  box-shadow: inset 3px 0 #7668dc;
+}
+.tasks-layout > .session-list .task-entry[aria-current="true"] strong,
+.task-sessions-layout .session-entry[aria-current="true"] strong,
+.task-sessions-main .audit-entry[aria-current="true"] .audit-entry-title { color: #5143b5; }
+.task-sessions-main .session-detail-header strong { color: #273248; font-size: 14px; }
+.task-sessions-main #session-detail-status { display: inline-flex; align-items: center; gap: 7px; color: #687688; font-size: 11px; }
+.task-sessions-main #session-detail-status::before { content: ""; width: 7px; height: 7px; flex: none; border-radius: 50%; background: #9aa6b5; }
+.task-sessions-main #session-detail-status[data-state="available"]::before { background: #22a676; }
+.task-sessions-main #session-detail-status[data-state="warning"]::before { background: #d19231; }
+.task-sessions-main #session-detail-status[data-state="ended"]::before { background: #94a1b2; }
+.task-sessions-main .session-audit .session-resource-heading { align-items: baseline; gap: 10px; }
+.task-sessions-main .session-audit .session-resource-heading h3 { margin: 0; color: #354056; font-size: 13px; }
+.task-sessions-main #session-audit-summary { margin: 0 auto 0 0; color: #8791a3; font-size: 11px; }
+.task-sessions-main #session-audit-state:empty { display: none; }
+.task-sessions-main .session-audit-layout { margin-top: 10px; }
+.session-todos > .session-resource-heading { min-height: 0; justify-content: flex-end; }
+.todo-summary span { border: 0; padding: 3px 5px; background: transparent; color: #8791a3; font-size: 11px; }
+.todo-summary span:nth-child(2) { color: #6354c7; font-weight: 650; }
+@media (max-width: 780px) {
+  .task-progress-lead { padding: 15px; }
+  .task-progress-objective > strong { font-size: 15px; }
+  .session-task .session-task-grid { padding: 14px; }
 }

@@ -158,7 +158,7 @@ export function createTasksController({
 
   function setTodoDirty(dirty = true) {
     controllerState.todoDirty = dirty;
-    if (dirty) elements.todoState.textContent = "Unsaved changes · " + selectedTaskId();
+    if (dirty) elements.todoState.textContent = "Unsaved changes";
     syncControls();
   }
 
@@ -175,12 +175,17 @@ export function createTasksController({
     updateTaskTabs();
     const task = controllerState.task;
     const progress = task && task.progress && typeof task.progress === "object" ? task.progress : {};
-    elements.taskStatus.textContent = text(task && task.status);
+    const status = text(task && task.status);
+    elements.taskStatus.textContent = status;
+    elements.taskStatus.dataset.status = ["active", "completed", "cancelled", "blocked"].includes(status)
+      ? status : "other";
     elements.taskObjective.textContent = text(task && task.objective);
     elements.taskSummary.textContent = text(progress.summary);
     elements.taskNextAction.textContent = text(progress.next_action);
     elements.taskFindings.textContent = taskListText(progress.findings);
     elements.taskBlockers.textContent = taskListText(progress.blockers);
+    elements.taskFindings.closest(".task-progress-findings").hidden = !Array.isArray(progress.findings) || !progress.findings.length;
+    elements.taskBlockers.closest(".task-progress-blockers").hidden = !Array.isArray(progress.blockers) || !progress.blockers.length;
     elements.taskState.textContent = task
       ? text(task.task_id, "task")
       : selectedTaskId()
@@ -235,6 +240,7 @@ export function createTasksController({
     const session = selectedSession();
     document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
     if (!session) {
+      elements.sessionDetailStatus.dataset.state = "other";
       elements.sessionDetailTitle.textContent = "No session selected";
       elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
       elements.sessionDetailId.textContent = "—";
@@ -247,6 +253,10 @@ export function createTasksController({
     }
     const finalStatus = text(session.status, "");
     const availability = sessionAvailability(session);
+    let state = "available";
+    if (finalStatus === "ended") state = "ended";
+    else if (finalStatus === "terminating" || (availability && availability !== "available")) state = "warning";
+    elements.sessionDetailStatus.dataset.state = state;
     elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
     elements.sessionDetailStatus.textContent = finalStatus === "ended"
       ? "Ended · retained history available"
@@ -288,7 +298,8 @@ export function createTasksController({
           session.session_id === controllerState.sessionId ? "true" : "false",
         );
         const title = document.createElement("strong");
-        title.textContent = sessionOptionLabel(session);
+        title.textContent = text(session.label, text(session.workdir, "Session"));
+        button.title = sessionOptionLabel(session);
         const meta = document.createElement("span");
         meta.className = sessionTerminated(session)
           ? "session-entry-meta session-entry-terminated"
@@ -783,14 +794,14 @@ export function createTasksController({
     controllerState.todoDirty = false;
     renderTaskState();
     renderTodos();
-    elements.todoState.textContent = `${requestedTask} · loaded ${controllerState.todoItems.length} plan steps`;
+    elements.todoState.textContent = "";
   }
 
   async function refreshTodos({ force = false } = {}) {
     const requestedTask = selectedTaskId();
     if (!requestedTask || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
     const generation = ++controllerState.todoGeneration;
-    elements.todoState.textContent = "Loading " + requestedTask;
+    elements.todoState.textContent = "Loading…";
     syncControls();
     try {
       const payload = await request(todoQuery());
@@ -812,7 +823,7 @@ export function createTasksController({
     const generation = ++controllerState.todoGeneration;
     const todos = controllerState.todoItems.map((item) => ({ ...item }));
     setTodoMutationBusy(true);
-    elements.todoState.textContent = "Saving " + requestedTask;
+    elements.todoState.textContent = "Saving…";
     try {
       const payload = await request("/todos", {
         method: "PUT",
@@ -828,7 +839,7 @@ export function createTasksController({
       controllerState.todoDirty = false;
       renderTaskState();
       renderTodos();
-      elements.todoState.textContent = "Saved " + requestedTask;
+      elements.todoState.textContent = "Saved";
     } catch (error) {
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return;
       elements.todoState.textContent = error instanceof Error ? error.message : String(error);
@@ -840,7 +851,7 @@ export function createTasksController({
   function clearSessionAuditDetail(message = "Select a session Audit record.") {
     controllerState.sessionAuditDetailGeneration += 1;
     elements.sessionAuditDetailTitle.textContent = "No record selected";
-    elements.sessionAuditDetailMeta.textContent = controllerState.sessionId || "Control Audit";
+    elements.sessionAuditDetailMeta.textContent = "";
     renderAuditDetailMessage(elements.sessionAuditDetailBody, message);
   }
 
@@ -883,9 +894,9 @@ export function createTasksController({
     }
   }
 
-  function renderSessionAuditDetailEntry(entry, requestedSession) {
+  function renderSessionAuditDetailEntry(entry) {
     elements.sessionAuditDetailTitle.textContent = auditEntryTitle(entry);
-    elements.sessionAuditDetailMeta.textContent = `${requestedSession} · ${auditTimestamp(entry.ts)}`;
+    elements.sessionAuditDetailMeta.textContent = auditTimestamp(entry.ts);
     renderAuditDetailInto(entry, elements.sessionAuditDetailBody);
   }
 
@@ -904,7 +915,7 @@ export function createTasksController({
     renderSessionAuditList();
     const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
     if (selected && selected.id === controllerState.sessionAuditSelectedId) {
-      renderSessionAuditDetailEntry(selected, requestedSession);
+      renderSessionAuditDetailEntry(selected);
     } else if (payload && payload.entry_error) {
       elements.sessionAuditDetailMeta.textContent = "Details unavailable";
       renderAuditDetailMessage(elements.sessionAuditDetailBody, text(payload.entry_error));
@@ -953,7 +964,7 @@ export function createTasksController({
       ) return null;
       const entry = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (!entry) throw new Error("Session Audit detail response was malformed");
-      renderSessionAuditDetailEntry(entry, requestedSession);
+      renderSessionAuditDetailEntry(entry);
       return entry;
     } catch (error) {
       if (
@@ -977,7 +988,7 @@ export function createTasksController({
     const previousSelection = controllerState.sessionAuditSelectedId;
     controllerState.sessionAuditLoading = true;
     syncControls();
-    elements.sessionAuditState.textContent = `Loading ${requestedSession}`;
+    elements.sessionAuditState.textContent = "Loading…";
     try {
       const payload = await request(sessionAuditQueryPath());
       if (

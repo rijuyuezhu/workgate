@@ -136,29 +136,27 @@
         </article>
         <article class="dashboard-section dashboard-alerts-section">
           <div class="dashboard-section-heading">
-            <div><h3>Needs attention</h3><p>Executor alerts</p></div>
+            <div><h3>Needs attention</h3></div>
             <span id="dashboard-alert-count" class="muted">0</span>
           </div>
           <div id="dashboard-alerts" class="dashboard-list" aria-live="polite">
             <div class="empty-state">No telemetry loaded.</div>
           </div>
-          <button class="dashboard-panel-footer" type="button" data-go-view="audit">Open audit →</button>
         </article>
       </div>
       <div class="dashboard-layout">
         <article class="dashboard-section dashboard-workloads-section">
           <div class="dashboard-section-heading">
-            <div><h3>Active tasks</h3><p>Durable work in progress</p></div>
+            <div><h3>Active tasks</h3></div>
             <button class="dashboard-panel-link" type="button" data-go-view="tasks">View all →</button>
           </div>
           <div id="dashboard-task-list" class="dashboard-task-list" aria-live="polite">
             <div class="empty-state">Loading tasks…</div>
           </div>
-          <button class="dashboard-panel-footer" type="button" data-go-view="tasks">Open task history →</button>
         </article>
         <article class="dashboard-section dashboard-activity-section">
           <div class="dashboard-section-heading">
-            <div><h3>Recent activity</h3><p>Latest tool calls</p></div>
+            <div><h3>Recent activity</h3></div>
             <span id="dashboard-source-state" class="muted">—</span>
           </div>
           <div id="dashboard-activity" class="dashboard-list" aria-live="polite">
@@ -171,7 +169,6 @@
         <summary>System details</summary>
         <article class="dashboard-section dashboard-system">
           <div class="dashboard-section-heading">
-            <h3>System</h3>
             <span id="dashboard-generated" class="muted">—</span>
           </div>
           <div class="dashboard-resource-list">
@@ -469,24 +466,25 @@
           </nav>
           <div id="task-panel-progress" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-progress">
           <section class="session-resource session-task">
-            <div class="session-resource-heading">
-              <div><h3>Progress</h3></div>
-              <span id="task-state" class="muted">Select a task</span>
+            <div class="task-progress-lead">
+              <div class="task-progress-objective">
+                <span>Objective</span>
+                <strong id="task-objective">—</strong>
+              </div>
+              <span id="task-status" class="task-status-pill">—</span>
+              <span id="task-state" class="visually-hidden">Select a task</span>
             </div>
             <dl class="session-task-grid">
-              <div><dt>Task status</dt><dd id="task-status">—</dd></div>
-              <div><dt>Objective</dt><dd id="task-objective">—</dd></div>
-              <div><dt>Summary</dt><dd id="task-summary">—</dd></div>
-              <div><dt>Next action</dt><dd id="task-next-action">—</dd></div>
-              <div><dt>Findings</dt><dd id="task-findings">—</dd></div>
-              <div><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
+              <div class="task-progress-summary"><dt>Summary</dt><dd id="task-summary">—</dd></div>
+              <div class="task-progress-next"><dt>Next action</dt><dd id="task-next-action">—</dd></div>
+              <div class="task-progress-findings"><dt>Findings</dt><dd id="task-findings">—</dd></div>
+              <div class="task-progress-blockers"><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
             </dl>
           </section>
           </div>
           <div id="task-panel-plan" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-plan" hidden>
           <section class="session-resource session-todos">
             <div class="session-resource-heading">
-              <div><h3>Plan</h3></div>
               <span id="todo-state" class="muted">Select a task</span>
             </div>
             <div class="todo-toolbar">
@@ -544,6 +542,7 @@
           <section class="session-resource session-audit">
             <div class="session-resource-heading">
               <div><h3>Audit</h3></div>
+              <span id="session-audit-summary" class="audit-summary" aria-live="polite">0 records</span>
               <span id="session-audit-state" class="muted">Select a session</span>
             </div>
             <form id="session-audit-filter-form" class="audit-toolbar session-audit-toolbar">
@@ -574,7 +573,6 @@
               </label>
               <button id="session-audit-refresh" type="submit">Refresh</button>
             </form>
-            <div id="session-audit-summary" class="audit-summary" aria-live="polite">0 entries</div>
             <div class="audit-layout session-audit-layout">
               <nav id="session-audit-list" class="audit-list" aria-label="Session Audit records" aria-live="polite">
                 <div class="empty-state">Select a session to load its Audit records.</div>

@@ -342,11 +342,16 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         )
     ).to_have_attribute("aria-current", "true")
     expect(page.locator("#session-audit-filter-form")).to_be_visible()
+    expect(page.locator("#session-audit-summary")).to_contain_text("records")
     audit_top = page.locator("#session-audit-filter-form").bounding_box()
     assert audit_top and audit_top["y"] < 820
-    expect(page.locator("#todo-state")).to_contain_text("loaded 0 plan steps")
+    expect(page.locator("#todo-summary")).to_contain_text("0 total")
     _show_task_tab(page, "progress")
     expect(page.locator("#task-status")).to_have_text("active")
+    expect(page.locator("#task-status")).to_have_attribute(
+        "data-status", "active"
+    )
+    expect(page.locator(".task-progress-blockers")).to_be_hidden()
 
     reported = harness.api(
         "POST",
@@ -361,6 +366,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     assert reported["status"] == 200
     _refresh_task(page)
     expect(page.locator("#task-objective")).to_have_text("Browser durable task")
+    expect(page.locator(".task-progress-objective strong")).to_have_text(
+        "Browser durable task"
+    )
     expect(page.locator("#task-summary")).to_have_text("Visible in the WebUI")
 
     completed = harness.api(
@@ -466,7 +474,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(rows).to_have_count(1)
 
     page.locator("#todo-save").click()
-    expect(page.locator("#todo-state")).to_contain_text(f"Saved {task_id}")
+    expect(page.locator("#todo-state")).to_have_text("Saved")
     _show_task_tab(page, "progress")
     expect(page.locator("#task-state")).to_contain_text(task_id)
     todos = harness.api("GET", f"/api/ui/todos?task_id={task_id}")
