@@ -16,6 +16,7 @@ from tests.helpers import (
     build_paired_mcp,
     mcp_structured,
 )
+from workgate import __version__
 from workgate.agent_bridge.mcp import AgentMcpTool
 from workgate.app_paths import app_paths
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -161,9 +162,54 @@ def test_oauth_urls_ignore_untrusted_request_host_headers(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "auth_mode", "expected"),
+    [
+        ("mcp", "oauth", "oauth2"),
+        ("both", "oauth", "oauth2"),
+        ("mcp", "none", "noauth"),
+        ("both", "none", "noauth"),
+        ("stdio", "oauth", "noauth"),
+    ],
+)
+async def test_mcp_security_metadata_matches_server_mode(
+    tmp_path, monkeypatch, mode, auth_mode, expected
+):
+    monkeypatch.setenv("WORKGATE_MODE", mode)
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+    mcp = build_mcp()
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    scopes_by_tool = {
+        "workspace_search": ["shell:read"],
+        "fetch": ["shell:read"],
+        "session_start": ["shell:read"],
+        "bash": ["shell:read", "shell:execute"],
+    }
+    for name in ("workspace_search", "fetch", "session_start", "bash"):
+        meta = tools[name].meta
+        assert meta is not None
+        schemes = meta["securitySchemes"]
+        assert len(schemes) == 1
+        assert schemes[0]["type"] == expected
+        if expected == "noauth":
+            assert schemes == [{"type": "noauth"}]
+        else:
+            assert schemes[0]["scopes"] == scopes_by_tool[name]
+    assert (
+        mcp._mcp_server.create_initialization_options().server_version
+        == __version__
+    )
+
+
+@pytest.mark.asyncio
 async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_BASE_URL", "https://workgate.example.com")
+    monkeypatch.setenv("WORKGATE_MODE", "mcp")
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "oauth")
     clear_settings_cache()
 
     mcp, harness = build_paired_mcp(get_settings())
@@ -199,10 +245,15 @@ async def test_mcp_metadata_for_chatgpt_developer_mode(tmp_path, monkeypatch):
     assert "remote_admin" not in tools
     assert search_meta is not None
     assert session_meta is not None
-    assert search_meta["securitySchemes"][0]["type"] == "noauth"
-    assert search_meta["securitySchemes"][1]["scopes"] == ["shell:read"]
+    assert search_meta["securitySchemes"] == [
+        {"type": "oauth2", "scopes": ["shell:read"]}
+    ]
     assert session_meta["securitySchemes"][0]["type"] == "oauth2"
     assert session_meta["securitySchemes"][0]["scopes"] == ["shell:read"]
+    assert (
+        mcp._mcp_server.create_initialization_options().server_version
+        == __version__
+    )
 
     def tool_oauth_scopes(name: str) -> list[str]:
         meta = tools[name].meta

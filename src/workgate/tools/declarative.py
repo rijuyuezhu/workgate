@@ -28,9 +28,8 @@ from .contracts import (
     ToolRegistry,
 )
 from .mcp_text import has_explicit_tool_text, render_tool_text
-from .metadata import oauth_security_meta
+from .metadata import mcp_security_meta
 
-type McpSecurityProfile = Literal["oauth", "connector_compatible"]
 type ToolAnnotation = Literal["read_only"]
 type ToolDescription = str | Callable[[McpToolContext], str]
 type ToolEnabled = Callable[[ControlConfig], bool]
@@ -80,7 +79,6 @@ class ToolDecoratorFactory(Protocol):
         http_method: HttpMethod | None,
         http_path: str | None,
         name: str | None = None,
-        mcp_security_profile: McpSecurityProfile = "oauth",
         oauth_scopes: tuple[str, ...] | None = None,
         annotations: ToolAnnotation | None = None,
         description: ToolDescription | None = None,
@@ -143,8 +141,6 @@ class ToolDefinition:
     """HTTP method for the REST adapter route, or None for MCP-only tools."""
     http_path: str | None
     """HTTP path for the REST adapter route, or None for MCP-only tools."""
-    mcp_security_profile: McpSecurityProfile = "oauth"
-    """Client-facing MCP securitySchemes profile advertised for this tool."""
     oauth_scopes: tuple[str, ...] | None = None
     """Server-enforced OAuth scopes for this tool. Also drives MCP security metadata."""
     annotations: ToolAnnotation | None = None
@@ -199,20 +195,6 @@ class ToolDefinition:
             return await self.call_from_mapping(args)
 
         return handler
-
-    def _mcp_security_meta(self) -> dict[str, Any]:
-        match self.mcp_security_profile:
-            case "connector_compatible" | "oauth":
-                return oauth_security_meta(
-                    self.required_oauth_scopes(),
-                    connector_compatible=(
-                        self.mcp_security_profile == "connector_compatible"
-                    ),
-                )
-            case _:
-                raise ValueError(
-                    f"Invalid MCP security profile: {self.mcp_security_profile}"
-                )
 
     def _mcp_annotations(
         self, context: McpToolContext
@@ -269,7 +251,9 @@ class ToolDefinition:
         mcp.tool(
             description=self._mcp_description(context),
             annotations=self._mcp_annotations(context),
-            meta=self._mcp_security_meta(),
+            meta=mcp_security_meta(
+                self.required_oauth_scopes(), settings=context.settings
+            ),
             structured_output=True,
         )(mcp_handler)
 
@@ -306,7 +290,6 @@ class DeclarativeToolRegistry(ToolRegistry):
             http_method: HttpMethod | None,
             http_path: str | None,
             name: str | None = None,
-            mcp_security_profile: McpSecurityProfile = "oauth",
             oauth_scopes: tuple[str, ...] | None = None,
             annotations: ToolAnnotation | None = None,
             description: ToolDescription | None = None,
@@ -321,7 +304,6 @@ class DeclarativeToolRegistry(ToolRegistry):
                         name=name or func.__name__,
                         http_method=http_method,
                         http_path=http_path,
-                        mcp_security_profile=mcp_security_profile,
                         oauth_scopes=oauth_scopes,
                         annotations=annotations,
                         description=description,

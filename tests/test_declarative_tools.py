@@ -219,21 +219,6 @@ async def test_dynamic_oauth_scope_failures_use_standard_tool_error_shape():
         reset_oauth_claims(claims_token)
 
 
-def test_tool_definition_rejects_unknown_mcp_security_profile():
-    definition = ToolDefinition(
-        func=_sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-        mcp_security_profile="future-profile",  # type: ignore[arg-type]
-    )
-
-    with pytest.raises(
-        ValueError, match="Invalid MCP security profile: future-profile"
-    ):
-        definition._mcp_security_meta()
-
-
 def test_tool_definition_rejects_unknown_annotations():
     definition = ToolDefinition(
         func=_sample_tool,

@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Mount
 
+from ... import __version__
 from ...audit import audit
 from ...config.control import ControlConfig, resolve_control_config
 from ...config.settings import get_settings
@@ -103,6 +104,8 @@ def build_mcp(
             else None
         ),
     )
+    # The SDK otherwise reports its own package version during initialize.
+    mcp._mcp_server.version = __version__
     cast(Any, mcp)._workgate_runtime = runtime
     cast(Any, mcp)._workgate_runtime_lifespan_owned = own_runtime_lifespan
     context = McpToolContext(

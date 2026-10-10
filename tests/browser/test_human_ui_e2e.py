@@ -5,7 +5,10 @@ from tests.browser.scenario_auth_dashboard import run_auth_dashboard
 from tests.browser.scenario_executors import run_executor_admin
 from tests.browser.scenario_files_todos_audit import run_files_todos_audit
 from tests.browser.scenario_layout import run_webui_layout
-from tests.browser.scenario_live_workspace import run_live_workspace
+from tests.browser.scenario_live_workspace import (
+    run_live_workspace,
+    run_live_workspace_remount,
+)
 from tests.browser.scenario_mobile_drilldown import run_mobile_drilldown
 from tests.browser.scenario_terminals import run_terminals
 
@@ -20,4 +23,11 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_files_todos_audit(browser_harness)
     run_terminals(browser_harness)
     run_mobile_drilldown(browser_harness)
+    browser_harness.assert_clean_browser()
+
+
+def test_live_workspace_remount_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    run_live_workspace_remount(browser_harness)
     browser_harness.assert_clean_browser()

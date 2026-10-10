@@ -5,6 +5,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from ..config.control import ControlConfig
 from ..oauth.core.scopes import dedupe_scopes
 
 
@@ -15,22 +16,15 @@ def oauth_security_scheme(
     return {"type": "oauth2", "scopes": dedupe_scopes(scopes)}
 
 
-# Client-facing hint used by connector-compatible read-only search/fetch tools.
-# This does not bypass AuthMiddleware or per-tool scope checks; it only helps
-# connector-style clients discover these tools as a document-source surface.
-NOAUTH_SECURITY_SCHEME = {"type": "noauth"}
-
-
-def oauth_security_meta(
+def mcp_security_meta(
     scopes: list[str] | tuple[str, ...],
     *,
-    connector_compatible: bool = False,
+    settings: ControlConfig,
 ) -> dict[str, Any]:
-    """Return MCP securitySchemes metadata for server-enforced OAuth scopes."""
-    schemes = [oauth_security_scheme(scopes)]
-    if connector_compatible:
-        schemes.insert(0, NOAUTH_SECURITY_SCHEME)
-    return {"securitySchemes": schemes}
+    """Describe the authentication actually enforced on this MCP transport."""
+    if settings.mode == "stdio" or settings.auth_mode == "none":
+        return {"securitySchemes": [{"type": "noauth"}]}
+    return {"securitySchemes": [oauth_security_scheme(scopes)]}
 
 
 _OPEN_WORLD_TOOL_NAMES = frozenset(

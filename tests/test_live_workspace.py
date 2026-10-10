@@ -85,7 +85,20 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
         str(resource.uri): resource for resource in await mcp.list_resources()
     }
     assert "ui://workgate/live-workspace.html" in resources
-    assert open_meta["ui/resourceUri"] in resources
+    templates = {
+        template.uriTemplate for template in await mcp.list_resource_templates()
+    }
+    assert "ui://workgate/live-workspace-{digest}.html" in templates
+    for uri in (
+        open_meta["ui/resourceUri"],
+        "ui://workgate/live-workspace-0123456789abcdef.html",
+    ):
+        result = await mcp.read_resource(uri)
+        assert "Workgate Live Workspace" in str(next(iter(result)).content)
+    with pytest.raises(
+        ValueError, match="Invalid Live Workspace resource cache key"
+    ):
+        await mcp.read_resource("ui://workgate/live-workspace-invalid.html")
 
 
 @pytest.mark.asyncio

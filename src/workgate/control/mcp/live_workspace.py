@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
@@ -10,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from ...audit import current_audit_call_id, query_audit
+from ...config.control import ControlConfig
 from ...oauth.core.context import require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_READ,
@@ -31,7 +33,7 @@ from ...schemas.result_models.live_workspace import (
 )
 from ...schemas.result_models.session import SessionEndOutput
 from ...schemas.result_models.task import TaskDocument
-from ...tools.metadata import oauth_security_meta
+from ...tools.metadata import mcp_security_meta
 from ..runtime import ControlRuntime
 from ..state import ControlSessionRecord
 
@@ -103,10 +105,16 @@ def _mutating_annotations(*, destructive: bool) -> ToolAnnotations:
 
 
 def _app_meta(
-    scopes: tuple[str, ...], *, resource_uri: str | None = None
+    scopes: tuple[str, ...],
+    *,
+    settings: ControlConfig,
+    resource_uri: str | None = None,
 ) -> dict[str, Any]:
     ui: dict[str, Any] = {"visibility": ["app"]}
-    meta: dict[str, Any] = {**oauth_security_meta(scopes), "ui": ui}
+    meta: dict[str, Any] = {
+        **mcp_security_meta(scopes, settings=settings),
+        "ui": ui,
+    }
     if resource_uri is not None:
         ui["resourceUri"] = resource_uri
         meta.update(
@@ -530,8 +538,13 @@ def register_live_workspace(
     def live_workspace_resource() -> str:
         return _resource_html()
 
-    @mcp.resource(versioned_uri, **resource_options)
-    def versioned_live_workspace_resource() -> str:
+    @mcp.resource(
+        "ui://workgate/live-workspace-{digest}.html", **resource_options
+    )
+    def versioned_live_workspace_resource(digest: str) -> str:
+        # A template handles old content-addressed URIs without alias history.
+        if not re.fullmatch(r"[0-9a-f]{16}|unbuilt", digest):
+            raise ValueError("Invalid Live Workspace resource cache key")
         return _resource_html()
 
     read_scopes = (SCOPE_SHELL_READ, SCOPE_AUDIT_READ)
@@ -543,7 +556,9 @@ def register_live_workspace(
             "session-specific panes."
         ),
         annotations=_read_only_annotations(),
-        meta=_app_meta(read_scopes, resource_uri=versioned_uri),
+        meta=_app_meta(
+            read_scopes, settings=runtime.config, resource_uri=versioned_uri
+        ),
         structured_output=True,
     )
     async def workspace_open(
@@ -560,7 +575,7 @@ def register_live_workspace(
     @mcp.tool(
         description="Refresh one task and its optional selected execution session.",
         annotations=_read_only_annotations(),
-        meta=_app_meta(read_scopes),
+        meta=_app_meta(read_scopes, settings=runtime.config),
         structured_output=True,
     )
     async def workspace_snapshot(
@@ -577,7 +592,7 @@ def register_live_workspace(
     @mcp.tool(
         description="Apply one task control without changing execution routing.",
         annotations=_mutating_annotations(destructive=True),
-        meta=_app_meta(task_write_scopes),
+        meta=_app_meta(task_write_scopes, settings=runtime.config),
         structured_output=True,
     )
     async def workspace_task_control(
@@ -601,7 +616,7 @@ def register_live_workspace(
             "claim/validate/report handshake."
         ),
         annotations=_mutating_annotations(destructive=False),
-        meta=_app_meta(read_scopes),
+        meta=_app_meta(read_scopes, settings=runtime.config),
         structured_output=True,
     )
     async def workspace_continuation(
@@ -622,7 +637,7 @@ def register_live_workspace(
     @mcp.tool(
         description="End an attached execution session after explicit confirmation.",
         annotations=_mutating_annotations(destructive=True),
-        meta=_app_meta((SCOPE_SHELL_EXECUTE,)),
+        meta=_app_meta((SCOPE_SHELL_EXECUTE,), settings=runtime.config),
         structured_output=True,
     )
     async def workspace_end(
