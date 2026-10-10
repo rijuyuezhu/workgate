@@ -628,11 +628,11 @@ class BrowserHarness:
         expect(item).to_have_attribute("aria-current", "page")
         expect(self.page.locator("#page-title")).to_have_text(
             {
-                "overview": "Control plane overview",
+                "overview": "Overview",
                 "executors": "Executors",
                 "tasks": "Tasks",
-                "terminals": "Persistent terminals",
-                "files": "File manager",
+                "terminals": "Terminals",
+                "files": "Files",
                 "audit": "Audit",
             }[view]
         )

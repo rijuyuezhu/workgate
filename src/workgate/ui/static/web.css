@@ -22,6 +22,7 @@
   --font-mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 * { box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
 
 body { margin: 0; background: #f5f6fa; }
 button, a { font: inherit; }
@@ -31,7 +32,6 @@ a { color: inherit; text-decoration: none; }
 .brand-block { display: flex; align-items: center; gap: 11px; padding: 0 10px 22px; }
 .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; overflow: hidden; border-radius: 11px; box-shadow: 0 9px 24px rgba(91,74,214,.34); color: #fff; background: linear-gradient(145deg,#8175f2,#5447cb); font-size: 12px; font-weight: 800; }
 .brand-name { color: #fff; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
-.brand-subtitle { margin-top: 3px; color: #7f8aa2; font-size: 13px; }
 .primary-nav { display: grid; gap: 4px; }
 .nav-item { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; align-items: center; width: 100%; min-height: 42px; padding: 0 11px; border: 0; border-radius: 9px; color: #9fa9bc; background: transparent; font-size: 13px; font-weight: 540; text-align: left; cursor: pointer; transition: .16s ease; }
 .nav-item svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -42,15 +42,9 @@ a { color: inherit; text-decoration: none; }
 .sidebar-footer small { display: block; }
 .sidebar-footer small { color: #657187; margin-top: 3px; }
 .main-content { grid-column: 2; padding: 28px 32px 26px; min-width: 0; max-width: none; overflow-x: hidden; }
-.topbar { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-bottom: 22px; }
-.breadcrumb { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; color: #929aab; font-size: 12px; }
-.breadcrumb strong { color: #555f71; font-weight: 650; }
+.topbar { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 12px; }
 h1 { margin: 0; color: #182033; font-size: 24px; line-height: 1.2; letter-spacing: -.035em; }
-.topbar h1 { font-size: 24px; margin: 0; }
-.topbar p { margin: 5px 0 0; color: #7a8496; font-size: 12px; }
-.topbar .subtitle { font-size: 13px; max-width: 660px; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.page-footer { display: flex; justify-content: center; gap: 9px; margin: 26px 0 4px; color: #a1a7b2; font-size: 11px; }
 /* Workgate functional views mapped onto the upstream Web-native palette. */
 .app-view[hidden] {
   display: none !important;
@@ -2837,4 +2831,81 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   .task-progress-lead { padding: 15px; }
   .task-progress-objective > strong { font-size: 15px; }
   .session-task .session-task-grid { padding: 14px; }
+}
+
+/* Keep expandable audit content within stable workspaces, not the page flow. */
+.tasks-layout {
+  height: clamp(570px, calc(100dvh - 260px), 900px);
+  min-height: 0;
+}
+.tasks-layout > .session-list { min-height: 0; overflow-y: auto; }
+.tasks-workspace { min-height: 0; overflow: hidden; }
+.task-tab-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.task-tab-panel[hidden] { display: none; }
+#task-panel-sessions { display: flex; flex-direction: column; }
+#task-panel-sessions[hidden] { display: none; }
+.task-sessions-layout { flex: 1 1 auto; height: 100%; min-height: 0; }
+.task-sessions-layout > .session-executions { min-height: 0; overflow-y: auto; }
+.task-sessions-main { min-height: 0; overflow: hidden; }
+.task-sessions-main > .session-execution-detail { flex: none; }
+.task-sessions-main > .session-audit {
+  display: flex; flex: 1 1 auto; flex-direction: column;
+  min-height: 0; overflow: hidden;
+}
+.task-sessions-main .session-audit-layout {
+  flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden;
+}
+.task-sessions-main .session-audit-layout > .audit-list,
+.task-sessions-main .session-audit-layout > .audit-detail {
+  height: 100%; min-height: 0; max-height: none;
+}
+.task-session-metadata[open] .session-detail-grid { max-height: 140px; overflow-y: auto; }
+
+.audit-panel > .audit-layout {
+  height: clamp(500px, calc(100dvh - 330px), 780px);
+  min-height: 0;
+}
+.audit-list-pane { display: flex; flex-direction: column; min-height: 0; }
+.audit-list-pane-header { flex: none; }
+.audit-layout .audit-list-pane > .audit-list {
+  flex: 1 1 auto; min-height: 0; max-height: none;
+}
+.audit-layout .audit-detail {
+  height: 100%; min-height: 0; max-height: none;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.audit-layout .audit-detail-body {
+  min-height: 0; height: 100%; grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.audit-value-content { overflow: visible; }
+.audit-call-panel-body { overscroll-behavior: contain; overflow-anchor: none; }
+.audit-list, .audit-call-panel-body, .task-sessions-layout > .session-executions {
+  scrollbar-gutter: stable;
+}
+.audit-tree-branch { overflow-anchor: none; }
+
+/* Advanced filters open like a menu rather than pushing the record list. */
+#audit-filter-form { position: relative; }
+#audit-advanced {
+  position: absolute; top: calc(100% + 7px); right: 0;
+  z-index: 10; width: min(600px, 100%);
+  box-shadow: var(--shadow);
+}
+
+@media (min-width: 781px) and (max-width: 1150px) {
+  .task-sessions-main .session-audit-layout {
+    grid-template-rows: minmax(105px, .5fr) minmax(230px, 1fr);
+  }
+}
+@media (max-width: 780px) {
+  .tasks-layout { height: auto; min-height: 570px; overflow: visible; }
+  .tasks-workspace { overflow: visible; }
+  .task-tab-panel { overflow: visible; }
+  .task-sessions-layout { height: auto; min-height: 0; }
+  .task-sessions-layout > .session-executions { overflow-y: visible; }
+  .task-sessions-main { overflow: visible; }
+  .task-sessions-main > .session-audit { overflow: visible; }
+  .task-sessions-main .session-audit-layout { height: 530px; }
+  .audit-panel > .audit-layout { height: auto; }
+  .audit-panel .audit-detail { height: 470px; }
 }

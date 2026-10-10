@@ -53,19 +53,30 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(page.locator(".status-orb, .controller-meta")).to_have_count(0)
 
     page.get_by_role("button", name="Manage executors →").click()
-    expect(page.locator("#page-location")).to_have_text("Executors")
+    expect(page.locator("#page-title")).to_have_text("Executors")
     harness.navigate("overview")
     page.locator("#dashboard-machine-list button").first.click()
-    expect(page.locator("#page-location")).to_have_text("Overview")
+    expect(page.locator("#page-title")).to_have_text("Overview")
     expect(page.locator(".dashboard-executor-control")).to_be_hidden()
     expect(
         page.locator("#dashboard-machine-list button").first
     ).to_have_attribute("aria-current", "true")
     harness.navigate("overview")
     page.get_by_role("button", name="Open audit activity →").click()
-    expect(page.locator("#page-location")).to_have_text("Audit")
+    expect(page.locator("#page-title")).to_have_text("Audit")
+    audit_height = page.locator(".audit-panel > .audit-layout").evaluate(
+        "element => element.getBoundingClientRect().height"
+    )
+    page_height = page.evaluate("document.documentElement.scrollHeight")
     page.locator("#audit-advanced-toggle").click()
     expect(page.locator("#audit-advanced")).to_be_visible()
+    assert (
+        page.locator(".audit-panel > .audit-layout").evaluate(
+            "element => element.getBoundingClientRect().height"
+        )
+        == audit_height
+    )
+    assert page.evaluate("document.documentElement.scrollHeight") == page_height
     page.locator("#audit-advanced-toggle").click()
     expect(page.locator("#audit-advanced")).to_be_hidden()
     page.locator("#audit-live-toggle").click()
@@ -127,7 +138,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
 
     for view in VIEWS:
         harness.navigate(view)
-        expect(page.locator("#page-location")).to_have_text(view.capitalize())
+        expect(page.locator("#page-title")).to_have_text(view.capitalize())
         assert page.evaluate(
             "document.documentElement.scrollWidth <= innerWidth + 1"
         )

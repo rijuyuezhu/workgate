@@ -14,7 +14,7 @@
     <aside class="sidebar" aria-label="Application navigation">
       <div class="brand-block">
         <div class="brand-mark" aria-hidden="true">WG</div>
-        <div><div class="brand-name">Workgate</div><div class="brand-subtitle">Control plane</div></div>
+        <div class="brand-name">Workgate</div>
       </div>
         <nav class="primary-nav" aria-label="Primary navigation">
           <button class="nav-item active" type="button" data-view="overview" aria-label="Overview" title="Overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4zm10 7h6v-9h-6zM4 20h6v-3H4zm10-13h6V4h-6z"/></svg><span>Overview</span></button>
@@ -31,14 +31,9 @@
     </aside>
     <main id="app-main" class="main-content">
       <header class="topbar">
-        <div>
-          <div class="breadcrumb">Control plane <span aria-hidden="true">›</span> <strong id="page-location">Overview</strong></div>
-          <h1 id="page-title">Overview</h1>
-          <p id="page-description" class="subtitle">System health across executors.</p>
-        </div>
+        <h1 id="page-title" class="visually-hidden">Overview</h1>
         <div class="topbar-actions">
           <span id="connection-state" class="status status-idle">Connecting</span>
-          <button id="refresh" type="button">Refresh</button>
           <button id="sign-out" type="button" hidden>Sign out</button>
         </div>
       </header>
@@ -73,7 +68,6 @@
             <span>Executor</span>
             <select id="dashboard-executor" name="dashboard-executor"></select>
           </label>
-          <button id="dashboard-refresh" type="button">Refresh</button>
           <span id="dashboard-state" class="muted">Not loaded</span>
         </div>
       </div>
@@ -212,7 +206,6 @@
         </div>
         <div class="executors-actions">
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
-          <button id="executor-refresh" type="button">Refresh</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
@@ -571,7 +564,7 @@
                 <span>Limit</span>
                 <select id="session-audit-limit"><option value="100">100</option><option value="300" selected>300</option><option value="1000">1000</option></select>
               </label>
-              <button id="session-audit-refresh" type="submit">Refresh</button>
+              <button id="session-audit-refresh" type="submit">Apply</button>
             </form>
             <div class="audit-layout session-audit-layout">
               <nav id="session-audit-list" class="audit-list" aria-label="Session Audit records" aria-live="polite">
@@ -636,7 +629,7 @@
             </select>
           </label>
           <button id="audit-advanced-toggle" type="button" aria-expanded="false">Advanced</button>
-          <button id="audit-refresh" type="submit">Refresh</button>
+          <button id="audit-refresh" type="submit">Apply</button>
         </div>
         <div id="audit-advanced" class="audit-advanced" hidden>
           <label class="audit-control" for="audit-event"><span>Event</span>
@@ -673,7 +666,6 @@
     </section>
 
 
-    <footer class="page-footer">Workgate <span aria-hidden="true">•</span> Web UI</footer>
   </main>
   </div>
   <script src="__WORKGATE_UI_PATH__/assets/xterm_bundle.js?v=__WORKGATE_UI_ASSET_REV__" defer></script>

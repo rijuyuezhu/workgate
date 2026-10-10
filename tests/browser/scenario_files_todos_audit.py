@@ -253,7 +253,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     expect(dashboard_task).to_be_visible()
     dashboard_task.click()
-    expect(page.locator("#page-location")).to_have_text("Tasks")
+    expect(page.locator("#page-title")).to_have_text("Tasks")
     expect(
         page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
     ).to_have_attribute("aria-current", "true")
@@ -637,6 +637,30 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(session_request.locator(".audit-detail-json")).to_be_visible()
     session_request.get_by_role("button", name="Tree").click()
     expect(session_request.locator(".audit-tree-branch").first).to_be_visible()
+    dimensions = page.evaluate("""() => ({
+      page: document.documentElement.scrollHeight,
+      workspace: document.querySelector('.tasks-layout').getBoundingClientRect().height,
+      audit: document.querySelector('.session-audit-layout').getBoundingClientRect().height,
+    })""")
+    root_summary = session_request.locator(".audit-tree-branch > summary").first
+    root_summary.click()
+    assert (
+        page.evaluate("""() => ({
+      page: document.documentElement.scrollHeight,
+      workspace: document.querySelector('.tasks-layout').getBoundingClientRect().height,
+      audit: document.querySelector('.session-audit-layout').getBoundingClientRect().height,
+    })""")
+        == dimensions
+    )
+    root_summary.click()
+    assert (
+        page.evaluate("""() => ({
+      page: document.documentElement.scrollHeight,
+      workspace: document.querySelector('.tasks-layout').getBoundingClientRect().height,
+      audit: document.querySelector('.session-audit-layout').getBoundingClientRect().height,
+    })""")
+        == dimensions
+    )
     session_request.get_by_role("button", name="Raw").click()
     task_list_box = page.locator("#task-list").bounding_box()
     task_workspace_box = page.locator(".tasks-workspace").bounding_box()

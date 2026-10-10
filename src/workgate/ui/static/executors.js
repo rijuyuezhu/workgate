@@ -38,7 +38,6 @@ export function createExecutorsController({
   }
 
   function setControls() {
-    elements.executorRefresh.disabled = state.loading;
     elements.executorPairOpen.disabled = state.loading;
     const selected = selectedExecutor();
     const mutable = selected && !selected.revoked_at;
@@ -290,7 +289,6 @@ export function createExecutorsController({
   }
 
   function bind() {
-    elements.executorRefresh.addEventListener("click", () => refreshInBackground({ force: true }));
     elements.executorPairOpen.addEventListener("click", () => {
       clearPairReview();
       elements.executorPairForm.reset();

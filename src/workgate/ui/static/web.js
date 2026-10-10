@@ -70,38 +70,18 @@ void (async () => {
 
   const initialUiLocation = startupUiLocation();
   const viewDefinitions = Object.freeze({
-    overview: {
-      title: "Control plane overview",
-      description: "System health across executors.",
-    },
-    executors: {
-      title: "Executors",
-      description: "Manage paired executors.",
-    },
-    tasks: {
-      title: "Tasks",
-      description: "Tasks, plans, and execution sessions.",
-    },
-    terminals: {
-      title: "Persistent terminals",
-      description: "Interactive terminals on connected executors.",
-    },
-    files: {
-      title: "File manager",
-      description: "Browse and edit files on an executor.",
-    },
-    audit: {
-      title: "Audit",
-      description: "Search tool and control activity.",
-    },
+    overview: { title: "Overview" },
+    executors: { title: "Executors" },
+    tasks: { title: "Tasks" },
+    terminals: { title: "Terminals" },
+    files: { title: "Files" },
+    audit: { title: "Audit" },
   });
   const encoder = new TextEncoder();
   let authenticated = config.authMode !== "oauth";
   const elements = {
     appNavItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
-    pageDescription: document.getElementById("page-description"),
-    pageLocation: document.getElementById("page-location"),
     pageTitle: document.getElementById("page-title"),
     dashboardActivity: document.getElementById("dashboard-activity"),
     dashboardAlertCount: document.getElementById("dashboard-alert-count"),
@@ -135,7 +115,6 @@ void (async () => {
     dashboardNetworkTx: document.getElementById("dashboard-network-tx"),
     dashboardPlatform: document.getElementById("dashboard-platform"),
     dashboardPython: document.getElementById("dashboard-python"),
-    dashboardRefresh: document.getElementById("dashboard-refresh"),
     dashboardSourceState: document.getElementById("dashboard-source-state"),
     dashboardState: document.getElementById("dashboard-state"),
     dashboardUptime: document.getElementById("dashboard-uptime"),
@@ -227,7 +206,6 @@ void (async () => {
     executorPairRequestedName: document.getElementById("executor-pair-requested-name"),
     executorPairReview: document.getElementById("executor-pair-review"),
     executorDrain: document.getElementById("executor-drain"),
-    executorRefresh: document.getElementById("executor-refresh"),
     executorRenameDialog: document.getElementById("executor-rename-dialog"),
     executorRenameForm: document.getElementById("executor-rename-form"),
     executorRenameName: document.getElementById("executor-rename-name"),
@@ -242,7 +220,6 @@ void (async () => {
     executorTargetOnline: document.getElementById("executor-target-online"),
     executorTargetTotal: document.getElementById("executor-target-total"),
     executorTotal: document.getElementById("executor-total"),
-    refresh: document.getElementById("refresh"),
     signOut: document.getElementById("sign-out"),
     terminalCopy: document.getElementById("terminal-copy"),
     terminalFeedback: document.getElementById("terminal-feedback"),
@@ -321,8 +298,7 @@ void (async () => {
     link: "M9 15 15 9M8 7h-2a5 5 0 0 0 0 10h4m4-10h4a5 5 0 0 1 0 10h-2",
   };
   const controlIcons = {
-    refresh: "refresh", "dashboard-refresh": "refresh", "tasks-refresh": "refresh",
-    "executor-refresh": "refresh", "audit-refresh": "refresh", "session-audit-refresh": "refresh",
+    "tasks-refresh": "refresh", "audit-refresh": "refresh", "session-audit-refresh": "refresh",
     "file-refresh": "refresh", "todo-refresh": "refresh", "terminal-reconnect": "retry",
     "executor-pair-open": "plus", "terminal-create": "terminal", "terminal-kill": "trash", "terminal-copy": "copy",
     "terminal-paste": "paste", "file-new": "file", "file-new-folder": "folder",
@@ -472,8 +448,6 @@ void (async () => {
     const definition = viewDefinitions[view];
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
-    elements.pageDescription.textContent = definition.description;
-    elements.pageLocation.textContent = view.charAt(0).toUpperCase() + view.slice(1);
     document.title = `${definition.title} · Workgate`;
 
     for (const item of elements.appNavItems) {
@@ -862,7 +836,6 @@ void (async () => {
 
   async function load({ background = false } = {}) {
     setConnection("Connecting", "idle");
-    elements.refresh.disabled = true;
     try {
       render(await request("/bootstrap"));
       await dashboard.refresh({ force: true });
@@ -911,8 +884,6 @@ void (async () => {
       } else {
         setConnection("Unavailable", "error");
       }
-    } finally {
-      elements.refresh.disabled = false;
     }
   }
 
@@ -968,7 +939,6 @@ void (async () => {
   });
 
   elements.oauthLogin.addEventListener("click", () => void startOAuth());
-  elements.refresh.addEventListener("click", () => void load());
   elements.signOut.addEventListener("click", async () => {
     try {
       await request("/session/logout", { method: "POST" });

@@ -541,6 +541,6 @@ def run_live_workspace(harness: BrowserHarness) -> None:
         page.wait_for_url("**/ui/callback?*")
         expect(page.locator("#connection-state")).to_have_text("Connected")
         expect(page).to_have_url(return_url)
-        expect(page.locator("#page-title")).to_have_text("File manager")
+        expect(page.locator("#page-title")).to_have_text("Files")
     finally:
         context.close()

@@ -73,7 +73,6 @@ export function createDashboardController({
 
   function setDashboardControls() {
     const online = dashboardExecutorOnline();
-    elements.dashboardRefresh.disabled = controllerState.loading || !online;
     elements.dashboardExecutor.disabled = controllerState.loading;
   }
 
@@ -502,9 +501,6 @@ export function createDashboardController({
       if (controllerState.loading) return;
       controllerState.executorPinned = true;
       resetDashboardExecutor(elements.dashboardExecutor.value);
-      refreshDashboardInBackground({ force: true });
-    });
-    elements.dashboardRefresh.addEventListener("click", () => {
       refreshDashboardInBackground({ force: true });
     });
   }
