@@ -132,10 +132,10 @@ def run_terminals(harness: BrowserHarness) -> None:
     executor_id = harness.executor_id
     executor_shell = _start_terminal(harness, f"browser-executor-{suffix}")
     expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
-        "background-color", "rgb(238, 236, 255)"
+        "background-color", "rgb(46, 54, 84)"
     )
     expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
-        "color", "rgb(79, 67, 195)"
+        "color", "rgb(255, 255, 255)"
     )
     _send_terminal(
         harness,
@@ -298,6 +298,4 @@ def run_terminals(harness: BrowserHarness) -> None:
         f'#terminal-list .terminal-session[title*="{executor_shell}"]'
     ).click()
     page.locator("#terminal-kill").click()
-    expect(page.locator("#terminal-state")).to_contain_text(
-        f"0 session(s) · {executor_id}"
-    )
+    expect(page.locator("#terminal-state")).to_have_text("0 sessions")

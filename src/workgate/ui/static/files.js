@@ -434,7 +434,7 @@ export function createFilesController({
       }
       renderFileList();
       if (selected && previewSelection) void previewFile(selected);
-      elements.fileState.textContent = `${controllerState.fileExecutorId}:${controllerState.filePath} · ${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
+      elements.fileState.textContent = `${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
       return payload;
     } finally {
       if (generation === controllerState.fileListGeneration) {
@@ -648,6 +648,9 @@ export function createFilesController({
     if (!controllerState.fileMutationBusy) void navigateFiles(elements.filePath.value.trim() || ".");
   });
   elements.fileUp.addEventListener("click", () => void navigateFiles(controllerState.fileParentPath));
+  document.getElementById("file-workspace-shortcut").addEventListener("click", () => {
+    if (!controllerState.fileMutationBusy) void navigateFiles(".");
+  });
   elements.fileRefresh.addEventListener("click", () => void refreshFiles());
   elements.fileShowHidden.addEventListener("change", () => {
     const entry = currentFileEntry();

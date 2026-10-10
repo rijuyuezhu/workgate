@@ -528,9 +528,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#file-executor")).to_have_value(harness.executor_id)
     expect(page.locator("#file-path")).to_have_value(".")
-    expect(page.locator("#file-state")).to_contain_text(
-        f"{harness.executor_id}:."
-    )
+    expect(page.locator("#file-state")).to_contain_text("entries")
 
     page.goto(
         f"{harness.base_url}/ui?{deep_link_query}#audit",

@@ -2297,3 +2297,281 @@ input[type=checkbox] { accent-color: #6759e7; }
  .metric-grid {grid-template-columns:1fr;}
  .topbar-actions {gap:6px;}
 }
+
+/* Upstream v5 page composition, with Workgate's own task and executor data. */
+.dashboard-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.dashboard-heading {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+.dashboard-heading > div:first-child { display: none; }
+.dashboard-health-banner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 14px;
+  padding: 22px 26px;
+  border-radius: 12px;
+  color: white;
+  background: linear-gradient(115deg, #136b50, #164f40);
+}
+.dashboard-health-banner #dashboard-health-card {
+  display: grid;
+  gap: 5px;
+  min-height: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.dashboard-health-banner #dashboard-health-card > span {
+  color: #b6ead8;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.dashboard-health-banner #dashboard-health-card strong {
+  color: white;
+  font-size: 20px;
+  text-transform: none;
+}
+.dashboard-health-banner #dashboard-health-card small { color: #b6ead8; }
+.dashboard-health-stats { display: flex; align-items: center; gap: 0; }
+.dashboard-health-stats > div {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 88px;
+  padding: 4px 12px;
+  border-left: 1px solid rgba(255,255,255,.16);
+}
+.dashboard-health-stats strong { color: white; font-size: 18px; }
+.dashboard-health-stats span { color: #b6ead8; font-size: 11px; }
+.dashboard-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.dashboard-summary .dashboard-card {
+  min-height: 154px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+}
+.dashboard-summary .dashboard-card > span {
+  color: #748095;
+  font-size: 12px;
+  font-weight: 600;
+}
+.dashboard-summary .dashboard-card > strong { font-size: 26px; }
+.dashboard-summary .dashboard-sparkline { height: 58px; margin-top: 12px; }
+.dashboard-executors-row, .dashboard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.dashboard-executors-row .dashboard-section,
+.dashboard-layout .dashboard-section {
+  min-width: 0;
+  margin: 0;
+  padding: 18px;
+  border-radius: 10px;
+}
+.dashboard-executors-row .dashboard-section { min-height: 190px; }
+.dashboard-machine-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.dashboard-machine-row strong { overflow-wrap: anywhere; }
+.dashboard-machine-status { color: #a13f49; text-transform: capitalize; }
+.dashboard-machine-status.is-online { color: #16825b; }
+.dashboard-layout .dashboard-system { grid-row: auto; }
+.dashboard-layout .dashboard-activity-section { grid-column: auto; }
+
+/* Upstream summary strip and list/detail pages. */
+.tasks-summary, .executor-summary {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.tasks-summary > div, .executor-summary > article {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  min-height: 82px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  box-shadow: none;
+}
+.tasks-summary strong, .executor-summary strong { font-size: 24px; color: #28344c; }
+.tasks-summary span, .executor-summary span { color: #818b9d; font-size: 12px; }
+.tasks-panel, .executors-panel, .audit-panel {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+.tasks-panel > .section-heading, .executors-panel > .section-heading,
+.audit-panel > .section-heading { margin: 3px 0 13px; }
+.tasks-layout, .executors-layout, .audit-layout {
+  gap: 0;
+  min-height: 570px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: white;
+}
+.tasks-layout, .executors-layout { grid-template-columns: minmax(260px, .85fr) minmax(0, 1.15fr); }
+.tasks-layout > .session-list, .executors-layout > .executor-list,
+.audit-layout > .audit-list {
+  padding: 13px;
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: white;
+}
+.tasks-workspace, .executors-layout > .executor-details,
+.audit-layout > .audit-detail {
+  min-width: 0;
+  margin: 0;
+  padding: 15px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.tasks-workspace .session-resource {
+  border-radius: 9px;
+  box-shadow: none;
+}
+.tasks-workspace:not(.has-selection) > .session-resource { display: none; }
+.task-empty-note {
+  display: none;
+  min-height: 440px;
+  place-items: center;
+  color: #8b94a5;
+  font-size: 13px;
+}
+.tasks-workspace:not(.has-selection) > .task-empty-note { display: grid; }
+.audit-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
+/* Upstream file manager: locations / contents / preview. */
+.file-panel { padding: 17px; }
+.file-panel > .section-heading { margin-bottom: 5px; }
+.file-toolbar { margin: 8px 0 12px; gap: 10px; align-items: end; }
+.file-executor-control { flex: 0 1 180px; }
+.file-path-form { flex: 1 1 260px; }
+.file-actions { flex: 1 0 100%; justify-content: flex-start; gap: 6px; }
+.file-layout {
+  display: grid;
+  grid-template-columns: 162px minmax(0, 1.18fr) minmax(0, 1fr);
+  gap: 0;
+  min-height: 560px;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.file-locations, .file-browser, .file-preview { min-width: 0; padding: 14px; }
+.file-locations { border-right: 1px solid var(--line); background: #f9fafe; }
+.file-locations h3, .file-browser-heading h3 { margin: 0 0 14px; font-size: 13px; }
+.file-locations button {
+  width: 100%;
+  text-align: left;
+  color: #594ac8;
+  background: #eeecff;
+  border-color: #ddd8fc;
+}
+.file-browser { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+.file-browser-heading { display: flex; justify-content: space-between; align-items: center; }
+.file-browser-heading h3 { margin: 0; }
+.file-breadcrumbs { margin: 9px 0; }
+.file-list-options { margin-bottom: 9px; }
+.file-browser .file-list { flex: 1 1 auto; max-height: 640px; border: none; border-radius: 0; padding: 0; }
+.file-preview { margin: 0; border: none; border-radius: 0; background: white; backdrop-filter: none; }
+
+/* Upstream dark terminal workspace with native Workgate terminal controls. */
+.terminal-panel { padding: 0; border: 0; background: transparent; box-shadow: none; }
+.terminal-heading {
+  margin-bottom: 0;
+  padding: 12px 14px;
+  gap: 14px;
+  border-radius: 11px 11px 0 0;
+  color: white;
+  background: #182338;
+}
+.terminal-heading h2 { color: white; }
+.terminal-heading .executor-select span { color: #a7b4c8; }
+.terminal-heading button { color: #e2e8f3; background: #24324b; border-color: #3a4b68; }
+.terminal-heading input, .terminal-heading select { color: #edf2fa; background: #111b2d; border-color: #34445f; }
+.terminal-layout {
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 0;
+  min-height: 560px;
+  margin-top: 0;
+  padding: 0;
+  border: 1px solid #263249;
+  border-radius: 0 0 11px 11px;
+  background: #0b1423;
+}
+.terminal-list {
+  display: block;
+  padding: 12px;
+  border-right: 1px solid #28354d;
+  background: #111b2b;
+  color: #dfe7f5;
+}
+.terminal-list .empty-state { color: #8695ad; background: transparent; border-color: #344159; }
+.terminal-list .terminal-session { color: #dfe7f5; background: #1a2940; border-color: #344159; }
+.terminal-list .terminal-session[aria-current="true"] { color: #fff; background: #2e3654; border-color: #7267d8; }
+.terminal-console { min-height: 558px; padding: 12px; border: 0; border-radius: 0; }
+.terminal-xterm, #terminal-output { min-height: 320px; height: min(48vh, 480px); }
+
+@media (max-width: 1150px) {
+  .dashboard-health-banner { grid-template-columns: 1fr; }
+  .dashboard-health-stats { justify-content: space-between; }
+  .dashboard-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .file-layout { grid-template-columns: 130px minmax(0,1fr) minmax(0,1fr); }
+}
+@media (max-width: 780px) {
+  .dashboard-executors-row, .dashboard-layout { grid-template-columns: 1fr; }
+  .file-layout { grid-template-columns: minmax(0,1fr); }
+  .file-locations { display: none; }
+  .file-browser { border-right: 0; border-bottom: 1px solid var(--line); }
+  .file-executor-control, .file-path-form, .file-actions { flex: 0 0 auto; width: 100%; }
+  .file-browser .file-list { min-height: 150px; }
+  .tasks-layout, .executors-layout, .audit-layout, .terminal-layout { grid-template-columns: 1fr; }
+  .terminal-list { border-right: 0; border-bottom: 1px solid #28354d; }
+}
+@media (max-width: 480px) {
+  .dashboard-health-banner { padding: 17px; }
+  .dashboard-health-stats { flex-wrap: wrap; }
+  .dashboard-health-stats > div { min-width: 50%; margin: 5px 0; }
+  .dashboard-summary, .tasks-summary, .executor-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .file-browser { padding: 10px; }
+  .file-browser-heading { display: none; }
+  .file-panel { padding: 12px; }
+  .file-actions button:disabled { display: none; }
+  .terminal-heading { flex-wrap: wrap; }
+  .terminal-actions { width: 100%; justify-content: flex-start; }
+}

@@ -139,7 +139,7 @@ export function createDashboardController({
     controllerState.generation += 1;
     controllerState.history = [];
     elements.dashboardExecutor.value = controllerState.executorId;
-    elements.dashboardState.textContent = `Not loaded · ${controllerState.executorId}`;
+    elements.dashboardState.textContent = "Not loaded";
     elements.dashboardHealth.textContent = "—";
     elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
     elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
@@ -186,6 +186,9 @@ export function createDashboardController({
     const wasOnline = dashboardExecutorOnline();
     controllerState.executorStates = new Map();
     elements.dashboardExecutor.replaceChildren();
+    const machineList = document.getElementById("dashboard-machine-list");
+    machineList.replaceChildren();
+    if (!available.length) dashboardEmpty(machineList, "No executors paired.");
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
       if (!executorId) continue;
@@ -197,6 +200,15 @@ export function createDashboardController({
       option.textContent = state === "online" ? label : `${label} (${state})`;
       option.disabled = state !== "online";
       elements.dashboardExecutor.append(option);
+      const row = document.createElement("div");
+      row.className = "dashboard-machine-row";
+      const name = document.createElement("strong");
+      name.textContent = label;
+      const status = document.createElement("span");
+      status.className = `dashboard-machine-status ${state === "online" ? "is-online" : ""}`;
+      status.textContent = state;
+      row.append(name, status);
+      machineList.append(row);
     }
     const previousExecutorId = controllerState.executorId;
     if (!dashboardExecutorOnline() && !controllerState.executorPinned) {
@@ -218,7 +230,7 @@ export function createDashboardController({
       refreshDashboardInBackground({ force: true });
     }
     if (!dashboardExecutorOnline() && controllerState.executorId) {
-      elements.dashboardState.textContent = `Executor unavailable · ${controllerState.executorId}`;
+      elements.dashboardState.textContent = "Executor offline";
     }
     setDashboardControls();
   }
@@ -261,11 +273,15 @@ export function createDashboardController({
     const health = ["healthy", "attention", "critical"].includes(payload.health)
       ? payload.health
       : "attention";
-    elements.dashboardHealth.textContent = health;
+    elements.dashboardHealth.textContent = {
+      healthy: "All systems operational",
+      attention: "Attention needed",
+      critical: "Critical issue detected",
+    }[health];
     elements.dashboardHealthCard.className = `dashboard-card dashboard-health-card dashboard-health-${health}`;
     elements.dashboardHealthDetail.textContent = alerts.length
-      ? `${alerts.length} alert${alerts.length === 1 ? "" : "s"} on ${controllerState.executorId}`
-      : `No active alerts on ${controllerState.executorId}`;
+      ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
+      : "No active alerts.";
     elements.dashboardCpu.textContent = dashboardPercent(system.cpu_percent);
     elements.dashboardMemory.textContent = dashboardPercent(system.memory_percent);
     elements.dashboardDisk.textContent = dashboardPercent(system.disk_percent);
@@ -351,7 +367,7 @@ export function createDashboardController({
       }
     }
     elements.dashboardSourceState.textContent = `system ${text(sources.system, "unknown")} · audit ${text(sources.audit, "unknown")}`;
-    elements.dashboardState.textContent = `${controllerState.executorId} · ${health} · updated ${new Date().toLocaleTimeString()}`;
+    elements.dashboardState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
   }
 
   function dashboardQueryPath() {
@@ -365,7 +381,7 @@ export function createDashboardController({
     const requestedExecutor = controllerState.executorId;
     controllerState.loading = true;
     setDashboardControls();
-    elements.dashboardState.textContent = `Loading ${requestedExecutor}`;
+    elements.dashboardState.textContent = "Loading…";
     try {
       const payload = await request(dashboardQueryPath());
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;

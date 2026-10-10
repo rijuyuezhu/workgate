@@ -71,28 +71,28 @@ void (async () => {
   const initialUiLocation = startupUiLocation();
   const viewDefinitions = Object.freeze({
     overview: {
-      title: "Overview",
-      description: "System health across connected executor environments.",
+      title: "Control plane overview",
+      description: "System health across executors.",
     },
     executors: {
       title: "Executors",
-      description: "Pair, inspect, rename, and revoke final executor identities.",
+      description: "Manage paired executors.",
     },
     tasks: {
       title: "Tasks",
-      description: "Inspect durable tasks, retained execution sessions, and scoped Audit records.",
+      description: "Tasks, plans, and execution sessions.",
     },
     terminals: {
-      title: "Terminals",
-      description: "Persistent executor terminals with interactive streaming.",
+      title: "Persistent terminals",
+      description: "Interactive terminals on connected executors.",
     },
     files: {
-      title: "Files",
-      description: "Browse and edit files on the selected executor.",
+      title: "File manager",
+      description: "Browse and edit files on an executor.",
     },
     audit: {
       title: "Audit",
-      description: "Search control-owned product and tool activity.",
+      description: "Search tool and control activity.",
     },
   });
   const encoder = new TextEncoder();
@@ -426,7 +426,7 @@ void (async () => {
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
     elements.pageDescription.textContent = definition.description;
-    elements.pageLocation.textContent = definition.title;
+    elements.pageLocation.textContent = view.charAt(0).toUpperCase() + view.slice(1);
     document.title = `${definition.title} · Workgate`;
 
     for (const item of elements.appNavItems) {

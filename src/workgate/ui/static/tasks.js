@@ -149,6 +149,9 @@ export function createTasksController({
   }
 
   function renderTaskState() {
+    document.querySelector(".tasks-workspace").classList.toggle(
+      "has-selection", Boolean(selectedTaskId() || controllerState.sessionId),
+    );
     const task = controllerState.task;
     const progress = task && task.progress && typeof task.progress === "object" ? task.progress : {};
     elements.taskStatus.textContent = text(task && task.status);
@@ -302,11 +305,21 @@ export function createTasksController({
   }
 
   function renderTaskList() {
+    const counts = { active: 0, completed: 0, cancelled: 0 };
+    for (const task of controllerState.tasks) {
+      if (task.status === "completed") counts.completed += 1;
+      else if (task.status === "cancelled") counts.cancelled += 1;
+      else counts.active += 1;
+    }
+    document.getElementById("task-count-active").textContent = String(counts.active);
+    document.getElementById("task-count-completed").textContent = String(counts.completed);
+    document.getElementById("task-count-cancelled").textContent = String(counts.cancelled);
+    document.getElementById("task-count-total").textContent = String(controllerState.tasks.length);
     elements.taskList.replaceChildren();
     if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = "No retained tasks or unattached sessions.";
+      empty.textContent = "No tasks yet.";
       elements.taskList.append(empty);
       return;
     }

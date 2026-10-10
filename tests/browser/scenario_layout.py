@@ -16,11 +16,17 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     colors = page.evaluate("""() => ({
         body: getComputedStyle(document.body).backgroundColor,
         sidebar: getComputedStyle(document.querySelector('.sidebar')).backgroundColor,
-        panel: getComputedStyle(document.querySelector('#dashboard-panel')).backgroundColor,
+        panel: getComputedStyle(document.querySelector('.dashboard-summary .dashboard-card')).backgroundColor,
+        hero: getComputedStyle(document.querySelector('.dashboard-health-banner')).backgroundColor,
     })""")
     assert colors["body"] == "rgb(245, 246, 250)"
     assert colors["sidebar"] == "rgb(17, 24, 39)"
     assert colors["panel"] == "rgb(255, 255, 255)"
+    assert colors["hero"] != colors["panel"]
+    assert page.locator(".dashboard-summary .dashboard-card").count() == 4
+    assert page.locator(".tasks-summary > div").count() == 4
+    assert page.locator(".file-layout > *").count() == 3
+    assert page.locator(".executor-summary > article").count() == 4
     expect(page.locator(".token-row")).to_have_css("display", "flex")
     # Navigation icon strokes must not leak into dashboard data SVGs.
     expect(page.locator('.nav-item[data-view="overview"] svg')).to_have_css(

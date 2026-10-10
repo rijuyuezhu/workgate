@@ -26,9 +26,7 @@ def run_auth_dashboard(harness: BrowserHarness) -> None:
     expect(page.locator("#dashboard-executor")).to_have_value(
         harness.executor_id
     )
-    expect(page.locator("#dashboard-state")).to_contain_text(
-        harness.executor_id
-    )
+    expect(page.locator("#dashboard-state")).to_contain_text("Updated")
 
     # Simulate a later offline inventory observation deterministically. Backend
     # presence TTL is 60 seconds; the UI should react to the next 4s poll, not

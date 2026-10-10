@@ -571,8 +571,8 @@ export function createTerminalController({
         controllerState.terminalSocketExecutorId === requestedExecutor &&
         controllerState.terminalSocket?.readyState === WebSocket.OPEN;
       elements.terminalState.textContent = controllerState.selectedShellId
-        ? `${connected ? "Connected" : "Selected"} · ${requestedExecutor}`
-        : `${controllerState.terminalSessions.length} session(s) · ${requestedExecutor}`;
+        ? (connected ? "Connected" : "Selected")
+        : `${controllerState.terminalSessions.length} sessions`;
       const autoConnectShellId = controllerState.terminalAutoConnectShellId;
       controllerState.terminalAutoConnectShellId = "";
       if (
