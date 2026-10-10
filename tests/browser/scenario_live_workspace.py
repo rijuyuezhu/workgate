@@ -224,6 +224,93 @@ window.addEventListener("message", (event) => {{
     return html.replace(marker, mock + marker, 1)
 
 
+def _mock_openai_host_html(
+    *,
+    widget_state: dict | None = None,
+    tool_output: dict | None = None,
+    session_ended: bool = False,
+) -> str:
+    html = _LIVE_WORKSPACE_HTML.read_text(encoding="utf-8")
+    mock = f"""
+<script>
+window.__liveCalls = [];
+window.openai = {{
+  widgetState: {json.dumps(widget_state)},
+  toolOutput: {json.dumps(tool_output)},
+  setWidgetState(state) {{ this.widgetState = state; }},
+  async callTool(name, args) {{
+    window.__liveCalls.push({{ name, args }});
+    if ({json.dumps(session_ended)}) return {{
+      isError: true,
+      content: [{{ type: "text", text: "Saved Workgate session has ended" }}],
+    }};
+    if (name !== "workspace_snapshot" || args.task_id !== "task_browser_live" ||
+        args.session_id !== "sess_browser_live") throw Error("Unexpected session binding");
+    return {{ structuredContent: {json.dumps(_snapshot())} }};
+  }},
+}};
+</script>
+"""
+    return html.replace("<script>\n(() => {", mock + "<script>\n(() => {", 1)
+
+
+def run_live_workspace_remount(harness: BrowserHarness) -> None:
+    context = harness.browser.new_context()
+    page = context.new_page()
+    try:
+        # The first mount saves only an explicitly selected Workgate session.
+        page.set_content(_mock_openai_host_html(tool_output=_snapshot()))
+        expect(page.locator("#title")).to_have_text("Browser handoff")
+        saved = page.evaluate("window.openai.widgetState")
+        assert saved["workgateLiveWorkspace"] == {
+            "task_id": "task_browser_live",
+            "session_id": "sess_browser_live",
+        }
+
+        # Remount with the tool result gone: exact identity, canonical snapshot.
+        page.goto("about:blank")
+        page.set_content(_mock_openai_host_html(widget_state=saved))
+        expect(page.locator("#title")).to_have_text("Browser handoff")
+        assert page.evaluate("window.__liveCalls") == [
+            {
+                "name": "workspace_snapshot",
+                "args": saved["workgateLiveWorkspace"],
+            }
+        ]
+
+        # An ended session never falls back to another attached session.
+        page.goto("about:blank")
+        page.set_content(
+            _mock_openai_host_html(widget_state=saved, session_ended=True)
+        )
+        expect(page.locator("#status")).to_contain_text(
+            "Saved Workgate session has ended"
+        )
+        expect(page.locator("#title")).to_have_text("Live Workspace")
+
+        # No explicit host identity means no tool call or implicit session.
+        page.goto("about:blank")
+        page.set_content(_mock_openai_host_html())
+        expect(page.locator("#status")).to_contain_text(
+            "No original snapshot or host-persisted Workgate session identity"
+        )
+        assert page.evaluate("window.__liveCalls") == []
+        # Task-only output must clear an older selected-session identity.
+        task_only = _snapshot()
+        task_only["session"] = None
+        page.goto("about:blank")
+        page.set_content(
+            _mock_openai_host_html(widget_state=saved, tool_output=task_only)
+        )
+        expect(page.locator("#title")).to_have_text("Browser handoff")
+        assert (
+            page.evaluate("window.openai.widgetState.workgateLiveWorkspace")
+            is None
+        )
+    finally:
+        context.close()
+
+
 def run_live_workspace(harness: BrowserHarness) -> None:
     # The App is an authenticated MCP surface; it must not accidentally become
     # a public route just because the resource itself is HTML.

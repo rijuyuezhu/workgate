@@ -14,6 +14,7 @@ from ..agent_bridge.service import (
     list_agent_mcp_tools_payload,
 )
 from ..config.control import ControlConfig
+from ..errors import PublicToolValueError
 from ..schemas.result_models.agent import (
     CallAgentMcpToolOutput,
     ListAgentMcpServersOutput,
@@ -48,7 +49,7 @@ class ControlAgentBridgeService:
     @staticmethod
     def _require_session_id(session_id: str | None, server: str) -> str:
         if session_id is None:
-            raise ValueError(
+            raise PublicToolValueError(
                 f"Unknown agent MCP server: {server}; "
                 "pass session_id for executor-local stdio MCP servers"
             )
@@ -298,7 +299,7 @@ class ControlAgentBridgeService:
             )
         selected_session = self._require_session_id(session_id, server)
         if owner == "unknown":
-            raise ValueError(f"Unknown agent MCP server: {server}")
+            raise PublicToolValueError(f"Unknown agent MCP server: {server}")
         payload = await self._sessions.call_session_tool(
             "agent_mcp.call_tool",
             {

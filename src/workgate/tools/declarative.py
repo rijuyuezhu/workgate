@@ -8,12 +8,17 @@ from functools import wraps
 from typing import Any, ClassVar, Literal, Protocol
 
 from fastapi import HTTPException
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
 from ..config.control import ControlConfig, get_control_config
-from ..errors import SessionTerminationRequestedError
+from ..errors import (
+    PublicToolError,
+    SessionTerminationRequestedError,
+    ShellExecutableNotFoundError,
+)
 from ..oauth.core.context import (
     MissingOAuthScopeError,
     require_oauth_scopes,
@@ -28,9 +33,8 @@ from .contracts import (
     ToolRegistry,
 )
 from .mcp_text import has_explicit_tool_text, render_tool_text
-from .metadata import oauth_security_meta
+from .metadata import mcp_security_meta
 
-type McpSecurityProfile = Literal["oauth", "connector_compatible"]
 type ToolAnnotation = Literal["read_only"]
 type ToolDescription = str | Callable[[McpToolContext], str]
 type ToolEnabled = Callable[[ControlConfig], bool]
@@ -80,7 +84,6 @@ class ToolDecoratorFactory(Protocol):
         http_method: HttpMethod | None,
         http_path: str | None,
         name: str | None = None,
-        mcp_security_profile: McpSecurityProfile = "oauth",
         oauth_scopes: tuple[str, ...] | None = None,
         annotations: ToolAnnotation | None = None,
         description: ToolDescription | None = None,
@@ -143,8 +146,6 @@ class ToolDefinition:
     """HTTP method for the REST adapter route, or None for MCP-only tools."""
     http_path: str | None
     """HTTP path for the REST adapter route, or None for MCP-only tools."""
-    mcp_security_profile: McpSecurityProfile = "oauth"
-    """Client-facing MCP securitySchemes profile advertised for this tool."""
     oauth_scopes: tuple[str, ...] | None = None
     """Server-enforced OAuth scopes for this tool. Also drives MCP security metadata."""
     annotations: ToolAnnotation | None = None
@@ -200,20 +201,6 @@ class ToolDefinition:
 
         return handler
 
-    def _mcp_security_meta(self) -> dict[str, Any]:
-        match self.mcp_security_profile:
-            case "connector_compatible" | "oauth":
-                return oauth_security_meta(
-                    self.required_oauth_scopes(),
-                    connector_compatible=(
-                        self.mcp_security_profile == "connector_compatible"
-                    ),
-                )
-            case _:
-                raise ValueError(
-                    f"Invalid MCP security profile: {self.mcp_security_profile}"
-                )
-
     def _mcp_annotations(
         self, context: McpToolContext
     ) -> ToolAnnotations | None:
@@ -235,13 +222,13 @@ class ToolDefinition:
         normalized = _normalize_description(description)
         return normalized or None
 
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
-        """Register this tool on the provided FastMCP app."""
+    def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
+        """Register this tool on the provided MCPServer app."""
 
         @wraps(self.func)
         async def mcp_handler(*args: Any, **kwargs: Any) -> Any:
             try:
-                _enforce_oauth_scopes(self.required_oauth_scopes())
+                require_oauth_scopes(self.required_oauth_scopes())
                 result = await self.func(*args, **kwargs)
                 if not has_explicit_tool_text(self.name):
                     return result
@@ -251,15 +238,20 @@ class ToolDefinition:
                     return result
                 return CallToolResult(
                     content=[TextContent(type="text", text=text)],
-                    structuredContent=structured,
+                    structured_content=structured,
                 )
-            except SessionTerminationRequestedError:
-                raise
+            except SessionTerminationRequestedError as exc:
+                raise ToolError(str(exc)) from None
             except MissingOAuthScopeError as exc:
-                raise _oauth_scope_http_error(exc) from exc
+                raise ToolError(str(exc)) from None
             except Exception as exc:
                 if self.mcp_error_handler is not None:
                     return self.mcp_error_handler(exc, args, kwargs)
+                if isinstance(
+                    exc, (PublicToolError, ShellExecutableNotFoundError)
+                ):
+                    # Display only errors explicitly public or already redacted.
+                    raise ToolError(str(exc)) from None
                 raise
 
         mcp_handler.__name__ = self.name
@@ -269,7 +261,9 @@ class ToolDefinition:
         mcp.tool(
             description=self._mcp_description(context),
             annotations=self._mcp_annotations(context),
-            meta=self._mcp_security_meta(),
+            meta=mcp_security_meta(
+                self.required_oauth_scopes(), settings=context.settings
+            ),
             structured_output=True,
         )(mcp_handler)
 
@@ -306,7 +300,6 @@ class DeclarativeToolRegistry(ToolRegistry):
             http_method: HttpMethod | None,
             http_path: str | None,
             name: str | None = None,
-            mcp_security_profile: McpSecurityProfile = "oauth",
             oauth_scopes: tuple[str, ...] | None = None,
             annotations: ToolAnnotation | None = None,
             description: ToolDescription | None = None,
@@ -321,7 +314,6 @@ class DeclarativeToolRegistry(ToolRegistry):
                         name=name or func.__name__,
                         http_method=http_method,
                         http_path=http_path,
-                        mcp_security_profile=mcp_security_profile,
                         oauth_scopes=oauth_scopes,
                         annotations=annotations,
                         description=description,
@@ -362,8 +354,8 @@ class DeclarativeToolRegistry(ToolRegistry):
             tool.name: tool.http_handler() for tool in self._enabled_tools()
         }
 
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
-        """Register enabled declarative tools on the provided FastMCP app."""
+    def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
+        """Register enabled declarative tools on the provided MCPServer app."""
         self._context = context
         try:
             for tool in self._enabled_tools():

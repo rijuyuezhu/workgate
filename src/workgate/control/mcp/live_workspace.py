@@ -2,15 +2,18 @@
 
 import asyncio
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.types import ToolAnnotations
 
 from ...audit import current_audit_call_id, query_audit
-from ...oauth.core.context import require_oauth_scopes
+from ...config.control import ControlConfig
+from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_READ,
     SCOPE_SHELL_EXECUTE,
@@ -31,7 +34,7 @@ from ...schemas.result_models.live_workspace import (
 )
 from ...schemas.result_models.session import SessionEndOutput
 from ...schemas.result_models.task import TaskDocument
-from ...tools.metadata import oauth_security_meta
+from ...tools.metadata import mcp_security_meta
 from ..runtime import ControlRuntime
 from ..state import ControlSessionRecord
 
@@ -86,27 +89,33 @@ def _resource_meta(runtime: ControlRuntime) -> dict[str, Any]:
 
 def _read_only_annotations() -> ToolAnnotations:
     return ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
     )
 
 
 def _mutating_annotations(*, destructive: bool) -> ToolAnnotations:
     return ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=destructive,
-        idempotentHint=False,
-        openWorldHint=False,
+        read_only_hint=False,
+        destructive_hint=destructive,
+        idempotent_hint=False,
+        open_world_hint=False,
     )
 
 
 def _app_meta(
-    scopes: tuple[str, ...], *, resource_uri: str | None = None
+    scopes: tuple[str, ...],
+    *,
+    settings: ControlConfig,
+    resource_uri: str | None = None,
 ) -> dict[str, Any]:
     ui: dict[str, Any] = {"visibility": ["app"]}
-    meta: dict[str, Any] = {**oauth_security_meta(scopes), "ui": ui}
+    meta: dict[str, Any] = {
+        **mcp_security_meta(scopes, settings=settings),
+        "ui": ui,
+    }
     if resource_uri is not None:
         ui["resourceUri"] = resource_uri
         meta.update(
@@ -505,8 +514,16 @@ async def live_workspace_end(
     return SessionEndOutput.model_validate(result)
 
 
+def _require_mcp_scopes(scopes: tuple[str, ...]) -> None:
+    """Preserve useful scope denial details on the MCP tool surface."""
+    try:
+        require_oauth_scopes(scopes)
+    except MissingOAuthScopeError as exc:
+        raise ToolError(str(exc)) from None
+
+
 def register_live_workspace(
-    mcp: FastMCP, runtime: ControlRuntime | None
+    mcp: MCPServer, runtime: ControlRuntime | None
 ) -> None:
     """Register the HTTP-only Live Workspace MCP App."""
 
@@ -530,8 +547,13 @@ def register_live_workspace(
     def live_workspace_resource() -> str:
         return _resource_html()
 
-    @mcp.resource(versioned_uri, **resource_options)
-    def versioned_live_workspace_resource() -> str:
+    @mcp.resource(
+        "ui://workgate/live-workspace-{digest}.html", **resource_options
+    )
+    def versioned_live_workspace_resource(digest: str) -> str:
+        # A template handles old content-addressed URIs without alias history.
+        if not re.fullmatch(r"[0-9a-f]{16}|unbuilt", digest):
+            raise ResourceError("Invalid Live Workspace resource cache key")
         return _resource_html()
 
     read_scopes = (SCOPE_SHELL_READ, SCOPE_AUDIT_READ)
@@ -543,14 +565,16 @@ def register_live_workspace(
             "session-specific panes."
         ),
         annotations=_read_only_annotations(),
-        meta=_app_meta(read_scopes, resource_uri=versioned_uri),
+        meta=_app_meta(
+            read_scopes, settings=runtime.config, resource_uri=versioned_uri
+        ),
         structured_output=True,
     )
     async def workspace_open(
         task_id: TaskIdArg,
         session_id: OptionalSessionIdArg = None,
     ) -> LiveWorkspaceSnapshot:
-        require_oauth_scopes(read_scopes)
+        _require_mcp_scopes(read_scopes)
         return await live_workspace_snapshot(
             runtime,
             str(task_id),
@@ -560,14 +584,14 @@ def register_live_workspace(
     @mcp.tool(
         description="Refresh one task and its optional selected execution session.",
         annotations=_read_only_annotations(),
-        meta=_app_meta(read_scopes),
+        meta=_app_meta(read_scopes, settings=runtime.config),
         structured_output=True,
     )
     async def workspace_snapshot(
         task_id: TaskIdArg,
         session_id: OptionalSessionIdArg = None,
     ) -> LiveWorkspaceSnapshot:
-        require_oauth_scopes(read_scopes)
+        _require_mcp_scopes(read_scopes)
         return await live_workspace_snapshot(
             runtime,
             str(task_id),
@@ -577,7 +601,7 @@ def register_live_workspace(
     @mcp.tool(
         description="Apply one task control without changing execution routing.",
         annotations=_mutating_annotations(destructive=True),
-        meta=_app_meta(task_write_scopes),
+        meta=_app_meta(task_write_scopes, settings=runtime.config),
         structured_output=True,
     )
     async def workspace_task_control(
@@ -586,7 +610,7 @@ def register_live_workspace(
         session_id: OptionalSessionIdArg = None,
         instruction: str | None = None,
     ) -> LiveWorkspaceSnapshot:
-        require_oauth_scopes(task_write_scopes)
+        _require_mcp_scopes(task_write_scopes)
         return await live_workspace_task_control(
             runtime,
             task_id=str(task_id),
@@ -601,7 +625,7 @@ def register_live_workspace(
             "claim/validate/report handshake."
         ),
         annotations=_mutating_annotations(destructive=False),
-        meta=_app_meta(read_scopes),
+        meta=_app_meta(read_scopes, settings=runtime.config),
         structured_output=True,
     )
     async def workspace_continuation(
@@ -610,7 +634,7 @@ def register_live_workspace(
         claim_id: str | None = None,
         accepted: bool | None = None,
     ) -> LiveWorkspaceContinuationResult:
-        require_oauth_scopes(read_scopes)
+        _require_mcp_scopes(read_scopes)
         return await live_workspace_continuation(
             runtime,
             task_id=str(task_id),
@@ -622,7 +646,7 @@ def register_live_workspace(
     @mcp.tool(
         description="End an attached execution session after explicit confirmation.",
         annotations=_mutating_annotations(destructive=True),
-        meta=_app_meta((SCOPE_SHELL_EXECUTE,)),
+        meta=_app_meta((SCOPE_SHELL_EXECUTE,), settings=runtime.config),
         structured_output=True,
     )
     async def workspace_end(
@@ -630,7 +654,7 @@ def register_live_workspace(
         session_id: SessionIdArg,
         confirm_session_id: str,
     ) -> SessionEndOutput:
-        require_oauth_scopes((SCOPE_SHELL_EXECUTE,))
+        _require_mcp_scopes((SCOPE_SHELL_EXECUTE,))
         return await live_workspace_end(
             runtime,
             task_id=str(task_id),

@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from ..config.control import ControlConfig
@@ -52,6 +52,6 @@ class ToolRegistry:
         """Return canonical tool-name to HTTP invocation handler mappings."""
         return {}
 
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
+    def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
         """Register MCP tools for this registry onto the provided app."""
         return None

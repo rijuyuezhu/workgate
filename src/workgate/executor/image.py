@@ -90,12 +90,12 @@ async def view_image_execute(
             ImageContent(
                 type="image",
                 data=base64.b64encode(image.data).decode("ascii"),
-                mimeType=image.mime_type,
+                mime_type=image.mime_type,
             ),
             TextContent(
                 type="text",
                 text=f"{image.path} ({image.mime_type}, {image.size} bytes)",
             ),
         ],
-        structuredContent=metadata.model_dump(mode="json"),
+        structured_content=metadata.model_dump(mode="json"),
     )

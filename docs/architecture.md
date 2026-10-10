@@ -100,10 +100,12 @@ does not hold a shared mutable runtime `Settings` object with either child.
 The control runtime is entered by the transport host, not by domain code.
 REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
 it through the outer Starlette lifespan that also owns the SDK session manager.
-MCP stdio instead uses FastMCP's low-level server lifespan because stdio has one
+The MCP v2 SDK owns HTTP session capacity and idle expiry via `max_sessions`
+and `session_idle_timeout`; a full session pool receives the SDK-native HTTP 503.
+MCP stdio instead uses MCPServer's low-level server lifespan because stdio has one
 `Server.run()` for the process lifetime. Both `run_http()` and `run_mcp()` require
 the already-composed `ControlRuntime`; they do not reconstruct role authority from
-ambient settings. The process runtime must not be attached to FastMCP's low-level
+ambient settings. The process runtime must not be attached to MCPServer's low-level
 lifespan for MCP-over-HTTP:
 the SDK enters it once per MCP session, which is a narrower lifecycle than the
 control process.
@@ -162,7 +164,7 @@ Rejected alternatives:
 
 The `control/mcp` package owns framework-specific MCP composition and runtime
 policy. It converts transport-neutral tool registries and shared services into a
-FastMCP server, then runs that server over stdio or wraps the MCP SDK's ASGI app
+MCPServer server, then runs that server over stdio or wraps the MCP SDK's ASGI app
 for HTTP delivery. The HTTP wrapper installs the same `ui/http` routes used by
 the REST control adapter before the catch-all MCP mount. The browser shell and assets
 remain public, while WebUI APIs retain their OAuth and session access checks.
@@ -177,9 +179,9 @@ Rejected ownership alternatives:
 
 - `server/mcp`: “server” obscures that this is one selectable control adapter beside
   REST/tool HTTP delivery and WebUI delivery.
-- `http`: stdio execution, FastMCP registration, MCP sessions, and MCP tool
+- `http`: stdio execution, MCPServer registration, MCP sessions, and MCP tool
   wrappers are MCP delivery-adapter concerns, not shared HTTP infrastructure.
-- `tools`: tool declarations are transport-neutral; FastMCP registration and
+- `tools`: tool declarations are transport-neutral; MCPServer registration and
   MCP-specific presentation must depend on tools, not the reverse.
 
 ## `control/http`: REST/tool HTTP control adapter

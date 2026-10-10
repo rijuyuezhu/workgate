@@ -93,7 +93,7 @@ async def test_stdio_fastmcp_server_run_lifespan_owns_control_runtime(
     with use_state_store(outer_state_store):
         mcp = build_mcp(runtime=runtime, own_runtime_lifespan=True)
         assert get_state_store() is outer_state_store
-        async with mcp._mcp_server.lifespan(mcp._mcp_server):
+        async with mcp._lowlevel_server.lifespan(mcp._lowlevel_server):
             assert get_state_store() is outer_state_store
         assert get_state_store() is outer_state_store
 
@@ -111,7 +111,7 @@ async def test_mcp_http_sessions_do_not_own_process_runtime(tmp_path):
     runtime = build_control_runtime(settings)
     with use_state_store(outer_state_store):
         mcp = build_mcp(runtime=runtime)
-        async with mcp._mcp_server.lifespan(mcp._mcp_server):
+        async with mcp._lowlevel_server.lifespan(mcp._lowlevel_server):
             assert get_state_store() is outer_state_store
 
 

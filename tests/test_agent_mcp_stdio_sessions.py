@@ -20,9 +20,9 @@ from workgate.executor.tool_session.store import UnknownAgentSessionError
 
 _SERVER_SOURCE = """import os
 import uuid
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-app = FastMCP('stdio-isolation-test')
+app = MCPServer('stdio-isolation-test')
 instance_id = uuid.uuid4().hex
 
 @app.tool()

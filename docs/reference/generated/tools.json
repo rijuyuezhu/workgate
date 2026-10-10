@@ -2143,7 +2143,7 @@
       ]
     },
     {
-      "body": "Register the special read-only search/fetch surface for connector clients. These tools are intentionally separate from the richer coding-agent file and search tools. Regular ChatGPT custom connectors and Deep Research-style clients often expose only a document-source pattern: search for result cards, then fetch one result by id. They may not surface general-purpose tools such as code search, file reads, shell commands, edits, or executor operations unless the client is in Developer Mode or otherwise supports the full MCP tool set. search/fetch use mcp_security_profile=\"connector_compatible\" so MCP clients can discover them as document-source tools. oauth_scopes remains the server-enforced source of truth; the connector profile only affects MCP securitySchemes metadata.",
+      "body": "Register the special read-only search/fetch surface for connector clients. These tools are intentionally separate from the richer coding-agent file and search tools. Regular ChatGPT custom connectors and Deep Research-style clients often expose only a document-source pattern: search for result cards, then fetch one result by id. They may not surface general-purpose tools such as code search, file reads, shell commands, edits, or executor operations unless the client is in Developer Mode or otherwise supports the full MCP tool set. search/fetch advertise the same enforced authentication as other tools.",
       "headers": [
         "Tool",
         "Parameters",
@@ -2372,6 +2372,25 @@
   ],
   "tools": [
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -2398,25 +2417,6 @@
         ],
         "title": "activate_agent_skillArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "activate_agent_skill",
       "outputSchema": {
@@ -2481,19 +2481,7 @@
       }
     },
     {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true
-      },
-      "description": "Return agent bridge configuration status, discovered skills, configured MCP servers, and load errors.",
-      "inputSchema": {
-        "properties": {},
-        "title": "agent_config_statusArguments",
-        "type": "object"
-      },
-      "meta": {
+      "_meta": {
         "securitySchemes": [
           {
             "scopes": [
@@ -2511,6 +2499,18 @@
             "type": "oauth2"
           }
         ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Return agent bridge configuration status, discovered skills, configured MCP servers, and load errors.",
+      "inputSchema": {
+        "properties": {},
+        "title": "agent_config_statusArguments",
+        "type": "object"
       },
       "name": "agent_config_status",
       "outputSchema": {
@@ -2566,6 +2566,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -2601,17 +2612,6 @@
         ],
         "title": "apply_patchArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "apply_patch",
       "outputSchema": {
@@ -2704,6 +2704,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -2856,16 +2866,6 @@
         "title": "audit_tailArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "audit:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "audit_tail",
       "outputSchema": {
         "description": "Bounded logical audit query result from canonical control history.",
@@ -2942,6 +2942,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -3058,17 +3069,6 @@
         "title": "bashArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "bash",
       "outputSchema": {
         "description": "Result returned by the bash shell execution tool.",
@@ -3111,6 +3111,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -3503,16 +3513,6 @@
         "title": "browser_actArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "browser:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "browser_act",
       "outputSchema": {
         "$defs": {
@@ -3678,6 +3678,18 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use",
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -3734,18 +3746,6 @@
         "title": "browser_run_scriptArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "browser:use",
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "browser_run_script",
       "outputSchema": {
         "description": "Result of writing Python code to a temporary file and executing it through shell modes.",
@@ -3794,6 +3794,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -3938,16 +3948,6 @@
         ],
         "title": "browser_sessionArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "browser:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "browser_session",
       "outputSchema": {
@@ -4134,6 +4134,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "browser:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -4230,16 +4240,6 @@
         ],
         "title": "browser_snapshotArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "browser:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "browser_snapshot",
       "outputSchema": {
@@ -4545,6 +4545,25 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -4599,25 +4618,6 @@
         "title": "call_agent_mcp_toolArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "call_agent_mcp_tool",
       "outputSchema": {
         "additionalProperties": true,
@@ -4628,6 +4628,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "file:share"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
@@ -4702,17 +4713,6 @@
         ],
         "title": "create_file_linkArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "file:share"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "create_file_link",
       "outputSchema": {
@@ -4842,6 +4842,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -4878,17 +4889,6 @@
         "title": "delete_file_or_dirArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "delete_file_or_dir",
       "outputSchema": {
         "description": "File or directory deletion result.",
@@ -4913,6 +4913,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -4973,17 +4984,6 @@
         ],
         "title": "edit_linesArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "edit_lines",
       "outputSchema": {
@@ -5100,6 +5100,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "executor:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -5158,16 +5168,6 @@
         },
         "title": "executorArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "executor:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "executor",
       "outputSchema": {
@@ -5500,6 +5500,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -5529,19 +5539,6 @@
         ],
         "title": "fetchArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "type": "noauth"
-          },
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "fetch",
       "outputSchema": {
@@ -5593,6 +5590,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -5635,16 +5642,6 @@
         "title": "glob_searchArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "glob_search",
       "outputSchema": {
         "description": "Glob file search result.",
@@ -5666,6 +5663,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "gui:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -6046,16 +6053,6 @@
         "title": "gui_actionArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "gui:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "gui_action",
       "outputSchema": {
         "properties": {
@@ -6100,6 +6097,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "gui:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -6123,16 +6130,6 @@
         ],
         "title": "gui_listArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "gui:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "gui_list",
       "outputSchema": {
@@ -6204,6 +6201,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "gui:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
@@ -6263,16 +6270,6 @@
         ],
         "title": "gui_stateArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "gui:use"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "gui_state",
       "outputSchema": {
@@ -6357,6 +6354,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -6386,17 +6394,6 @@
         ],
         "title": "hashline_editArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "hashline_edit",
       "outputSchema": {
@@ -6561,6 +6558,25 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -6601,25 +6617,6 @@
         "title": "inspect_agent_mcp_toolArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "inspect_agent_mcp_tool",
       "outputSchema": {
         "description": "One selected tool descriptor containing its complete input schema.",
@@ -6653,6 +6650,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -6744,17 +6752,6 @@
         ],
         "title": "jobArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "job",
       "outputSchema": {
@@ -7237,6 +7234,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -7266,17 +7274,6 @@
         ],
         "title": "kill_persistent_shellArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "kill_persistent_shell",
       "outputSchema": {
@@ -7336,6 +7333,25 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -7362,7 +7378,16 @@
         "title": "list_agent_mcp_serversArguments",
         "type": "object"
       },
-      "meta": {
+      "name": "list_agent_mcp_servers",
+      "outputSchema": {
+        "additionalProperties": true,
+        "description": "Configured agent MCP server status rows keyed by server name.",
+        "title": "ListAgentMcpServersOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
         "securitySchemes": [
           {
             "scopes": [
@@ -7381,15 +7406,6 @@
           }
         ]
       },
-      "name": "list_agent_mcp_servers",
-      "outputSchema": {
-        "additionalProperties": true,
-        "description": "Configured agent MCP server status rows keyed by server name.",
-        "title": "ListAgentMcpServersOutput",
-        "type": "object"
-      }
-    },
-    {
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -7410,25 +7426,6 @@
         ],
         "title": "list_agent_skillsArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "list_agent_skills",
       "outputSchema": {
@@ -7473,6 +7470,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "file:share"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -7502,17 +7510,6 @@
         ],
         "title": "list_file_linksArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "file:share"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "list_file_links",
       "outputSchema": {
@@ -7649,6 +7646,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -7690,16 +7697,6 @@
         ],
         "title": "list_filesArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "list_files",
       "outputSchema": {
@@ -7795,6 +7792,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -7818,16 +7825,6 @@
         ],
         "title": "list_persistent_shellsArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "list_persistent_shells",
       "outputSchema": {
@@ -7921,6 +7918,25 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -7990,25 +8006,6 @@
         "title": "manage_agent_mcp_serverArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "manage_agent_mcp_server",
       "outputSchema": {
         "additionalProperties": true,
@@ -8017,6 +8014,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -8046,16 +8053,6 @@
         ],
         "title": "readArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "read",
       "outputSchema": {
@@ -8378,6 +8375,25 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -8410,25 +8426,6 @@
         ],
         "title": "read_agent_skill_fileArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "read_agent_skill_file",
       "outputSchema": {
@@ -8478,6 +8475,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -8513,16 +8520,6 @@
         ],
         "title": "read_persistent_shell_outputArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "read_persistent_shell_output",
       "outputSchema": {
@@ -8575,6 +8572,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -8598,16 +8605,6 @@
         ],
         "title": "read_todosArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "read_todos",
       "outputSchema": {
@@ -8678,6 +8675,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
@@ -8724,17 +8732,6 @@
         "title": "resize_persistent_shellArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "resize_persistent_shell",
       "outputSchema": {
         "description": "Result of resizing a persistent terminal.",
@@ -8777,6 +8774,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "file:share"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -8807,17 +8815,6 @@
         "title": "revoke_file_linkArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "file:share"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "revoke_file_link",
       "outputSchema": {
         "description": "Result of revoking a public link by management id.",
@@ -8840,6 +8837,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -8956,17 +8964,6 @@
         "title": "run_python_codeArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "run_python_code",
       "outputSchema": {
         "description": "Result of writing Python code to a temporary file and executing it through shell modes.",
@@ -9015,6 +9012,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -9100,16 +9107,6 @@
         ],
         "title": "searchArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "search",
       "outputSchema": {
@@ -9430,6 +9427,25 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -9488,25 +9504,6 @@
         "title": "search_agent_mcp_toolsArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "shell:execute",
-              "git:write",
-              "file:share",
-              "executor:use",
-              "browser:use",
-              "gui:use",
-              "audit:read",
-              "audit:full"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "search_agent_mcp_tools",
       "outputSchema": {
         "description": "Small external-MCP search results without tool input schemas.",
@@ -9535,6 +9532,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -9583,16 +9590,6 @@
         ],
         "title": "secret_scanArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "secret_scan",
       "outputSchema": {
@@ -9656,6 +9653,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -9698,17 +9706,6 @@
         "title": "send_persistent_shell_inputArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "send_persistent_shell_input",
       "outputSchema": {
         "description": "Result of sending input to a persistent shell.",
@@ -9739,6 +9736,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
@@ -9770,16 +9777,6 @@
         ],
         "title": "session_change_workdirArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "session_change_workdir",
       "outputSchema": {
@@ -10276,6 +10273,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -10356,17 +10364,6 @@
         ],
         "title": "session_copyArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "session_copy",
       "outputSchema": {
@@ -10780,6 +10777,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -10809,16 +10816,6 @@
         ],
         "title": "session_endArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "session_end",
       "outputSchema": {
@@ -10887,6 +10884,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
@@ -10959,16 +10966,6 @@
         },
         "title": "session_startArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "session_start",
       "outputSchema": {
@@ -11465,6 +11462,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -11596,17 +11604,6 @@
         ],
         "title": "taskArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "task",
       "outputSchema": {
@@ -11835,6 +11832,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -11868,17 +11876,6 @@
         ],
         "title": "task_planArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "task_plan",
       "outputSchema": {
@@ -12067,6 +12064,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -12108,16 +12115,6 @@
         ],
         "title": "tree_viewArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "tree_view",
       "outputSchema": {
@@ -12225,6 +12222,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -12236,16 +12243,6 @@
         "properties": {},
         "title": "versionArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "version",
       "outputSchema": {
@@ -12283,6 +12280,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -12312,16 +12319,6 @@
         ],
         "title": "view_imageArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "view_image",
       "outputSchema": {
@@ -12359,6 +12356,22 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -12416,22 +12429,6 @@
         ],
         "title": "workspace_continuationArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "audit:read"
-            ],
-            "type": "oauth2"
-          }
-        ],
-        "ui": {
-          "visibility": [
-            "app"
-          ]
-        }
       },
       "name": "workspace_continuation",
       "outputSchema": {
@@ -12758,6 +12755,21 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -12795,21 +12807,6 @@
         ],
         "title": "workspace_endArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:execute"
-            ],
-            "type": "oauth2"
-          }
-        ],
-        "ui": {
-          "visibility": [
-            "app"
-          ]
-        }
       },
       "name": "workspace_end",
       "outputSchema": {
@@ -12878,6 +12875,25 @@
       }
     },
     {
+      "_meta": {
+        "openai/outputTemplate": "ui://workgate/live-workspace-e0a63544a7f511bf.html",
+        "openai/toolInvocation/invoked": "Live Workspace ready",
+        "openai/toolInvocation/invoking": "Opening Live Workspace",
+        "openai/widgetAccessible": true,
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "resourceUri": "ui://workgate/live-workspace-e0a63544a7f511bf.html"
+        },
+        "ui/resourceUri": "ui://workgate/live-workspace-e0a63544a7f511bf.html"
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -12917,25 +12933,6 @@
         ],
         "title": "workspace_openArguments",
         "type": "object"
-      },
-      "meta": {
-        "openai/outputTemplate": "ui://workgate/live-workspace-cf35d056e25f2971.html",
-        "openai/toolInvocation/invoked": "Live Workspace ready",
-        "openai/toolInvocation/invoking": "Opening Live Workspace",
-        "openai/widgetAccessible": true,
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "audit:read"
-            ],
-            "type": "oauth2"
-          }
-        ],
-        "ui": {
-          "resourceUri": "ui://workgate/live-workspace-cf35d056e25f2971.html"
-        },
-        "ui/resourceUri": "ui://workgate/live-workspace-cf35d056e25f2971.html"
       },
       "name": "workspace_open",
       "outputSchema": {
@@ -13628,6 +13625,16 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -13657,19 +13664,6 @@
         ],
         "title": "workspace_searchArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "type": "noauth"
-          },
-          {
-            "scopes": [
-              "shell:read"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "workspace_search",
       "outputSchema": {
@@ -13721,6 +13715,22 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
@@ -13760,22 +13770,6 @@
         ],
         "title": "workspace_snapshotArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "audit:read"
-            ],
-            "type": "oauth2"
-          }
-        ],
-        "ui": {
-          "visibility": [
-            "app"
-          ]
-        }
       },
       "name": "workspace_snapshot",
       "outputSchema": {
@@ -14468,6 +14462,23 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "audit:read"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "visibility": [
+            "app"
+          ]
+        }
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -14530,23 +14541,6 @@
         ],
         "title": "workspace_task_controlArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write",
-              "audit:read"
-            ],
-            "type": "oauth2"
-          }
-        ],
-        "ui": {
-          "visibility": [
-            "app"
-          ]
-        }
       },
       "name": "workspace_task_control",
       "outputSchema": {
@@ -15239,6 +15233,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -15281,17 +15286,6 @@
         "title": "write_fileArguments",
         "type": "object"
       },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
-      },
       "name": "write_file",
       "outputSchema": {
         "description": "File write result.",
@@ -15322,6 +15316,17 @@
       }
     },
     {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
@@ -15355,17 +15360,6 @@
         ],
         "title": "write_todosArguments",
         "type": "object"
-      },
-      "meta": {
-        "securitySchemes": [
-          {
-            "scopes": [
-              "shell:read",
-              "shell:write"
-            ],
-            "type": "oauth2"
-          }
-        ]
       },
       "name": "write_todos",
       "outputSchema": {

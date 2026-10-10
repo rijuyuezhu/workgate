@@ -1027,7 +1027,7 @@ async def test_http_transport_receives_resolved_secret_header(
     @asynccontextmanager
     async def fake_streamable(url, *, http_client):
         captured["url"] = url
-        yield object(), object(), lambda: None
+        yield object(), object()
 
     class FakeSession:
         async def __aenter__(self):
@@ -1042,7 +1042,7 @@ async def test_http_transport_receives_resolved_secret_header(
         async def list_tools(self, *, params=None):
             return SimpleNamespace(tools=[], nextCursor=None)
 
-    monkeypatch.setattr(mcp_module.httpx, "AsyncClient", FakeHttpClient)
+    monkeypatch.setattr(mcp_module.httpx2, "AsyncClient", FakeHttpClient)
     monkeypatch.setattr(mcp_module, "streamable_http_client", fake_streamable)
     monkeypatch.setattr(
         mcp_module, "ClientSession", lambda *_args: FakeSession()
@@ -1069,7 +1069,9 @@ async def test_loopback_oauth_callback_accepts_only_expected_path():
         writer.close()
         await writer.wait_closed()
 
-        assert await callback.wait() == ("abc", "state-1")
+        result = await callback.wait()
+        assert result.code == "abc"
+        assert result.state == "state-1"
         assert b"200 OK" in response
 
 

@@ -18,6 +18,7 @@ from typing import Any
 from ..audit import audit
 from ..config.executor import ExecutorConfig
 from ..errors import (
+    PublicToolValueError,
     ShellExecutableNotFoundError,
     process_start_not_found_error,
 )
@@ -169,7 +170,7 @@ def run_shell_command_timeout(
     default = max(1, config.run_shell_default_timeout_s)
     cap = max(1, config.run_shell_max_timeout_s)
     if timeout_s is not None and timeout_s > cap:
-        raise ValueError(
+        raise PublicToolValueError(
             f"timeout_s must be <= {cap} seconds for bounded shell commands; "
             "use bash async or PTY mode for long-running or streaming commands"
         )
