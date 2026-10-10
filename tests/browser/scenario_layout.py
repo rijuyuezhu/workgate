@@ -140,6 +140,17 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(
         page.locator("#file-location-executors button").first
     ).to_have_attribute("aria-current", "true")
+    file_location_style = page.locator(
+        "#file-location-executors button"
+    ).first.evaluate(
+        """el => {
+            const style = getComputedStyle(el);
+            const dot = getComputedStyle(el.querySelector('.file-location-dot'));
+            return [style.padding, style.gap, style.borderRadius,
+                    style.backgroundColor, style.color, dot.backgroundColor,
+                    el.getBoundingClientRect().height];
+        }"""
+    )
     expect(page.locator(".file-column-heading span")).to_have_count(3)
     page.keyboard.press("Control+l")
     expect(page.locator("#file-path")).to_be_focused()
@@ -174,6 +185,18 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(
         page.locator("#terminal-executor-locations button").first
     ).to_have_attribute("aria-current", "true")
+    terminal_location_style = page.locator(
+        "#terminal-executor-locations button"
+    ).first.evaluate(
+        """el => {
+            const style = getComputedStyle(el);
+            const dot = getComputedStyle(el.querySelector('.terminal-location-dot'));
+            return [style.padding, style.gap, style.borderRadius,
+                    style.backgroundColor, style.color, dot.backgroundColor,
+                    el.getBoundingClientRect().height];
+        }"""
+    )
+    assert file_location_style == terminal_location_style
     assert (
         page.evaluate(
             "getComputedStyle(document.querySelector('.dashboard-health-banner')).borderRadius"
@@ -191,6 +214,30 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             page.screenshot(
                 path=str(harness.artifacts / f"webui-{view}-desktop.png")
             )
+
+    # Selection styling is shared; content grids within each list remain distinct.
+    list_styles = page.evaluate("""() => {
+        const cases = [
+            ['#task-list', 'session-entry task-entry'],
+            ['#session-list', 'session-entry'],
+            ['#audit-list', 'audit-entry'],
+            ['#file-list', 'file-entry'],
+            ['#terminal-list', 'terminal-session'],
+        ];
+        return cases.map(([container, classes]) => {
+            const node = document.createElement('button');
+            node.className = classes;
+            node.setAttribute('aria-current', 'true');
+            document.querySelector(container).append(node);
+            const css = getComputedStyle(node);
+            const result = [css.backgroundColor, css.borderLeftColor, css.boxShadow];
+            node.remove();
+            return result;
+        });
+    }""")
+    assert len(list_styles) == 5
+    assert all(style == list_styles[0] for style in list_styles)
+    assert list_styles[0][0] == "rgb(241, 238, 255)"
 
     page.locator(".brand-block").click()
     expect(page.locator("#page-title")).to_have_text("Overview")

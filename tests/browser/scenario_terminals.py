@@ -142,10 +142,10 @@ def run_terminals(harness: BrowserHarness) -> None:
         page.locator('.terminal-session[aria-current="true"]')
     ).to_be_visible()
     expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
-        "background-color", "rgb(240, 237, 255)"
+        "background-color", "rgb(241, 238, 255)"
     )
     expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
-        "color", "rgb(82, 69, 188)"
+        "color", "rgb(81, 67, 181)"
     )
     expect(page.locator(".terminal-session-icon").first).to_be_visible()
     _send_terminal(

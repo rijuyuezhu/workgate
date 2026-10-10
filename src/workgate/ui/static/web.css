@@ -283,12 +283,6 @@ h2 {
   white-space: nowrap;
 }
 
-.terminal-session[aria-current="true"] {
-  border-color: #bcb4ef;
-  background: var(--accent-soft);
-  color: #4f43c3;
-}
-
 .terminal-console {
   min-width: 0;
   border: 1px solid rgba(151, 184, 202, 0.12);
@@ -499,15 +493,6 @@ h2 {
   text-align: left;
 }
 
-.file-entry:hover {
-  background: var(--accent-soft);
-}
-
-.file-entry[aria-current="true"] {
-  border-color: #bcb4ef;
-  background: var(--accent-soft);
-}
-
 .file-entry-name {
   overflow: hidden;
   font-family: var(--font-mono);
@@ -699,15 +684,6 @@ h2 {
   background: var(--panel);
   padding: 0.75rem;
   text-align: left;
-}
-
-.session-entry:hover {
-  background: var(--accent-soft);
-}
-
-.session-entry[aria-current="true"] {
-  border-color: #bcb4ef;
-  background: var(--accent-soft);
 }
 
 .session-entry strong,
@@ -1057,15 +1033,6 @@ h2 {
   background: var(--panel);
   padding: 0.65rem;
   text-align: left;
-}
-
-.audit-entry:hover {
-  background: var(--accent-soft);
-}
-
-.audit-entry[aria-current="true"] {
-  border-color: #bcb4ef;
-  background: var(--accent-soft);
 }
 
 .audit-entry-title,
@@ -2358,12 +2325,30 @@ input[type=checkbox] { accent-color: #6759e7; }
   border-color: #ddd8fc;
 }
 .file-locations #file-location-executors { display: grid; gap: 4px; margin-bottom: 18px; }
-.file-locations .file-location-row { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; padding: 9px 7px; border: 0; box-shadow: none; text-align: left; background: transparent; color: #576074; }
-.file-locations .file-location-row[aria-current="true"] { background: #eeecff; color: #584ac7; }
-.file-locations .file-location-row:disabled { opacity: .7; }
-.file-location-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-location-dot { display: block; flex: 0 0 7px; height: 7px; width: 7px; border-radius: 50%; background: #a1a8b4; }
-.file-location-dot.online { background: #28af7e; }
+/* One executor-location control for Files and Terminals. */
+:is(.file-location-row, .terminal-location-row) {
+  display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%;
+  padding: 9px 8px; border: 0; border-radius: 6px; box-shadow: none;
+  color: #576074; background: transparent; text-align: left;
+}
+:is(.file-location-row, .terminal-location-row):not(:disabled):not([aria-current="true"]):hover {
+  color: #584ac7; background: #faf9ff;
+}
+:is(.file-location-row, .terminal-location-row)[aria-current="true"] {
+  color: #584ac7; background: #eeecff;
+}
+:is(.file-location-row, .terminal-location-row):focus-visible {
+  outline: 2px solid #7668dc; outline-offset: -2px;
+}
+:is(.file-location-row, .terminal-location-row):disabled { opacity: .65; }
+:is(.file-location-row, .terminal-location-row) span:last-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:is(.file-location-dot, .terminal-location-dot) {
+  display: block; flex: 0 0 7px; width: 7px; height: 7px;
+  border-radius: 50%; background: #a1a8b4;
+}
+:is(.file-location-dot, .terminal-location-dot).online { background: #28af7e; }
 .file-shortcuts { display: grid; gap: 7px; }
 .file-shortcuts button { display: flex; align-items: center; gap: 7px; }
 .file-browser { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
@@ -2425,7 +2410,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 }
 .terminal-list .empty-state { color: #8b95a6; background: transparent; border-color: #e2e5ec; }
 .terminal-list .terminal-session { color: #455168; background: #fff; border-color: #e5e7ef; }
-.terminal-list .terminal-session[aria-current="true"] { color: #5245bc; background: #f0edff; border-color: #cfc8f6; box-shadow: inset 3px 0 #7668dc; }
+.terminal-list .terminal-session[aria-current="true"] { color: #5143b5; }
 .terminal-console { min-height: 558px; padding: 12px; border: 0; border-radius: 0; }
 .terminal-xterm, #terminal-output { min-height: 320px; height: min(48vh, 480px); }
 
@@ -2470,14 +2455,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 .executor-row, .audit-call-panel { border-radius: 6px; }
 button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { border-radius: 5px; }
 .terminal-location-heading { padding: 12px 12px 5px; color: #8c95a5; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-.terminal-executor-locations { display: grid; gap: 3px; padding: 4px 9px 11px; border-bottom: 1px solid var(--line); }
-.terminal-location-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 8px; border: 0; color: #5b677a; background: transparent; text-align: left; box-shadow: none; }
-.terminal-location-row[aria-current="true"] { color: #5547bc; background: #efecff; }
-.terminal-location-row:hover:not(:disabled) { color: #5547bc; background: #f3f1ff; }
-.terminal-location-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.terminal-location-dot { flex: 0 0 7px; height: 7px; border-radius: 50%; background: #9aa6b5; }
-.terminal-location-dot.online { background: #35b78e; }
-.terminal-executor-locations .terminal-location-row:disabled { opacity: .6; }
+.terminal-executor-locations { display: grid; gap: 4px; padding: 4px 9px 11px; border-bottom: 1px solid var(--line); }
 .terminal-session { display: flex; align-items: center; gap: 8px; }
 .terminal-session-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
 .terminal-list .terminal-session { font-size: 12px; }
@@ -2622,12 +2600,9 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 /* Task titles are prose; status is a compact, semantic visual marker. */
 .tasks-layout > .session-list { gap: 8px; }
-.tasks-layout > .session-list .task-entry {
+.task-entry {
   gap: 7px; padding: 12px;
   border: 1px solid #e3e7ef; border-radius: 6px; background: #fff;
-}
-.tasks-layout > .session-list .task-entry:not([aria-current="true"]):hover {
-  border-color: #cac3ee; background: #faf9ff;
 }
 .task-entry-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
 .task-entry-heading strong {
@@ -2645,12 +2620,16 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .task-entry-status[data-status="cancelled"] { color: #a64850; background: #fce8ed; }
 .tasks-layout > .session-list .task-entry .session-entry-meta { color: #8590a0; font-size: 11px; }
 
-/* One quiet selection language across Task, Session and Audit lists. */
-.tasks-layout > .session-list .task-entry[aria-current="true"],
-.task-sessions-layout .session-entry[aria-current="true"],
-.task-sessions-main .audit-entry[aria-current="true"] {
+/* Shared interaction feedback; preserve each list's own content layout. */
+:is(.task-entry, .session-entry, .audit-entry, .file-entry, .terminal-session):not([aria-current="true"]):hover {
+  border-color: #cac3ee; background: #faf9ff;
+}
+:is(.task-entry, .session-entry, .audit-entry, .file-entry, .terminal-session)[aria-current="true"] {
   border-color: #d8d0fc; background: #f1eeff;
   box-shadow: inset 3px 0 #7668dc;
+}
+:is(.task-entry, .session-entry, .audit-entry, .file-entry, .terminal-session):focus-visible {
+  outline: 2px solid #7668dc; outline-offset: -2px;
 }
 .tasks-layout > .session-list .task-entry[aria-current="true"] strong,
 .task-sessions-layout .session-entry[aria-current="true"] strong,
