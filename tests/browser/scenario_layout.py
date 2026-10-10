@@ -91,6 +91,29 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(page.locator("#file-filter")).to_be_focused()
     harness.navigate("terminals")
     expect(page.locator(".executor-select")).to_be_hidden()
+    expect(page.locator("#terminal-create > .control-icon")).to_be_visible()
+    expect(page.locator("#terminal-reconnect > .control-icon")).to_have_count(1)
+    assert (
+        page.locator(".terminal-heading").evaluate(
+            "node => getComputedStyle(node).backgroundColor"
+        )
+        == "rgb(255, 255, 255)"
+    )
+    assert (
+        page.locator(".terminal-rail").evaluate(
+            "node => getComputedStyle(node).backgroundColor"
+        )
+        == "rgb(250, 251, 254)"
+    )
+    assert (
+        page.locator("#terminal-output").evaluate(
+            "node => getComputedStyle(node).backgroundColor"
+        )
+        == "rgb(7, 17, 31)"
+    )
+    assert "JetBrains Mono" in page.locator("#terminal-output").evaluate(
+        "node => getComputedStyle(node).fontFamily"
+    )
     expect(page.locator("#terminal-executor-locations button")).to_have_count(1)
     expect(
         page.locator("#terminal-executor-locations button").first

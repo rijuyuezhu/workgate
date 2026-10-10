@@ -149,9 +149,9 @@ export function createTerminalController({
       cursorBlink: true,
       cursorStyle: "block",
       disableStdin: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontFamily: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
       fontSize: 13,
-      lineHeight: 1.15,
+      lineHeight: 1.2,
       linkHandler: {
         activate: () => {},
         allowNonHttpProtocols: false,
@@ -413,6 +413,14 @@ export function createTerminalController({
       button.type = "button";
       button.className = "terminal-session";
       button.textContent = text(session.name, shellId);
+      const terminalIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      terminalIcon.setAttribute("class", "terminal-session-icon");
+      terminalIcon.setAttribute("viewBox", "0 0 24 24");
+      terminalIcon.setAttribute("aria-hidden", "true");
+      const terminalPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      terminalPath.setAttribute("d", "M3 4h18v16H3z m4 5 3 3-3 3 M13 16h4");
+      terminalIcon.append(terminalPath);
+      button.prepend(terminalIcon);
       const details = [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean);
       button.title = details.join(" · ");
       button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");

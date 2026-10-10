@@ -302,7 +302,7 @@
           </label>
           <form id="terminal-start-form" class="terminal-start-form">
             <input id="terminal-name" name="terminal-name" type="text" maxlength="64" placeholder="Optional shell name" autocomplete="off" spellcheck="false">
-            <button type="submit">New terminal</button>
+            <button id="terminal-create" type="submit" class="primary-action">New terminal</button>
           </form>
           <button id="terminal-kill" type="button" disabled>Kill</button>
         </div>
@@ -392,8 +392,8 @@
           <div class="file-locations-heading"><h3>Locations</h3><span id="file-location-count">0</span></div>
           <nav id="file-location-executors" aria-label="Executor locations"></nav>
           <div class="file-shortcuts">
-            <button id="file-workspace-shortcut" type="button">⌂ <span>Workspace</span></button>
-            <button id="file-parent-shortcut" type="button">↑ <span>Parent folder</span></button>
+            <button id="file-workspace-shortcut" type="button"><span>Workspace</span></button>
+            <button id="file-parent-shortcut" type="button"><span>Parent folder</span></button>
           </div>
         </aside>
         <section class="file-browser">

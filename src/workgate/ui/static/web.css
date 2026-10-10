@@ -19,6 +19,7 @@
   --blue: #3577db;
   --blue-soft: #eaf2ff;
   --shadow: 0 1px 2px rgba(16,24,40,.035), 0 8px 28px rgba(16,24,40,.045);
+  --font-mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 * { box-sizing: border-box; }
 
@@ -368,7 +369,7 @@ h2 {
   color: var(--terminal-foreground);
   background: var(--terminal-background);
   padding: 0.9rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   line-height: 1.45;
   white-space: pre;
@@ -489,7 +490,7 @@ h2 {
 
 .file-executor-control select {
   min-height: 2.55rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .file-path-form {
@@ -499,7 +500,7 @@ h2 {
 
 .file-path-form input {
   flex: 1;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .file-actions {
@@ -571,7 +572,7 @@ h2 {
 
 .file-entry-name {
   overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -638,7 +639,7 @@ h2 {
   margin: 0;
   overflow: auto;
   color: #394255;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.48;
   white-space: pre-wrap;
@@ -671,7 +672,7 @@ h2 {
   width: 100%;
   min-height: 24rem;
   resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   line-height: 1.48;
   tab-size: 2;
@@ -805,7 +806,7 @@ h2 {
 }
 
 .session-entry strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
 }
 
@@ -859,7 +860,7 @@ h2 {
   margin: 0.3rem 0 0;
   overflow: hidden;
   color: #394255;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1043,7 +1044,7 @@ h2 {
   max-width: 100%;
   overflow: hidden;
   color: #718697;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.7rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1163,7 +1164,7 @@ h2 {
 }
 
 .audit-entry-title {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -1429,7 +1430,7 @@ h2 {
   margin: 0.25rem 0 0;
   overflow: hidden;
   color: #394255;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -1618,7 +1619,7 @@ h2 {
 .executor-row-version {
   max-width: 8rem;
   color: #6759e7;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .executor-details {
@@ -1666,7 +1667,7 @@ h2 {
   margin: 0.25rem 0 0;
   overflow-wrap: anywhere;
   color: #394255;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.75rem;
   line-height: 1.45;
 }
@@ -2080,7 +2081,7 @@ h2 {
   background: transparent;
   padding: 0;
   color: #394255;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   line-height: 1.48;
   white-space: pre-wrap;
@@ -2231,13 +2232,13 @@ input:focus, select:focus, textarea:focus { border-color: #8f84ed; }
 input[type=checkbox] { accent-color: #6759e7; }
 [hidden] { display: none !important; }
 .dashboard-card, .dashboard-section, .executor-details, .file-preview, .terminal-session, .todo-row, .session-entry, .audit-detail, .audit-entry { box-shadow: none; }
-/* Dark terminal canvas is a deliberate upstream v5 convention. */
-.terminal-console { color:#e7edf8;background:#111a2a; border-color:#263249; }
+/* Keep a genuine dark PTY canvas, but use the light app chrome around it. */
+.terminal-console { color:#273248;background:#fff; border-color:var(--line); }
 .terminal-xterm { background:#080d18; border-color:#263249; }
-.terminal-console button:not(.nav-item), .terminal-keyboard button { color:#d8e0ed; background:#182338; border:1px solid #32415c; }
-.terminal-console button:not(.nav-item):hover:not(:disabled), .terminal-keyboard button:hover:not(:disabled) { color:#fff;background:#2b3154; }
-.terminal-console .terminal-feedback, .terminal-console .muted { color:#98a5b9; }
-.terminal-input-form input { background:#080d18; color:#e5ebf5; border-color:#2e3a50; }
+.terminal-console button:not(.nav-item), .terminal-keyboard button { color:#5c6678; background:#fff; border:1px solid #dfe3eb; }
+.terminal-console button:not(.nav-item):hover:not(:disabled), .terminal-keyboard button:hover:not(:disabled) { color:#594bc1;background:#f6f4ff; }
+.terminal-console .terminal-feedback, .terminal-console .muted { color:#7a8496; }
+.terminal-input-form input { background:#fff; color:#273248; border-color:#dfe3eb; }
 .terminal-xterm .xterm-viewport { scrollbar-width:thin;scrollbar-color:#4a5872 #0b1220; }
 .terminal-xterm .xterm-viewport::-webkit-scrollbar { width:9px; }
 .terminal-xterm .xterm-viewport::-webkit-scrollbar-thumb { background:#4a5872;border-radius:7px; }
@@ -2567,48 +2568,50 @@ input[type=checkbox] { accent-color: #6759e7; }
 .file-browser .file-list { flex: 1 1 auto; max-height: 640px; border: none; border-radius: 0; padding: 0; }
 .file-preview { margin: 0; border: none; border-radius: 0; background: white; backdrop-filter: none; }
 
-/* Upstream dark terminal workspace with native Workgate terminal controls. */
+/* Workgate uses light controls with a dark terminal buffer, not a dark page. */
 .terminal-panel { padding: 0; border: 0; background: transparent; box-shadow: none; }
 .terminal-heading {
   margin-bottom: 0;
   padding: 12px 14px;
   gap: 14px;
-  border-radius: 11px 11px 0 0;
-  color: white;
-  background: #182338;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: #273248;
+  background: #fff;
 }
-.terminal-heading h2 { color: white; }
-.terminal-heading .executor-select span { color: #a7b4c8; }
-.terminal-heading button { color: #e2e8f3; background: #24324b; border-color: #3a4b68; }
-.terminal-heading input, .terminal-heading select { color: #edf2fa; background: #111b2d; border-color: #34445f; }
+.terminal-heading h2 { color: #273248; }
+.terminal-heading .executor-select span { color: #7d889a; }
+.terminal-heading button { color: #596578; background: #fff; border-color: #dfe3eb; }
+.terminal-heading input, .terminal-heading select { color: #394255; background: #fff; border-color: #dfe3eb; }
 .terminal-layout {
   grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   gap: 0;
   min-height: 560px;
   margin-top: 0;
   padding: 0;
-  border: 1px solid #263249;
-  border-radius: 0 0 11px 11px;
-  background: #0b1423;
+  border: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
+  background: #fff;
 }
-.terminal-rail { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid #28354d; background: #111b2b; }
-.terminal-rail-header { display: flex; align-items: center; gap: 7px; padding: 12px; color: #e0e7f5; border-bottom: 1px solid #28354d; font-size: 12px; }
-.terminal-rail-header > span { margin-left: auto; color: #9aa6b9; }
+.terminal-rail { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); background: #fafbfe; }
+.terminal-rail-header { display: flex; align-items: center; gap: 7px; padding: 12px; color: #3d485b; border-bottom: 1px solid var(--line); font-size: 12px; }
+.terminal-rail-header > span { margin-left: auto; color: #8d97a7; }
 .terminal-rail-header > div { display: flex; gap: 3px; }
-.terminal-rail-header button { padding: 3px 7px; border-color: #344159; color: #b5c1d3; background: #1a2940; }
-.terminal-session-search { display: flex; align-items: center; gap: 7px; margin: 12px 10px 4px; padding: 4px 8px; border: 1px solid #344159; border-radius: 7px; color: #9aa6b9; }
-.terminal-session-search input { width: 100%; min-width: 0; padding: 3px; color: #e6ebf4; background: transparent; border: 0; box-shadow: none; font-size: 11px; }
+.terminal-rail-header button { padding: 3px 7px; border-color: var(--line); color: #647189; background: #fff; }
+.terminal-session-search { display: flex; align-items: center; gap: 7px; margin: 12px 10px 4px; padding: 4px 8px; border: 1px solid #dfe3eb; border-radius: 6px; color: #8791a3; background: #fff; }
+.terminal-session-search input { width: 100%; min-width: 0; padding: 3px; color: #374155; background: transparent; border: 0; box-shadow: none; font-size: 11px; }
 .terminal-session-search input:focus { outline: none; }
 .terminal-list {
   display: block;
   padding: 10px;
   border: 0;
-  background: #111b2b;
-  color: #dfe7f5;
+  background: #fafbfe;
+  color: #384459;
 }
-.terminal-list .empty-state { color: #8695ad; background: transparent; border-color: #344159; }
-.terminal-list .terminal-session { color: #dfe7f5; background: #1a2940; border-color: #344159; }
-.terminal-list .terminal-session[aria-current="true"] { color: #fff; background: #2e3654; border-color: #7267d8; }
+.terminal-list .empty-state { color: #8b95a6; background: transparent; border-color: #e2e5ec; }
+.terminal-list .terminal-session { color: #455168; background: #fff; border-color: #e5e7ef; }
+.terminal-list .terminal-session[aria-current="true"] { color: #5245bc; background: #f0edff; border-color: #cfc8f6; box-shadow: inset 3px 0 #7668dc; }
 .terminal-console { min-height: 558px; padding: 12px; border: 0; border-radius: 0; }
 .terminal-xterm, #terminal-output { min-height: 320px; height: min(48vh, 480px); }
 
@@ -2655,15 +2658,26 @@ input[type=checkbox] { accent-color: #6759e7; }
 button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { border-radius: 5px; }
 .sidebar-footer { justify-content: flex-start; color: #657187; font-size: 11px; }
 .sidebar-footer small { margin: 0; font-size: 11px; color: #737f93; }
-.terminal-location-heading { padding: 12px 12px 5px; color: #8e9aaf; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-.terminal-executor-locations { display: grid; gap: 3px; padding: 4px 9px 11px; border-bottom: 1px solid #28354d; }
-.terminal-location-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 8px; border: 0; color: #abb8ca; background: transparent; text-align: left; box-shadow: none; }
-.terminal-location-row[aria-current="true"] { color: white; background: #263650; }
-.terminal-location-row:hover:not(:disabled) { color: white; background: #29384e; }
+.terminal-location-heading { padding: 12px 12px 5px; color: #8c95a5; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.terminal-executor-locations { display: grid; gap: 3px; padding: 4px 9px 11px; border-bottom: 1px solid var(--line); }
+.terminal-location-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 8px; border: 0; color: #5b677a; background: transparent; text-align: left; box-shadow: none; }
+.terminal-location-row[aria-current="true"] { color: #5547bc; background: #efecff; }
+.terminal-location-row:hover:not(:disabled) { color: #5547bc; background: #f3f1ff; }
 .terminal-location-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.terminal-location-dot { flex: 0 0 7px; height: 7px; border-radius: 50%; background: #78859a; }
+.terminal-location-dot { flex: 0 0 7px; height: 7px; border-radius: 50%; background: #9aa6b5; }
 .terminal-location-dot.online { background: #35b78e; }
 .terminal-executor-locations .terminal-location-row:disabled { opacity: .6; }
+.terminal-session { display: flex; align-items: center; gap: 8px; }
+.terminal-session-icon { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.terminal-list .terminal-session { font-size: 12px; }
+.terminal-console .terminal-keyboard { padding-top: 10px; border-top: 1px solid var(--line); }
+.terminal-heading button.primary-action { color: #fff; background: #6759e7; border-color: #5e50d6; }
+.terminal-heading button.primary-action:hover:not(:disabled) { color: #fff; background: #5e50d6; }
+.terminal-rail .terminal-session-search input { box-shadow: none; border: 0; background: transparent; }
+/* Icon + label: clarity without creating an additional visual hierarchy. */
+button:has(> .control-icon) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.control-icon { flex: 0 0 14px; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.file-browser .file-entry-icon { width: 23px; height: 23px; padding: 4px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
 .dashboard-machine-row[aria-current="true"] { background: #f1efff; box-shadow: inset 3px 0 #7567ef; }
 /* Desktop Locations owns executor switching; mobile retains a compact chooser. */
 .file-toolbar .file-executor-control, .file-toolbar #file-up { display: none; }
@@ -2677,7 +2691,7 @@ button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { bo
 .audit-value-toolbar button { border-radius: 4px; padding: 4px 8px; font-size: 11px; box-shadow: none; }
 .audit-value-toolbar button[aria-pressed="true"] { color: #5547bc; border-color: #d7d1f7; background: #f1efff; }
 .audit-value-content { min-width: 0; overflow: auto; }
-.audit-tree-branch { min-width: 0; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.audit-tree-branch { min-width: 0; font: 12px/1.6 var(--font-mono); }
 .audit-tree-branch > summary { color: #5f6680; cursor: pointer; user-select: none; }
 .audit-tree-branch > summary::marker { color: #7d8498; }
 .audit-tree-children { margin-left: 9px; padding-left: 12px; border-left: 1px solid #e7e9ef; }

@@ -301,6 +301,49 @@ void (async () => {
     tokenInput: document.getElementById("access-token"),
     version: document.getElementById("version"),
   };
+
+  // Compact inline line icons for commonly used actions; no font or icon package required.
+  const iconPaths = {
+    refresh: "M20 11a8 8 0 0 0-14.6-4.6L3 9m0-5v5h5M4 13a8 8 0 0 0 14.6 4.6L21 15m0 5v-5h-5",
+    plus: "M12 5v14M5 12h14",
+    terminal: "m4 7 5 5-5 5M11 17h9M3 4h18v16H3z",
+    folder: "M3 7h7l2 2h9v11H3zM3 7V5h7l2 2",
+    file: "M6 3h8l4 4v14H6zM14 3v5h5",
+    upload: "M12 16V3m-5 5 5-5 5 5M4 16v4h16v-4",
+    copy: "M8 7h12v14H8zM4 17H3V3h13v2",
+    paste: "M8 4h2a2 2 0 0 1 4 0h2v3H8zM6 5H4v16h16V5h-2",
+    edit: "m4 16-1 5 5-1L20 8l-4-4zM13 7l4 4",
+    trash: "M4 7h16M9 7V4h6v3m-9 0 1 14h10l1-14M10 11v6M14 11v6",
+    save: "M4 3h13l4 4v14H4zM8 3v6h9V3M8 21v-8h9v8",
+    up: "M12 20V4m-6 6 6-6 6 6",
+    retry: "M20 7v5h-5M4 17v-5h5M5 9a8 8 0 0 1 14-2l1 5M19 15a8 8 0 0 1-14 2l-1-5",
+    scissors: "M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm0 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM8 8l13 13M8 16 21 3",
+    link: "M9 15 15 9M8 7h-2a5 5 0 0 0 0 10h4m4-10h4a5 5 0 0 1 0 10h-2",
+  };
+  const controlIcons = {
+    refresh: "refresh", "dashboard-refresh": "refresh", "tasks-refresh": "refresh",
+    "executor-refresh": "refresh", "audit-refresh": "refresh", "session-audit-refresh": "refresh",
+    "file-refresh": "refresh", "todo-refresh": "refresh", "terminal-reconnect": "retry",
+    "executor-pair-open": "plus", "terminal-create": "terminal", "terminal-kill": "trash", "terminal-copy": "copy",
+    "terminal-paste": "paste", "file-new": "file", "file-new-folder": "folder",
+    "file-upload": "upload", "file-open": "link", "file-edit": "edit",
+    "file-copy": "copy", "file-move": "scissors", "file-paste": "paste",
+    "file-rename": "edit", "file-delete": "trash", "file-up": "up",
+    "file-workspace-shortcut": "folder", "file-parent-shortcut": "up",
+    "todo-add": "plus", "todo-save": "save",
+  };
+  for (const [id, name] of Object.entries(controlIcons)) {
+    const button = document.getElementById(id);
+    if (!button) continue;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("class", "control-icon");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", iconPaths[name]);
+    svg.append(path);
+    button.prepend(svg);
+  }
   function text(value, fallback = "—") {
     if (value === null || value === undefined || value === "") return fallback;
     return String(value);

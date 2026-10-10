@@ -320,10 +320,17 @@ export function createFilesController({
 
       const label = document.createElement("span");
       label.className = "file-entry-name";
-      const icon = document.createElement("span");
-      icon.className = `file-entry-icon file-entry-icon-${entry.type === "dir" ? "dir" : entry.type === "link" ? "link" : "file"}`;
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("class", `file-entry-icon file-entry-icon-${entry.type === "dir" ? "dir" : entry.type === "link" ? "link" : "file"}`);
       icon.setAttribute("aria-hidden", "true");
-      icon.textContent = entry.type === "dir" ? "▰" : entry.type === "link" ? "↗" : "▤";
+      icon.setAttribute("viewBox", "0 0 24 24");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", entry.type === "dir"
+        ? "M3 7h7l2 2h9v11H3z M3 7V5h7l2 2"
+        : entry.type === "link"
+          ? "M9 15 15 9 M8 7H6a5 5 0 0 0 0 10h4 M14 7h4a5 5 0 0 1 0 10h-2"
+          : "M6 3h8l4 4v14H6z M14 3v5h5");
+      icon.append(path);
       label.append(icon, document.createTextNode(text(entry.name, entry.path)));
       const detail = document.createElement("span");
       detail.className = "file-entry-detail";
