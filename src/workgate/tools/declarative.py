@@ -14,7 +14,11 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import TypeAdapter, ValidationError
 
 from ..config.control import ControlConfig, get_control_config
-from ..errors import PublicToolError, SessionTerminationRequestedError
+from ..errors import (
+    PublicToolError,
+    SessionTerminationRequestedError,
+    ShellExecutableNotFoundError,
+)
 from ..oauth.core.context import (
     MissingOAuthScopeError,
     require_oauth_scopes,
@@ -243,7 +247,9 @@ class ToolDefinition:
             except Exception as exc:
                 if self.mcp_error_handler is not None:
                     return self.mcp_error_handler(exc, args, kwargs)
-                if isinstance(exc, PublicToolError) or (
+                if isinstance(
+                    exc, (PublicToolError, ShellExecutableNotFoundError)
+                ) or (
                     self.name == "call_agent_mcp_tool"
                     and isinstance(exc, ValueError)
                 ):

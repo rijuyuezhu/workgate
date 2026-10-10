@@ -7,6 +7,7 @@ from functools import wraps
 from typing import Any, Protocol, cast
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult
 
 from ...audit import (
@@ -139,7 +140,7 @@ def _mcp_tool_audit_watchdog_wrapper(
                 task_ids=task_ids,
             )
             if payload is None:
-                raise exc from None
+                raise ToolError(str(exc)) from None
             return payload
         except BaseException as exc:
             duration_ms = int((time.time() - start) * 1000)
