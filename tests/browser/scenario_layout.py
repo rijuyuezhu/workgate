@@ -27,6 +27,20 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     assert page.locator(".tasks-summary > div").count() == 4
     assert page.locator(".file-layout > *").count() == 3
     assert page.locator(".executor-summary > article").count() == 4
+    expect(page.locator(".dashboard-health-banner")).to_have_attribute(
+        "data-health", "healthy"
+    )
+    expect(
+        page.locator(".dashboard-status-circle .dashboard-health-check")
+    ).to_be_visible()
+    expect(page.locator("#dashboard-health-card")).to_have_css(
+        "background-color", "rgba(0, 0, 0, 0)"
+    )
+    expect(page.locator(".dashboard-metric-icon svg")).to_have_count(4)
+    expect(page.locator(".dashboard-live").first).to_have_text("Live")
+    expect(page.locator("#dashboard-network-down")).to_be_visible()
+    expect(page.locator("#dashboard-network-up")).to_be_visible()
+    expect(page.locator("#dashboard-cpu-foot-cores")).to_contain_text("cores")
     expect(page.locator(".token-row")).to_have_css("display", "flex")
     # Navigation icon strokes must not leak into dashboard data SVGs.
     expect(page.locator('.nav-item[data-view="overview"] svg')).to_have_css(
@@ -37,6 +51,37 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     assert trend_bounds and trend_bounds["width"] > 80
     # Never claim authentication or a live Control connection from static chrome.
     expect(page.locator(".status-orb, .controller-meta")).to_have_count(0)
+
+    page.get_by_role("button", name="Manage executors →").click()
+    expect(page.locator("#page-location")).to_have_text("Executors")
+    harness.navigate("overview")
+    page.locator("#dashboard-machine-list button").first.click()
+    expect(page.locator("#page-location")).to_have_text("Executors")
+    expect(page.locator(".executor-row-selected")).to_be_visible()
+    harness.navigate("overview")
+    page.get_by_role("button", name="Open audit activity →").click()
+    expect(page.locator("#page-location")).to_have_text("Audit")
+    page.locator("#audit-advanced-toggle").click()
+    expect(page.locator("#audit-advanced")).to_be_visible()
+    page.locator("#audit-advanced-toggle").click()
+    expect(page.locator("#audit-advanced")).to_be_hidden()
+    page.locator("#audit-live-toggle").click()
+    expect(page.locator("#audit-live-toggle")).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    page.locator("#audit-live-toggle").click()
+    expect(page.locator("#audit-live-toggle")).to_have_attribute(
+        "aria-pressed", "false"
+    )
+    expect(page.locator("#audit-time")).to_have_value("86400")
+
+    harness.navigate("files")
+    expect(page.locator("#file-location-executors button")).to_have_count(1)
+    expect(page.locator(".file-column-heading span")).to_have_count(3)
+    page.keyboard.press("Control+l")
+    expect(page.locator("#file-path")).to_be_focused()
+    page.keyboard.press("Control+f")
+    expect(page.locator("#file-filter")).to_be_focused()
 
     for view in VIEWS:
         harness.navigate(view)

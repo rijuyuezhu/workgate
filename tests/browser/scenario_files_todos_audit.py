@@ -233,6 +233,18 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     assert session_shell["payload"]["mode"] == "pty"
     shell_id = str(session_shell["payload"]["result"]["shell_id"])
     harness.track_terminal(harness.executor_id, shell_id)
+    harness.navigate("tasks")
+    page.locator("#tasks-refresh").click()
+    harness.navigate("overview")
+    dashboard_task = page.locator(
+        f'#dashboard-task-list [data-task-id="{task_id}"]'
+    )
+    expect(dashboard_task).to_be_visible()
+    dashboard_task.click()
+    expect(page.locator("#page-location")).to_have_text("Tasks")
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
+    ).to_have_attribute("aria-current", "true")
     page.goto(
         f"{harness.base_url}/ui?task_id={task_id}&session_id={session_id}#tasks",
         wait_until="domcontentloaded",

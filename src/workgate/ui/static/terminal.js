@@ -370,6 +370,10 @@ export function createTerminalController({
     }
 
     elements.terminalList.replaceChildren();
+    document.getElementById("terminal-count").textContent = String(controllerState.terminalSessions.length);
+    const activeIndex = controllerState.terminalSessions.findIndex((item) => item.shell_id === controllerState.selectedShellId);
+    document.getElementById("terminal-previous").disabled = activeIndex <= 0;
+    document.getElementById("terminal-next").disabled = activeIndex < 0 || activeIndex >= controllerState.terminalSessions.length - 1;
     if (!controllerState.terminalSessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
@@ -379,9 +383,10 @@ export function createTerminalController({
       return;
     }
 
+    const filter = document.getElementById("terminal-search").value.trim().toLocaleLowerCase();
     for (const session of controllerState.terminalSessions) {
       const shellId = text(session.shell_id, "");
-      if (!shellId) continue;
+      if (!shellId || (filter && !`${session.name || ""} ${shellId}`.toLocaleLowerCase().includes(filter))) continue;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "terminal-session";
@@ -391,6 +396,12 @@ export function createTerminalController({
       button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");
       button.addEventListener("click", () => connectTerminal(shellId));
       elements.terminalList.append(button);
+    }
+    if (!elements.terminalList.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No matching sessions.";
+      elements.terminalList.append(empty);
     }
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
@@ -713,6 +724,16 @@ export function createTerminalController({
     resetTerminalWorkspace(elements.terminalExecutor.value);
     refreshTerminalsInBackground({ force: true });
   });
+  document.getElementById("terminal-search").addEventListener("input", () => {
+    renderTerminalList({ shells: controllerState.terminalSessions });
+  });
+  for (const [id, delta] of [["terminal-previous", -1], ["terminal-next", 1]]) {
+    document.getElementById(id).addEventListener("click", () => {
+      const index = controllerState.terminalSessions.findIndex((item) => item.shell_id === controllerState.selectedShellId);
+      const next = controllerState.terminalSessions[index + delta];
+      if (next) void connectTerminal(next.shell_id);
+    });
+  }
 
   }
 

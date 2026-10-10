@@ -80,8 +80,16 @@
           <span id="dashboard-state" class="muted">Not loaded</span>
         </div>
       </div>
-      <div class="dashboard-health-banner" aria-live="polite">
-<article id="dashboard-health-card" class="dashboard-card dashboard-health-card">
+      <div class="dashboard-health-banner" data-health="unknown" aria-live="polite">
+        <div class="dashboard-status-illustration" aria-hidden="true">
+          <div class="dashboard-status-ring"></div>
+          <div class="dashboard-status-ring inner"></div>
+          <div class="dashboard-status-circle">
+            <svg class="dashboard-health-check" viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
+            <svg class="dashboard-health-warning" viewBox="0 0 24 24"><path d="M12 4 3 20h18zM12 9v5M12 17h.01"/></svg>
+          </div>
+        </div>
+        <article id="dashboard-health-card" class="dashboard-card dashboard-health-card">
           <span>System health</span>
           <strong id="dashboard-health">—</strong>
           <small id="dashboard-health-detail">Waiting for telemetry</small>
@@ -94,40 +102,77 @@
         </div>
       </div>
       <div class="dashboard-summary" aria-label="Resource usage">
-<article class="dashboard-card">
-          <span>CPU</span>
+        <article class="dashboard-card dashboard-metric-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon violet"><svg viewBox="0 0 24 24"><path d="M8 2v3M16 2v3M8 19v3M16 19v3M2 8h3M2 16h3M19 8h3M19 16h3"/><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 9h6v6H9z"/></svg></span><span class="dashboard-live">Live</span></div>
+          <span>CPU usage</span>
           <strong id="dashboard-cpu">—</strong>
           <svg id="dashboard-cpu-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent CPU trend"></svg>
-        </article><article class="dashboard-card">
-          <span>Memory</span>
+          <div class="dashboard-metric-foot"><span id="dashboard-cpu-foot-load">—</span><span id="dashboard-cpu-foot-cores">—</span></div>
+        </article>
+        <article class="dashboard-card dashboard-metric-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon blue"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="dashboard-live">Live</span></div>
+          <span>Memory usage</span>
           <strong id="dashboard-memory">—</strong>
           <svg id="dashboard-memory-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent memory trend"></svg>
-        </article><article class="dashboard-card">
-          <span>Disk</span>
+          <div class="dashboard-metric-foot"><span id="dashboard-memory-foot-used">—</span><span id="dashboard-memory-foot-total">—</span></div>
+        </article>
+        <article class="dashboard-card dashboard-metric-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon amber"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"/></svg></span><span class="dashboard-live">Live</span></div>
+          <span>Workspace disk</span>
           <strong id="dashboard-disk">—</strong>
           <svg id="dashboard-disk-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent disk trend"></svg>
-        </article><article class="dashboard-card">
-          <span>Network</span>
-          <strong id="dashboard-network">—</strong>
-          <svg id="dashboard-network-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent network trend"></svg>
+          <div class="dashboard-metric-foot"><span id="dashboard-disk-foot-used">—</span><span id="dashboard-disk-foot-total">—</span></div>
+        </article>
+        <article class="dashboard-card dashboard-metric-card dashboard-network-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 20V10M7 15l5 5 5-5M4 4h16"/></svg></span><span class="dashboard-live positive">Live</span></div>
+          <span>Network throughput</span>
+          <strong id="dashboard-network" class="visually-hidden">—</strong>
+          <svg id="dashboard-network-trend" class="visually-hidden" viewBox="0 0 100 32" aria-hidden="true"></svg>
+          <div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong id="dashboard-network-down">—</strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong id="dashboard-network-up">—</strong><small>sent</small></div></div>
+          <div class="dashboard-network-bar" aria-label="Relative incoming and outgoing traffic"><span id="dashboard-network-rx-bar"></span><i id="dashboard-network-tx-bar"></i></div>
+          <div class="dashboard-metric-foot"><span>Downlink</span><span>Uplink</span></div>
         </article>
       </div>
       <div class="dashboard-executors-row">
         <article class="dashboard-section dashboard-executors-section">
-          <div class="dashboard-section-heading"><h3>Executors</h3><span class="muted">Connected environments</span></div>
+          <div class="dashboard-section-heading"><div><h3>Executors</h3><p>Connected environments</p></div><button class="dashboard-panel-link" type="button" data-go-view="executors">Manage executors →</button></div>
           <div id="dashboard-machine-list" class="dashboard-machine-list" aria-live="polite">Loading executors…</div>
         </article>
         <article class="dashboard-section dashboard-alerts-section">
           <div class="dashboard-section-heading">
-            <h3>Needs attention</h3>
+            <div><h3>Needs attention</h3><p>Executor alerts</p></div>
             <span id="dashboard-alert-count" class="muted">0</span>
           </div>
           <div id="dashboard-alerts" class="dashboard-list" aria-live="polite">
             <div class="empty-state">No telemetry loaded.</div>
           </div>
+          <button class="dashboard-panel-footer" type="button" data-go-view="audit">Open audit →</button>
         </article>
       </div>
       <div class="dashboard-layout">
+        <article class="dashboard-section dashboard-workloads-section">
+          <div class="dashboard-section-heading">
+            <div><h3>Active tasks</h3><p>Durable work in progress</p></div>
+            <button class="dashboard-panel-link" type="button" data-go-view="tasks">View all →</button>
+          </div>
+          <div id="dashboard-task-list" class="dashboard-task-list" aria-live="polite">
+            <div class="empty-state">Loading tasks…</div>
+          </div>
+          <button class="dashboard-panel-footer" type="button" data-go-view="tasks">Open task history →</button>
+        </article>
+        <article class="dashboard-section dashboard-activity-section">
+          <div class="dashboard-section-heading">
+            <div><h3>Recent activity</h3><p>Latest tool calls</p></div>
+            <span id="dashboard-source-state" class="muted">—</span>
+          </div>
+          <div id="dashboard-activity" class="dashboard-list" aria-live="polite">
+            <div class="empty-state">No telemetry loaded.</div>
+          </div>
+          <button class="dashboard-panel-footer" type="button" data-go-view="audit">Open audit activity →</button>
+        </article>
+      </div>
+      <details class="dashboard-system-disclosure">
+        <summary>System details</summary>
         <article class="dashboard-section dashboard-system">
           <div class="dashboard-section-heading">
             <h3>System</h3>
@@ -163,16 +208,7 @@
             <div><dt>Network TX</dt><dd id="dashboard-network-tx">—</dd></div>
           </dl>
         </article>
-        <article class="dashboard-section dashboard-activity-section">
-          <div class="dashboard-section-heading">
-            <h3>Recent activity</h3>
-            <span id="dashboard-source-state" class="muted">—</span>
-          </div>
-          <div id="dashboard-activity" class="dashboard-list" aria-live="polite">
-            <div class="empty-state">No telemetry loaded.</div>
-          </div>
-        </article>
-      </div>
+      </details>
     </section>
 
     <section id="executors-panel" class="panel executors-panel app-view" data-app-view="executors" hidden>
@@ -284,9 +320,15 @@
         </div>
       </div>
       <div class="terminal-layout">
-        <nav id="terminal-list" class="terminal-list" aria-label="Persistent terminals">
-          <div class="empty-state">Loading terminal sessions…</div>
-        </nav>
+        <aside class="terminal-rail">
+          <div class="terminal-rail-header"><strong>Sessions</strong><span id="terminal-count">0</span>
+            <div><button id="terminal-previous" type="button" aria-label="Previous session" disabled>‹</button><button id="terminal-next" type="button" aria-label="Next session" disabled>›</button></div>
+          </div>
+          <label class="terminal-session-search"><span aria-hidden="true">⌕</span><input id="terminal-search" type="search" placeholder="Filter sessions" autocomplete="off"></label>
+          <nav id="terminal-list" class="terminal-list" aria-label="Persistent terminals">
+            <div class="empty-state">Loading terminal sessions…</div>
+          </nav>
+        </aside>
         <div class="terminal-console">
           <div class="terminal-console-header">
             <div class="terminal-console-title">
@@ -357,8 +399,12 @@
       </div>
       <div class="file-layout">
         <aside class="file-locations">
-          <h3>Locations</h3>
-          <button id="file-workspace-shortcut" type="button" class="file-location-active">Workspace</button>
+          <div class="file-locations-heading"><h3>Locations</h3><span id="file-location-count">0</span></div>
+          <nav id="file-location-executors" aria-label="Executor locations"></nav>
+          <div class="file-shortcuts">
+            <button id="file-workspace-shortcut" type="button">⌂ <span>Workspace</span></button>
+            <button id="file-parent-shortcut" type="button">↑ <span>Parent folder</span></button>
+          </div>
         </aside>
         <section class="file-browser">
           <div class="file-browser-heading"><h3>Files</h3><span class="muted">Current directory</span></div>
@@ -369,6 +415,7 @@
         <button id="file-sort-direction" type="button" aria-label="Reverse file sort">Ascending</button>
         <span id="file-clipboard-state" class="muted" aria-live="polite">Clipboard empty</span>
       </div>
+          <div class="file-column-heading"><span>Name</span><span>Size</span><span>Modified</span></div>
         <nav id="file-list" class="file-list" aria-label="Executor files" aria-live="polite">
           <div class="empty-state">Loading files…</div>
         </nav>
@@ -556,52 +603,70 @@
         <span id="audit-state" class="muted">Not loaded</span>
       </div>
       <form id="audit-filter-form" class="audit-toolbar">
-        <label class="audit-control" for="audit-operation">
-          <span>Operation</span>
-          <select id="audit-operation" name="audit-operation">
-            <option value="">All</option>
-            <option value="files">Files</option>
-            <option value="shell">Shell</option>
-            <option value="jobs">Jobs</option>
-            <option value="transfer">Transfer</option>
-            <option value="agent">Agent</option>
-            <option value="security">Security</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <label class="audit-control" for="audit-event">
-          <span>Event</span>
-          <input id="audit-event" name="audit-event" type="text" maxlength="1024" placeholder="tool_call" autocomplete="off" spellcheck="false">
-        </label>
-        <label class="audit-control audit-search-control" for="audit-search">
-          <span>Search</span>
-          <input id="audit-search" name="audit-search" type="search" maxlength="4096" placeholder="Search records" autocomplete="off" spellcheck="false">
-        </label>
-        <label class="audit-control" for="audit-sort">
-          <span>Order</span>
-          <select id="audit-sort" name="audit-sort">
-            <option value="desc">Newest first</option>
-            <option value="asc">Oldest first</option>
-          </select>
-        </label>
-        <label class="audit-control" for="audit-limit">
-          <span>Limit</span>
-          <select id="audit-limit" name="audit-limit">
-            <option value="100">100</option>
-            <option value="300" selected>300</option>
-            <option value="1000">1000</option>
-          </select>
-        </label>
-        <button id="audit-refresh" type="submit">Refresh</button>
+        <div class="audit-searchbar">
+          <label class="audit-control audit-search-control" for="audit-search">Search audit
+            <input id="audit-search" name="audit-search" type="search" maxlength="4096" placeholder="Command, path, tool, error…" autocomplete="off" spellcheck="false">
+          </label>
+          <button id="audit-live-toggle" type="button" aria-pressed="false">Pause updates</button>
+        </div>
+        <div class="audit-filter-strip">
+          <label class="audit-control" for="audit-operation"><span>Operation</span>
+            <select id="audit-operation" name="audit-operation">
+              <option value="">All</option>
+              <option value="files">Files</option>
+              <option value="shell">Shell</option>
+              <option value="jobs">Jobs</option>
+              <option value="transfer">Transfer</option>
+              <option value="agent">Agent</option>
+              <option value="security">Security</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label class="audit-control" for="audit-time"><span>Time</span>
+            <select id="audit-time">
+              <option value="900">15m</option>
+              <option value="3600">1h</option>
+              <option value="86400" selected>24h</option>
+              <option value="604800">7d</option>
+              <option value="0">All</option>
+            </select>
+          </label>
+          <label class="audit-control" for="audit-sort"><span>Sort</span>
+            <select id="audit-sort" name="audit-sort">
+              <option value="desc">Newest first</option>
+              <option value="asc">Oldest first</option>
+            </select>
+          </label>
+          <button id="audit-advanced-toggle" type="button" aria-expanded="false">Advanced</button>
+          <button id="audit-refresh" type="submit">Refresh</button>
+        </div>
+        <div id="audit-advanced" class="audit-advanced" hidden>
+          <label class="audit-control" for="audit-event"><span>Event</span>
+            <input id="audit-event" name="audit-event" type="text" maxlength="1024" placeholder="tool_call" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="audit-control" for="audit-limit"><span>Limit</span>
+            <select id="audit-limit" name="audit-limit">
+              <option value="100">100</option>
+              <option value="300" selected>300</option>
+              <option value="1000">1000</option>
+            </select>
+          </label>
+          <button id="audit-clear-filters" type="button">Clear filters</button>
+        </div>
       </form>
       <div id="audit-summary" class="audit-summary" aria-live="polite">0 entries</div>
       <div class="audit-layout">
-        <nav id="audit-list" class="audit-list" aria-label="Audit records" aria-live="polite">
+        <section class="audit-list-pane">
+          <div class="audit-list-pane-header"><strong>Audit records</strong>
+            <div><button id="audit-previous" type="button" disabled>Previous</button><button id="audit-next" type="button" disabled>Next</button></div>
+          </div>
+          <nav id="audit-list" class="audit-list" aria-label="Audit records" aria-live="polite" tabindex="0">
           <div class="empty-state">Loading Audit records…</div>
-        </nav>
+          </nav>
+        </section>
         <article class="audit-detail">
           <div class="audit-detail-header">
-            <strong id="audit-detail-title">No record selected</strong>
+            <strong id="audit-detail-title">Call details</strong>
             <span id="audit-detail-meta" class="muted">Select an Audit record</span>
           </div>
           <div id="audit-detail-body" class="audit-detail-body">Select an Audit record.</div>
@@ -610,7 +675,7 @@
     </section>
 
 
-    <footer class="page-footer">Workgate <span aria-hidden="true">•</span> WebUI <span aria-hidden="true">•</span> Protected control plane</footer>
+    <footer class="page-footer">Workgate <span aria-hidden="true">•</span> Web UI</footer>
   </main>
   </div>
   <script src="__WORKGATE_UI_PATH__/assets/xterm_bundle.js?v=__WORKGATE_UI_ASSET_REV__" defer></script>

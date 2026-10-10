@@ -19,6 +19,13 @@ export function createExecutorsController({
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
   }
 
+  function select(executorId) {
+    if (!state.executors.some((item) => item.executor_id === executorId)) return;
+    state.selectedId = executorId;
+    renderList();
+    renderDetails();
+  }
+
   function timestamp(value, fallback = "Never") {
     const seconds = Number(value);
     if (!Number.isFinite(seconds) || seconds <= 0) return fallback;
@@ -407,6 +414,7 @@ export function createExecutorsController({
 
   return {
     bind,
+    select,
     refresh,
     reset,
     startPolling,

@@ -7,6 +7,7 @@ export function createTasksController({
   auditTimestamp,
   renderAuditDetailInto,
   renderAuditDetailMessage,
+  onInventory = () => {},
   initialTaskId = "",
   initialSessionId = "",
 }) {
@@ -394,6 +395,7 @@ export function createTasksController({
     controllerState.tasks = Array.isArray(payload && payload.tasks)
       ? payload.tasks
       : [];
+    onInventory(controllerState.tasks);
     controllerState.unattachedSessions = Array.isArray(
       payload && payload.unattached_sessions,
     )
@@ -1031,6 +1033,7 @@ export function createTasksController({
 
   return {
     bind,
+    select: selectTask,
     invalidate,
     renderExecutors,
     refresh: refreshWorkspace,

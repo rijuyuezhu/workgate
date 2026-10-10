@@ -131,6 +131,16 @@ def run_terminals(harness: BrowserHarness) -> None:
 
     executor_id = harness.executor_id
     executor_shell = _start_terminal(harness, f"browser-executor-{suffix}")
+    assert int(page.locator("#terminal-count").inner_text()) >= 1
+    page.locator("#terminal-search").fill("no-such-terminal-session")
+    expect(page.locator("#terminal-list .terminal-session")).to_have_count(0)
+    expect(page.locator("#terminal-list")).to_contain_text(
+        "No matching sessions"
+    )
+    page.locator("#terminal-search").fill("")
+    expect(
+        page.locator('.terminal-session[aria-current="true"]')
+    ).to_be_visible()
     expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
         "background-color", "rgb(46, 54, 84)"
     )

@@ -373,6 +373,7 @@ void (async () => {
     auditTimestamp,
     renderAuditDetailInto,
     renderAuditDetailMessage,
+    onInventory: (items) => dashboard.renderTasks(items),
     initialTaskId: deepLink.taskId,
     initialSessionId: deepLink.sessionId,
   });
@@ -385,6 +386,14 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     onAuthenticationRequired: () => void load(),
+    onOpenExecutor: (executorId) => {
+      document.querySelector('.nav-item[data-view="executors"]').click();
+      executors.select(executorId);
+    },
+    onOpenTask: (taskId) => {
+      document.querySelector('.nav-item[data-view="tasks"]').click();
+      void tasks.select(taskId);
+    },
     initialExecutorId: deepLink.executorId,
   });
   dashboard.bind();
@@ -813,7 +822,7 @@ void (async () => {
     setConnection("Connected", "online");
   }
 
-  async function load() {
+  async function load({ background = false } = {}) {
     setConnection("Connecting", "idle");
     elements.refresh.disabled = true;
     try {
@@ -845,7 +854,7 @@ void (async () => {
         elements.todoState.textContent = "Plan unavailable";
         elements.sessionAuditState.textContent = "Session Audit unavailable";
       }
-      await audit.refresh();
+      await audit.refresh({ background });
     } catch (error) {
       if (error.authenticationRequired) {
         terminal.reset("");
@@ -958,6 +967,11 @@ void (async () => {
       setActiveView(item.dataset.view);
     });
   }
+  for (const link of document.querySelectorAll("[data-go-view]")) {
+    link.addEventListener("click", () => {
+      document.querySelector(`.nav-item[data-view="${link.dataset.goView}"]`)?.click();
+    });
+  }
   const restoreViewFromLocation = () => setActiveView(viewFromLocation(), { syncHash: false });
   window.addEventListener("popstate", restoreViewFromLocation);
   window.addEventListener("hashchange", restoreViewFromLocation);
@@ -983,6 +997,6 @@ void (async () => {
   void boot();
   window.setInterval(() => {
     terminal.ping();
-    if (config.authMode !== "oauth" || authenticated) void load();
+    if (config.authMode !== "oauth" || authenticated) void load({ background: true });
   }, 30000);
 })();
