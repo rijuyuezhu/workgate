@@ -115,7 +115,8 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="dashboard-executor"' in index.text
     assert 'id="dashboard-cpu-trend"' in index.text
     assert 'id="dashboard-alerts"' in index.text
-    assert 'id="dashboard-activity"' in index.text
+    assert 'id="dashboard-activity"' not in index.text
+    assert 'class="dashboard-audit-shortcut"' in index.text
     assert 'id="executors-panel"' in index.text
     assert 'id="executor-list"' in index.text
     assert 'id="executor-pair-dialog"' in index.text

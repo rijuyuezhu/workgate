@@ -168,7 +168,6 @@ export function createDashboardController({
       elements.dashboardNetworkRx,
       elements.dashboardNetworkTx,
       elements.dashboardGenerated,
-      elements.dashboardSourceState,
     ]) element.textContent = "—";
     elements.dashboardAuditDetail.textContent = "No activity loaded";
     for (const id of [
@@ -179,7 +178,6 @@ export function createDashboardController({
     ]) document.getElementById(id).textContent = "—";
     document.getElementById("dashboard-network-rx-bar").style.width = "0%";
     document.getElementById("dashboard-network-tx-bar").style.width = "0%";
-    elements.dashboardAlertCount.textContent = "0";
     setDashboardBar(elements.dashboardCpuBar, null);
     setDashboardBar(elements.dashboardMemoryBar, null);
     setDashboardBar(elements.dashboardDiskBar, null);
@@ -190,7 +188,6 @@ export function createDashboardController({
       elements.dashboardNetworkTrend,
     ]) trend.replaceChildren();
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
-    dashboardEmpty(elements.dashboardActivity, `Activity for ${controllerState.executorId} is not loaded.`);
     setDashboardControls();
   }
 
@@ -322,8 +319,6 @@ export function createDashboardController({
     const system = payload && payload.system && typeof payload.system === "object" ? payload.system : {};
     const version = payload && payload.version && typeof payload.version === "object" ? payload.version : {};
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
-    const activity = Array.isArray(payload?.activity) ? payload.activity : [];
-    const sources = payload && payload.sources && typeof payload.sources === "object" ? payload.sources : {};
     const networkRx = dashboardNumber(system.network_rx_bps);
     const networkTx = dashboardNumber(system.network_tx_bps);
     const networkTotal = networkRx !== null && networkTx !== null
@@ -411,7 +406,6 @@ export function createDashboardController({
     elements.dashboardNetworkRx.textContent = dashboardRate(system.network_rx_bps);
     elements.dashboardNetworkTx.textContent = dashboardRate(system.network_tx_bps);
 
-    elements.dashboardAlertCount.textContent = String(alerts.length);
     elements.dashboardAlerts.replaceChildren();
     if (!alerts.length) {
       dashboardEmpty(elements.dashboardAlerts, "No active alerts.");
@@ -428,24 +422,6 @@ export function createDashboardController({
       }
     }
 
-    elements.dashboardActivity.replaceChildren();
-    if (!activity.length) {
-      dashboardEmpty(elements.dashboardActivity, "No recent Audit activity.");
-    } else {
-      for (const item of activity) {
-        const durationMs = dashboardNumber(item.duration_ms);
-        const duration = durationMs === null ? "" : `${durationMs.toFixed(0)} ms`;
-        elements.dashboardActivity.append(
-          dashboardListItem(
-            text(item.kind, "success"),
-            text(item.title, "MCP activity"),
-            text(item.detail, ""),
-            `${dashboardTimestamp(item.timestamp)}${duration ? ` · ${duration}` : ""}`,
-          ),
-        );
-      }
-    }
-    elements.dashboardSourceState.textContent = `system ${text(sources.system, "unknown")} · audit ${text(sources.audit, "unknown")}`;
     elements.dashboardState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
   }
 

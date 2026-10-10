@@ -46,6 +46,20 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     assert colors["panel"] == "rgb(255, 255, 255)"
     assert colors["hero"] != colors["panel"]
     assert page.locator(".dashboard-summary .dashboard-card").count() == 4
+    expect(page.locator(".dashboard-activity-section")).to_have_count(0)
+    assert (
+        page.locator(".dashboard-executors-row > .dashboard-section").count()
+        == 3
+    )
+    sections = [
+        item.bounding_box()
+        for item in page.locator(
+            ".dashboard-executors-row > .dashboard-section"
+        ).all()
+    ]
+    section_tops = [section["y"] for section in sections if section is not None]
+    assert len(section_tops) == 3
+    assert max(section_tops) - min(section_tops) < 2
     assert page.locator(".inventory-summary").count() == 2
     assert page.locator(".file-layout > *").count() == 3
     assert page.locator(".tasks-summary, .executor-summary").count() == 0
@@ -77,6 +91,12 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     page.get_by_role("button", name="Manage executors →").click()
     expect(page.locator("#page-title")).to_have_text("Executors")
     harness.navigate("overview")
+    page.get_by_role("button", name="Open Audit records").click()
+    expect(page.locator("#page-title")).to_have_text("Audit")
+    harness.navigate("overview")
+    page.get_by_role("button", name="View audit →").click()
+    expect(page.locator("#page-title")).to_have_text("Audit")
+    harness.navigate("overview")
     page.locator("#dashboard-machine-list button").first.click()
     expect(page.locator("#page-title")).to_have_text("Overview")
     expect(page.locator(".dashboard-executor-control")).to_be_hidden()
@@ -84,7 +104,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
         page.locator("#dashboard-machine-list button").first
     ).to_have_attribute("aria-current", "true")
     harness.navigate("overview")
-    page.get_by_role("button", name="Open audit activity →").click()
+    page.get_by_role("button", name="Open Audit records").click()
     expect(page.locator("#page-title")).to_have_text("Audit")
     audit_height = page.locator(".audit-panel > .audit-layout").evaluate(
         "element => element.getBoundingClientRect().height"
@@ -210,13 +230,73 @@ def run_webui_layout(harness: BrowserHarness) -> None:
         ), view
         active = page.locator(f'.nav-item[data-view="{view}"]')
         expect(active).to_have_attribute("aria-current", "page")
+        if view == "overview":
+            expect(page.locator(".dashboard-activity-section")).to_have_count(0)
+            # The resource charts and captions belong to their cards; none
+            # may overlap even in two-column phone layouts.
+            assert page.evaluate("""() => {
+                const bounds = (node) => node.getBoundingClientRect();
+                for (const card of document.querySelectorAll('.dashboard-metric-card')) {
+                    const footer = card.querySelector('.dashboard-metric-foot');
+                    const chart = card.querySelector('.dashboard-sparkline:not(.visually-hidden)');
+                    if (chart && bounds(footer).top < bounds(chart).bottom - 1) return false;
+                    const values = card.querySelector('.dashboard-network-values');
+                    const bar = card.querySelector('.dashboard-network-bar');
+                    if (values && bounds(bar).top < bounds(values).bottom - 1) return false;
+                }
+                return true;
+            }""")
+            assert (
+                page.locator(".dashboard-health-stats").evaluate(
+                    "element => getComputedStyle(element).display"
+                )
+                == "grid"
+            )
         if view == "files":
             # Mobile has no Locations rail, so it keeps the executor selector.
             expect(page.locator(".file-executor-control")).to_be_visible()
+            label_bounds = page.locator(
+                ".file-executor-control > span"
+            ).bounding_box()
+            select_bounds = page.locator("#file-executor").bounding_box()
+            assert label_bounds and select_bounds
+            assert (
+                select_bounds["y"]
+                >= label_bounds["y"] + label_bounds["height"] + 4
+            )
+            assert abs(select_bounds["x"] - label_bounds["x"]) < 1
+            assert abs(select_bounds["width"] - label_bounds["width"]) < 1
             form_bounds = page.locator("#file-path-form").bounding_box()
             list_bounds = page.locator("#file-list").bounding_box()
             assert form_bounds and form_bounds["height"] < 70
             assert list_bounds and list_bounds["y"] < 780
+        if view in ("tasks", "executors", "terminals", "audit"):
+            selectors = {
+                "tasks": (".tasks-layout > .session-list", ".tasks-workspace"),
+                "executors": (
+                    ".executors-layout > .executor-list",
+                    ".executors-layout > .executor-details",
+                ),
+                "terminals": (
+                    ".terminal-layout > .terminal-rail",
+                    ".terminal-layout > .terminal-console",
+                ),
+                "audit": (
+                    ".audit-panel > .audit-layout > .audit-list-pane",
+                    ".audit-panel > .audit-layout > .audit-detail",
+                ),
+            }
+            upper, lower = selectors[view]
+            upper_bounds = page.locator(upper).bounding_box()
+            lower_bounds = page.locator(lower).bounding_box()
+            assert upper_bounds and lower_bounds
+            assert (
+                lower_bounds["y"]
+                >= upper_bounds["y"] + upper_bounds["height"] + 9
+            )
+            expect(page.locator(lower)).to_have_css("border-top-width", "1px")
+            if view == "audit":
+                assert upper_bounds["height"] <= 350
         if view in ("overview", "executors", "files", "terminals", "tasks"):
             page.screenshot(
                 path=str(harness.artifacts / f"webui-{view}-mobile.png")

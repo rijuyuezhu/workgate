@@ -86,7 +86,10 @@
         <div class="dashboard-health-stats">
           <div><strong id="executor-target-total">—</strong><span>Executors</span></div>
           <div><strong id="executor-target-online">—</strong><span>Online</span></div>
-          <div><strong id="dashboard-audit-total">—</strong><span>Audit · 24h</span><small id="dashboard-audit-detail" class="visually-hidden">—</small></div>
+          <button class="dashboard-audit-shortcut" type="button" data-go-view="audit" aria-label="Open Audit records">
+            <strong id="dashboard-audit-total">—</strong><span>Audit · 24h <span aria-hidden="true">↗</span></span>
+            <small id="dashboard-audit-detail" class="visually-hidden">—</small>
+          </button>
         </div>
       </div>
       <div class="dashboard-summary" aria-label="Resource usage">
@@ -123,20 +126,18 @@
       </div>
       <div class="dashboard-executors-row">
         <article class="dashboard-section dashboard-executors-section">
-          <div class="dashboard-section-heading"><div><h3>Executors</h3><p>Connected environments</p></div><button class="dashboard-panel-link" type="button" data-go-view="executors">Manage executors →</button></div>
+          <div class="dashboard-section-heading"><div><h3>Executors</h3></div><button class="dashboard-panel-link" type="button" data-go-view="executors">Manage executors →</button></div>
           <div id="dashboard-machine-list" class="dashboard-machine-list" aria-live="polite">Loading executors…</div>
         </article>
         <article class="dashboard-section dashboard-alerts-section">
           <div class="dashboard-section-heading">
             <div><h3>Needs attention</h3></div>
-            <span id="dashboard-alert-count" class="muted">0</span>
+            <button class="dashboard-panel-link" type="button" data-go-view="audit">View audit →</button>
           </div>
           <div id="dashboard-alerts" class="dashboard-list" aria-live="polite">
             <div class="empty-state">No telemetry loaded.</div>
           </div>
         </article>
-      </div>
-      <div class="dashboard-layout">
         <article class="dashboard-section dashboard-workloads-section">
           <div class="dashboard-section-heading">
             <div><h3>Active tasks</h3></div>
@@ -145,16 +146,6 @@
           <div id="dashboard-task-list" class="dashboard-task-list" aria-live="polite">
             <div class="empty-state">Loading tasks…</div>
           </div>
-        </article>
-        <article class="dashboard-section dashboard-activity-section">
-          <div class="dashboard-section-heading">
-            <div><h3>Recent activity</h3></div>
-            <span id="dashboard-source-state" class="muted">—</span>
-          </div>
-          <div id="dashboard-activity" class="dashboard-list" aria-live="polite">
-            <div class="empty-state">No telemetry loaded.</div>
-          </div>
-          <button class="dashboard-panel-footer" type="button" data-go-view="audit">Open audit activity →</button>
         </article>
       </div>
       <details class="dashboard-system-disclosure">
