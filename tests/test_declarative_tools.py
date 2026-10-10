@@ -10,7 +10,7 @@ from workgate.oauth.core.context import (
     require_oauth_scopes,
     reset_oauth_claims,
 )
-from workgate.tools.declarative import ToolDefinition
+from workgate.tools.declarative import DeclarativeToolRegistry, ToolDefinition
 
 
 @pytest.mark.asyncio
@@ -31,6 +31,39 @@ async def test_tool_definition_call_from_mapping_uses_defaults_and_filters_extra
     assert await definition.call_from_mapping(
         {"required": "value", "optional": 9}
     ) == {"required": "value", "optional": 9}
+
+
+@pytest.mark.asyncio
+async def test_unannotated_tool_argument_is_passed_through():
+    async def sample_tool(value):
+        return {"value": value}
+
+    definition = ToolDefinition(
+        func=sample_tool,
+        name="sample_tool",
+        http_method=None,
+        http_path=None,
+    )
+    assert await definition.call_from_mapping({"value": ["unchanged"]}) == {
+        "value": ["unchanged"]
+    }
+
+
+def test_registry_rejects_duplicate_tool_names():
+    class SampleRegistry(DeclarativeToolRegistry):
+        pass
+
+    definition = ToolDefinition(
+        func=_sample_tool,
+        name="sample_tool",
+        http_method=None,
+        http_path=None,
+    )
+    SampleRegistry.register_tool(definition)
+    with pytest.raises(
+        ValueError, match="Duplicate tool definition: sample_tool"
+    ):
+        SampleRegistry.register_tool(definition)
 
 
 @pytest.mark.asyncio
