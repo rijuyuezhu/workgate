@@ -82,6 +82,8 @@ void (async () => {
   const elements = {
     appNavItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
+    appHeader: document.querySelector(".app-header"),
+    navToggle: document.getElementById("nav-toggle"),
     pageTitle: document.getElementById("page-title"),
     dashboardActivity: document.getElementById("dashboard-activity"),
     dashboardAlertCount: document.getElementById("dashboard-alert-count"),
@@ -474,6 +476,12 @@ void (async () => {
   function setConnection(label, state) {
     elements.connectionState.textContent = label;
     elements.connectionState.className = `status status-${state}`;
+  }
+
+  function setNavigationOpen(open) {
+    elements.appHeader.classList.toggle("menu-open", open);
+    elements.navToggle.setAttribute("aria-expanded", String(open));
+    elements.navToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
   }
 
   function cookieValue(name) {
@@ -968,6 +976,7 @@ void (async () => {
 
   for (const item of elements.appNavItems) {
     item.addEventListener("click", () => {
+      setNavigationOpen(false);
       if (deepLinkActive) {
         location.assign(`${uiPath}#${normalizeView(item.dataset.view)}`);
         return;
@@ -975,12 +984,30 @@ void (async () => {
       setActiveView(item.dataset.view);
     });
   }
+  elements.navToggle.addEventListener("click", () => {
+    setNavigationOpen(!elements.appHeader.classList.contains("menu-open"));
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (elements.appHeader.classList.contains("menu-open") && !elements.appHeader.contains(event.target)) {
+      setNavigationOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.appHeader.classList.contains("menu-open")) {
+      setNavigationOpen(false);
+      elements.navToggle.focus();
+    }
+  });
+  window.matchMedia("(max-width: 1160px)").addEventListener("change", () => setNavigationOpen(false));
   for (const link of document.querySelectorAll("[data-go-view]")) {
     link.addEventListener("click", () => {
       document.querySelector(`.nav-item[data-view="${link.dataset.goView}"]`)?.click();
     });
   }
-  const restoreViewFromLocation = () => setActiveView(viewFromLocation(), { syncHash: false });
+  const restoreViewFromLocation = () => {
+    setNavigationOpen(false);
+    setActiveView(viewFromLocation(), { syncHash: false });
+  };
   window.addEventListener("popstate", restoreViewFromLocation);
   window.addEventListener("hashchange", restoreViewFromLocation);
   window.addEventListener("storage", (event) => {

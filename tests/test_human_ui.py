@@ -101,11 +101,12 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert index.status_code == 200
     assert 'class="app-shell"' in index.text
     assert "<title>Workgate WebUI</title>" in index.text
-    assert 'class="topbar"' in index.text
+    assert 'class="app-header"' in index.text
+    assert 'id="nav-toggle"' in index.text
     assert 'id="page-title"' in index.text
     assert 'id="page-location"' not in index.text
     assert 'data-view="console"' not in index.text
-    assert 'class="sidebar"' in index.text
+    assert 'id="app-navigation"' in index.text
     assert 'data-view="overview"' in index.text
     assert 'data-view="tasks"' in index.text
     assert 'data-view="audit"' in index.text

@@ -10,17 +10,39 @@ VIEWS = ("overview", "tasks", "files", "terminals", "executors", "audit")
 def run_webui_layout(harness: BrowserHarness) -> None:
     page = harness.page
     page.set_viewport_size({"width": 1440, "height": 900})
-    expect(page.locator(".sidebar")).to_be_visible()
-    expect(page.locator(".topbar")).to_be_visible()
+    expect(page.locator(".app-header")).to_be_visible()
+    expect(page.locator("#nav-toggle")).to_be_hidden()
+    expect(page.locator("#connection-state")).to_be_visible()
+    expect(page.locator("#version")).to_be_visible()
     assert page.title().endswith("· Workgate")
     colors = page.evaluate("""() => ({
         body: getComputedStyle(document.body).backgroundColor,
-        sidebar: getComputedStyle(document.querySelector('.sidebar')).backgroundColor,
+        header: getComputedStyle(document.querySelector('.app-header')).backgroundColor,
         panel: getComputedStyle(document.querySelector('.dashboard-summary .dashboard-card')).backgroundColor,
         hero: getComputedStyle(document.querySelector('.dashboard-health-banner')).backgroundColor,
     })""")
     assert colors["body"] == "rgb(245, 246, 250)"
-    assert colors["sidebar"] == "rgb(17, 24, 39)"
+    assert colors["header"] == "rgb(17, 24, 39)"
+    header_bounds = page.locator(".app-header").bounding_box()
+    content_bounds = page.locator(".main-content").bounding_box()
+    assert header_bounds and content_bounds
+    assert (
+        content_bounds["y"] >= header_bounds["y"] + header_bounds["height"] - 1
+    )
+    nav_boxes = [
+        box
+        for item in page.locator(".nav-item").all()
+        if (box := item.bounding_box()) is not None
+    ]
+    assert len(nav_boxes) == 6
+    assert (
+        max(box["y"] for box in nav_boxes) - min(box["y"] for box in nav_boxes)
+        < 2
+    )
+    assert all(
+        nav_boxes[i]["x"] + nav_boxes[i]["width"] + 5 < nav_boxes[i + 1]["x"]
+        for i in range(5)
+    )
     assert colors["panel"] == "rgb(255, 255, 255)"
     assert colors["hero"] != colors["panel"]
     assert page.locator(".dashboard-summary .dashboard-card").count() == 4
@@ -148,17 +170,45 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             )
 
     page.set_viewport_size({"width": 390, "height": 844})
-    assert page.evaluate("""() => {
-        const box = document.querySelector('.sidebar').getBoundingClientRect();
-        return box.bottom <= innerHeight + 1 && box.bottom >= innerHeight - 1;
-    }""")
+    expect(page.locator("#nav-toggle")).to_be_visible()
+    expect(page.locator("#nav-toggle")).to_have_attribute(
+        "aria-expanded", "false"
+    )
+    expect(page.locator(".primary-nav")).to_be_hidden()
+    main_box = page.locator(".main-content").bounding_box()
+    assert main_box is not None
+    main_top = main_box["y"]
+    page.locator("#nav-toggle").click()
+    expect(page.locator("#nav-toggle")).to_have_attribute(
+        "aria-expanded", "true"
+    )
+    expect(page.locator(".primary-nav")).to_be_visible()
+    mobile_boxes = [
+        box
+        for item in page.locator(".nav-item").all()
+        if (box := item.bounding_box()) is not None
+    ]
+    assert len(mobile_boxes) == 6
+    assert mobile_boxes[0]["x"] == mobile_boxes[2]["x"]
+    assert mobile_boxes[0]["x"] < mobile_boxes[1]["x"]
+    main_box = page.locator(".main-content").bounding_box()
+    assert main_box is not None and main_box["y"] == main_top
+    page.mouse.click(5, 610)
+    expect(page.locator(".primary-nav")).to_be_hidden()
+    page.locator("#nav-toggle").click()
+    page.keyboard.press("Escape")
+    expect(page.locator(".primary-nav")).to_be_hidden()
+    expect(page.locator("#nav-toggle")).to_be_focused()
     for view in VIEWS:
         harness.navigate(view)
+        expect(page.locator("#nav-toggle")).to_have_attribute(
+            "aria-expanded", "false"
+        )
+        expect(page.locator(".primary-nav")).to_be_hidden()
         assert page.evaluate(
             "document.documentElement.scrollWidth <= innerWidth + 1"
         ), view
         active = page.locator(f'.nav-item[data-view="{view}"]')
-        expect(active).to_be_visible()
         expect(active).to_have_attribute("aria-current", "page")
         if view == "files":
             # Mobile has no Locations rail, so it keeps the executor selector.
@@ -180,6 +230,8 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                 "document.documentElement.scrollWidth <= innerWidth + 1"
             ), (width, view)
             button = page.locator(f'.nav-item[data-view="{view}"]')
+            if page.locator("#nav-toggle").is_visible():
+                page.locator("#nav-toggle").click()
             expect(button).to_be_visible()
             bounds = button.bounding_box()
             assert bounds and bounds["x"] >= 0, (width, view, bounds)
@@ -188,5 +240,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                 view,
                 bounds,
             )
+            if page.locator("#nav-toggle").is_visible():
+                page.locator("#nav-toggle").click()
     page.set_viewport_size({"width": 1280, "height": 720})
     harness.navigate("overview")
