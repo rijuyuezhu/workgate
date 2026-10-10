@@ -1525,14 +1525,6 @@ h2 {
   justify-content: flex-end;
 }
 
-.executor-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 0.9rem;
-}
-
-.executor-metric,
 .executor-details,
 .executor-list {
   border: 1px solid var(--line);
@@ -1540,13 +1532,6 @@ h2 {
   background: var(--panel);
 }
 
-.executor-metric {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.8rem 0.9rem;
-}
-
-.executor-metric span,
 .executor-capabilities > span,
 .executor-reconnect > span {
   color: #7f94a6;
@@ -1554,11 +1539,6 @@ h2 {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.executor-metric strong {
-  color: #394255;
-  font-size: 1.25rem;
 }
 
 .executors-layout {
@@ -1911,8 +1891,7 @@ h2 {
 }
 
 .dashboard-summary,
-  .metric-grid,
-  .executor-summary {
+  .metric-grid {
   grid-template-columns: 1fr 1fr;
 }
 
@@ -1924,7 +1903,6 @@ h2 {
 @media (max-width: 480px) {
 .dashboard-summary,
   .metric-grid,
-  .executor-summary,
   .executor-detail-grid {
   grid-template-columns: 1fr;
 }
@@ -2252,7 +2230,7 @@ input:not([type=checkbox]), select, textarea { min-width: 0; border: 1px solid #
 input:focus, select:focus, textarea:focus { border-color: #8f84ed; }
 input[type=checkbox] { accent-color: #6759e7; }
 [hidden] { display: none !important; }
-.dashboard-card, .dashboard-section, .executor-metric, .executor-details, .file-preview, .terminal-session, .todo-row, .session-entry, .audit-detail, .audit-entry { box-shadow: none; }
+.dashboard-card, .dashboard-section, .executor-details, .file-preview, .terminal-session, .todo-row, .session-entry, .audit-detail, .audit-entry { box-shadow: none; }
 /* Dark terminal canvas is a deliberate upstream v5 convention. */
 .terminal-console { color:#e7edf8;background:#111a2a; border-color:#263249; }
 .terminal-xterm { background:#080d18; border-color:#263249; }
@@ -2469,25 +2447,6 @@ input[type=checkbox] { accent-color: #6759e7; }
 .dashboard-layout .dashboard-activity-section { grid-column: auto; }
 
 /* Upstream summary strip and list/detail pages. */
-.tasks-summary, .executor-summary {
-  display: grid;
-  grid-template-columns: repeat(4,minmax(0,1fr));
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.tasks-summary > div, .executor-summary > article {
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 6px;
-  min-height: 82px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: white;
-  box-shadow: none;
-}
-.tasks-summary strong, .executor-summary strong { font-size: 24px; color: #28344c; }
-.tasks-summary span, .executor-summary span { color: #818b9d; font-size: 12px; }
 .tasks-panel, .executors-panel, .audit-panel {
   padding: 0;
   border: none;
@@ -2673,7 +2632,7 @@ input[type=checkbox] { accent-color: #6759e7; }
   .dashboard-health-banner { padding: 17px; }
   .dashboard-health-stats { flex-wrap: wrap; }
   .dashboard-health-stats > div { min-width: 50%; margin: 5px 0; }
-  .dashboard-summary, .tasks-summary, .executor-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .dashboard-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .file-browser { padding: 10px; }
   .file-browser-heading { display: none; }
   .file-column-heading, .file-browser .file-entry { grid-template-columns: minmax(0,1fr) 65px; }
@@ -2688,7 +2647,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 .brand-mark, .nav-item, .panel, .metric, .dashboard-health-banner,
 .dashboard-summary .dashboard-card, .dashboard-executors-row .dashboard-section,
 .dashboard-layout .dashboard-section, .dashboard-system-disclosure,
-.tasks-summary > div, .executor-summary > article, .tasks-layout,
+.tasks-layout,
 .executors-layout, .audit-layout, .audit-searchbar, .audit-filter-strip,
 .audit-advanced, .file-layout, .file-locations button, .file-entry,
 .file-preview, .terminal-heading, .terminal-layout, .terminal-console,
@@ -2728,3 +2687,76 @@ button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { bo
 .audit-tree-string { color: #19845f; }
 .audit-tree-number, .audit-tree-boolean { color: #b45b22; }
 .audit-tree-null { color: #788294; }
+
+/* Compact inventory counts; the actual list is the primary information. */
+.inventory-summary {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin: 0; color: #858e9f; font-size: 11px;
+}
+.inventory-summary > span + span { padding-left: 12px; border-left: 1px solid var(--line); }
+.inventory-summary strong { color: #596578; font-weight: 700; }
+
+/* A selected task exposes only one focused workspace at a time. */
+.tasks-layout { grid-template-columns: minmax(215px, 255px) minmax(0, 1fr); }
+.tasks-workspace { display: flex; flex-direction: column; gap: 0; padding: 0; }
+.task-detail-tabs {
+  display: flex; gap: 4px; padding: 11px 16px 0;
+  border-bottom: 1px solid var(--line); background: #fcfcfe;
+}
+.task-detail-tabs button {
+  padding: 9px 15px; color: #718095; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; background: transparent; box-shadow: none;
+  font-size: 12px; font-weight: 650;
+}
+.task-detail-tabs button[aria-selected="true"] { color: #6253c9; border-color: #7465dc; }
+.task-detail-tabs button:focus-visible { outline: 2px solid #7465dc; outline-offset: -3px; }
+.task-detail-tabs button:disabled { opacity: .42; }
+.tasks-workspace:not(.has-selection) > .task-detail-tabs { display: none; }
+.task-tab-panel { min-width: 0; padding: 16px; }
+.task-tab-panel > .session-resource { margin: 0; }
+.task-sessions-layout {
+  display: grid; grid-template-columns: minmax(175px, 215px) minmax(0, 1fr);
+  min-height: 490px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.task-sessions-layout > .session-executions {
+  min-width: 0; margin: 0; padding: 12px; border: 0; border-right: 1px solid var(--line);
+  border-radius: 0; background: #fafbfe;
+}
+.task-sessions-layout .task-session-list { margin-top: 12px; }
+.task-sessions-layout .session-entry { overflow-wrap: anywhere; }
+.task-sessions-main { display: flex; flex-direction: column; min-width: 0; }
+.task-sessions-main > .session-resource { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+.task-sessions-main > .session-execution-detail { padding: 12px 15px; border-bottom: 1px solid var(--line); }
+.task-sessions-main > .session-audit { padding: 14px 12px; }
+.task-sessions-main:not(.has-session) > .session-resource { display: none; }
+.task-session-empty { display: none; margin: auto; padding: 30px; color: #8a93a4; font-size: 12px; text-align: center; }
+.task-sessions-main:not(.has-session) > .task-session-empty { display: block; }
+.task-session-metadata { margin-top: 8px; }
+.task-session-metadata summary { color: #778196; font-size: 11px; cursor: pointer; }
+.task-session-metadata .session-detail-grid { margin-top: 10px; }
+.task-sessions-main .session-audit-layout { grid-template-columns: minmax(145px, .85fr) minmax(0, 1.15fr); min-height: 360px; }
+.task-sessions-main .session-audit-toolbar {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 7px; margin-top: 10px;
+}
+.task-sessions-main .session-audit-toolbar .audit-control { flex: 1 1 100px; min-width: 85px; }
+.task-sessions-main .session-audit-toolbar .audit-search-control { flex: 2 1 170px; }
+.task-sessions-main .session-audit-toolbar button { flex: 0 0 auto; }
+.task-sessions-main .session-audit-toolbar input,
+.task-sessions-main .session-audit-toolbar select { min-height: 32px; padding: 5px 8px; }
+.task-sessions-main .session-audit-toolbar .audit-control span { font-size: 10px; }
+.task-sessions-layout .task-session-list { margin-top: 0; }
+.task-sessions-main .audit-detail-body { min-height: 250px; }
+.task-sessions-layout .session-resource-heading .muted { display: none; }
+@media (max-width: 1150px) {
+  .tasks-layout { grid-template-columns: minmax(185px, 235px) minmax(0,1fr); }
+  .task-sessions-layout { grid-template-columns: minmax(145px,185px) minmax(0,1fr); }
+  .task-sessions-main .session-audit-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 780px) {
+  .tasks-layout, .task-sessions-layout { grid-template-columns: 1fr; }
+  .task-sessions-layout > .session-executions { border-right: 0; border-bottom: 1px solid var(--line); }
+  .task-detail-tabs { padding-left: 9px; }
+  .task-detail-tabs button { padding: 9px 12px; }
+  .task-tab-panel { padding: 10px; }
+  .task-sessions-layout .task-session-list { max-height: 180px; overflow-y: auto; }
+}

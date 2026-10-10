@@ -163,9 +163,9 @@ export function createExecutorsController({
     const online = state.executors.filter((item) => !item.revoked_at && item.online).length;
     const revoked = state.executors.filter((item) => item.revoked_at).length;
     elements.executorOnline.textContent = String(online);
-    document.getElementById("executor-offline").textContent = String(state.executors.length - online - revoked);
     elements.executorTotal.textContent = String(state.executors.length);
     elements.executorRevoked.textContent = String(revoked);
+    document.getElementById("executor-revoked-summary").hidden = revoked === 0;
     elements.executorState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     renderList();
     renderDetails();
@@ -282,9 +282,9 @@ export function createExecutorsController({
     elements.executorRenameForm.reset();
     elements.executorState.textContent = message;
     elements.executorOnline.textContent = "—";
-    document.getElementById("executor-offline").textContent = "—";
     elements.executorTotal.textContent = "—";
     elements.executorRevoked.textContent = "—";
+    document.getElementById("executor-revoked-summary").hidden = true;
     renderList();
     renderDetails();
   }

@@ -39,6 +39,25 @@ export function createTasksController({
     sessionAuditDetailGeneration: 0,
     sessionAuditLoading: false,
   };
+  let activeTab = initialSessionId ? "sessions" : "progress";
+
+  function showTab(tab) {
+    activeTab = tab;
+    for (const button of document.querySelectorAll("[data-task-tab]")) {
+      const selected = button.dataset.taskTab === tab;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      document.getElementById(`task-panel-${button.dataset.taskTab}`).hidden = !selected;
+    }
+  }
+
+  function updateTaskTabs() {
+    const hasTask = Boolean(selectedTaskId());
+    for (const button of document.querySelectorAll("[data-task-tab]")) {
+      button.disabled = !hasTask && button.dataset.taskTab !== "sessions";
+    }
+    if (!hasTask && controllerState.sessionId) showTab("sessions");
+  }
 
   function selectedTaskId() {
     return text(controllerState.taskId, "");
@@ -153,6 +172,7 @@ export function createTasksController({
     document.querySelector(".tasks-workspace").classList.toggle(
       "has-selection", Boolean(selectedTaskId() || controllerState.sessionId),
     );
+    updateTaskTabs();
     const task = controllerState.task;
     const progress = task && task.progress && typeof task.progress === "object" ? task.progress : {};
     elements.taskStatus.textContent = text(task && task.status);
@@ -213,6 +233,7 @@ export function createTasksController({
 
   function renderSessionDetail() {
     const session = selectedSession();
+    document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
     if (!session) {
       elements.sessionDetailTitle.textContent = "No session selected";
       elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
@@ -306,15 +327,10 @@ export function createTasksController({
   }
 
   function renderTaskList() {
-    const counts = { active: 0, completed: 0, cancelled: 0 };
-    for (const task of controllerState.tasks) {
-      if (task.status === "completed") counts.completed += 1;
-      else if (task.status === "cancelled") counts.cancelled += 1;
-      else counts.active += 1;
-    }
-    document.getElementById("task-count-active").textContent = String(counts.active);
-    document.getElementById("task-count-completed").textContent = String(counts.completed);
-    document.getElementById("task-count-cancelled").textContent = String(counts.cancelled);
+    const active = controllerState.tasks.filter(
+      (task) => task.status !== "completed" && task.status !== "cancelled",
+    ).length;
+    document.getElementById("task-count-active").textContent = String(active);
     document.getElementById("task-count-total").textContent = String(controllerState.tasks.length);
     elements.taskList.replaceChildren();
     if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {
@@ -446,6 +462,8 @@ export function createTasksController({
 
     renderTaskList();
     renderSessions(controllerState.sessions);
+    if (controllerState.sessionId) showTab("sessions");
+    updateTaskTabs();
     syncDeepLink();
   }
 
@@ -462,6 +480,7 @@ export function createTasksController({
     ) return;
 
     controllerState.taskId = next;
+    showTab("progress");
     const task = selectedTaskSummary();
     controllerState.sessions = Array.isArray(task && task.sessions)
       ? task.sessions
@@ -494,6 +513,7 @@ export function createTasksController({
 
     controllerState.taskId = "";
     controllerState.sessionId = next;
+    showTab("sessions");
     controllerState.sessions = [];
     clearTaskResources(
       "No semantic task attached to this execution session",
@@ -512,6 +532,7 @@ export function createTasksController({
       controllerState.workspaceLoading
     ) return;
     controllerState.sessionId = next;
+    showTab("sessions");
     controllerState.sessionAuditSelectedId = "";
     resetSessionAuditWorkspace("Loading selected session");
     renderTaskList();
@@ -528,15 +549,7 @@ export function createTasksController({
     try {
       const payload = await request("/tasks");
       applyInventory(payload);
-      const count = Number.isInteger(payload.count)
-        ? payload.count
-        : controllerState.tasks.length;
-      const unattached = Number.isInteger(payload.unattached_count)
-        ? payload.unattached_count
-        : controllerState.unattachedSessions.length;
-      elements.tasksState.textContent =
-        `${count} retained task${count === 1 ? "" : "s"} · ` +
-        `${unattached} unattached session${unattached === 1 ? "" : "s"}`;
+      elements.tasksState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
       if (!selectedTaskId()) {
         clearTaskResources(
@@ -885,8 +898,9 @@ export function createTasksController({
       ? previousSelection
       : text(controllerState.sessionAuditEntries[0] && controllerState.sessionAuditEntries[0].id, "");
     const total = Number.isInteger(payload.total_matched) ? payload.total_matched : controllerState.sessionAuditEntries.length;
-    elements.sessionAuditSummary.textContent = `${controllerState.sessionAuditEntries.length} shown · ${total} matched · ${requestedSession}`;
-    elements.sessionAuditState.textContent = `${requestedSession} · loaded ${controllerState.sessionAuditEntries.length} records`;
+    const shown = controllerState.sessionAuditEntries.length;
+    elements.sessionAuditSummary.textContent = total > shown ? `${shown} of ${total} records` : `${shown} records`;
+    elements.sessionAuditState.textContent = "";
     renderSessionAuditList();
     const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
     if (selected && selected.id === controllerState.sessionAuditSelectedId) {
@@ -996,6 +1010,24 @@ export function createTasksController({
   }
 
   function bind() {
+    const tabs = Array.from(document.querySelectorAll("[data-task-tab]"));
+    for (const [index, button] of tabs.entries()) {
+      button.addEventListener("click", () => showTab(button.dataset.taskTab));
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        for (let offset = 1; offset <= tabs.length; offset += 1) {
+          const next = tabs[(index + direction * offset + tabs.length * 2) % tabs.length];
+          if (next.disabled) continue;
+          showTab(next.dataset.taskTab);
+          next.focus();
+          break;
+        }
+      });
+    }
+    showTab(activeTab);
+    updateTaskTabs();
     elements.tasksRefresh.addEventListener("click", () => {
       if (controllerState.workspaceLoading || controllerState.sessionTerminating) return;
       void refreshWorkspace();

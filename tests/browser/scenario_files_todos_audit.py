@@ -10,6 +10,18 @@ def _file_entry(harness: BrowserHarness, path: str):
     return harness.page.locator(f'.file-entry[title="{path}"]')
 
 
+def _show_task_tab(page, tab: str) -> None:
+    button = page.locator(f"#task-tab-{tab}")
+    button.click()
+    expect(button).to_have_attribute("aria-selected", "true")
+
+
+def _refresh_task(page) -> None:
+    _show_task_tab(page, "plan")
+    page.locator("#todo-refresh").click()
+    _show_task_tab(page, "progress")
+
+
 def run_files_todos_audit(harness: BrowserHarness) -> None:
     page = harness.page
     harness.navigate("files")
@@ -299,6 +311,19 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "No session selected"
     )
     page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]').click()
+    expect(page.locator("#task-tab-progress")).to_have_attribute(
+        "aria-selected", "true"
+    )
+    expect(page.locator("#task-panel-plan")).to_be_hidden()
+    page.locator("#task-tab-progress").focus()
+    page.keyboard.press("ArrowRight")
+    expect(page.locator("#task-tab-plan")).to_have_attribute(
+        "aria-selected", "true"
+    )
+    page.keyboard.press("ArrowRight")
+    expect(page.locator("#task-tab-sessions")).to_have_attribute(
+        "aria-selected", "true"
+    )
     expect(
         page.locator(
             f'#session-list .session-entry[data-session-id="{session_id}"]'
@@ -307,6 +332,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-title")).to_have_text(
         "No session selected"
     )
+    _show_task_tab(page, "sessions")
     page.locator(
         f'#session-list .session-entry[data-session-id="{session_id}"]'
     ).click()
@@ -315,7 +341,11 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             f'#session-list .session-entry[data-session-id="{session_id}"]'
         )
     ).to_have_attribute("aria-current", "true")
+    expect(page.locator("#session-audit-filter-form")).to_be_visible()
+    audit_top = page.locator("#session-audit-filter-form").bounding_box()
+    assert audit_top and audit_top["y"] < 820
     expect(page.locator("#todo-state")).to_contain_text("loaded 0 plan steps")
+    _show_task_tab(page, "progress")
     expect(page.locator("#task-status")).to_have_text("active")
 
     reported = harness.api(
@@ -329,7 +359,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         },
     )
     assert reported["status"] == 200
-    page.locator("#todo-refresh").click()
+    _refresh_task(page)
     expect(page.locator("#task-objective")).to_have_text("Browser durable task")
     expect(page.locator("#task-summary")).to_have_text("Visible in the WebUI")
 
@@ -342,7 +372,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         },
     )
     assert completed["status"] == 200
-    page.locator("#todo-refresh").click()
+    _refresh_task(page)
     expect(page.locator("#task-status")).to_have_text("completed")
     expect(page.locator("#todo-refresh")).to_be_enabled()
     expect(page.locator("#todo-add")).to_be_disabled()
@@ -356,7 +386,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         },
     )
     assert resumed["status"] == 200
-    page.locator("#todo-refresh").click()
+    _refresh_task(page)
     expect(page.locator("#task-status")).to_have_text("active")
     expect(page.locator("#todo-add")).to_be_enabled()
 
@@ -410,6 +440,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-audit-refresh")).to_be_enabled()
     expect(page.locator("#session-terminate")).to_be_enabled()
 
+    _show_task_tab(page, "plan")
     page.locator("#todo-add").click()
     row = page.locator("#todo-list .todo-row").last
     row.locator("input").fill("verify browser todos")
@@ -436,6 +467,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
 
     page.locator("#todo-save").click()
     expect(page.locator("#todo-state")).to_contain_text(f"Saved {task_id}")
+    _show_task_tab(page, "progress")
     expect(page.locator("#task-state")).to_contain_text(task_id)
     todos = harness.api("GET", f"/api/ui/todos?task_id={task_id}")
     assert todos["status"] == 200
@@ -524,6 +556,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-title")).to_have_text(
         "No session selected"
     )
+    _show_task_tab(page, "sessions")
     page.locator(
         f'#session-list .session-entry[data-session-id="{session_id}"]'
     ).click()
@@ -755,6 +788,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
     ).to_have_attribute("aria-current", "true")
     expect(page.locator("#session-audit-operation")).to_be_disabled()
+    _show_task_tab(page, "sessions")
     page.locator(
         f'#session-list .session-entry[data-session-id="{session_id}"]'
     ).click()
@@ -785,6 +819,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
     ).to_have_attribute("aria-current", "true")
     expect(page.locator("#session-terminate")).to_be_disabled()
+    _show_task_tab(page, "sessions")
     page.locator(
         f'#session-list .session-entry[data-session-id="{session_id}"]'
     ).click()

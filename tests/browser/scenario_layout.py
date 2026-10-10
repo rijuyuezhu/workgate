@@ -24,9 +24,9 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     assert colors["panel"] == "rgb(255, 255, 255)"
     assert colors["hero"] != colors["panel"]
     assert page.locator(".dashboard-summary .dashboard-card").count() == 4
-    assert page.locator(".tasks-summary > div").count() == 4
+    assert page.locator(".inventory-summary").count() == 2
     assert page.locator(".file-layout > *").count() == 3
-    assert page.locator(".executor-summary > article").count() == 4
+    assert page.locator(".tasks-summary, .executor-summary").count() == 0
     expect(page.locator(".dashboard-health-banner")).to_have_attribute(
         "data-health", "healthy"
     )

@@ -208,20 +208,16 @@
 
     <section id="executors-panel" class="panel executors-panel app-view" data-app-view="executors" hidden>
       <div class="section-heading executors-heading">
-        <div>
-          <h2>Paired executors</h2>
+        <div class="inventory-summary" aria-live="polite">
+          <span><strong id="executor-total">—</strong> executors</span>
+          <span><strong id="executor-online">—</strong> online</span>
+          <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
         </div>
         <div class="executors-actions">
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
           <button id="executor-refresh" type="button">Refresh</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
-      </div>
-      <div class="executor-summary" aria-live="polite">
-        <article class="executor-metric"><span>Online</span><strong id="executor-online">—</strong></article>
-        <article class="executor-metric"><span>Offline</span><strong id="executor-offline">—</strong></article>
-        <article class="executor-metric"><span>Total</span><strong id="executor-total">—</strong></article>
-        <article class="executor-metric"><span>Revoked</span><strong id="executor-revoked">—</strong></article>
       </div>
       <div class="executors-layout">
         <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
@@ -451,19 +447,14 @@
 
     <section id="tasks-panel" class="panel tasks-panel app-view" data-app-view="tasks" hidden>
       <div class="section-heading session-heading">
-        <div>
-          <h2>Task history</h2>
+        <div class="inventory-summary" aria-live="polite">
+          <span><strong id="task-count-total">—</strong> tasks</span>
+          <span><strong id="task-count-active">—</strong> active</span>
         </div>
         <div class="session-toolbar">
           <button id="tasks-refresh" type="button">Refresh</button>
           <span id="tasks-state" class="muted">Not loaded</span>
         </div>
-      </div>
-      <div class="tasks-summary" aria-live="polite">
-        <div><strong id="task-count-active">—</strong><span>Active</span></div>
-        <div><strong id="task-count-completed">—</strong><span>Completed</span></div>
-        <div><strong id="task-count-cancelled">—</strong><span>Cancelled</span></div>
-        <div><strong id="task-count-total">—</strong><span>Total</span></div>
       </div>
       <div class="tasks-layout">
         <nav id="task-list" class="session-list" aria-label="Semantic tasks" aria-live="polite">
@@ -471,6 +462,12 @@
         </nav>
         <article class="tasks-workspace">
           <div class="task-empty-note">Select a task to view details.</div>
+          <nav class="task-detail-tabs" role="tablist" aria-label="Task detail">
+            <button id="task-tab-progress" type="button" role="tab" aria-controls="task-panel-progress" aria-selected="true" data-task-tab="progress">Progress</button>
+            <button id="task-tab-plan" type="button" role="tab" aria-controls="task-panel-plan" aria-selected="false" data-task-tab="plan">Plan</button>
+            <button id="task-tab-sessions" type="button" role="tab" aria-controls="task-panel-sessions" aria-selected="false" data-task-tab="sessions">Sessions</button>
+          </nav>
+          <div id="task-panel-progress" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-progress">
           <section class="session-resource session-task">
             <div class="session-resource-heading">
               <div><h3>Progress</h3></div>
@@ -485,7 +482,8 @@
               <div><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
             </dl>
           </section>
-
+          </div>
+          <div id="task-panel-plan" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-plan" hidden>
           <section class="session-resource session-todos">
             <div class="session-resource-heading">
               <div><h3>Plan</h3></div>
@@ -513,17 +511,16 @@
               <div class="empty-state">Select a task to load its plan.</div>
             </div>
           </section>
-
+          </div>
+          <div id="task-panel-sessions" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-sessions" hidden>
+            <div class="task-sessions-layout">
           <section class="session-resource session-executions">
-            <div class="session-resource-heading">
-              <div><h3>Sessions</h3></div>
-              <span class="muted">Execution history</span>
-            </div>
             <nav id="session-list" class="task-session-list" aria-label="Execution sessions for selected task" aria-live="polite">
               <div class="empty-state">Select a task to inspect its execution sessions.</div>
             </nav>
           </section>
-
+          <div class="task-sessions-main">
+            <p class="task-session-empty">Select a session to view its Audit.</p>
           <section class="session-resource session-execution-detail">
             <div class="session-detail-header">
               <div>
@@ -532,6 +529,8 @@
               </div>
               <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
             </div>
+            <details class="task-session-metadata">
+              <summary>Session metadata</summary>
             <dl class="session-detail-grid">
               <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
               <div><dt>Executor ID</dt><dd id="session-detail-executor">—</dd></div>
@@ -539,6 +538,7 @@
               <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
               <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
             </dl>
+            </details>
           </section>
 
           <section class="session-resource session-audit">
@@ -588,6 +588,9 @@
               </article>
             </div>
           </section>
+          </div>
+            </div>
+          </div>
         </article>
       </div>
     </section>
