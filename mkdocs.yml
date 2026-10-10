@@ -67,7 +67,7 @@ nav:
       - Install options: getting-started/install-options.md
   - Guides:
       - Common workflows: guides/common-workflows.md
-      - Human interface: guides/human-interface.md
+      - WebUI: guides/webui.md
       - Executors: guides/executors.md
       - Agent capability bridge: guides/agent-bridge.md
       - Audit log: guides/audit-log.md

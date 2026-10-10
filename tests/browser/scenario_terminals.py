@@ -131,6 +131,23 @@ def run_terminals(harness: BrowserHarness) -> None:
 
     executor_id = harness.executor_id
     executor_shell = _start_terminal(harness, f"browser-executor-{suffix}")
+    assert int(page.locator("#terminal-count").inner_text()) >= 1
+    page.locator("#terminal-search").fill("no-such-terminal-session")
+    expect(page.locator("#terminal-list .terminal-session")).to_have_count(0)
+    expect(page.locator("#terminal-list")).to_contain_text(
+        "No matching sessions"
+    )
+    page.locator("#terminal-search").fill("")
+    expect(
+        page.locator('.terminal-session[aria-current="true"]')
+    ).to_be_visible()
+    expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
+        "background-color", "rgb(241, 238, 255)"
+    )
+    expect(page.locator('.terminal-session[aria-current="true"]')).to_have_css(
+        "color", "rgb(81, 67, 181)"
+    )
+    expect(page.locator(".terminal-session-icon").first).to_be_visible()
     _send_terminal(
         harness,
         executor_id,
@@ -222,6 +239,13 @@ def run_terminals(harness: BrowserHarness) -> None:
     expect(page.locator("#terminal-xterm textarea")).to_be_focused()
     # Narrow browser views keep the terminal usable without horizontal overflow.
     page.set_viewport_size({"width": 390, "height": 780})
+    expect(page.locator(".terminal-console")).to_be_hidden()
+    page.locator(
+        f'#terminal-list .terminal-session[title*="{executor_shell}"]'
+    ).click()
+    expect(page.locator("#terminal-panel")).to_have_attribute(
+        "data-mobile-step", "detail"
+    )
     expect(page.locator("#terminal-xterm .xterm-screen")).to_be_visible()
     terminal_bounds = page.locator("#terminal-xterm").bounding_box()
     assert (
@@ -273,18 +297,23 @@ def run_terminals(harness: BrowserHarness) -> None:
     session_button.click()
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
     expect(page.locator("#terminal-xterm .xterm")).to_be_visible()
-    _wait_terminal_output(
-        harness,
-        executor_id,
-        executor_shell,
-        "scroll-complete",
-        websocket_event_start=reload_websocket_start,
-    )
+    # A browser reload reattaches the same shell. The preceding scroll can
+    # leave tmux in copy mode, so do not assume typed text executes as a shell
+    # command until that mode is explicitly exited. Earlier reconnect tests
+    # independently verify fresh command execution on this shell.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if any(
+            event.startswith("received ws://")
+            for event in harness.websocket_events[reload_websocket_start:]
+        ):
+            break
+        page.wait_for_timeout(50)
+    else:
+        raise AssertionError("reloaded terminal did not receive PTY output")
     harness.navigate("terminals")
     page.locator(
         f'#terminal-list .terminal-session[title*="{executor_shell}"]'
     ).click()
     page.locator("#terminal-kill").click()
-    expect(page.locator("#terminal-state")).to_contain_text(
-        f"0 session(s) · {executor_id}"
-    )
+    expect(page.locator("#terminal-state")).to_have_text("0 sessions")

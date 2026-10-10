@@ -767,7 +767,7 @@ def test_file_http_helpers_reject_bad_runtime_and_payload() -> None:
     )
     with pytest.raises(RuntimeError, match="requires the control runtime"):
         ui_files_module._runtime(cast(Any, request))
-    with pytest.raises(RuntimeError, match="malformed Human UI Files payload"):
+    with pytest.raises(RuntimeError, match="malformed WebUI Files payload"):
         ui_files_module._payload("not-a-mapping", "exec_test")
 
 

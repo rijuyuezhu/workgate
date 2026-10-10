@@ -1,4 +1,4 @@
-"""Executor-owned implementation of the Human UI Files surface."""
+"""Executor-owned implementation of the WebUI Files surface."""
 
 import base64
 import binascii
@@ -40,7 +40,7 @@ UI_FILE_INLINE_IMAGE_TYPES = frozenset(
 
 
 class UiFilesService:
-    """Serve Human UI file operations on the executor filesystem."""
+    """Serve WebUI file operations on the executor filesystem."""
 
     def __init__(self, config: FilesConfig, store: ToolSessionStore) -> None:
         self.config = config

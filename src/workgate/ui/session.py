@@ -1,4 +1,4 @@
-"""Persistent, purpose-isolated Human UI browser sessions."""
+"""Persistent, purpose-isolated WebUI browser sessions."""
 
 import hashlib
 import hmac
@@ -38,7 +38,7 @@ def _session_signing_key() -> bytes:
 
 
 def ui_session_audience(origin: str | None = None) -> str:
-    """Return the origin-bound audience used by Human UI session tokens."""
+    """Return the origin-bound audience used by WebUI session tokens."""
     settings = get_control_config()
     resolved_origin = (
         ui_origin() if origin is None else canonical_ui_origin(origin)
@@ -80,16 +80,16 @@ def _canonical_browser_ipv4(hostname: str) -> str | None:
             return None
 
     if not 1 <= len(parts) <= 4:
-        raise ValueError("Human UI origin IPv4 hostname is invalid")
+        raise ValueError("WebUI origin IPv4 hostname is invalid")
     try:
         numbers = [_parse_browser_ipv4_number(part) for part in parts]
     except ValueError as exc:
-        raise ValueError("Human UI origin IPv4 hostname is invalid") from exc
+        raise ValueError("WebUI origin IPv4 hostname is invalid") from exc
     if any(number > 255 for number in numbers[:-1]):
-        raise ValueError("Human UI origin IPv4 hostname is invalid")
+        raise ValueError("WebUI origin IPv4 hostname is invalid")
     last_limit = 256 ** (5 - len(numbers))
     if numbers[-1] >= last_limit:
-        raise ValueError("Human UI origin IPv4 hostname is invalid")
+        raise ValueError("WebUI origin IPv4 hostname is invalid")
 
     ipv4_value = numbers[-1]
     for index, number in enumerate(numbers[:-1]):
@@ -103,7 +103,7 @@ def canonical_ui_origin(url: str) -> str:
     scheme = parsed.scheme.lower()
     hostname = parsed.hostname
     if not scheme or hostname is None:
-        raise ValueError("Human UI origin must include a scheme and hostname")
+        raise ValueError("WebUI origin must include a scheme and hostname")
 
     browser_ipv4 = _canonical_browser_ipv4(hostname)
     if browser_ipv4 is not None:
@@ -119,7 +119,7 @@ def canonical_ui_origin(url: str) -> str:
                     transitional=False,
                 ).decode("ascii")
             except idna.IDNAError as exc:
-                raise ValueError("Human UI origin hostname is invalid") from exc
+                raise ValueError("WebUI origin hostname is invalid") from exc
         else:
             host = address.compressed.lower()
             if address.version == 6:
@@ -143,7 +143,7 @@ def _ui_cookie_namespace(origin: str) -> str:
 
 
 def ui_session_cookie_name(origin: str | None = None) -> str:
-    """Return the origin-scoped Human UI session cookie name."""
+    """Return the origin-scoped WebUI session cookie name."""
     resolved_origin = (
         ui_origin() if origin is None else canonical_ui_origin(origin)
     )
@@ -151,7 +151,7 @@ def ui_session_cookie_name(origin: str | None = None) -> str:
 
 
 def ui_csrf_cookie_name(origin: str | None = None) -> str:
-    """Return the origin-scoped Human UI CSRF cookie name."""
+    """Return the origin-scoped WebUI CSRF cookie name."""
     resolved_origin = (
         ui_origin() if origin is None else canonical_ui_origin(origin)
     )
@@ -199,9 +199,9 @@ def issue_ui_session(
     binding_token: str,
     origin: str | None = None,
 ) -> tuple[str, str, int | None]:
-    """Issue a signed Human UI session token and its double-submit CSRF value."""
+    """Issue a signed WebUI session token and its double-submit CSRF value."""
     if not is_valid_ui_session_binding_token(binding_token):
-        raise ValueError("Invalid Human UI session binding token")
+        raise ValueError("Invalid WebUI session binding token")
     settings = get_control_config()
     now = int(time.time())
     configured_expiry = now + (
@@ -247,7 +247,7 @@ def validate_ui_session(
     binding_token: str,
     origin: str | None = None,
 ) -> dict[str, Any]:
-    """Decode and validate a purpose-isolated Human UI session token."""
+    """Decode and validate a purpose-isolated WebUI session token."""
     claims = jwt.decode(
         token,
         _session_signing_key(),
@@ -269,14 +269,14 @@ def validate_ui_session(
         },
     )
     if claims.get("token_use") != UI_SESSION_TOKEN_USE:
-        raise jwt.InvalidTokenError("Invalid Human UI session token use")
+        raise jwt.InvalidTokenError("Invalid WebUI session token use")
     if not is_valid_ui_session_binding_token(binding_token):
-        raise jwt.InvalidTokenError("Invalid Human UI session binding")
+        raise jwt.InvalidTokenError("Invalid WebUI session binding")
     expected_binding = str(claims.get("binding_sha256") or "")
     if not expected_binding or not hmac.compare_digest(
         _binding_digest(binding_token), expected_binding
     ):
-        raise jwt.InvalidTokenError("Invalid Human UI session binding")
+        raise jwt.InvalidTokenError("Invalid WebUI session binding")
     return claims
 
 

@@ -7,6 +7,8 @@ export function createTasksController({
   auditTimestamp,
   renderAuditDetailInto,
   renderAuditDetailMessage,
+  onInventory = () => {},
+  onNavigate = () => {},
   initialTaskId = "",
   initialSessionId = "",
 }) {
@@ -38,6 +40,25 @@ export function createTasksController({
     sessionAuditDetailGeneration: 0,
     sessionAuditLoading: false,
   };
+  let activeTab = initialSessionId ? "sessions" : "progress";
+
+  function showTab(tab) {
+    activeTab = tab;
+    for (const button of document.querySelectorAll("[data-task-tab]")) {
+      const selected = button.dataset.taskTab === tab;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+      document.getElementById(`task-panel-${button.dataset.taskTab}`).hidden = !selected;
+    }
+  }
+
+  function updateTaskTabs() {
+    const hasTask = Boolean(selectedTaskId());
+    for (const button of document.querySelectorAll("[data-task-tab]")) {
+      button.disabled = !hasTask && button.dataset.taskTab !== "sessions";
+    }
+    if (!hasTask && controllerState.sessionId) showTab("sessions");
+  }
 
   function selectedTaskId() {
     return text(controllerState.taskId, "");
@@ -138,7 +159,7 @@ export function createTasksController({
 
   function setTodoDirty(dirty = true) {
     controllerState.todoDirty = dirty;
-    if (dirty) elements.todoState.textContent = "Unsaved changes · " + selectedTaskId();
+    if (dirty) elements.todoState.textContent = "Unsaved changes";
     syncControls();
   }
 
@@ -149,14 +170,23 @@ export function createTasksController({
   }
 
   function renderTaskState() {
+    document.querySelector(".tasks-workspace").classList.toggle(
+      "has-selection", Boolean(selectedTaskId() || controllerState.sessionId),
+    );
+    updateTaskTabs();
     const task = controllerState.task;
     const progress = task && task.progress && typeof task.progress === "object" ? task.progress : {};
-    elements.taskStatus.textContent = text(task && task.status);
+    const status = text(task && task.status);
+    elements.taskStatus.textContent = status;
+    elements.taskStatus.dataset.status = ["active", "completed", "cancelled", "blocked"].includes(status)
+      ? status : "other";
     elements.taskObjective.textContent = text(task && task.objective);
     elements.taskSummary.textContent = text(progress.summary);
     elements.taskNextAction.textContent = text(progress.next_action);
     elements.taskFindings.textContent = taskListText(progress.findings);
     elements.taskBlockers.textContent = taskListText(progress.blockers);
+    elements.taskFindings.closest(".task-progress-findings").hidden = !Array.isArray(progress.findings) || !progress.findings.length;
+    elements.taskBlockers.closest(".task-progress-blockers").hidden = !Array.isArray(progress.blockers) || !progress.blockers.length;
     elements.taskState.textContent = task
       ? text(task.task_id, "task")
       : selectedTaskId()
@@ -209,7 +239,9 @@ export function createTasksController({
 
   function renderSessionDetail() {
     const session = selectedSession();
+    document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
     if (!session) {
+      elements.sessionDetailStatus.dataset.state = "other";
       elements.sessionDetailTitle.textContent = "No session selected";
       elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
       elements.sessionDetailId.textContent = "—";
@@ -222,6 +254,10 @@ export function createTasksController({
     }
     const finalStatus = text(session.status, "");
     const availability = sessionAvailability(session);
+    let state = "available";
+    if (finalStatus === "ended") state = "ended";
+    else if (finalStatus === "terminating" || (availability && availability !== "available")) state = "warning";
+    elements.sessionDetailStatus.dataset.state = state;
     elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
     elements.sessionDetailStatus.textContent = finalStatus === "ended"
       ? "Ended · retained history available"
@@ -263,7 +299,8 @@ export function createTasksController({
           session.session_id === controllerState.sessionId ? "true" : "false",
         );
         const title = document.createElement("strong");
-        title.textContent = sessionOptionLabel(session);
+        title.textContent = text(session.label, text(session.workdir, "Session"));
+        button.title = sessionOptionLabel(session);
         const meta = document.createElement("span");
         meta.className = sessionTerminated(session)
           ? "session-entry-meta session-entry-terminated"
@@ -277,10 +314,10 @@ export function createTasksController({
               ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
               : `available · ${sessionActivityTimestamp(session)}`;
         button.append(title, meta);
-        button.addEventListener(
-          "click",
-          () => void selectSession(session.session_id),
-        );
+        button.addEventListener("click", () => {
+          if (session.session_id === controllerState.sessionId) onNavigate("session");
+          else void selectSession(session.session_id);
+        });
         elements.sessionList.append(button);
       }
     }
@@ -298,15 +335,20 @@ export function createTasksController({
   function taskMeta(task) {
     const sessions = Array.isArray(task && task.sessions) ? task.sessions : [];
     const count = sessions.length;
-    return `${text(task && task.status, "unknown")} · ${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
+    return `${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
   }
 
   function renderTaskList() {
+    const active = controllerState.tasks.filter(
+      (task) => task.status !== "completed" && task.status !== "cancelled",
+    ).length;
+    document.getElementById("task-count-active").textContent = String(active);
+    document.getElementById("task-count-total").textContent = String(controllerState.tasks.length);
     elements.taskList.replaceChildren();
     if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = "No retained tasks or unattached sessions.";
+      empty.textContent = "No tasks yet.";
       elements.taskList.append(empty);
       return;
     }
@@ -321,11 +363,20 @@ export function createTasksController({
       );
       const title = document.createElement("strong");
       title.textContent = taskOptionLabel(task);
+      const heading = document.createElement("span");
+      heading.className = "task-entry-heading";
+      const status = document.createElement("span");
+      status.className = "task-entry-status";
+      status.dataset.status = text(task.status, "unknown");
+      status.textContent = text(task.status, "unknown");
+      heading.append(title, status);
       const meta = document.createElement("span");
       meta.className = "session-entry-meta";
       meta.textContent = taskMeta(task);
-      button.append(title, meta);
-      button.addEventListener("click", () => void selectTask(task.task_id));
+      button.append(heading, meta);
+      button.addEventListener("click", () => {
+        void selectTask(task.task_id);
+      });
       elements.taskList.append(button);
     }
     if (!controllerState.unattachedSessions.length) return;
@@ -371,7 +422,7 @@ export function createTasksController({
       url.searchParams.delete("session_id");
     }
     globalThis.history.replaceState(
-      {},
+      globalThis.history.state,
       "",
       `${url.pathname}${url.search}${url.hash}`,
     );
@@ -381,6 +432,7 @@ export function createTasksController({
     controllerState.tasks = Array.isArray(payload && payload.tasks)
       ? payload.tasks
       : [];
+    onInventory(controllerState.tasks);
     controllerState.unattachedSessions = Array.isArray(
       payload && payload.unattached_sessions,
     )
@@ -431,22 +483,28 @@ export function createTasksController({
 
     renderTaskList();
     renderSessions(controllerState.sessions);
+    if (controllerState.sessionId) showTab("sessions");
+    updateTaskTabs();
     syncDeepLink();
   }
 
   async function selectTask(next) {
     if (
       !next ||
-      next === controllerState.taskId ||
       controllerState.todoMutationBusy ||
       controllerState.workspaceLoading
     ) return;
+    if (next === controllerState.taskId && !controllerState.sessionId) {
+      onNavigate("task");
+      return;
+    }
     if (
       controllerState.todoDirty &&
       !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
     ) return;
 
     controllerState.taskId = next;
+    showTab("progress");
     const task = selectedTaskSummary();
     controllerState.sessions = Array.isArray(task && task.sessions)
       ? task.sessions
@@ -462,6 +520,7 @@ export function createTasksController({
     renderTaskList();
     renderSessions(controllerState.sessions);
     syncDeepLink();
+    onNavigate("task");
     await refreshTodos({ force: true });
     if (controllerState.sessionId) await refreshSessionAudit();
   }
@@ -479,6 +538,7 @@ export function createTasksController({
 
     controllerState.taskId = "";
     controllerState.sessionId = next;
+    showTab("sessions");
     controllerState.sessions = [];
     clearTaskResources(
       "No semantic task attached to this execution session",
@@ -487,6 +547,7 @@ export function createTasksController({
     renderTaskList();
     renderSessions(controllerState.sessions);
     syncDeepLink();
+    onNavigate("session");
     await refreshSessionAudit();
   }
 
@@ -497,11 +558,13 @@ export function createTasksController({
       controllerState.workspaceLoading
     ) return;
     controllerState.sessionId = next;
+    showTab("sessions");
     controllerState.sessionAuditSelectedId = "";
     resetSessionAuditWorkspace("Loading selected session");
     renderTaskList();
     renderSessions(controllerState.sessions);
     syncDeepLink();
+    onNavigate("session");
     await refreshSessionAudit();
   }
 
@@ -513,15 +576,7 @@ export function createTasksController({
     try {
       const payload = await request("/tasks");
       applyInventory(payload);
-      const count = Number.isInteger(payload.count)
-        ? payload.count
-        : controllerState.tasks.length;
-      const unattached = Number.isInteger(payload.unattached_count)
-        ? payload.unattached_count
-        : controllerState.unattachedSessions.length;
-      elements.tasksState.textContent =
-        `${count} retained task${count === 1 ? "" : "s"} · ` +
-        `${unattached} unattached session${unattached === 1 ? "" : "s"}`;
+      elements.tasksState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
       if (!selectedTaskId()) {
         clearTaskResources(
@@ -660,6 +715,8 @@ export function createTasksController({
       const row = document.createElement("article");
       row.className = "todo-row";
       row.dataset.todoId = item.id;
+      row.dataset.status = item.status;
+      row.dataset.priority = item.priority;
 
       const content = document.createElement("input");
       content.type = "text";
@@ -676,6 +733,7 @@ export function createTasksController({
       todoOption(status, item.status, ["pending", "in_progress", "blocked", "completed", "skipped"]);
       status.addEventListener("change", () => {
         controllerState.todoItems[index].status = status.value;
+        row.dataset.status = status.value;
         setTodoDirty();
         renderTodoSummary();
         if (elements.todoFilter.value !== "all") renderTodos();
@@ -685,12 +743,13 @@ export function createTasksController({
       todoOption(priority, item.priority, ["high", "medium", "low"]);
       priority.addEventListener("change", () => {
         controllerState.todoItems[index].priority = priority.value;
+        row.dataset.priority = priority.value;
         setTodoDirty();
       });
 
       const identifier = document.createElement("span");
       identifier.className = "todo-id";
-      identifier.textContent = item.id;
+      identifier.textContent = `Step ${index + 1}`;
       identifier.title = item.id;
 
       const remove = document.createElement("button");
@@ -703,12 +762,14 @@ export function createTasksController({
         renderTodos();
       });
 
+      const heading = document.createElement("div");
+      heading.className = "todo-row-heading";
+      heading.append(identifier, remove);
       row.append(
-        identifier,
+        heading,
         todoField("Content", "todo-field-content", content),
         todoField("Status", "todo-field-status", status),
         todoField("Priority", "todo-field-priority", priority),
-        remove,
       );
       elements.todoList.append(row);
     }
@@ -755,14 +816,14 @@ export function createTasksController({
     controllerState.todoDirty = false;
     renderTaskState();
     renderTodos();
-    elements.todoState.textContent = `${requestedTask} · loaded ${controllerState.todoItems.length} plan steps`;
+    elements.todoState.textContent = "";
   }
 
   async function refreshTodos({ force = false } = {}) {
     const requestedTask = selectedTaskId();
     if (!requestedTask || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
     const generation = ++controllerState.todoGeneration;
-    elements.todoState.textContent = "Loading " + requestedTask;
+    elements.todoState.textContent = "Loading…";
     syncControls();
     try {
       const payload = await request(todoQuery());
@@ -784,7 +845,7 @@ export function createTasksController({
     const generation = ++controllerState.todoGeneration;
     const todos = controllerState.todoItems.map((item) => ({ ...item }));
     setTodoMutationBusy(true);
-    elements.todoState.textContent = "Saving " + requestedTask;
+    elements.todoState.textContent = "Saving…";
     try {
       const payload = await request("/todos", {
         method: "PUT",
@@ -800,7 +861,7 @@ export function createTasksController({
       controllerState.todoDirty = false;
       renderTaskState();
       renderTodos();
-      elements.todoState.textContent = "Saved " + requestedTask;
+      elements.todoState.textContent = "Saved";
     } catch (error) {
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return;
       elements.todoState.textContent = error instanceof Error ? error.message : String(error);
@@ -812,7 +873,7 @@ export function createTasksController({
   function clearSessionAuditDetail(message = "Select a session Audit record.") {
     controllerState.sessionAuditDetailGeneration += 1;
     elements.sessionAuditDetailTitle.textContent = "No record selected";
-    elements.sessionAuditDetailMeta.textContent = controllerState.sessionId || "Control Audit";
+    elements.sessionAuditDetailMeta.textContent = "";
     renderAuditDetailMessage(elements.sessionAuditDetailBody, message);
   }
 
@@ -850,14 +911,15 @@ export function createTasksController({
           controllerState.sessionAuditSelectedId = text(entry.id, "");
           renderSessionAuditList();
           void loadSessionAuditDetail(controllerState.sessionAuditSelectedId);
+          onNavigate("session-record");
         }),
       );
     }
   }
 
-  function renderSessionAuditDetailEntry(entry, requestedSession) {
+  function renderSessionAuditDetailEntry(entry) {
     elements.sessionAuditDetailTitle.textContent = auditEntryTitle(entry);
-    elements.sessionAuditDetailMeta.textContent = `${requestedSession} · ${auditTimestamp(entry.ts)}`;
+    elements.sessionAuditDetailMeta.textContent = auditTimestamp(entry.ts);
     renderAuditDetailInto(entry, elements.sessionAuditDetailBody);
   }
 
@@ -870,12 +932,13 @@ export function createTasksController({
       ? previousSelection
       : text(controllerState.sessionAuditEntries[0] && controllerState.sessionAuditEntries[0].id, "");
     const total = Number.isInteger(payload.total_matched) ? payload.total_matched : controllerState.sessionAuditEntries.length;
-    elements.sessionAuditSummary.textContent = `${controllerState.sessionAuditEntries.length} shown · ${total} matched · ${requestedSession}`;
-    elements.sessionAuditState.textContent = `${requestedSession} · loaded ${controllerState.sessionAuditEntries.length} records`;
+    const shown = controllerState.sessionAuditEntries.length;
+    elements.sessionAuditSummary.textContent = total > shown ? `${shown} of ${total} records` : `${shown} records`;
+    elements.sessionAuditState.textContent = "";
     renderSessionAuditList();
     const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
     if (selected && selected.id === controllerState.sessionAuditSelectedId) {
-      renderSessionAuditDetailEntry(selected, requestedSession);
+      renderSessionAuditDetailEntry(selected);
     } else if (payload && payload.entry_error) {
       elements.sessionAuditDetailMeta.textContent = "Details unavailable";
       renderAuditDetailMessage(elements.sessionAuditDetailBody, text(payload.entry_error));
@@ -924,7 +987,7 @@ export function createTasksController({
       ) return null;
       const entry = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (!entry) throw new Error("Session Audit detail response was malformed");
-      renderSessionAuditDetailEntry(entry, requestedSession);
+      renderSessionAuditDetailEntry(entry);
       return entry;
     } catch (error) {
       if (
@@ -948,7 +1011,7 @@ export function createTasksController({
     const previousSelection = controllerState.sessionAuditSelectedId;
     controllerState.sessionAuditLoading = true;
     syncControls();
-    elements.sessionAuditState.textContent = `Loading ${requestedSession}`;
+    elements.sessionAuditState.textContent = "Loading…";
     try {
       const payload = await request(sessionAuditQueryPath());
       if (
@@ -981,6 +1044,24 @@ export function createTasksController({
   }
 
   function bind() {
+    const tabs = Array.from(document.querySelectorAll("[data-task-tab]"));
+    for (const [index, button] of tabs.entries()) {
+      button.addEventListener("click", () => showTab(button.dataset.taskTab));
+      button.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        for (let offset = 1; offset <= tabs.length; offset += 1) {
+          const next = tabs[(index + direction * offset + tabs.length * 2) % tabs.length];
+          if (next.disabled) continue;
+          showTab(next.dataset.taskTab);
+          next.focus();
+          break;
+        }
+      });
+    }
+    showTab(activeTab);
+    updateTaskTabs();
     elements.tasksRefresh.addEventListener("click", () => {
       if (controllerState.workspaceLoading || controllerState.sessionTerminating) return;
       void refreshWorkspace();
@@ -1018,6 +1099,7 @@ export function createTasksController({
 
   return {
     bind,
+    select: selectTask,
     invalidate,
     renderExecutors,
     refresh: refreshWorkspace,

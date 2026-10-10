@@ -7,7 +7,7 @@
   ],
   "section_order": [
     "Server",
-    "Human interface",
+    "WebUI",
     "Paths and state",
     "Authentication and OAuth",
     "Safety and resource limits",
@@ -139,7 +139,7 @@
         "Default",
         "Description"
       ],
-      "heading": "Human interface",
+      "heading": "WebUI",
       "kind": "table",
       "rows": [
         [
@@ -160,7 +160,7 @@
           {
             "code": "true"
           },
-          "Mount the browser Human UI and its authenticated API on the HTTP server."
+          "Mount the browser WebUI and its authenticated API on the HTTP server."
         ],
         [
           {
@@ -180,7 +180,7 @@
           {
             "code": "/ui"
           },
-          "Non-root URL path where the browser Human UI is mounted."
+          "Non-root URL path where the browser WebUI is mounted."
         ],
         [
           {
@@ -200,7 +200,7 @@
           {
             "code": "3600"
           },
-          "Idle timeout for authenticated Human UI terminal WebSockets; 0 disables idle expiry."
+          "Idle timeout for authenticated WebUI terminal WebSockets; 0 disables idle expiry."
         ],
         [
           {
@@ -220,27 +220,7 @@
           {
             "code": "8"
           },
-          "Maximum concurrent Human UI terminal WebSocket connections."
-        ],
-        [
-          {
-            "code": "ui_wallpaper"
-          },
-          {
-            "lines": [
-              {
-                "code": "--ui-wallpaper"
-              }
-            ]
-          },
-          {
-            "code": "WORKGATE_UI_WALLPAPER"
-          },
-          "aurora | grid | none",
-          {
-            "code": "aurora"
-          },
-          "Browser Human UI background treatment; no external network image is fetched."
+          "Maximum concurrent WebUI terminal WebSocket connections."
         ]
       ]
     },
@@ -2095,11 +2075,11 @@
       "cli": "--ui-enabled",
       "default": true,
       "default_display": "true",
-      "description": "Mount the browser Human UI and its authenticated API on the HTTP server.",
+      "description": "Mount the browser WebUI and its authenticated API on the HTTP server.",
       "env": "WORKGATE_UI_ENABLED",
       "name": "ui_enabled",
       "nullable": false,
-      "section": "Human interface",
+      "section": "WebUI",
       "type": "true | false",
       "unset_cli": null
     },
@@ -2108,11 +2088,11 @@
       "cli": "--ui-path",
       "default": "/ui",
       "default_display": "/ui",
-      "description": "Non-root URL path where the browser Human UI is mounted.",
+      "description": "Non-root URL path where the browser WebUI is mounted.",
       "env": "WORKGATE_UI_PATH",
       "name": "ui_path",
       "nullable": false,
-      "section": "Human interface",
+      "section": "WebUI",
       "type": "string",
       "unset_cli": null
     },
@@ -2121,11 +2101,11 @@
       "cli": "--ui-terminal-idle-timeout-s",
       "default": 3600,
       "default_display": "3600",
-      "description": "Idle timeout for authenticated Human UI terminal WebSockets; 0 disables idle expiry.",
+      "description": "Idle timeout for authenticated WebUI terminal WebSockets; 0 disables idle expiry.",
       "env": "WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S",
       "name": "ui_terminal_idle_timeout_s",
       "nullable": false,
-      "section": "Human interface",
+      "section": "WebUI",
       "type": "integer",
       "unset_cli": null
     },
@@ -2134,29 +2114,12 @@
       "cli": "--ui-terminal-max-connections",
       "default": 8,
       "default_display": "8",
-      "description": "Maximum concurrent Human UI terminal WebSocket connections.",
+      "description": "Maximum concurrent WebUI terminal WebSocket connections.",
       "env": "WORKGATE_UI_TERMINAL_MAX_CONNECTIONS",
       "name": "ui_terminal_max_connections",
       "nullable": false,
-      "section": "Human interface",
+      "section": "WebUI",
       "type": "integer",
-      "unset_cli": null
-    },
-    {
-      "choices": [
-        "aurora",
-        "grid",
-        "none"
-      ],
-      "cli": "--ui-wallpaper",
-      "default": "aurora",
-      "default_display": "aurora",
-      "description": "Browser Human UI background treatment; no external network image is fetched.",
-      "env": "WORKGATE_UI_WALLPAPER",
-      "name": "ui_wallpaper",
-      "nullable": false,
-      "section": "Human interface",
-      "type": "aurora | grid | none",
       "unset_cli": null
     },
     {

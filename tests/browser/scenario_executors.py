@@ -30,6 +30,12 @@ def run_executor_admin(harness: BrowserHarness) -> None:
 
     page.locator("#executor-pair-open").click()
     expect(page.locator("#executor-pair-dialog")).to_be_visible()
+    assert (
+        page.locator("#executor-pair-dialog").evaluate(
+            "el => getComputedStyle(el, '::backdrop').backgroundColor"
+        )
+        == "rgba(17, 24, 39, 0.45)"
+    )
     page.locator("#executor-pair-code").fill(pair["user_code"].lower())
     page.locator("#executor-pair-form").get_by_role(
         "button", name="Inspect request"
@@ -54,6 +60,9 @@ def run_executor_admin(harness: BrowserHarness) -> None:
         "browser-approved", exact=True
     ).click()
     expect(page.locator("#executor-detail-status")).to_have_text("offline")
+    expect(page.locator(".executor-row-selected")).to_have_css(
+        "background-color", "rgb(238, 236, 255)"
+    )
     executor_id = page.locator("#executor-detail-id").inner_text()
     assert executor_id.startswith("exec_")
 
@@ -71,6 +80,9 @@ def run_executor_admin(harness: BrowserHarness) -> None:
 
     page.locator("#executor-revoke-open").click()
     expect(page.locator("#executor-revoke-dialog")).to_be_visible()
+    expect(page.locator("#executor-revoke-form .danger-action")).to_have_css(
+        "color", "rgb(161, 63, 73)"
+    )
     expect(page.locator("#executor-revoke-name")).to_have_text(
         "browser-renamed"
     )

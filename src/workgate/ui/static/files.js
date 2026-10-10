@@ -5,6 +5,7 @@ export function createFilesController({
   formatFileBytes,
   initialExecutorId = "",
   initialPath = "",
+  onNavigate = () => {},
 }) {
   const controllerState = {
     fileExecutorId: text(initialExecutorId, ""),
@@ -69,6 +70,9 @@ export function createFilesController({
     const wasOnline = fileExecutorOnline();
     controllerState.fileExecutorStates = new Map();
     elements.fileExecutor.replaceChildren();
+    const locations = document.getElementById("file-location-executors");
+    locations.replaceChildren();
+    document.getElementById("file-location-count").textContent = String(available.length);
     let currentAvailable = false;
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
@@ -83,6 +87,27 @@ export function createFilesController({
       option.selected = executorId === controllerState.fileExecutorId;
       if (option.selected && online) currentAvailable = true;
       elements.fileExecutor.append(option);
+      const location = document.createElement("button");
+      location.type = "button";
+      location.className = "file-location-row";
+      location.dataset.executorId = executorId;
+      location.setAttribute("aria-current", executorId === controllerState.fileExecutorId ? "true" : "false");
+      const dot = document.createElement("span");
+      dot.className = `file-location-dot ${online ? "online" : ""}`;
+      const name = document.createElement("span");
+      name.textContent = label;
+      location.append(dot, name);
+      location.disabled = !online;
+      location.addEventListener("click", () => {
+        if (controllerState.fileMutationBusy || executorId === controllerState.fileExecutorId) return;
+        controllerState.fileExecutorPinned = false;
+        resetFileWorkspace(executorId);
+        for (const item of locations.children) {
+          item.setAttribute("aria-current", String(item === location));
+        }
+        void refreshFiles();
+      });
+      locations.append(location);
     }
     if (!currentAvailable) {
       if (controllerState.fileExecutorPinned && controllerState.fileExecutorId) {
@@ -111,6 +136,9 @@ export function createFilesController({
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.fileExecutorId !== nextExecutorId;
       resetFileWorkspace(nextExecutorId);
+      for (const item of locations.children) {
+        item.setAttribute("aria-current", String(item.dataset.executorId === nextExecutorId));
+      }
       if (changed && nextExecutorId) void refreshFiles();
       return;
     }
@@ -201,6 +229,8 @@ export function createFilesController({
     elements.fileRename.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.rename || !entry;
     elements.fileDelete.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.delete || !entry;
     elements.fileUp.disabled = unavailable || controllerState.fileMutationBusy || controllerState.filePath === controllerState.fileParentPath;
+    document.getElementById("file-parent-shortcut").disabled = elements.fileUp.disabled;
+    document.getElementById("file-workspace-shortcut").disabled = unavailable || controllerState.fileMutationBusy;
     elements.fileCopy.title = "";
     elements.fileMove.title = "";
     elements.fileRename.title = "";
@@ -291,11 +321,27 @@ export function createFilesController({
 
       const label = document.createElement("span");
       label.className = "file-entry-name";
-      label.textContent = fileEntryLabel(entry);
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("class", `file-entry-icon file-entry-icon-${entry.type === "dir" ? "dir" : entry.type === "link" ? "link" : "file"}`);
+      icon.setAttribute("aria-hidden", "true");
+      icon.setAttribute("viewBox", "0 0 24 24");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", entry.type === "dir"
+        ? "M3 7h7l2 2h9v11H3z M3 7V5h7l2 2"
+        : entry.type === "link"
+          ? "M9 15 15 9 M8 7H6a5 5 0 0 0 0 10h4 M14 7h4a5 5 0 0 1 0 10h-2"
+          : "M6 3h8l4 4v14H6z M14 3v5h5");
+      icon.append(path);
+      label.append(icon, document.createTextNode(text(entry.name, entry.path)));
       const detail = document.createElement("span");
       detail.className = "file-entry-detail";
       detail.textContent = entry.type === "dir" ? "dir" : entry.type === "link" ? "link" : formatFileBytes(entry.size);
-      button.append(label, detail);
+      const modified = document.createElement("span");
+      modified.className = "file-entry-modified";
+      const modifiedAt = Number(entry.modified);
+      modified.textContent = Number.isFinite(modifiedAt) && modifiedAt > 0
+        ? new Date(modifiedAt * 1000).toLocaleDateString() : "—";
+      button.append(label, detail, modified);
       button.addEventListener("click", () => selectFile(entry));
       button.addEventListener("dblclick", () => {
         if (!controllerState.fileMutationBusy && entry.type === "dir") void navigateFiles(entry.path);
@@ -398,6 +444,7 @@ export function createFilesController({
     controllerState.selectedFilePath = entry.path;
     renderFileList();
     void previewFile(entry);
+    onNavigate("detail");
   }
 
   async function refreshFiles({ previewSelection = false } = {}) {
@@ -434,7 +481,7 @@ export function createFilesController({
       }
       renderFileList();
       if (selected && previewSelection) void previewFile(selected);
-      elements.fileState.textContent = `${controllerState.fileExecutorId}:${controllerState.filePath} · ${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
+      elements.fileState.textContent = `${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
       return payload;
     } finally {
       if (generation === controllerState.fileListGeneration) {
@@ -451,6 +498,7 @@ export function createFilesController({
     showFilePreviewMessage("Loading directory", `${controllerState.fileExecutorId}:${controllerState.filePath}`);
     try {
       await refreshFiles({ previewSelection: Boolean(selection) });
+      onNavigate("list", { replace: true });
       return true;
     } catch (error) {
       elements.fileState.textContent = "Directory unavailable";
@@ -648,6 +696,26 @@ export function createFilesController({
     if (!controllerState.fileMutationBusy) void navigateFiles(elements.filePath.value.trim() || ".");
   });
   elements.fileUp.addEventListener("click", () => void navigateFiles(controllerState.fileParentPath));
+  document.getElementById("file-workspace-shortcut").addEventListener("click", () => {
+    if (!controllerState.fileMutationBusy) void navigateFiles(".");
+  });
+  document.getElementById("file-parent-shortcut").addEventListener("click", () => {
+    if (!elements.fileUp.disabled) elements.fileUp.click();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (document.body.dataset.activeView !== "files" || elements.fileOperationDialog.open) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
+      event.preventDefault();
+      elements.filePath.focus();
+      elements.filePath.select();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      elements.fileFilter.focus();
+    } else if (event.altKey && event.key === "ArrowUp" && !elements.fileUp.disabled) {
+      event.preventDefault();
+      elements.fileUp.click();
+    }
+  });
   elements.fileRefresh.addEventListener("click", () => void refreshFiles());
   elements.fileShowHidden.addEventListener("change", () => {
     const entry = currentFileEntry();

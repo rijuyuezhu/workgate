@@ -622,6 +622,12 @@ class BrowserHarness:
         ]
 
     def navigate(self, view: str) -> None:
+        if (
+            self.page.locator("#nav-toggle").is_visible()
+            and self.page.locator("#nav-toggle").get_attribute("aria-expanded")
+            == "false"
+        ):
+            self.page.locator("#nav-toggle").click()
         item = self.page.locator(f'.nav-item[data-view="{view}"]')
         expect(item).to_be_visible()
         item.click()

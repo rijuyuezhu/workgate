@@ -111,7 +111,7 @@ Pairing still requires the human owner to approve the device code. Workgate
 does not provision cloud machines itself; an external provider can create a
 machine and then run the same bootstrap recipe.
 
-The Human UI **Executors** page exposes the same inventory and owner actions.
+The WebUI **Executors** page exposes the same inventory and owner actions.
 The `executor:use` OAuth scope protects executor discovery and administration.
 
 ## Start work on an executor
@@ -140,7 +140,7 @@ bytes on control for source-offline retries.
 
 ## Revoke or replace trust
 
-Use **Executors** in the Human UI or `executor(action="revoke", ...)` to revoke
+Use **Executors** in the WebUI or `executor(action="revoke", ...)` to revoke
 a machine. To deliberately replace its credential, run
 `workgate executor connect CONTROL_URL` on that machine and approve the
 replacement.

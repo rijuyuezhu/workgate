@@ -1,1 +1,1 @@
-"""Real Chromium end-to-end coverage for the browser-hosted Human UI."""
+"""Real Chromium end-to-end coverage for the browser-hosted WebUI."""

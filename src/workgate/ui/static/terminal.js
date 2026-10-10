@@ -7,6 +7,7 @@ export function createTerminalController({
   initialExecutorId = "",
   initialSessionId = "",
   initialShellId = "",
+  onNavigate = () => {},
 }) {
   const controllerState = {
     terminalSocket: null,
@@ -149,9 +150,9 @@ export function createTerminalController({
       cursorBlink: true,
       cursorStyle: "block",
       disableStdin: false,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontFamily: '"JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace',
       fontSize: 13,
-      lineHeight: 1.15,
+      lineHeight: 1.2,
       linkHandler: {
         activate: () => {},
         allowNonHttpProtocols: false,
@@ -317,6 +318,8 @@ export function createTerminalController({
     const wasOnline = terminalExecutorOnline();
     controllerState.terminalExecutorStates = new Map();
     elements.terminalExecutor.replaceChildren();
+    const locations = document.getElementById("terminal-executor-locations");
+    locations.replaceChildren();
     let currentAvailable = false;
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
@@ -331,6 +334,23 @@ export function createTerminalController({
       option.selected = executorId === controllerState.terminalExecutorId;
       if (option.selected && state === "online") currentAvailable = true;
       elements.terminalExecutor.append(option);
+      const location = document.createElement("button");
+      location.type = "button";
+      location.className = "terminal-location-row";
+      location.dataset.executorId = executorId;
+      location.setAttribute("aria-current", String(option.selected));
+      location.disabled = state !== "online";
+      const dot = document.createElement("span");
+      dot.className = `terminal-location-dot ${state === "online" ? "online" : ""}`;
+      const title = document.createElement("span");
+      title.textContent = label;
+      location.append(dot, title);
+      location.addEventListener("click", () => {
+        if (controllerState.terminalLoading || executorId === controllerState.terminalExecutorId) return;
+        elements.terminalExecutor.value = executorId;
+        elements.terminalExecutor.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      locations.append(location);
     }
     if (!currentAvailable) {
       if (controllerState.terminalExecutorPinned && controllerState.terminalExecutorId) {
@@ -351,6 +371,9 @@ export function createTerminalController({
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.terminalExecutorId !== nextExecutorId;
       resetTerminalWorkspace(nextExecutorId);
+      for (const item of locations.children) {
+        item.setAttribute("aria-current", String(item.dataset.executorId === nextExecutorId));
+      }
       if (changed && nextExecutorId) refreshTerminalsInBackground({ force: true });
       return;
     }
@@ -370,6 +393,10 @@ export function createTerminalController({
     }
 
     elements.terminalList.replaceChildren();
+    document.getElementById("terminal-count").textContent = String(controllerState.terminalSessions.length);
+    const activeIndex = controllerState.terminalSessions.findIndex((item) => item.shell_id === controllerState.selectedShellId);
+    document.getElementById("terminal-previous").disabled = activeIndex <= 0;
+    document.getElementById("terminal-next").disabled = activeIndex < 0 || activeIndex >= controllerState.terminalSessions.length - 1;
     if (!controllerState.terminalSessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
@@ -379,18 +406,36 @@ export function createTerminalController({
       return;
     }
 
+    const filter = document.getElementById("terminal-search").value.trim().toLocaleLowerCase();
     for (const session of controllerState.terminalSessions) {
       const shellId = text(session.shell_id, "");
-      if (!shellId) continue;
+      if (!shellId || (filter && !`${session.name || ""} ${shellId}`.toLocaleLowerCase().includes(filter))) continue;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "terminal-session";
       button.textContent = text(session.name, shellId);
+      const terminalIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      terminalIcon.setAttribute("class", "terminal-session-icon");
+      terminalIcon.setAttribute("viewBox", "0 0 24 24");
+      terminalIcon.setAttribute("aria-hidden", "true");
+      const terminalPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      terminalPath.setAttribute("d", "M3 4h18v16H3z m4 5 3 3-3 3 M13 16h4");
+      terminalIcon.append(terminalPath);
+      button.prepend(terminalIcon);
       const details = [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean);
       button.title = details.join(" · ");
       button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");
-      button.addEventListener("click", () => connectTerminal(shellId));
+      button.addEventListener("click", () => {
+        onNavigate("detail");
+        void connectTerminal(shellId);
+      });
       elements.terminalList.append(button);
+    }
+    if (!elements.terminalList.children.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No matching sessions.";
+      elements.terminalList.append(empty);
     }
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
@@ -434,6 +479,7 @@ export function createTerminalController({
     }
     closeTerminalSocket();
     controllerState.selectedShellId = shellId;
+    onNavigate("detail");
     const generation = controllerState.terminalGeneration;
     const selectionCurrent = () =>
       generation === controllerState.terminalGeneration &&
@@ -571,8 +617,8 @@ export function createTerminalController({
         controllerState.terminalSocketExecutorId === requestedExecutor &&
         controllerState.terminalSocket?.readyState === WebSocket.OPEN;
       elements.terminalState.textContent = controllerState.selectedShellId
-        ? `${connected ? "Connected" : "Selected"} · ${requestedExecutor}`
-        : `${controllerState.terminalSessions.length} session(s) · ${requestedExecutor}`;
+        ? (connected ? "Connected" : "Selected")
+        : `${controllerState.terminalSessions.length} sessions`;
       const autoConnectShellId = controllerState.terminalAutoConnectShellId;
       controllerState.terminalAutoConnectShellId = "";
       if (
@@ -711,8 +757,21 @@ export function createTerminalController({
     controllerState.terminalSessionId = "";
     controllerState.terminalAutoConnectShellId = "";
     resetTerminalWorkspace(elements.terminalExecutor.value);
+    for (const item of document.getElementById("terminal-executor-locations").children) {
+      item.setAttribute("aria-current", String(item.dataset.executorId === controllerState.terminalExecutorId));
+    }
     refreshTerminalsInBackground({ force: true });
   });
+  document.getElementById("terminal-search").addEventListener("input", () => {
+    renderTerminalList({ shells: controllerState.terminalSessions });
+  });
+  for (const [id, delta] of [["terminal-previous", -1], ["terminal-next", 1]]) {
+    document.getElementById(id).addEventListener("click", () => {
+      const index = controllerState.terminalSessions.findIndex((item) => item.shell_id === controllerState.selectedShellId);
+      const next = controllerState.terminalSessions[index + delta];
+      if (next) void connectTerminal(next.shell_id);
+    });
+  }
 
   }
 

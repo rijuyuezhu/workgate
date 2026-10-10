@@ -15,7 +15,7 @@ from .settings import ENV_PREFIX, Settings
 
 type SectionName = Literal[
     "Server",
-    "Human interface",
+    "WebUI",
     "Paths and state",
     "Authentication and OAuth",
     "Safety and resource limits",
@@ -146,19 +146,18 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("port", "Server", metavar="PORT"),
     SettingSpec("log_level", "Server", metavar="LEVEL"),
     SettingSpec("forwarded_allow_ips", "Server", metavar="IPS"),
-    SettingSpec("ui_enabled", "Human interface"),
-    SettingSpec("ui_path", "Human interface", metavar="PATH"),
+    SettingSpec("ui_enabled", "WebUI"),
+    SettingSpec("ui_path", "WebUI", metavar="PATH"),
     SettingSpec(
         "ui_terminal_idle_timeout_s",
-        "Human interface",
+        "WebUI",
         metavar="SECONDS",
     ),
     SettingSpec(
         "ui_terminal_max_connections",
-        "Human interface",
+        "WebUI",
         metavar="COUNT",
     ),
-    SettingSpec("ui_wallpaper", "Human interface", metavar="MODE"),
     SettingSpec(
         "default_workdir",
         "Paths and state",

@@ -66,9 +66,9 @@ class ExecutorRuntime:
     sessions: ExecutorSessionService
     """Executor-authoritative execution-session resource service."""
     ui_files: UiFilesService
-    """Executor-owned internal Human UI file operations."""
+    """Executor-owned internal WebUI file operations."""
     ui_terminals: UiTerminalsService
-    """Executor-owned internal Human UI terminal operations."""
+    """Executor-owned internal WebUI terminal operations."""
     profile_store: ExecutorProfileStore | None
     """Persistent executor profile store, when configured."""
     browser: BrowserService

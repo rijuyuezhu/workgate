@@ -277,7 +277,7 @@ def test_mcp_executor_admin_routes_require_auth_and_ui_csrf(tmp_path):
         json={"user_code": "ABCDEFGH", "decision": "deny"},
     )
     assert missing_csrf.status_code == 403
-    assert missing_csrf.json()["detail"] == "Human UI CSRF validation failed"
+    assert missing_csrf.json()["detail"] == "WebUI CSRF validation failed"
 
 
 def test_build_mcp_uses_runtime_settings_for_transport_security():

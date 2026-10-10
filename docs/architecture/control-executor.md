@@ -147,7 +147,7 @@ its execution phase, but not for its obsolete result upload to complete. It then
 reconciles feature-owned live job/shell state; if a live resource cannot be
 observed authoritatively, it retries reconnect instead of publishing a false
 empty/partial inventory. Job runner shells are private implementation resources:
-they appear through `jobs`, not as public or Human UI `shells`. A retained
+they appear through `jobs`, not as public or WebUI `shells`. A retained
 shell-job row reserves both its current and pending-attempt backing-shell IDs
 until the row/attempt state releases them, so another persistent shell cannot
 reuse an ID and accidentally inherit job-private identity. `session.lookup`

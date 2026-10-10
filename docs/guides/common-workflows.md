@@ -87,7 +87,7 @@ For substantial multi-step work, create or resume a task before starting its exe
 
 ## Review activity
 
-Use the Human UI Audit panel or `audit_tail` to review recent tool activity. Request a full retained payload only for a specific entry and only when the client has the required scope.
+Use the WebUI Audit panel or `audit_tail` to review recent tool activity. Request a full retained payload only for a specific entry and only when the client has the required scope.
 
 Audit data is not redacted: it may contain project content, credentials, and command output. Treat it as private. See [Audit log](audit-log.md).
 

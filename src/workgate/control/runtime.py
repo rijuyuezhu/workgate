@@ -63,7 +63,7 @@ class ControlRuntime:
     stream_hub: ControlStreamHub
     """Process-local terminal stream rendezvous and live relay state."""
     human_ui_runtime: HumanUiRuntime
-    """Control-owned Human UI connection admission state."""
+    """Control-owned WebUI connection admission state."""
     oauth_state: OAuthState
     """Control-owned dynamic-client and authorization-code live state."""
     tool_catalog: ToolCatalog

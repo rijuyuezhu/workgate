@@ -1,4 +1,4 @@
-"""Executor-owned Human UI terminal and raw-PTY operations."""
+"""Executor-owned WebUI terminal and raw-PTY operations."""
 
 from typing import Any
 
@@ -6,7 +6,7 @@ from .shell_service import ShellService
 
 
 class UiTerminalsService:
-    """Execute narrow Human UI terminal operations on this executor."""
+    """Execute narrow WebUI terminal operations on this executor."""
 
     def __init__(self, shell: ShellService) -> None:
         self._shell = shell

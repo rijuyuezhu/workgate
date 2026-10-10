@@ -8,6 +8,7 @@ export function createAuditController({
   renderAuditDetailInto,
   renderAuditDetailMessage,
   initialSessionId = "",
+  onNavigate = () => {},
 }) {
   const controllerState = {
     auditEntries: [],
@@ -16,6 +17,7 @@ export function createAuditController({
     auditDetailGeneration: 0,
     auditLoading: false,
     auditSessionId: text(initialSessionId, ""),
+    paused: false,
   };
 
   function auditScopeLabel() {
@@ -29,11 +31,14 @@ export function createAuditController({
     for (const control of elements.auditFilterForm.querySelectorAll("input, select")) {
       control.disabled = controllerState.auditLoading;
     }
+    const selected = controllerState.auditEntries.findIndex((entry) => entry.id === controllerState.auditSelectedId);
+    document.getElementById("audit-previous").disabled = selected <= 0;
+    document.getElementById("audit-next").disabled = selected < 0 || selected >= controllerState.auditEntries.length - 1;
   }
 
   function clearAuditDetail(message = `Select an Audit record from ${auditScopeLabel()}.`) {
     controllerState.auditDetailGeneration += 1;
-    elements.auditDetailTitle.textContent = "No record selected";
+    elements.auditDetailTitle.textContent = "Call details";
     elements.auditDetailMeta.textContent = auditScopeLabel();
     renderAuditDetailMessage(elements.auditDetailBody, message);
   }
@@ -54,6 +59,13 @@ export function createAuditController({
     setAuditControls();
   }
 
+  function showGlobalAudit() {
+    if (!controllerState.auditSessionId) return;
+    controllerState.auditSessionId = "";
+    resetAuditWorkspace();
+    void refreshAudit();
+  }
+
   function renderAuditList() {
     elements.auditList.replaceChildren();
     if (!controllerState.auditEntries.length) {
@@ -69,7 +81,9 @@ export function createAuditController({
         auditEntryButton(entry, controllerState.auditSelectedId, () => {
           controllerState.auditSelectedId = text(entry.id, "");
           renderAuditList();
+          setAuditControls();
           void loadAuditDetail(controllerState.auditSelectedId);
+          onNavigate("detail");
         }),
       );
     }
@@ -83,6 +97,8 @@ export function createAuditController({
       include_selected: "true",
     });
     if (controllerState.auditSessionId) params.set("session", controllerState.auditSessionId);
+    const range = Number(document.getElementById("audit-time").value);
+    if (range > 0) params.set("start_ts", String(Date.now() / 1000 - range));
     if (controllerState.auditSelectedId) params.set("selected_id", controllerState.auditSelectedId);
     const filters = [
       ["operation", elements.auditOperation.value],
@@ -137,8 +153,8 @@ export function createAuditController({
     }
   }
 
-  async function refreshAudit() {
-    if (controllerState.auditLoading) return null;
+  async function refreshAudit({ background = false } = {}) {
+    if (controllerState.auditLoading || (background && controllerState.paused)) return null;
     const generation = ++controllerState.auditGeneration;
     const previousSelection = controllerState.auditSelectedId;
     controllerState.auditLoading = true;
@@ -197,9 +213,48 @@ export function createAuditController({
       event.preventDefault();
       void refreshAudit();
     });
-    for (const control of [elements.auditOperation, elements.auditSort, elements.auditLimit]) {
+    for (const control of [elements.auditOperation, elements.auditSort, elements.auditLimit, document.getElementById("audit-time")]) {
       control.addEventListener("change", () => void refreshAudit());
     }
+    const advanced = document.getElementById("audit-advanced");
+    const toggle = document.getElementById("audit-advanced-toggle");
+    toggle.addEventListener("click", () => {
+      advanced.hidden = !advanced.hidden;
+      toggle.setAttribute("aria-expanded", String(!advanced.hidden));
+    });
+    const live = document.getElementById("audit-live-toggle");
+    live.addEventListener("click", () => {
+      controllerState.paused = !controllerState.paused;
+      live.setAttribute("aria-pressed", String(controllerState.paused));
+      live.textContent = controllerState.paused ? "Resume updates" : "Pause updates";
+      if (!controllerState.paused) void refreshAudit();
+    });
+    document.getElementById("audit-clear-filters").addEventListener("click", () => {
+      elements.auditOperation.value = "";
+      elements.auditEvent.value = "";
+      elements.auditSearch.value = "";
+      elements.auditSort.value = "desc";
+      elements.auditLimit.value = "300";
+      document.getElementById("audit-time").value = "86400";
+      void refreshAudit();
+    });
+    const moveSelection = (delta) => {
+      const index = controllerState.auditEntries.findIndex((entry) => entry.id === controllerState.auditSelectedId);
+      const next = controllerState.auditEntries[index + delta];
+      if (!next) return;
+      controllerState.auditSelectedId = next.id;
+      renderAuditList();
+      setAuditControls();
+      elements.auditList.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+      void loadAuditDetail(next.id);
+    };
+    document.getElementById("audit-previous").addEventListener("click", () => moveSelection(-1));
+    document.getElementById("audit-next").addEventListener("click", () => moveSelection(1));
+    elements.auditList.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      moveSelection(event.key === "ArrowDown" ? 1 : -1);
+    });
   }
 
   return {
@@ -207,5 +262,6 @@ export function createAuditController({
     invalidate,
     refresh: refreshAudit,
     reset: resetAuditWorkspace,
+    showGlobalAudit,
   };
 }

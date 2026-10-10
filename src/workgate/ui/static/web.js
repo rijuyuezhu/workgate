@@ -14,6 +14,7 @@ void (async () => {
     { createTerminalController },
     { createFilesController },
     { createTasksController },
+    { createMobileNavigation },
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
     import(assetUrl("executors.js")),
@@ -22,13 +23,10 @@ void (async () => {
     import(assetUrl("terminal.js")),
     import(assetUrl("files.js")),
     import(assetUrl("tasks.js")),
+    import(assetUrl("mobile_navigation.js")),
   ]);
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
   const oauth = config.oauth && typeof config.oauth === "object" ? config.oauth : null;
-  const wallpaper = ["aurora", "grid", "none"].includes(String(config.wallpaper || ""))
-    ? String(config.wallpaper)
-    : "aurora";
-  document.body.dataset.wallpaper = wallpaper;
   const legacyTokenStorageKey = "workgate-ui-access-token";
   const pendingStorageKey = "workgate-ui-oauth-pending";
   const pendingMaxAgeMs = 10 * 60 * 1000;
@@ -74,40 +72,21 @@ void (async () => {
 
   const initialUiLocation = startupUiLocation();
   const viewDefinitions = Object.freeze({
-    overview: {
-      title: "Overview",
-      description: "System health across connected executor environments.",
-    },
-    executors: {
-      title: "Executors",
-      description: "Pair, inspect, rename, and revoke final executor identities.",
-    },
-    tasks: {
-      title: "Tasks",
-      description: "Inspect durable tasks, retained execution sessions, and scoped Audit records.",
-    },
-    terminals: {
-      title: "Terminals",
-      description: "Persistent executor terminals with interactive streaming.",
-    },
-    files: {
-      title: "Files",
-      description: "Browse and edit files on the selected executor.",
-    },
-    audit: {
-      title: "Audit",
-      description: "Search control-owned product and tool activity.",
-    },
+    overview: { title: "Overview" },
+    executors: { title: "Executors" },
+    tasks: { title: "Tasks" },
+    terminals: { title: "Terminals" },
+    files: { title: "Files" },
+    audit: { title: "Audit" },
   });
   const encoder = new TextEncoder();
   let authenticated = config.authMode !== "oauth";
   const elements = {
     appNavItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
-    pageDescription: document.getElementById("page-description"),
+    appHeader: document.querySelector(".app-header"),
+    navToggle: document.getElementById("nav-toggle"),
     pageTitle: document.getElementById("page-title"),
-    dashboardActivity: document.getElementById("dashboard-activity"),
-    dashboardAlertCount: document.getElementById("dashboard-alert-count"),
     dashboardAlerts: document.getElementById("dashboard-alerts"),
     dashboardAuditDetail: document.getElementById("dashboard-audit-detail"),
     dashboardAuditTotal: document.getElementById("dashboard-audit-total"),
@@ -138,11 +117,8 @@ void (async () => {
     dashboardNetworkTx: document.getElementById("dashboard-network-tx"),
     dashboardPlatform: document.getElementById("dashboard-platform"),
     dashboardPython: document.getElementById("dashboard-python"),
-    dashboardRefresh: document.getElementById("dashboard-refresh"),
-    dashboardSourceState: document.getElementById("dashboard-source-state"),
     dashboardState: document.getElementById("dashboard-state"),
     dashboardUptime: document.getElementById("dashboard-uptime"),
-    dashboardVersion: document.getElementById("dashboard-version"),
     auditDetailBody: document.getElementById("audit-detail-body"),
     auditDetailMeta: document.getElementById("audit-detail-meta"),
     auditDetailTitle: document.getElementById("audit-detail-title"),
@@ -231,7 +207,6 @@ void (async () => {
     executorPairRequestedName: document.getElementById("executor-pair-requested-name"),
     executorPairReview: document.getElementById("executor-pair-review"),
     executorDrain: document.getElementById("executor-drain"),
-    executorRefresh: document.getElementById("executor-refresh"),
     executorRenameDialog: document.getElementById("executor-rename-dialog"),
     executorRenameForm: document.getElementById("executor-rename-form"),
     executorRenameName: document.getElementById("executor-rename-name"),
@@ -246,7 +221,6 @@ void (async () => {
     executorTargetOnline: document.getElementById("executor-target-online"),
     executorTargetTotal: document.getElementById("executor-target-total"),
     executorTotal: document.getElementById("executor-total"),
-    refresh: document.getElementById("refresh"),
     signOut: document.getElementById("sign-out"),
     terminalCopy: document.getElementById("terminal-copy"),
     terminalFeedback: document.getElementById("terminal-feedback"),
@@ -305,6 +279,48 @@ void (async () => {
     tokenInput: document.getElementById("access-token"),
     version: document.getElementById("version"),
   };
+
+  // Compact inline line icons for commonly used actions; no font or icon package required.
+  const iconPaths = {
+    refresh: "M20 11a8 8 0 0 0-14.6-4.6L3 9m0-5v5h5M4 13a8 8 0 0 0 14.6 4.6L21 15m0 5v-5h-5",
+    plus: "M12 5v14M5 12h14",
+    terminal: "m4 7 5 5-5 5M11 17h9M3 4h18v16H3z",
+    folder: "M3 7h7l2 2h9v11H3zM3 7V5h7l2 2",
+    file: "M6 3h8l4 4v14H6zM14 3v5h5",
+    upload: "M12 16V3m-5 5 5-5 5 5M4 16v4h16v-4",
+    copy: "M8 7h12v14H8zM4 17H3V3h13v2",
+    paste: "M8 4h2a2 2 0 0 1 4 0h2v3H8zM6 5H4v16h16V5h-2",
+    edit: "m4 16-1 5 5-1L20 8l-4-4zM13 7l4 4",
+    trash: "M4 7h16M9 7V4h6v3m-9 0 1 14h10l1-14M10 11v6M14 11v6",
+    save: "M4 3h13l4 4v14H4zM8 3v6h9V3M8 21v-8h9v8",
+    up: "M12 20V4m-6 6 6-6 6 6",
+    retry: "M20 7v5h-5M4 17v-5h5M5 9a8 8 0 0 1 14-2l1 5M19 15a8 8 0 0 1-14 2l-1-5",
+    scissors: "M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm0 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM8 8l13 13M8 16 21 3",
+    link: "M9 15 15 9M8 7h-2a5 5 0 0 0 0 10h4m4-10h4a5 5 0 0 1 0 10h-2",
+  };
+  const controlIcons = {
+    "tasks-refresh": "refresh", "audit-refresh": "refresh", "session-audit-refresh": "refresh",
+    "file-refresh": "refresh", "todo-refresh": "refresh", "terminal-reconnect": "retry",
+    "executor-pair-open": "plus", "terminal-create": "terminal", "terminal-kill": "trash", "terminal-copy": "copy",
+    "terminal-paste": "paste", "file-new": "file", "file-new-folder": "folder",
+    "file-upload": "upload", "file-open": "link", "file-edit": "edit",
+    "file-copy": "copy", "file-move": "scissors", "file-paste": "paste",
+    "file-rename": "edit", "file-delete": "trash", "file-up": "up",
+    "file-workspace-shortcut": "folder", "file-parent-shortcut": "up",
+    "todo-add": "plus", "todo-save": "save",
+  };
+  for (const [id, name] of Object.entries(controlIcons)) {
+    const button = document.getElementById(id);
+    if (!button) continue;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("class", "control-icon");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", iconPaths[name]);
+    svg.append(path);
+    button.prepend(svg);
+  }
   function text(value, fallback = "—") {
     if (value === null || value === undefined || value === "") return fallback;
     return String(value);
@@ -322,7 +338,8 @@ void (async () => {
     workdir: deepLinkValue("workdir", 4096),
     shellId: deepLinkValue("shell_id", 255),
   });
-  const deepLinkActive = Object.values(deepLink).some(Boolean);
+  const mobileNavigation = createMobileNavigation();
+  mobileNavigation.bind();
 
   const {
     auditEntryButton,
@@ -342,6 +359,7 @@ void (async () => {
     renderAuditDetailInto,
     renderAuditDetailMessage,
     initialSessionId: deepLink.sessionId,
+    onNavigate: (step, options) => mobileNavigation.go("audit", step, options),
   });
   audit.bind();
 
@@ -354,6 +372,7 @@ void (async () => {
     initialExecutorId: deepLink.executorId,
     initialSessionId: deepLink.sessionId,
     initialShellId: deepLink.shellId,
+    onNavigate: (step, options) => mobileNavigation.go("terminals", step, options),
   });
   terminal.bind();
 
@@ -364,6 +383,7 @@ void (async () => {
     formatFileBytes,
     initialExecutorId: deepLink.executorId,
     initialPath: deepLink.workdir,
+    onNavigate: (step, options) => mobileNavigation.go("files", step, options),
   });
   files.bind();
 
@@ -376,8 +396,10 @@ void (async () => {
     auditTimestamp,
     renderAuditDetailInto,
     renderAuditDetailMessage,
+    onInventory: (items) => dashboard.renderTasks(items),
     initialTaskId: deepLink.taskId,
     initialSessionId: deepLink.sessionId,
+    onNavigate: (step, options) => mobileNavigation.go("tasks", step, options),
   });
   tasks.bind();
 
@@ -388,6 +410,10 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     onAuthenticationRequired: () => void load(),
+    onOpenTask: (taskId) => {
+      document.querySelector('.nav-item[data-view="tasks"]').click();
+      void tasks.select(taskId);
+    },
     initialExecutorId: deepLink.executorId,
   });
   dashboard.bind();
@@ -408,6 +434,7 @@ void (async () => {
         }));
       renderExecutorTargets(targets);
     },
+    onNavigate: (step, options) => mobileNavigation.go("executors", step, options),
   });
   executors.bind();
 
@@ -428,7 +455,6 @@ void (async () => {
     const definition = viewDefinitions[view];
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
-    elements.pageDescription.textContent = definition.description;
     document.title = `${definition.title} · Workgate`;
 
     for (const item of elements.appNavItems) {
@@ -440,6 +466,7 @@ void (async () => {
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
+    mobileNavigation.sync(view);
 
     if (syncHash && location.hash !== `#${view}`) {
       const url = `${location.pathname}${location.search}#${view}`;
@@ -455,6 +482,12 @@ void (async () => {
   function setConnection(label, state) {
     elements.connectionState.textContent = label;
     elements.connectionState.className = `status status-${state}`;
+  }
+
+  function setNavigationOpen(open) {
+    elements.appHeader.classList.toggle("menu-open", open);
+    elements.navToggle.setAttribute("aria-expanded", String(open));
+    elements.navToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
   }
 
   function cookieValue(name) {
@@ -815,9 +848,8 @@ void (async () => {
     setConnection("Connected", "online");
   }
 
-  async function load() {
+  async function load({ background = false } = {}) {
     setConnection("Connecting", "idle");
-    elements.refresh.disabled = true;
     try {
       render(await request("/bootstrap"));
       await dashboard.refresh({ force: true });
@@ -847,7 +879,7 @@ void (async () => {
         elements.todoState.textContent = "Plan unavailable";
         elements.sessionAuditState.textContent = "Session Audit unavailable";
       }
-      await audit.refresh();
+      await audit.refresh({ background });
     } catch (error) {
       if (error.authenticationRequired) {
         terminal.reset("");
@@ -866,8 +898,6 @@ void (async () => {
       } else {
         setConnection("Unavailable", "error");
       }
-    } finally {
-      elements.refresh.disabled = false;
     }
   }
 
@@ -907,7 +937,7 @@ void (async () => {
       });
       const result = await responsePayload(response);
       if (!response.ok || !result.ok) {
-        throw new Error(result.message || result.detail || "Unable to establish Human UI session.");
+        throw new Error(result.message || result.detail || "Unable to establish WebUI session.");
       }
       announceSessionEstablished();
       elements.tokenInput.value = "";
@@ -923,7 +953,6 @@ void (async () => {
   });
 
   elements.oauthLogin.addEventListener("click", () => void startOAuth());
-  elements.refresh.addEventListener("click", () => void load());
   elements.signOut.addEventListener("click", async () => {
     try {
       await request("/session/logout", { method: "POST" });
@@ -953,14 +982,42 @@ void (async () => {
 
   for (const item of elements.appNavItems) {
     item.addEventListener("click", () => {
-      if (deepLinkActive) {
-        location.assign(`${uiPath}#${normalizeView(item.dataset.view)}`);
-        return;
+      setNavigationOpen(false);
+      const view = normalizeView(item.dataset.view);
+      const url = new URL(location.href);
+      for (const key of ["task_id", "session_id", "executor_id", "workdir", "shell_id"]) {
+        url.searchParams.delete(key);
       }
-      setActiveView(item.dataset.view);
+      url.hash = view;
+      history.pushState({}, "", url);
+      setActiveView(view, { syncHash: false });
+      if (view === "audit") audit.showGlobalAudit();
     });
   }
-  const restoreViewFromLocation = () => setActiveView(viewFromLocation(), { syncHash: false });
+  elements.navToggle.addEventListener("click", () => {
+    setNavigationOpen(!elements.appHeader.classList.contains("menu-open"));
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (elements.appHeader.classList.contains("menu-open") && !elements.appHeader.contains(event.target)) {
+      setNavigationOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.appHeader.classList.contains("menu-open")) {
+      setNavigationOpen(false);
+      elements.navToggle.focus();
+    }
+  });
+  window.matchMedia("(max-width: 1160px)").addEventListener("change", () => setNavigationOpen(false));
+  for (const link of document.querySelectorAll("[data-go-view]")) {
+    link.addEventListener("click", () => {
+      document.querySelector(`.nav-item[data-view="${link.dataset.goView}"]`)?.click();
+    });
+  }
+  const restoreViewFromLocation = () => {
+    setNavigationOpen(false);
+    setActiveView(viewFromLocation(), { syncHash: false });
+  };
   window.addEventListener("popstate", restoreViewFromLocation);
   window.addEventListener("hashchange", restoreViewFromLocation);
   window.addEventListener("storage", (event) => {
@@ -985,6 +1042,6 @@ void (async () => {
   void boot();
   window.setInterval(() => {
     terminal.ping();
-    if (config.authMode !== "oauth" || authenticated) void load();
+    if (config.authMode !== "oauth" || authenticated) void load({ background: true });
   }, 30000);
 })();

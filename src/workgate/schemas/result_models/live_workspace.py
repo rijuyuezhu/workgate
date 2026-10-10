@@ -59,7 +59,7 @@ class LiveWorkspaceActivity(BaseModel):
 
 
 class LiveWorkspaceLinks(BaseModel):
-    """Links to fuller authenticated Human UI views for a selected task/session."""
+    """Links to fuller authenticated WebUI views for a selected task/session."""
 
     tasks: str
     files: str

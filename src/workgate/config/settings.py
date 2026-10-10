@@ -89,17 +89,15 @@ class Settings(BaseSettings):
     forwarded_allow_ips: str = "127.0.0.1"
     """Comma-separated proxy addresses/networks trusted for forwarded HTTP headers."""
 
-    # Human interface.
+    # WebUI.
     ui_enabled: bool = True
-    """Mount the browser Human UI and its authenticated API on the HTTP server."""
+    """Mount the browser WebUI and its authenticated API on the HTTP server."""
     ui_path: str = "/ui"
-    """Non-root URL path where the browser Human UI is mounted."""
+    """Non-root URL path where the browser WebUI is mounted."""
     ui_terminal_idle_timeout_s: _NonNegativeInt = 3600
-    """Idle timeout for authenticated Human UI terminal WebSockets; 0 disables idle expiry."""
+    """Idle timeout for authenticated WebUI terminal WebSockets; 0 disables idle expiry."""
     ui_terminal_max_connections: int = Field(default=8, ge=1, le=128)
-    """Maximum concurrent Human UI terminal WebSocket connections."""
-    ui_wallpaper: Literal["aurora", "grid", "none"] = "aurora"
-    """Browser Human UI background treatment; no external network image is fetched."""
+    """Maximum concurrent WebUI terminal WebSocket connections."""
 
     # Paths and state.
     default_workdir: Path = Field(default_factory=Path.cwd)
@@ -351,7 +349,7 @@ class Settings(BaseSettings):
     @field_validator("ui_path", mode="before")
     @classmethod
     def validate_ui_path(cls, value: str) -> str:
-        """Reject root, traversal, and service-reserved Human UI paths."""
+        """Reject root, traversal, and service-reserved WebUI paths."""
         return normalize_ui_path(value)
 
     @field_validator(

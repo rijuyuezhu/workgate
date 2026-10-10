@@ -1,4 +1,4 @@
-"""Process-neutral Human UI terminal wire and dimension contracts."""
+"""Process-neutral WebUI terminal wire and dimension contracts."""
 
 PERSISTENT_SHELL_MIN_COLUMNS = 20
 PERSISTENT_SHELL_MAX_COLUMNS = 1600
@@ -24,7 +24,7 @@ class TerminalBridgeUnsupportedError(TerminalBridgeError):
 
 
 class TerminalBridgeBusyError(TerminalBridgeError):
-    """Raised when a shell already has an exclusive Human UI raw attachment."""
+    """Raised when a shell already has an exclusive WebUI raw attachment."""
 
 
 class TerminalBridgeNotFoundError(TerminalBridgeError):

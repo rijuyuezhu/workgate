@@ -1,4 +1,4 @@
-"""Human UI OAuth-to-cookie session endpoints."""
+"""WebUI OAuth-to-cookie session endpoints."""
 
 import jwt
 from authlib.oauth2.rfc6749.errors import OAuth2Error
@@ -37,10 +37,10 @@ def _ui_request_origin_candidates(
     scheme = str(connection.scope.get("scheme") or "").lower()
     scheme = {"ws": "http", "wss": "https"}.get(scheme, scheme)
     if scheme not in {"http", "https"}:
-        raise ValueError("Invalid Human UI request scheme")
+        raise ValueError("Invalid WebUI request scheme")
     authority = connection.headers.get("host", "").strip()
     if not authority or any(character in authority for character in "/?#@\\"):
-        raise ValueError("Invalid Human UI request host")
+        raise ValueError("Invalid WebUI request host")
     alternate_scheme = "https" if scheme == "http" else "http"
     return (
         canonical_ui_origin(f"{scheme}://{authority}"),
@@ -94,11 +94,11 @@ def ui_session_binding_token(connection: HTTPConnection) -> str:
 
 
 def ui_session_claims(connection: HTTPConnection) -> dict[str, object] | None:
-    """Return validated Human UI session claims, or None without a cookie."""
+    """Return validated WebUI session claims, or None without a cookie."""
     try:
         origin = ui_request_origin(connection)
     except (UnicodeError, ValueError) as exc:
-        raise jwt.InvalidTokenError("Invalid Human UI request origin") from exc
+        raise jwt.InvalidTokenError("Invalid WebUI request origin") from exc
     token = connection.cookies.get(ui_session_cookie_name(origin), "").strip()
     if not token:
         return None
@@ -163,7 +163,7 @@ def set_ui_session_cookies(
 
 
 def clear_ui_session_cookies(response: Response, origin: str) -> None:
-    """Expire both Human UI browser cookies."""
+    """Expire both WebUI browser cookies."""
     response.delete_cookie(ui_session_cookie_name(origin), path="/")
     response.delete_cookie(ui_csrf_cookie_name(origin), path="/")
 
@@ -187,23 +187,21 @@ def _require_origin(request: Request) -> tuple[str, Response | None]:
     try:
         origin = ui_request_origin(request)
     except UnicodeError, ValueError:
-        return "", _json_error(
-            "Invalid Human UI request origin", status_code=400
-        )
+        return "", _json_error("Invalid WebUI request origin", status_code=400)
     if is_valid_ui_origin(request.headers.get("origin", ""), origin):
         return origin, None
-    return "", _json_error("Invalid Human UI origin", status_code=403)
+    return "", _json_error("Invalid WebUI origin", status_code=403)
 
 
 def _require_binding(request: Request) -> tuple[str, Response | None]:
     binding_token = ui_session_binding_token(request)
     if is_valid_ui_session_binding_token(binding_token):
         return binding_token, None
-    return "", _json_error("Invalid Human UI session binding", status_code=400)
+    return "", _json_error("Invalid WebUI session binding", status_code=400)
 
 
 async def api_ui_session_oauth(request: Request) -> Response:
-    """Exchange a PKCE authorization code into HttpOnly Human UI cookies."""
+    """Exchange a PKCE authorization code into HttpOnly WebUI cookies."""
     origin, error = _require_origin(request)
     if error is not None:
         return error
@@ -219,7 +217,7 @@ async def api_ui_session_oauth(request: Request) -> Response:
     claims = validate_bearer_token(token_response.access_token)
     response = _json_ok(
         {"expires_in": token_response.expires_in},
-        "Human UI session established",
+        "WebUI session established",
     )
     expires_in = set_ui_session_cookies(
         response,
@@ -239,7 +237,7 @@ async def api_ui_session_oauth(request: Request) -> Response:
 
 
 async def api_ui_session_token(request: Request) -> Response:
-    """Convert an explicitly supplied OAuth bearer into HttpOnly Human UI cookies."""
+    """Convert an explicitly supplied OAuth bearer into HttpOnly WebUI cookies."""
     origin, error = _require_origin(request)
     if error is not None:
         return error
@@ -251,7 +249,7 @@ async def api_ui_session_token(request: Request) -> Response:
     except HTTPException as exc:
         return _json_error(str(exc.detail), status_code=exc.status_code)
 
-    response = _json_ok(message="Human UI session established")
+    response = _json_ok(message="WebUI session established")
     expires_in = set_ui_session_cookies(
         response,
         claims,
@@ -270,7 +268,7 @@ async def api_ui_session_token(request: Request) -> Response:
 
 
 async def api_ui_session_logout(request: Request) -> Response:
-    """Clear Human UI cookies after same-origin and CSRF validation."""
+    """Clear WebUI cookies after same-origin and CSRF validation."""
     origin, error = _require_origin(request)
     if error is not None:
         return error
@@ -279,9 +277,9 @@ async def api_ui_session_logout(request: Request) -> Response:
     except jwt.PyJWTError:
         claims = None
     if claims is not None and not has_valid_ui_csrf(request, claims):
-        return _json_error("Human UI CSRF validation failed", status_code=403)
+        return _json_error("WebUI CSRF validation failed", status_code=403)
 
-    response = _json_ok(message="Human UI session cleared")
+    response = _json_ok(message="WebUI session cleared")
     clear_ui_session_cookies(response, origin)
     audit(
         "ui_session_cleared",

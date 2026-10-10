@@ -123,11 +123,11 @@ exposing an executor credential or direct WebSocket.
 One raw bridge is allowed per `(machine, shell_id)`. Frames, dimensions, waits,
 connection counts, subscriber buffers, and idle lifetime are bounded; snapshot
 fallback remains available. Terminal output is rendered as terminal data, never
-HTML or script. Plain-text reads remove terminal controls, while the Human UI's
+HTML or script. Plain-text reads remove terminal controls, while the WebUI's
 ANSI/image path uses pinned xterm assets, bounded Sixel/iTerm decoding, inert
 nodes/canvas output, and no navigable OSC 8 links. Closing a raw attachment
 releases only that bridge and deliberately leaves the persistent tmux/ConPTY
-shell alive. See [Human interface](guides/human-interface.md#terminals) for the
+shell alive. See [WebUI](guides/webui.md#terminals) for the
 protocol and resource limits.
 
 Persistent-shell admission is serialized per backend across server processes.
@@ -148,9 +148,9 @@ server processes using the same state directory cannot admit work after another
 process has started teardown. Cancellation while waiting releases the local
 entry and its dedicated file-lock thread without leaving a stale holder.
 
-## Browser Human UI policy
+## Browser WebUI policy
 
-The browser Human UI loads scripts only from the configured origin. Its Content Security Policy permits inline styles required by xterm's runtime layout and narrowly permits `wasm-unsafe-eval` for the bundled xterm Image Addon Sixel decoder; it never enables general `unsafe-eval` or external script origins. OAuth `401` responses clear an invalid tab token, while `403` scope failures preserve the valid token and expose only the bounded missing-scope error.
+The browser WebUI loads scripts only from the configured origin. Its Content Security Policy permits inline styles required by xterm's runtime layout and narrowly permits `wasm-unsafe-eval` for the bundled xterm Image Addon Sixel decoder; it never enables general `unsafe-eval` or external script origins. OAuth `401` responses clear an invalid tab token, while `403` scope failures preserve the valid token and expose only the bounded missing-scope error.
 
 ## Tokenized file download links
 
@@ -216,7 +216,7 @@ Managed-job logs are appended before metadata accounting. If bounded lock retrie
 
 ## Executor pairing and machine trust
 
-New machines establish trust with `workgate executor connect CONTROL_URL`. Pairing uses a high-entropy device code plus a separate short user code: the owner approves the request through authenticated Human UI, while the issued executor bearer is returned only to the polling executor and is never exposed to the browser. Control-side durable state stores only the credential verifier. The executor atomically saves its private profile before an auth-only credential proof; that proof authenticates without publishing presence or resource inventory. Keep that state directory owner-private and revoke or explicitly replace the credential if it may be compromised.
+New machines establish trust with `workgate executor connect CONTROL_URL`. Pairing uses a high-entropy device code plus a separate short user code: the owner approves the request through authenticated WebUI, while the issued executor bearer is returned only to the polling executor and is never exposed to the browser. Control-side durable state stores only the credential verifier. The executor atomically saves its private profile before an auth-only credential proof; that proof authenticates without publishing presence or resource inventory. Keep that state directory owner-private and revoke or explicitly replace the credential if it may be compromised.
 
 Fresh-machine bootstrap does not weaken that trust flow. The public bootstrap
 script contains no executor credential or approval token. It pins the matching
@@ -248,7 +248,7 @@ Cold Audit segments under `audit_log/archives/` contain the same unredacted, sen
 
 Payload objects use private atomic replacement and are read through no-follow regular-file handles. Full recovery verifies retention, compressed/decompressed bounds, canonical byte count, digest, UTF-8, and JSON. JSONL and referenced payload quotas are enforced inside the same cross-process transaction while preserving completed tool-call pairs. Corrupt, missing, or expired payloads never return raw path or decompression diagnostics.
 
-`audit_tail` and Human UI lists require `audit:read`; queries may scope by `task_id`, `session_id`, or both. Resolving one retained reference also requires `audit:full` and a stable entry id. Human UI detail keeps operation-sensitive shell/file/share/Git/remote checks, and `audit_tail` excludes only its own current lifecycle.
+`audit_tail` and WebUI lists require `audit:read`; queries may scope by `task_id`, `session_id`, or both. Resolving one retained reference also requires `audit:full` and a stable entry id. WebUI detail keeps operation-sensitive shell/file/share/Git/remote checks, and `audit_tail` excludes only its own current lifecycle.
 
 Treat the Workgate audit directory (for example `${XDG_STATE_HOME:-~/.local/state}/workgate/audit_log/` on Linux) as **sensitive runtime state, including secrets and third-party content**. Audit is not a sanitized telemetry stream. Keep JSONL and payload objects in the controlled state directory, limit retention according to your threat model, restrict Audit scopes and filesystem access, and review exports manually before sharing. Agent Bridge upstream authentication secrets remain managed by the separate private credential boundary; arbitrary tool results and Audit events are not guaranteed to exclude such values.
 

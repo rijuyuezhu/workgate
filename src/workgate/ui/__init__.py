@@ -1,1 +1,1 @@
-"""Transport-neutral Human UI core capabilities."""
+"""Transport-neutral WebUI core capabilities."""

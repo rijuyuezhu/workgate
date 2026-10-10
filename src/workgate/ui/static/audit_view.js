@@ -189,13 +189,77 @@ export function createAuditView({ text, formatFileBytes }) {
     return { source: JSON.stringify(cleaned, null, 2), language: "json" };
   }
 
-  function renderAuditValue(target, value, emptyLabel) {
+  function renderAuditTree(value, depth = 0) {
+    const nested = value !== null && typeof value === "object";
+    if (!nested) {
+      const literal = document.createElement("span");
+      literal.className = `audit-tree-value audit-tree-${value === null ? "null" : typeof value}`;
+      literal.textContent = JSON.stringify(value);
+      return literal;
+    }
+    const entries = Object.entries(value);
+    const branch = document.createElement("details");
+    branch.className = "audit-tree-branch";
+    branch.open = depth === 0;
+    const summary = document.createElement("summary");
+    summary.textContent = Array.isArray(value) ? `Array (${entries.length})` : `Object (${entries.length})`;
+    branch.append(summary);
+    const children = document.createElement("div");
+    children.className = "audit-tree-children";
+    for (const [key, child] of entries) {
+      const row = document.createElement("div");
+      row.className = "audit-tree-row";
+      const label = document.createElement("span");
+      label.className = "audit-tree-key";
+      label.textContent = `${key}:`;
+      row.append(label, renderAuditTree(child, depth + 1));
+      children.append(row);
+    }
+    branch.append(children);
+    return branch;
+  }
+
+  function renderAuditValue(target, value, emptyLabel, heading) {
+    const { source, language } = auditValueSource(value, emptyLabel);
+    const toolbar = document.createElement("div");
+    toolbar.className = "audit-value-toolbar";
+    const treeButton = document.createElement("button");
+    const rawButton = document.createElement("button");
+    const copyButton = document.createElement("button");
+    for (const [button, label] of [[treeButton, "Tree"], [rawButton, "Raw"], [copyButton, "Copy"]]) {
+      button.type = "button";
+      button.textContent = label;
+      toolbar.append(button);
+    }
+    const display = document.createElement("div");
+    display.className = "audit-value-content";
     const pre = document.createElement("pre");
     pre.className = "audit-detail-json";
-    const { source, language } = auditValueSource(value, emptyLabel);
     if (window.WorkgateSyntax) window.WorkgateSyntax.render(pre, source, language);
     else pre.textContent = source;
-    target.append(pre);
+    let parsed = value;
+    if (typeof value === "string") parsed = parseAuditJsonString(value);
+    parsed = cleanAuditValue(unwrapAuditToolEnvelope(parsed));
+    const tree = parsed !== null && typeof parsed === "object";
+    function show(mode) {
+      display.replaceChildren(mode === "tree" ? renderAuditTree(parsed) : pre);
+      treeButton.setAttribute("aria-pressed", String(mode === "tree"));
+      rawButton.setAttribute("aria-pressed", String(mode === "raw"));
+    }
+    treeButton.hidden = !tree;
+    treeButton.addEventListener("click", () => show("tree"));
+    rawButton.addEventListener("click", () => show("raw"));
+    copyButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(source);
+        copyButton.textContent = "Copied";
+      } catch {
+        copyButton.textContent = "Copy failed";
+      }
+    });
+    toolbar.setAttribute("aria-label", `${heading} view controls`);
+    target.append(toolbar, display);
+    show(tree ? "tree" : "raw");
   }
 
   function renderAuditDetailMessage(target, message) {
@@ -222,7 +286,7 @@ export function createAuditView({ text, formatFileBytes }) {
 
   function renderAuditDetailInto(entry, target) {
     const requestPanel = auditCallPanel("Call request");
-    renderAuditValue(requestPanel.body, auditInput(entry), "No input recorded");
+    renderAuditValue(requestPanel.body, auditInput(entry), "No input recorded", "Call request");
 
     const resultPanel = auditCallPanel("Call result");
     const preview = isAuditRecord(entry.image_preview) ? entry.image_preview : null;
@@ -242,7 +306,7 @@ export function createAuditView({ text, formatFileBytes }) {
       warning.textContent = `Image preview unavailable: ${entry.image_preview_error}`;
       resultPanel.body.append(warning);
     }
-    renderAuditValue(resultPanel.body, auditOutput(entry), "No output recorded");
+    renderAuditValue(resultPanel.body, auditOutput(entry), "No output recorded", "Call result");
     target.replaceChildren(requestPanel.panel, resultPanel.panel);
   }
 

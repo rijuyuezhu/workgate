@@ -520,7 +520,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
         assert not console_errors
         assert not page_errors
 
-        # Preserve Live Workspace identity through a first-time Human UI OAuth
+        # Preserve Live Workspace identity through a first-time WebUI OAuth
         # round trip. The callback must restore the original deep link rather
         # than dropping back to an unscoped overview.
         oauth_query = urlencode(

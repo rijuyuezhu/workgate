@@ -5,6 +5,7 @@ export function createDashboardController({
   authMode,
   isAuthenticated,
   onAuthenticationRequired,
+  onOpenTask,
   initialExecutorId = "",
 }) {
   const controllerState = {
@@ -72,8 +73,11 @@ export function createDashboardController({
 
   function setDashboardControls() {
     const online = dashboardExecutorOnline();
-    elements.dashboardRefresh.disabled = controllerState.loading || !online;
     elements.dashboardExecutor.disabled = controllerState.loading;
+  }
+
+  function setMetricLive(label) {
+    for (const badge of document.querySelectorAll(".dashboard-live")) badge.textContent = label;
   }
 
   function stopDashboardPolling() {
@@ -139,10 +143,12 @@ export function createDashboardController({
     controllerState.generation += 1;
     controllerState.history = [];
     elements.dashboardExecutor.value = controllerState.executorId;
-    elements.dashboardState.textContent = `Not loaded · ${controllerState.executorId}`;
+    elements.dashboardState.textContent = "Not loaded";
     elements.dashboardHealth.textContent = "—";
     elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
     elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
+    document.querySelector(".dashboard-health-banner").dataset.health = "unknown";
+    setMetricLive("—");
     for (const element of [
       elements.dashboardCpu,
       elements.dashboardMemory,
@@ -152,7 +158,6 @@ export function createDashboardController({
       elements.dashboardCpuValue,
       elements.dashboardMemoryValue,
       elements.dashboardDiskValue,
-      elements.dashboardVersion,
       elements.dashboardPlatform,
       elements.dashboardPython,
       elements.dashboardCpuCount,
@@ -163,10 +168,16 @@ export function createDashboardController({
       elements.dashboardNetworkRx,
       elements.dashboardNetworkTx,
       elements.dashboardGenerated,
-      elements.dashboardSourceState,
     ]) element.textContent = "—";
     elements.dashboardAuditDetail.textContent = "No activity loaded";
-    elements.dashboardAlertCount.textContent = "0";
+    for (const id of [
+      "dashboard-cpu-foot-load", "dashboard-cpu-foot-cores",
+      "dashboard-memory-foot-used", "dashboard-memory-foot-total",
+      "dashboard-disk-foot-used", "dashboard-disk-foot-total",
+      "dashboard-network-down", "dashboard-network-up",
+    ]) document.getElementById(id).textContent = "—";
+    document.getElementById("dashboard-network-rx-bar").style.width = "0%";
+    document.getElementById("dashboard-network-tx-bar").style.width = "0%";
     setDashboardBar(elements.dashboardCpuBar, null);
     setDashboardBar(elements.dashboardMemoryBar, null);
     setDashboardBar(elements.dashboardDiskBar, null);
@@ -177,7 +188,6 @@ export function createDashboardController({
       elements.dashboardNetworkTrend,
     ]) trend.replaceChildren();
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
-    dashboardEmpty(elements.dashboardActivity, `Activity for ${controllerState.executorId} is not loaded.`);
     setDashboardControls();
   }
 
@@ -186,6 +196,9 @@ export function createDashboardController({
     const wasOnline = dashboardExecutorOnline();
     controllerState.executorStates = new Map();
     elements.dashboardExecutor.replaceChildren();
+    const machineList = document.getElementById("dashboard-machine-list");
+    machineList.replaceChildren();
+    if (!available.length) dashboardEmpty(machineList, "No executors paired.");
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
       if (!executorId) continue;
@@ -197,6 +210,37 @@ export function createDashboardController({
       option.textContent = state === "online" ? label : `${label} (${state})`;
       option.disabled = state !== "online";
       elements.dashboardExecutor.append(option);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "executor-band dashboard-machine-row";
+      row.setAttribute("aria-label", `Select ${label}`);
+      row.dataset.executorId = executorId;
+      row.setAttribute("aria-current", String(executorId === controllerState.executorId));
+      row.disabled = state !== "online";
+      const avatar = document.createElement("span");
+      avatar.className = "executor-band-mark";
+      avatar.textContent = label.slice(0, 1).toUpperCase();
+      const details = document.createElement("span");
+      details.className = "executor-band-main";
+      const name = document.createElement("strong");
+      name.textContent = label;
+      const version = document.createElement("small");
+      version.textContent = text(executor.runtime?.workgate_version, "Executor");
+      details.append(name, version);
+      const status = document.createElement("span");
+      status.className = "executor-band-state";
+      status.dataset.status = state;
+      status.textContent = state;
+      row.append(avatar, details, status);
+      row.addEventListener("click", () => {
+        if (controllerState.loading || executorId === controllerState.executorId) return;
+        elements.dashboardExecutor.value = executorId;
+        elements.dashboardExecutor.dispatchEvent(new Event("change", { bubbles: true }));
+        for (const item of machineList.children) {
+          item.setAttribute("aria-current", String(item.dataset.executorId === executorId));
+        }
+      });
+      machineList.append(row);
     }
     const previousExecutorId = controllerState.executorId;
     if (!dashboardExecutorOnline() && !controllerState.executorPinned) {
@@ -213,19 +257,52 @@ export function createDashboardController({
       elements.dashboardExecutor.append(option);
     }
     elements.dashboardExecutor.value = controllerState.executorId;
+    for (const item of machineList.children) {
+      item.setAttribute("aria-current", String(item.dataset.executorId === controllerState.executorId));
+    }
     if (!dashboardExecutorOnline() && wasOnline) resetDashboardExecutor(controllerState.executorId);
     if (dashboardExecutorOnline() && (!wasOnline || previousExecutorId !== controllerState.executorId)) {
       refreshDashboardInBackground({ force: true });
     }
     if (!dashboardExecutorOnline() && controllerState.executorId) {
-      elements.dashboardState.textContent = `Executor unavailable · ${controllerState.executorId}`;
+      elements.dashboardState.textContent = "Executor offline";
     }
     setDashboardControls();
+  }
+
+  function renderTasks(tasks) {
+    const list = document.getElementById("dashboard-task-list");
+    list.replaceChildren();
+    const active = (Array.isArray(tasks) ? tasks : []).filter(
+      (task) => task.status !== "completed" && task.status !== "cancelled",
+    );
+    if (!active.length) {
+      dashboardEmpty(list, "No active tasks.");
+      return;
+    }
+    for (const task of active.slice(0, 4)) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "dashboard-task-row";
+      row.dataset.taskId = task.task_id;
+      const title = document.createElement("strong");
+      title.textContent = text(task.objective, text(task.task_id));
+      const state = document.createElement("span");
+      state.className = "dashboard-task-state";
+      state.textContent = text(task.status);
+      row.append(title, state);
+      row.addEventListener("click", () => onOpenTask(task.task_id));
+      list.append(row);
+    }
   }
 
   function dashboardListItem(kind, titleText, detailText, metaText = "") {
     const article = document.createElement("article");
     article.className = `dashboard-list-item dashboard-list-${kind}`;
+    const icon = document.createElement("span");
+    icon.className = "dashboard-event-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = ["failed", "critical", "warning", "attention"].includes(kind) ? "!" : "✓";
     const header = document.createElement("div");
     header.className = "dashboard-list-header";
     const title = document.createElement("strong");
@@ -235,7 +312,7 @@ export function createDashboardController({
     header.append(title, meta);
     const detail = document.createElement("p");
     detail.textContent = detailText;
-    article.append(header, detail);
+    article.append(icon, header, detail);
     return article;
   }
 
@@ -243,8 +320,6 @@ export function createDashboardController({
     const system = payload && payload.system && typeof payload.system === "object" ? payload.system : {};
     const version = payload && payload.version && typeof payload.version === "object" ? payload.version : {};
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
-    const activity = Array.isArray(payload?.activity) ? payload.activity : [];
-    const sources = payload && payload.sources && typeof payload.sources === "object" ? payload.sources : {};
     const networkRx = dashboardNumber(system.network_rx_bps);
     const networkTx = dashboardNumber(system.network_tx_bps);
     const networkTotal = networkRx !== null && networkTx !== null
@@ -261,15 +336,33 @@ export function createDashboardController({
     const health = ["healthy", "attention", "critical"].includes(payload.health)
       ? payload.health
       : "attention";
-    elements.dashboardHealth.textContent = health;
+    elements.dashboardHealth.textContent = {
+      healthy: "All systems operational",
+      attention: "Attention needed",
+      critical: "Critical issue detected",
+    }[health];
     elements.dashboardHealthCard.className = `dashboard-card dashboard-health-card dashboard-health-${health}`;
+    document.querySelector(".dashboard-health-banner").dataset.health = health;
+    setMetricLive("Live");
     elements.dashboardHealthDetail.textContent = alerts.length
-      ? `${alerts.length} alert${alerts.length === 1 ? "" : "s"} on ${controllerState.executorId}`
-      : `No active alerts on ${controllerState.executorId}`;
+      ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
+      : "No active alerts.";
     elements.dashboardCpu.textContent = dashboardPercent(system.cpu_percent);
     elements.dashboardMemory.textContent = dashboardPercent(system.memory_percent);
     elements.dashboardDisk.textContent = dashboardPercent(system.disk_percent);
     elements.dashboardNetwork.textContent = networkTotal === null ? "—" : dashboardRate(networkTotal);
+    document.getElementById("dashboard-network-down").textContent = dashboardBytes(networkRx);
+    document.getElementById("dashboard-network-up").textContent = dashboardBytes(networkTx);
+    const total = Math.max(0, networkRx || 0) + Math.max(0, networkTx || 0);
+    document.getElementById("dashboard-network-rx-bar").style.width = total > 0 ? `${100 * Math.max(0, networkRx || 0) / total}%` : "0%";
+    document.getElementById("dashboard-network-tx-bar").style.width = total > 0 ? `${100 * Math.max(0, networkTx || 0) / total}%` : "0%";
+    const load = dashboardNumber(system.load_1m);
+    document.getElementById("dashboard-cpu-foot-load").textContent = load === null ? "Load —" : `Load ${load.toFixed(2)}`;
+    document.getElementById("dashboard-cpu-foot-cores").textContent = `${text(system.cpu_count)} cores`;
+    document.getElementById("dashboard-memory-foot-used").textContent = `${dashboardBytes(system.memory_used_bytes)} used`;
+    document.getElementById("dashboard-memory-foot-total").textContent = `${dashboardBytes(system.memory_total_bytes)} total`;
+    document.getElementById("dashboard-disk-foot-used").textContent = `${dashboardBytes(system.disk_used_bytes)} used`;
+    document.getElementById("dashboard-disk-foot-total").textContent = `${dashboardBytes(system.disk_total_bytes)} total`;
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed · last 24h`;
     elements.dashboardGenerated.textContent = dashboardTimestamp(payload.generated_at, "Unknown sample time");
@@ -300,11 +393,9 @@ export function createDashboardController({
       controllerState.history.map((sample) => sample.network),
     );
 
-    elements.dashboardVersion.textContent = text(version.version, text(version.package_version));
     elements.dashboardPlatform.textContent = text(version.platform);
     elements.dashboardPython.textContent = text(version.python);
     elements.dashboardCpuCount.textContent = text(system.cpu_count);
-    const load = dashboardNumber(system.load_1m);
     elements.dashboardLoad.textContent = load === null ? "—" : load.toFixed(2);
     elements.dashboardUptime.textContent = dashboardDuration(system.uptime_s);
     elements.dashboardMemoryUsed.textContent = system.memory_total_bytes === null
@@ -316,7 +407,6 @@ export function createDashboardController({
     elements.dashboardNetworkRx.textContent = dashboardRate(system.network_rx_bps);
     elements.dashboardNetworkTx.textContent = dashboardRate(system.network_tx_bps);
 
-    elements.dashboardAlertCount.textContent = String(alerts.length);
     elements.dashboardAlerts.replaceChildren();
     if (!alerts.length) {
       dashboardEmpty(elements.dashboardAlerts, "No active alerts.");
@@ -333,25 +423,7 @@ export function createDashboardController({
       }
     }
 
-    elements.dashboardActivity.replaceChildren();
-    if (!activity.length) {
-      dashboardEmpty(elements.dashboardActivity, "No recent Audit activity.");
-    } else {
-      for (const item of activity) {
-        const durationMs = dashboardNumber(item.duration_ms);
-        const duration = durationMs === null ? "" : `${durationMs.toFixed(0)} ms`;
-        elements.dashboardActivity.append(
-          dashboardListItem(
-            text(item.kind, "success"),
-            text(item.title, "MCP activity"),
-            text(item.detail, ""),
-            `${dashboardTimestamp(item.timestamp)}${duration ? ` · ${duration}` : ""}`,
-          ),
-        );
-      }
-    }
-    elements.dashboardSourceState.textContent = `system ${text(sources.system, "unknown")} · audit ${text(sources.audit, "unknown")}`;
-    elements.dashboardState.textContent = `${controllerState.executorId} · ${health} · updated ${new Date().toLocaleTimeString()}`;
+    elements.dashboardState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
   }
 
   function dashboardQueryPath() {
@@ -365,7 +437,7 @@ export function createDashboardController({
     const requestedExecutor = controllerState.executorId;
     controllerState.loading = true;
     setDashboardControls();
-    elements.dashboardState.textContent = `Loading ${requestedExecutor}`;
+    elements.dashboardState.textContent = "Loading…";
     try {
       const payload = await request(dashboardQueryPath());
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
@@ -376,6 +448,7 @@ export function createDashboardController({
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
       elements.dashboardState.textContent = error instanceof Error ? error.message : String(error);
       elements.dashboardHealth.textContent = "unavailable";
+      setMetricLive("Unavailable");
       elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card dashboard-health-attention";
       elements.dashboardHealthDetail.textContent = `Telemetry for ${requestedExecutor} could not be loaded`;
       return null;
@@ -407,13 +480,11 @@ export function createDashboardController({
       resetDashboardExecutor(elements.dashboardExecutor.value);
       refreshDashboardInBackground({ force: true });
     });
-    elements.dashboardRefresh.addEventListener("click", () => {
-      refreshDashboardInBackground({ force: true });
-    });
   }
 
   return {
     bind,
+    renderTasks,
     invalidate,
     refresh: refreshDashboard,
     renderExecutors: renderDashboardExecutors,

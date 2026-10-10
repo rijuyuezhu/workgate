@@ -10,7 +10,6 @@ def run_auth_dashboard(harness: BrowserHarness) -> None:
     harness.login()
     page = harness.page
     expect(page.locator("#executor-target-online")).to_have_text("0")
-    expect(page.locator("#dashboard-version")).to_have_text("—")
     harness.restart_executor()
     harness.wait_executor_online()
     expect(page.locator("#executor-target-online")).to_have_text("1")
@@ -20,15 +19,12 @@ def run_auth_dashboard(harness: BrowserHarness) -> None:
     )
 
     expect(page.locator("#version")).not_to_have_text("—")
-    expect(page.locator("#dashboard-version")).not_to_have_text("—")
     expect(page.locator("#dashboard-platform")).not_to_have_text("—")
     expect(page.locator("#dashboard-python")).not_to_have_text("—")
     expect(page.locator("#dashboard-executor")).to_have_value(
         harness.executor_id
     )
-    expect(page.locator("#dashboard-state")).to_contain_text(
-        harness.executor_id
-    )
+    expect(page.locator("#dashboard-state")).to_contain_text("Updated")
 
     # Simulate a later offline inventory observation deterministically. Backend
     # presence TTL is 60 seconds; the UI should react to the next 4s poll, not
@@ -45,14 +41,12 @@ def run_auth_dashboard(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-target-online")).to_have_text(
         "0", timeout=12_000
     )
-    expect(page.locator("#dashboard-version")).to_have_text("—")
     expect(page.locator("#terminal-start-form button")).to_be_disabled()
     expect(page.locator("#file-new")).to_be_disabled()
     page.unroute("**/api/ui/executors", offline_inventory)
     expect(page.locator("#executor-target-online")).to_have_text(
         "1", timeout=12_000
     )
-    expect(page.locator("#dashboard-version")).not_to_have_text("—")
     expect(page.locator("#file-new")).to_be_enabled()
 
     pinned = harness.context.new_page()

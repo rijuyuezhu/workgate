@@ -1,4 +1,4 @@
-"""Authenticated Human UI APIs for semantic-task Todos."""
+"""Authenticated WebUI APIs for semantic-task Todos."""
 
 from typing import Any
 
@@ -50,7 +50,7 @@ def _require_todo_scopes(*, write: bool = False) -> None:
 def _runtime(request: Request) -> Any:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
-        raise RuntimeError("Human UI Todos requires the control runtime")
+        raise RuntimeError("WebUI Todos requires the control runtime")
     return runtime
 
 

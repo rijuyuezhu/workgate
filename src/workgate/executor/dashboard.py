@@ -1,4 +1,4 @@
-"""Executor-owned machine telemetry for the Human UI dashboard."""
+"""Executor-owned machine telemetry for the WebUI dashboard."""
 
 import math
 import time

@@ -3,57 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>Workgate Human UI</title>
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#111827">
+  <title>Workgate WebUI</title>
   <link rel="stylesheet" href="__WORKGATE_UI_PATH__/assets/xterm.css?v=__WORKGATE_UI_ASSET_REV__">
   <link rel="stylesheet" href="__WORKGATE_UI_PATH__/assets/web.css?v=__WORKGATE_UI_ASSET_REV__">
 </head>
 <body data-workgate-config="__WORKGATE_UI_CONFIG_JSON__">
   <div class="app-shell">
-    <aside class="app-sidebar" aria-label="Application navigation">
-      <div class="brand-block">
-        <span class="brand-mark" aria-hidden="true">&gt;_</span>
-        <span>
-          <strong>Workgate</strong>
-          <small>Control plane</small>
-        </span>
-      </div>
-      <nav class="primary-nav" aria-label="Primary navigation">
-        <button class="nav-item active" type="button" data-view="overview" aria-current="page">
-          <span class="nav-index" aria-hidden="true">01</span><span>Overview</span>
-        </button>
-        <button class="nav-item" type="button" data-view="executors">
-          <span class="nav-index" aria-hidden="true">03</span><span>Executors</span>
-        </button>
-        <button class="nav-item" type="button" data-view="tasks">
-          <span class="nav-index" aria-hidden="true">05</span><span>Tasks</span>
-        </button>
-        <button class="nav-item" type="button" data-view="terminals">
-          <span class="nav-index" aria-hidden="true">06</span><span>Terminals</span>
-        </button>
-        <button class="nav-item" type="button" data-view="files">
-          <span class="nav-index" aria-hidden="true">07</span><span>Files</span>
-        </button>
-        <button class="nav-item" type="button" data-view="audit">
-          <span class="nav-index" aria-hidden="true">08</span><span>Audit</span>
-        </button>
+    <header class="app-header">
+      <button class="brand-block" type="button" data-go-view="overview" aria-label="Workgate home, go to Overview" title="Overview">
+        <div class="brand-mark" aria-hidden="true">WG</div>
+        <div class="brand-name">Workgate</div>
+      </button>
+      <nav id="app-navigation" class="primary-nav" aria-label="Primary navigation">
+          <button class="nav-item active" type="button" data-view="overview" aria-label="Overview" title="Overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4zm10 7h6v-9h-6zM4 20h6v-3H4zm10-13h6V4h-6z"/></svg><span>Overview</span></button>
+          <button class="nav-item" type="button" data-view="files" aria-label="Files" title="Files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/></svg><span>Files</span></button>
+          <button class="nav-item" type="button" data-view="terminals" aria-label="Terminals" title="Terminals"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg><span>Terminals</span></button>
+          <button class="nav-item" type="button" data-view="tasks" aria-label="Tasks" title="Tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v5H5zM5 11h14v9H5z"/><path d="M8 7h5M8 15h8M8 18h5"/></svg><span>Tasks</span></button>
+          <button class="nav-item" type="button" data-view="executors" aria-label="Executors" title="Executors"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></svg><span>Executors</span></button>
+          <button class="nav-item" type="button" data-view="audit" aria-label="Audit" title="Audit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9M10 18V5M16 18v-7M22 18V3"/></svg><span>Audit</span></button>
       </nav>
-      <div class="sidebar-spacer"></div>
-      <p class="sidebar-note">One control surface for execution sessions, executors, files, and terminals.</p>
-    </aside>
-  <main id="app-main" class="shell app-main">
-    <header class="masthead">
-      <div>
-        <p class="eyebrow">Control plane</p>
-        <h1 id="page-title">Overview</h1>
-        <p id="page-description" class="subtitle">System health across connected executor environments.</p>
-      </div>
-      <div class="actions">
+      <div class="app-global-status">
         <span id="connection-state" class="status status-idle">Connecting</span>
+        <span class="app-version"><span id="version">—</span> · <span id="auth-mode">—</span></span>
         <button id="sign-out" type="button" hidden>Sign out</button>
-        <button id="refresh" type="button">Refresh</button>
       </div>
+      <button id="nav-toggle" class="nav-toggle" type="button" aria-controls="app-navigation" aria-expanded="false" aria-label="Open navigation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
     </header>
+    <main id="app-main" class="main-content">
+      <h1 id="page-title" class="visually-hidden">Overview</h1>
 
     <section id="auth-panel" class="panel auth-panel" hidden>
       <div>
@@ -78,54 +59,99 @@
     <section id="dashboard-panel" class="panel dashboard-panel app-view" data-app-view="overview">
       <div class="section-heading dashboard-heading">
         <div>
-          <p class="eyebrow">Process telemetry</p>
-          <h2>Dashboard</h2>
+          <h2>System health</h2>
         </div>
         <div class="dashboard-actions">
-          <label class="dashboard-executor-control" for="dashboard-executor">
+          <label class="dashboard-executor-control" for="dashboard-executor" hidden>
             <span>Executor</span>
             <select id="dashboard-executor" name="dashboard-executor"></select>
           </label>
-          <button id="dashboard-refresh" type="button">Refresh telemetry</button>
           <span id="dashboard-state" class="muted">Not loaded</span>
         </div>
       </div>
-      <div class="dashboard-summary" aria-live="polite">
+      <div class="dashboard-health-banner" data-health="unknown" aria-live="polite">
+        <div class="dashboard-status-illustration" aria-hidden="true">
+          <div class="dashboard-status-ring"></div>
+          <div class="dashboard-status-ring inner"></div>
+          <div class="dashboard-status-circle">
+            <svg class="dashboard-health-check" viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
+            <svg class="dashboard-health-warning" viewBox="0 0 24 24"><path d="M12 4 3 20h18zM12 9v5M12 17h.01"/></svg>
+          </div>
+        </div>
         <article id="dashboard-health-card" class="dashboard-card dashboard-health-card">
           <span>System health</span>
           <strong id="dashboard-health">—</strong>
           <small id="dashboard-health-detail">Waiting for telemetry</small>
         </article>
-        <article class="dashboard-card">
-          <span>CPU</span>
+        <div class="dashboard-health-stats">
+          <div><strong id="executor-target-total">—</strong><span>Executors</span></div>
+          <div><strong id="executor-target-online">—</strong><span>Online</span></div>
+          <button class="dashboard-audit-shortcut" type="button" data-go-view="audit" aria-label="Open Audit records">
+            <strong id="dashboard-audit-total">—</strong><span>Audit · 24h <span aria-hidden="true">↗</span></span>
+            <small id="dashboard-audit-detail" class="visually-hidden">—</small>
+          </button>
+        </div>
+      </div>
+      <div class="dashboard-summary" aria-label="Resource usage">
+        <article class="dashboard-card dashboard-metric-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon violet"><svg viewBox="0 0 24 24"><path d="M8 2v3M16 2v3M8 19v3M16 19v3M2 8h3M2 16h3M19 8h3M19 16h3"/><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 9h6v6H9z"/></svg></span><span class="dashboard-live">Live</span></div>
+          <span>CPU usage</span>
           <strong id="dashboard-cpu">—</strong>
           <svg id="dashboard-cpu-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent CPU trend"></svg>
+          <div class="dashboard-metric-foot"><span id="dashboard-cpu-foot-load">—</span><span id="dashboard-cpu-foot-cores">—</span></div>
         </article>
-        <article class="dashboard-card">
-          <span>Memory</span>
+        <article class="dashboard-card dashboard-metric-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon blue"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="dashboard-live">Live</span></div>
+          <span>Memory usage</span>
           <strong id="dashboard-memory">—</strong>
           <svg id="dashboard-memory-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent memory trend"></svg>
+          <div class="dashboard-metric-foot"><span id="dashboard-memory-foot-used">—</span><span id="dashboard-memory-foot-total">—</span></div>
         </article>
-        <article class="dashboard-card">
-          <span>Disk</span>
+        <article class="dashboard-card dashboard-metric-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon amber"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"/></svg></span><span class="dashboard-live">Live</span></div>
+          <span>Workspace disk</span>
           <strong id="dashboard-disk">—</strong>
           <svg id="dashboard-disk-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent disk trend"></svg>
+          <div class="dashboard-metric-foot"><span id="dashboard-disk-foot-used">—</span><span id="dashboard-disk-foot-total">—</span></div>
         </article>
-        <article class="dashboard-card">
-          <span>Network</span>
-          <strong id="dashboard-network">—</strong>
-          <svg id="dashboard-network-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent network trend"></svg>
-        </article>
-        <article class="dashboard-card">
-          <span>Audit · 24h</span>
-          <strong id="dashboard-audit-total">—</strong>
-          <small id="dashboard-audit-detail">No activity loaded</small>
+        <article class="dashboard-card dashboard-metric-card dashboard-network-card">
+          <div class="dashboard-metric-head"><span class="dashboard-metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 20V10M7 15l5 5 5-5M4 4h16"/></svg></span><span class="dashboard-live positive">Live</span></div>
+          <span>Network throughput</span>
+          <strong id="dashboard-network" class="visually-hidden">—</strong>
+          <svg id="dashboard-network-trend" class="visually-hidden" viewBox="0 0 100 32" aria-hidden="true"></svg>
+          <div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong id="dashboard-network-down">—</strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong id="dashboard-network-up">—</strong><small>sent</small></div></div>
+          <div class="dashboard-network-bar" aria-label="Relative incoming and outgoing traffic"><span id="dashboard-network-rx-bar"></span><i id="dashboard-network-tx-bar"></i></div>
+          <div class="dashboard-metric-foot"><span>Downlink</span><span>Uplink</span></div>
         </article>
       </div>
-      <div class="dashboard-layout">
+      <div class="dashboard-executors-row">
+        <article class="dashboard-section dashboard-executors-section">
+          <div class="dashboard-section-heading"><div><h3>Executors</h3></div><button class="dashboard-panel-link" type="button" data-go-view="executors">Manage executors →</button></div>
+          <div id="dashboard-machine-list" class="dashboard-machine-list" aria-live="polite">Loading executors…</div>
+        </article>
+        <article class="dashboard-section dashboard-alerts-section">
+          <div class="dashboard-section-heading">
+            <div><h3>Needs attention</h3></div>
+            <button class="dashboard-panel-link" type="button" data-go-view="audit">View audit →</button>
+          </div>
+          <div id="dashboard-alerts" class="dashboard-list" aria-live="polite">
+            <div class="empty-state">No telemetry loaded.</div>
+          </div>
+        </article>
+        <article class="dashboard-section dashboard-workloads-section">
+          <div class="dashboard-section-heading">
+            <div><h3>Active tasks</h3></div>
+            <button class="dashboard-panel-link" type="button" data-go-view="tasks">View all →</button>
+          </div>
+          <div id="dashboard-task-list" class="dashboard-task-list" aria-live="polite">
+            <div class="empty-state">Loading tasks…</div>
+          </div>
+        </article>
+      </div>
+      <details class="dashboard-system-disclosure">
+        <summary>System details</summary>
         <article class="dashboard-section dashboard-system">
           <div class="dashboard-section-heading">
-            <h3>System snapshot</h3>
             <span id="dashboard-generated" class="muted">—</span>
           </div>
           <div class="dashboard-resource-list">
@@ -146,7 +172,6 @@
             </div>
           </div>
           <dl class="dashboard-details">
-            <div><dt>Version</dt><dd id="dashboard-version">—</dd></div>
             <div><dt>Platform</dt><dd id="dashboard-platform">—</dd></div>
             <div><dt>Python</dt><dd id="dashboard-python">—</dd></div>
             <div><dt>CPUs</dt><dd id="dashboard-cpu-count">—</dd></div>
@@ -158,62 +183,20 @@
             <div><dt>Network TX</dt><dd id="dashboard-network-tx">—</dd></div>
           </dl>
         </article>
-        <article class="dashboard-section dashboard-alerts-section">
-          <div class="dashboard-section-heading">
-            <h3>Needs attention</h3>
-            <span id="dashboard-alert-count" class="muted">0</span>
-          </div>
-          <div id="dashboard-alerts" class="dashboard-list" aria-live="polite">
-            <div class="empty-state">No telemetry loaded.</div>
-          </div>
-        </article>
-        <article class="dashboard-section dashboard-activity-section">
-          <div class="dashboard-section-heading">
-            <h3>Recent activity</h3>
-            <span id="dashboard-source-state" class="muted">—</span>
-          </div>
-          <div id="dashboard-activity" class="dashboard-list" aria-live="polite">
-            <div class="empty-state">No telemetry loaded.</div>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="metric-grid app-view" data-app-view="overview" aria-label="Service summary">
-      <article class="metric">
-        <span>Version</span>
-        <strong id="version">—</strong>
-      </article>
-      <article class="metric">
-        <span>Executors</span>
-        <strong id="executor-target-total">—</strong>
-      </article>
-      <article class="metric">
-        <span>Online</span>
-        <strong id="executor-target-online">—</strong>
-      </article>
-      <article class="metric">
-        <span>Authentication</span>
-        <strong id="auth-mode">—</strong>
-      </article>
+      </details>
     </section>
 
     <section id="executors-panel" class="panel executors-panel app-view" data-app-view="executors" hidden>
       <div class="section-heading executors-heading">
-        <div>
-          <p class="eyebrow">Final executor identity</p>
-          <h2>Executors</h2>
+        <div class="inventory-summary" aria-live="polite">
+          <span><strong id="executor-total">—</strong> executors</span>
+          <span><strong id="executor-online">—</strong> online</span>
+          <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
         </div>
         <div class="executors-actions">
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
-          <button id="executor-refresh" type="button">Refresh</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
-      </div>
-      <div class="executor-summary" aria-live="polite">
-        <article class="executor-metric"><span>Online</span><strong id="executor-online">—</strong></article>
-        <article class="executor-metric"><span>Total</span><strong id="executor-total">—</strong></article>
-        <article class="executor-metric"><span>Revoked</span><strong id="executor-revoked">—</strong></article>
       </div>
       <div class="executors-layout">
         <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
@@ -292,25 +275,32 @@
     <section id="terminal-panel" class="panel terminal-panel app-view" data-app-view="terminals" hidden>
       <div class="section-heading terminal-heading">
         <div>
-          <p class="eyebrow">Executor-owned persistent terminals</p>
           <h2>Terminals</h2>
         </div>
         <div class="terminal-actions">
-          <label class="executor-select" for="terminal-executor">
+          <label class="executor-select" for="terminal-executor" hidden>
             <span>Executor</span>
             <select id="terminal-executor" name="terminal-executor" aria-label="Terminal executor"></select>
           </label>
           <form id="terminal-start-form" class="terminal-start-form">
             <input id="terminal-name" name="terminal-name" type="text" maxlength="64" placeholder="Optional shell name" autocomplete="off" spellcheck="false">
-            <button type="submit">New terminal</button>
+            <button id="terminal-create" type="submit" class="primary-action">New terminal</button>
           </form>
-          <button id="terminal-kill" type="button" disabled>Kill selected</button>
+          <button id="terminal-kill" type="button" disabled>Kill</button>
         </div>
       </div>
       <div class="terminal-layout">
-        <nav id="terminal-list" class="terminal-list" aria-label="Persistent terminals">
-          <div class="empty-state">Loading terminal sessions…</div>
-        </nav>
+        <aside class="terminal-rail">
+          <div class="terminal-location-heading">Executors</div>
+          <nav id="terminal-executor-locations" class="terminal-executor-locations" aria-label="Terminal executors"></nav>
+          <div class="terminal-rail-header"><strong>Sessions</strong><span id="terminal-count">0</span>
+            <div><button id="terminal-previous" type="button" aria-label="Previous session" disabled>‹</button><button id="terminal-next" type="button" aria-label="Next session" disabled>›</button></div>
+          </div>
+          <label class="terminal-session-search"><span aria-hidden="true">⌕</span><input id="terminal-search" type="search" placeholder="Filter sessions" autocomplete="off"></label>
+          <nav id="terminal-list" class="terminal-list" aria-label="Persistent terminals">
+            <div class="empty-state">Loading terminal sessions…</div>
+          </nav>
+        </aside>
         <div class="terminal-console">
           <div class="terminal-console-header">
             <div class="terminal-console-title">
@@ -348,7 +338,6 @@
     <section id="file-panel" class="panel file-panel app-view" data-app-view="files" hidden>
       <div class="section-heading file-heading">
         <div>
-          <p class="eyebrow">Executor filesystem</p>
           <h2>Files</h2>
         </div>
         <span id="file-state" class="muted">Not loaded</span>
@@ -380,6 +369,17 @@
           <button id="file-delete" type="button" disabled>Delete</button>
         </div>
       </div>
+      <div class="file-layout">
+        <aside class="file-locations">
+          <div class="file-locations-heading"><h3>Locations</h3><span id="file-location-count">0</span></div>
+          <nav id="file-location-executors" aria-label="Executor locations"></nav>
+          <div class="file-shortcuts">
+            <button id="file-workspace-shortcut" type="button"><span>Workspace</span></button>
+            <button id="file-parent-shortcut" type="button"><span>Parent folder</span></button>
+          </div>
+        </aside>
+        <section class="file-browser">
+          <div class="file-browser-heading"><h3>Files</h3><span class="muted">Current directory</span></div>
       <nav id="file-breadcrumbs" class="file-breadcrumbs" aria-label="File path breadcrumbs"></nav>
       <div class="file-list-options">
         <label>Filter <input id="file-filter" type="search" placeholder="Search in this folder" autocomplete="off"></label>
@@ -387,10 +387,11 @@
         <button id="file-sort-direction" type="button" aria-label="Reverse file sort">Ascending</button>
         <span id="file-clipboard-state" class="muted" aria-live="polite">Clipboard empty</span>
       </div>
-      <div class="file-layout">
+          <div class="file-column-heading"><span>Name</span><span>Size</span><span>Modified</span></div>
         <nav id="file-list" class="file-list" aria-label="Executor files" aria-live="polite">
           <div class="empty-state">Loading files…</div>
         </nav>
+        </section>
         <article class="file-preview">
           <div class="file-preview-header">
             <strong id="file-preview-title">No file selected</strong>
@@ -425,9 +426,9 @@
 
     <section id="tasks-panel" class="panel tasks-panel app-view" data-app-view="tasks" hidden>
       <div class="section-heading session-heading">
-        <div>
-          <p class="eyebrow">Durable work</p>
-          <h2>Tasks</h2>
+        <div class="inventory-summary" aria-live="polite">
+          <span><strong id="task-count-total">—</strong> tasks</span>
+          <span><strong id="task-count-active">—</strong> active</span>
         </div>
         <div class="session-toolbar">
           <button id="tasks-refresh" type="button">Refresh</button>
@@ -439,24 +440,33 @@
           <div class="empty-state">Loading tasks…</div>
         </nav>
         <article class="tasks-workspace">
+          <div class="task-empty-note">Select a task to view details.</div>
+          <nav class="task-detail-tabs" role="tablist" aria-label="Task detail">
+            <button id="task-tab-progress" type="button" role="tab" aria-controls="task-panel-progress" aria-selected="true" data-task-tab="progress">Progress</button>
+            <button id="task-tab-plan" type="button" role="tab" aria-controls="task-panel-plan" aria-selected="false" data-task-tab="plan">Plan</button>
+            <button id="task-tab-sessions" type="button" role="tab" aria-controls="task-panel-sessions" aria-selected="false" data-task-tab="sessions">Sessions</button>
+          </nav>
+          <div id="task-panel-progress" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-progress">
           <section class="session-resource session-task">
-            <div class="session-resource-heading">
-              <div><p class="eyebrow">Durable task state</p><h3>Progress</h3></div>
-              <span id="task-state" class="muted">Select a task</span>
+            <div class="task-progress-lead">
+              <div class="task-progress-objective">
+                <span>Objective</span>
+                <strong id="task-objective">—</strong>
+              </div>
+              <span id="task-status" class="task-status-pill">—</span>
+              <span id="task-state" class="visually-hidden">Select a task</span>
             </div>
             <dl class="session-task-grid">
-              <div><dt>Task status</dt><dd id="task-status">—</dd></div>
-              <div><dt>Objective</dt><dd id="task-objective">—</dd></div>
-              <div><dt>Summary</dt><dd id="task-summary">—</dd></div>
-              <div><dt>Next action</dt><dd id="task-next-action">—</dd></div>
-              <div><dt>Findings</dt><dd id="task-findings">—</dd></div>
-              <div><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
+              <div class="task-progress-summary"><dt>Summary</dt><dd id="task-summary">—</dd></div>
+              <div class="task-progress-next"><dt>Next action</dt><dd id="task-next-action">—</dd></div>
+              <div class="task-progress-findings"><dt>Findings</dt><dd id="task-findings">—</dd></div>
+              <div class="task-progress-blockers"><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
             </dl>
           </section>
-
+          </div>
+          <div id="task-panel-plan" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-plan" hidden>
           <section class="session-resource session-todos">
             <div class="session-resource-heading">
-              <div><p class="eyebrow">Durable task state</p><h3>Plan</h3></div>
               <span id="todo-state" class="muted">Select a task</span>
             </div>
             <div class="todo-toolbar">
@@ -481,17 +491,16 @@
               <div class="empty-state">Select a task to load its plan.</div>
             </div>
           </section>
-
+          </div>
+          <div id="task-panel-sessions" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-sessions" hidden>
+            <div class="task-sessions-layout">
           <section class="session-resource session-executions">
-            <div class="session-resource-heading">
-              <div><p class="eyebrow">Execution contexts</p><h3>Sessions</h3></div>
-              <span class="muted">Retained for task history</span>
-            </div>
             <nav id="session-list" class="task-session-list" aria-label="Execution sessions for selected task" aria-live="polite">
               <div class="empty-state">Select a task to inspect its execution sessions.</div>
             </nav>
           </section>
-
+          <div class="task-sessions-main">
+            <p class="task-session-empty">Select a session to view its Audit.</p>
           <section class="session-resource session-execution-detail">
             <div class="session-detail-header">
               <div>
@@ -500,6 +509,8 @@
               </div>
               <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
             </div>
+            <details class="task-session-metadata">
+              <summary>Session metadata</summary>
             <dl class="session-detail-grid">
               <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
               <div><dt>Executor ID</dt><dd id="session-detail-executor">—</dd></div>
@@ -507,11 +518,13 @@
               <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
               <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
             </dl>
+            </details>
           </section>
 
           <section class="session-resource session-audit">
             <div class="session-resource-heading">
-              <div><p class="eyebrow">Session-scoped activity</p><h3>Audit</h3></div>
+              <div><h3>Audit</h3></div>
+              <span id="session-audit-summary" class="audit-summary" aria-live="polite">0 records</span>
               <span id="session-audit-state" class="muted">Select a session</span>
             </div>
             <form id="session-audit-filter-form" class="audit-toolbar session-audit-toolbar">
@@ -540,9 +553,8 @@
                 <span>Limit</span>
                 <select id="session-audit-limit"><option value="100">100</option><option value="300" selected>300</option><option value="1000">1000</option></select>
               </label>
-              <button id="session-audit-refresh" type="submit">Refresh</button>
+              <button id="session-audit-refresh" type="submit">Apply</button>
             </form>
-            <div id="session-audit-summary" class="audit-summary" aria-live="polite">0 entries</div>
             <div class="audit-layout session-audit-layout">
               <nav id="session-audit-list" class="audit-list" aria-label="Session Audit records" aria-live="polite">
                 <div class="empty-state">Select a session to load its Audit records.</div>
@@ -556,6 +568,9 @@
               </article>
             </div>
           </section>
+          </div>
+            </div>
+          </div>
         </article>
       </div>
     </section>
@@ -563,58 +578,75 @@
     <section id="audit-panel" class="panel audit-panel app-view" data-app-view="audit" hidden>
       <div class="section-heading audit-heading">
         <div>
-          <p class="eyebrow">Control-owned activity and product events</p>
-          <h2>Global Audit</h2>
+          <h2>Audit records</h2>
         </div>
         <span id="audit-state" class="muted">Not loaded</span>
       </div>
       <form id="audit-filter-form" class="audit-toolbar">
-        <label class="audit-control" for="audit-operation">
-          <span>Operation</span>
-          <select id="audit-operation" name="audit-operation">
-            <option value="">All</option>
-            <option value="files">Files</option>
-            <option value="shell">Shell</option>
-            <option value="jobs">Jobs</option>
-            <option value="transfer">Transfer</option>
-            <option value="agent">Agent</option>
-            <option value="security">Security</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <label class="audit-control" for="audit-event">
-          <span>Event</span>
-          <input id="audit-event" name="audit-event" type="text" maxlength="1024" placeholder="tool_call" autocomplete="off" spellcheck="false">
-        </label>
-        <label class="audit-control audit-search-control" for="audit-search">
-          <span>Search</span>
-          <input id="audit-search" name="audit-search" type="search" maxlength="4096" placeholder="Search Audit records" autocomplete="off" spellcheck="false">
-        </label>
-        <label class="audit-control" for="audit-sort">
-          <span>Order</span>
-          <select id="audit-sort" name="audit-sort">
-            <option value="desc">Newest first</option>
-            <option value="asc">Oldest first</option>
-          </select>
-        </label>
-        <label class="audit-control" for="audit-limit">
-          <span>Limit</span>
-          <select id="audit-limit" name="audit-limit">
-            <option value="100">100</option>
-            <option value="300" selected>300</option>
-            <option value="1000">1000</option>
-          </select>
-        </label>
-        <button id="audit-refresh" type="submit">Refresh</button>
+        <div class="audit-searchbar">
+          <label class="audit-control audit-search-control" for="audit-search">Search audit
+            <input id="audit-search" name="audit-search" type="search" maxlength="4096" placeholder="Command, path, tool, error…" autocomplete="off" spellcheck="false">
+          </label>
+          <button id="audit-live-toggle" type="button" aria-pressed="false">Pause updates</button>
+        </div>
+        <div class="audit-filter-strip">
+          <label class="audit-control" for="audit-operation"><span>Operation</span>
+            <select id="audit-operation" name="audit-operation">
+              <option value="">All</option>
+              <option value="files">Files</option>
+              <option value="shell">Shell</option>
+              <option value="jobs">Jobs</option>
+              <option value="transfer">Transfer</option>
+              <option value="agent">Agent</option>
+              <option value="security">Security</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label class="audit-control" for="audit-time"><span>Time</span>
+            <select id="audit-time">
+              <option value="900">15m</option>
+              <option value="3600">1h</option>
+              <option value="86400" selected>24h</option>
+              <option value="604800">7d</option>
+              <option value="0">All</option>
+            </select>
+          </label>
+          <label class="audit-control" for="audit-sort"><span>Sort</span>
+            <select id="audit-sort" name="audit-sort">
+              <option value="desc">Newest first</option>
+              <option value="asc">Oldest first</option>
+            </select>
+          </label>
+          <button id="audit-advanced-toggle" type="button" aria-expanded="false">Advanced</button>
+          <button id="audit-refresh" type="submit">Apply</button>
+        </div>
+        <div id="audit-advanced" class="audit-advanced" hidden>
+          <label class="audit-control" for="audit-event"><span>Event</span>
+            <input id="audit-event" name="audit-event" type="text" maxlength="1024" placeholder="tool_call" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="audit-control" for="audit-limit"><span>Limit</span>
+            <select id="audit-limit" name="audit-limit">
+              <option value="100">100</option>
+              <option value="300" selected>300</option>
+              <option value="1000">1000</option>
+            </select>
+          </label>
+          <button id="audit-clear-filters" type="button">Clear filters</button>
+        </div>
       </form>
       <div id="audit-summary" class="audit-summary" aria-live="polite">0 entries</div>
       <div class="audit-layout">
-        <nav id="audit-list" class="audit-list" aria-label="Audit records" aria-live="polite">
+        <section class="audit-list-pane">
+          <div class="audit-list-pane-header"><strong>Audit records</strong>
+            <div><button id="audit-previous" type="button" disabled>Previous</button><button id="audit-next" type="button" disabled>Next</button></div>
+          </div>
+          <nav id="audit-list" class="audit-list" aria-label="Audit records" aria-live="polite" tabindex="0">
           <div class="empty-state">Loading Audit records…</div>
-        </nav>
+          </nav>
+        </section>
         <article class="audit-detail">
           <div class="audit-detail-header">
-            <strong id="audit-detail-title">No record selected</strong>
+            <strong id="audit-detail-title">Call details</strong>
             <span id="audit-detail-meta" class="muted">Select an Audit record</span>
           </div>
           <div id="audit-detail-body" class="audit-detail-body">Select an Audit record.</div>
