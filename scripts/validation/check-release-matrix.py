@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check universal Python distribution and standalone binary release contracts."""
 
+import ast
 import re
 import tomllib
 from pathlib import Path
@@ -31,9 +32,23 @@ def main() -> int:
         raise SystemExit("Windows CI jobs are not supported")
     release = (ROOT / ".github/workflows/release.yml").read_text()
     with (ROOT / "pyproject.toml").open("rb") as stream:
-        project_python = tomllib.load(stream)["project"][
-            "requires-python"
-        ].removeprefix(">=")
+        project = tomllib.load(stream)["project"]
+    project_python = project["requires-python"].removeprefix(">=")
+    project_version = project["version"]
+    runtime_module = ast.parse((ROOT / "src/workgate/__init__.py").read_text())
+    runtime_versions = [
+        assignment.value.value
+        for assignment in runtime_module.body
+        if isinstance(assignment, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in assignment.targets
+        )
+        and isinstance(assignment.value, ast.Constant)
+        and isinstance(assignment.value.value, str)
+    ]
+    if runtime_versions != [project_version]:
+        raise SystemExit("pyproject version must match workgate.__version__")
     if f'  PYTHON_VERSION: "{project_python}"' not in release:
         raise SystemExit("release Python version must match project minimum")
     validation = _section(release, "validate-release")
