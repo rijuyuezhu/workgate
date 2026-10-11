@@ -144,9 +144,7 @@ a machine. To deliberately replace its credential, run
 `workgate executor connect CONTROL_URL` on that machine and approve the
 replacement.
 
-For protocol and trust details, see
-[Control/executor architecture](../architecture/control-executor.md) and
-[Security](../security.md).
+For executor trust and host permissions, see [Security](../security.md).
 
 ## Troubleshooting
 

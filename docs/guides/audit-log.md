@@ -43,4 +43,4 @@ Listing audit summaries requires `audit:read`. Full retained payloads require `a
 - **The audit directory is growing too large:** lower retention and payload limits in configuration.
 - **You need to report a bug:** export only the smallest relevant entries and review them manually for secrets and project content.
 
-For security guarantees and limitations, see [Security](../security.md). Contributors working on audit storage or event contracts should use [Development](../development.md) and the source tests as the canonical implementation reference.
+For security guidance, see [Security](../security.md).

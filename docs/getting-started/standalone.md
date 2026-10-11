@@ -65,5 +65,3 @@ an explicit `executor_id`. They are still executor-backed: if the executor is
 offline, machine-facing tools are unavailable.
 
 For public or multi-machine setups, see [Choose a deployment](deployment.md).
-For the ownership and failure contracts, see
-[Control/executor architecture](../architecture/control-executor.md).
