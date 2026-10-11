@@ -254,3 +254,34 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: python scripts/validation/check-release-matrix.py
+
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    needs:
+      - pre-commit
+      - pyright
+      - test
+      - topology
+      - coverage
+      - browser-e2e
+      - standalone-binary-smoke
+      - package-smoke
+      - release-matrix
+    if: always()
+    steps:
+      - name: Require every CI job to succeed
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          jobs = json.loads(os.environ['JOB_RESULTS'])
+          failures = {name: value['result'] for name, value in jobs.items() if value['result'] != 'success'}
+          if failures:
+              sys.exit(f'CI gate failed: {failures}')
+          print('All CI jobs passed')
+          PY
