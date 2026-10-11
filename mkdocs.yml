@@ -63,6 +63,7 @@ nav:
       - Standalone local mode: getting-started/standalone.md
       - VPS deployment: getting-started/vps.md
       - Cloudflare Tunnel: getting-started/cloudflare-tunnel.md
+      - Other MCP clients: getting-started/mcp-clients.md
       - ChatGPT connector: getting-started/chatgpt-connector.md
       - Install options: getting-started/install-options.md
   - Guides:

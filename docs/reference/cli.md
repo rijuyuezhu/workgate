@@ -24,6 +24,9 @@ workgate executor --help
 | `stdio` | Run a stdio MCP control process for local MCP clients. |
 | `http` | Start the WebUI and an HTTP debug wrapper of the registered MCP tools. |
 
+For generic MCP client onboarding over HTTP or local stdio, see
+[Other MCP clients](../getting-started/mcp-clients.md).
+
 The control CLI intentionally does **not** expose executor machine
 settings such as `--default-workdir`, shell executables, or executor tool binary
 paths. Those settings belong to the executor process.
