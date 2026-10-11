@@ -78,8 +78,8 @@ def _runner_argv(
     ]
 
 
-def _runner_command(argv: list[str], shell: str) -> str:
-    """Quote an internal runner invocation for the configured parent shell."""
+def _runner_command(argv: list[str]) -> str:
+    """Quote an internal runner invocation for the POSIX parent shell."""
     return shlex.join(argv)
 
 
@@ -96,4 +96,4 @@ def _prepare_attempt(
     paths["log"].unlink(missing_ok=True)
     paths["status"].unlink(missing_ok=True)
     argv = _runner_argv(config, paths, cwd)
-    return paths, _runner_command(argv, config.shell_executable)
+    return paths, _runner_command(argv)

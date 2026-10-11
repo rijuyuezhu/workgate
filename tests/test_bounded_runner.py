@@ -67,7 +67,7 @@ def test_handled_signals_omit_platform_missing_sighup(monkeypatch):
 
 
 def test_enable_child_subreaper_is_disabled_off_linux(monkeypatch):
-    monkeypatch.setattr(bounded_runner.sys, "platform", "win32")
+    monkeypatch.setattr(bounded_runner.sys, "platform", "darwin")
 
     assert bounded_runner._enable_child_subreaper() is False
 

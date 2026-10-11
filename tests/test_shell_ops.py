@@ -30,7 +30,6 @@ from workgate.control.http.app import build_http_app
 from workgate.control.tool_timeouts import tool_timeout_s
 from workgate.executor.shell import (
     _shared_tail_bytes,
-    _shell_command_args,
     _subprocess_env,
     _tmux_session_name,
     clamp_timeout,
@@ -60,14 +59,6 @@ def _executor_store():
         shell_ops, "get_tool_session_store", get_tool_session_store
     )
     return provider()
-
-
-def test_shell_command_args_are_native_for_supported_shells():
-    assert _shell_command_args("/bin/bash", "echo hi") == [
-        "/bin/bash",
-        "-lc",
-        "echo hi",
-    ]
 
 
 def test_bounded_runner_uses_trusted_absolute_script(monkeypatch):

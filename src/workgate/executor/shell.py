@@ -241,10 +241,6 @@ def _effective_shell_executable(config: ExecutorConfig) -> str:
     )
 
 
-def _shell_command_args(shell: str, command: str) -> list[str]:
-    return [shell, "-lc", command]
-
-
 def _shell_join_argv(argv: list[str]) -> str:
     return shlex.join(argv)
 
