@@ -300,9 +300,8 @@ def test_transfer_id_and_private_state_are_hardened(tmp_path, monkeypatch):
     temporary = root / begin.temp_path
     metadata = temporary.with_name(temporary.name + ".json")
 
-    if os.name != "nt":
-        assert temporary.stat().st_mode & 0o777 == 0o600
-        assert metadata.stat().st_mode & 0o777 == 0o600
+    assert temporary.stat().st_mode & 0o777 == 0o600
+    assert metadata.stat().st_mode & 0o777 == 0o600
     with pytest.raises(ValueError, match="unsupported characters"):
         transfer_abort_write("dest.bin", "../invalid")
 

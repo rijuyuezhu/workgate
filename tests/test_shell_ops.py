@@ -510,7 +510,6 @@ async def test_owned_tmux_name_collision_preserves_existing_ownership(
     assert events == expected
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires the shared tmux backend")
 def test_persistent_shell_capacity_is_shared_across_processes(
     tmp_path, monkeypatch
 ):
@@ -1423,7 +1422,6 @@ async def test_run_shell_command_timeout_marks_result_and_cleans_up(
     assert result.timed_out is True
 
 
-@pytest.mark.skipif(os.name == "nt", reason="tmux-specific behavior")
 @pytest.mark.asyncio
 async def test_read_persistent_shell_preserves_ansi_only_when_requested(
     monkeypatch,
@@ -1459,7 +1457,6 @@ async def test_read_persistent_shell_preserves_ansi_only_when_requested(
     ]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="tmux-specific behavior")
 @pytest.mark.asyncio
 async def test_resize_persistent_shell_resizes_tmux_window(monkeypatch):
     calls = []
@@ -1505,7 +1502,6 @@ async def test_resize_persistent_shell_rejects_invalid_dimensions():
         )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="tmux-specific behavior")
 @pytest.mark.asyncio
 async def test_send_shell_invokes_tmux_promptly(monkeypatch):
     calls = []

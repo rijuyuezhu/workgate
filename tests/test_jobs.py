@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -668,12 +667,8 @@ def test_job_runner_persists_bounded_output_and_terminal_status(
 def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
     _configure_job_state(tmp_path, monkeypatch)
     paths = _attempt_paths_untyped("job_failed", 1)
-    command = (
-        "echo failed-output & exit /b 7"
-        if os.name == "nt"
-        else python_shell_command(
-            "import sys; print('failed-output'); sys.exit(7)"
-        )
+    command = python_shell_command(
+        "import sys; print('failed-output'); sys.exit(7)"
     )
     paths["command"].write_text(command, encoding="utf-8")
     args = SimpleNamespace(
@@ -3020,16 +3015,10 @@ def test_job_runner_applies_configured_environment_filters(
     monkeypatch.setenv("PRIVATE_TOKEN", "hidden")
     monkeypatch.setenv("KEEP_VISIBLE", "visible")
     paths = _attempt_paths_untyped("job_env_filter", 1)
-    command = (
-        "if defined EXACT_SECRET (exit /b 21) else if defined PRIVATE_TOKEN "
-        '(exit /b 22) else if not "%KEEP_VISIBLE%"=="visible" '
-        "(exit /b 23) else echo filtered"
-        if os.name == "nt"
-        else python_shell_command(
-            "import os; "
-            "print('|'.join(os.environ.get(name, '<missing>') for name in "
-            "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
-        )
+    command = python_shell_command(
+        "import os; "
+        "print('|'.join(os.environ.get(name, '<missing>') for name in "
+        "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
     )
     paths["command"].write_text(
         command,
@@ -3051,7 +3040,7 @@ def test_job_runner_applies_configured_environment_filters(
 
     assert exit_info.value.code == 0
     assert paths["log"].read_text(encoding="utf-8").strip() == (
-        "filtered" if os.name == "nt" else "<missing>|<missing>|visible"
+        "<missing>|<missing>|visible"
     )
 
 

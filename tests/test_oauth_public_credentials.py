@@ -1,4 +1,3 @@
-import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
@@ -57,8 +56,7 @@ def test_public_oauth_accepts_eight_character_pin_and_generates_strong_secret(
     path = settings.state_dir / OAUTH_SIGNING_SECRET_FILE_NAME
     secret = path.read_text(encoding="utf-8").strip()
     assert len(secret.encode("utf-8")) >= MIN_OAUTH_SIGNING_SECRET_BYTES
-    if os.name != "nt":
-        assert path.stat().st_mode & 0o777 == 0o600
+    assert path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize(

@@ -535,11 +535,8 @@ def test_audit_threaded_appends_are_complete_and_private(tmp_path, monkeypatch):
     assert len(records) == 200
     assert {record["index"] for record in records} == set(range(200))
     assert len({record["id"] for record in records}) == 200
-    if os.name != "nt":
-        assert path.stat().st_mode & 0o777 == 0o600
-        assert (
-            path.with_name(path.name + ".lock").stat().st_mode & 0o777 == 0o600
-        )
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.with_name(path.name + ".lock").stat().st_mode & 0o777 == 0o600
 
 
 def test_audit_cross_process_appends_do_not_corrupt_jsonl(
@@ -861,8 +858,7 @@ def test_audit_payload_round_trip_is_deduplicated_private_and_truthful(
 
     files = list(get_settings().audit_payload_dir.glob("*.json.gz"))
     assert len(files) == 1
-    if os.name != "nt":
-        assert files[0].stat().st_mode & 0o777 == 0o600
+    assert files[0].stat().st_mode & 0o777 == 0o600
 
 
 def test_audit_payload_resolution_reports_corrupt_missing_and_expired(
@@ -967,8 +963,6 @@ def test_audit_payload_store_quota_drops_complete_lifecycle_units(
 
 
 def test_audit_payload_orphan_gc_and_symlink_replacement(tmp_path, monkeypatch):
-    if os.name == "nt":
-        pytest.skip("symlink creation was not permitted")
     _configure_audit(
         tmp_path,
         monkeypatch,
@@ -1064,8 +1058,6 @@ def test_disabling_audit_payloads_falls_back_to_bounded_jsonl(
 
 
 def test_audit_payload_rejects_symlinked_store_root(tmp_path, monkeypatch):
-    if os.name == "nt":
-        pytest.skip("symlink creation was not permitted")
     _configure_audit(
         tmp_path,
         monkeypatch,

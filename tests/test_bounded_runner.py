@@ -1285,7 +1285,6 @@ def test_bounded_runner_argparse_rejects_incomplete_launchd_child_args():
         )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_child_streams_output_and_publishes_status(tmp_path):
     stdout_path = tmp_path / "stdout.fifo"
     stderr_path = tmp_path / "stderr.fifo"
@@ -1320,7 +1319,6 @@ def test_launchd_child_streams_output_and_publishes_status(tmp_path):
         os.close(stderr_fd)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_child_waits_for_coalition_release(tmp_path, monkeypatch):
     stdout_path = tmp_path / "stdout.fifo"
     stderr_path = tmp_path / "stderr.fifo"
@@ -1592,7 +1590,6 @@ def test_bounded_runner_argv_uses_platform_native_absolute_script(monkeypatch):
     ]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_plist_uses_frozen_cli_subcommand(monkeypatch):
     _install_fake_launchd_coalitions(monkeypatch)
     program_arguments: list[str] = []
@@ -1624,7 +1621,6 @@ def test_launchd_plist_uses_frozen_cli_subcommand(monkeypatch):
     ]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_cleans_uncertain_timed_out_bootstrap(
     monkeypatch, capsys
 ):
@@ -1652,7 +1648,6 @@ def test_launchd_parent_cleans_uncertain_timed_out_bootstrap(
     assert "registration failed" in capsys.readouterr().err
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_forwards_output_and_real_status(monkeypatch, capsys):
     _install_fake_launchd_coalitions(monkeypatch)
     child_threads: list[threading.Thread] = []
@@ -1720,7 +1715,6 @@ def test_launchd_parent_forwards_output_and_real_status(monkeypatch, capsys):
     assert captured.err == "parent-err"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_falls_back_to_user_domain(monkeypatch):
     _install_fake_launchd_coalitions(monkeypatch)
     child_threads: list[threading.Thread] = []
@@ -1790,7 +1784,6 @@ def test_launchd_parent_falls_back_to_user_domain(monkeypatch):
     assert calls[2][1].startswith("user/1000/workgate.bounded.")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_fails_closed_when_cleanup_is_unconfirmed(
     monkeypatch, capsys
 ):

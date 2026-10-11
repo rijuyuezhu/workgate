@@ -170,8 +170,6 @@ async def test_control_stdio_is_forbidden():
 
 @pytest.mark.asyncio
 async def test_short_lived_stdio_child_reaped_on_initialize_timeout(tmp_path):
-    if os.name == "nt":
-        pytest.skip("POSIX process signal test")
     script = tmp_path / "hang.py"
     pid_file = tmp_path / "pid"
     script.write_text(

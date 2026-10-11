@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import json
-import os
 import time
 from pathlib import Path
 
@@ -461,9 +460,8 @@ def test_download_store_recovers_from_backup(tmp_path, monkeypatch):
     assert [item.link_id for item in recovered.links] == [link.link_id]
     assert json.loads(download_store_path.read_text())["version"] == 3
     assert backup_path().exists()
-    if os.name != "nt":
-        assert download_store_path.stat().st_mode & 0o777 == 0o600
-        assert backup_path().stat().st_mode & 0o777 == 0o600
+    assert download_store_path.stat().st_mode & 0o777 == 0o600
+    assert backup_path().stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.asyncio

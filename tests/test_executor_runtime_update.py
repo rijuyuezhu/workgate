@@ -1,6 +1,5 @@
 import hashlib
 import io
-import os
 import tarfile
 from pathlib import Path
 
@@ -154,8 +153,7 @@ async def test_control_managed_update_replaces_verified_runtime_atomically(
 
     assert updated == target
     assert target.read_text().endswith(f"'workgate {target_version}'\n")
-    if os.name != "nt":
-        assert target.stat().st_mode & 0o111
+    assert target.stat().st_mode & 0o111
     state = store.load()
     assert state is not None
     assert state.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED

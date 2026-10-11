@@ -1,6 +1,5 @@
 import contextlib
 import json
-import os
 import threading
 import time
 from pathlib import Path
@@ -352,10 +351,7 @@ def test_managed_updates_defer_in_order_and_replay_once(
         json.loads(path.read_text(encoding="utf-8"))["operation"]
         for path in deferred_paths
     ] == ["append_log", "update_progress", "finish"]
-    if os.name != "nt":
-        assert all(
-            (path.stat().st_mode & 0o077) == 0 for path in deferred_paths
-        )
+    assert all((path.stat().st_mode & 0o077) == 0 for path in deferred_paths)
 
     original_remove = jobs_recovery.remove_managed_deferred_updates
     monkeypatch.setattr(

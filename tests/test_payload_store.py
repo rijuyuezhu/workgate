@@ -52,9 +52,8 @@ def test_payload_commit_and_verified_open(tmp_path):
     finally:
         handle.close()
 
-    if os.name != "nt":
-        assert path.stat().st_mode & 0o777 == 0o600
-        assert store.directory("test").stat().st_mode & 0o777 == 0o700
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert store.directory("test").stat().st_mode & 0o777 == 0o700
 
 
 def test_payload_open_rejects_size_and_digest_changes(tmp_path):

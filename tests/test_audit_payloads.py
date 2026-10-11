@@ -140,9 +140,8 @@ def test_read_regular_file_rejects_symlink_nonregular_and_bounds(
     with pytest.raises(ValueError, match="exceeds read bound"):
         payloads._read_regular_file_nofollow(large, 3)
 
-    if os.name != "nt":
-        with pytest.raises(ValueError, match="not a regular file"):
-            payloads._read_regular_file_nofollow(tmp_path, 100)
+    with pytest.raises(ValueError, match="not a regular file"):
+        payloads._read_regular_file_nofollow(tmp_path, 100)
 
     real_fstat = payloads.os.fstat
 

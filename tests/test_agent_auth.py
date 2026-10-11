@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import stat
 import subprocess
 import sys
@@ -65,10 +64,9 @@ def test_agent_auth_store_secret_lifecycle_permissions_and_no_value_listing(
     with pytest.raises(AgentSecretNotFoundError, match="server docs"):
         store.get_secret("docs", "api_token")
 
-    if os.name != "nt":
-        assert stat.S_IMODE(store.root.stat().st_mode) == 0o700
-        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
-        assert stat.S_IMODE(store.lock_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(store.root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(store.lock_path.stat().st_mode) == 0o600
 
 
 def test_agent_auth_store_corruption_is_explicit_and_not_reset(tmp_path):

@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 import textwrap
 
 import pytest
@@ -691,10 +690,9 @@ def test_control_handler_initializes_only_control_owned_directories(
     assert state_dir.is_dir()
     assert data_dir.is_dir()
     assert settings.audit_log_path.parent.is_dir()
-    if os.name != "nt":
-        assert state_dir.stat().st_mode & 0o777 == 0o700
-        assert data_dir.stat().st_mode & 0o777 == 0o700
-        assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
+    assert state_dir.stat().st_mode & 0o777 == 0o700
+    assert data_dir.stat().st_mode & 0o777 == 0o700
+    assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
     assert configured == [settings]
     assert configured_log_levels == ["warning"]
     assert dispatched == [settings]

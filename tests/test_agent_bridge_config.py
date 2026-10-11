@@ -1,5 +1,4 @@
 import json
-import os
 
 import pytest
 
@@ -107,7 +106,6 @@ def test_load_agent_manifest_valid_config(tmp_path):
     assert manifest.data.skills.directory == "skills"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership/mode contract")
 def test_agent_manifest_directory_is_tightened_to_private_mode(tmp_path):
     config_dir = tmp_path / "agent"
     config_dir.mkdir(mode=0o755)

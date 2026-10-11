@@ -400,8 +400,6 @@ def test_regular_file_reads_are_bounded_and_normalized(tmp_path):
 def test_regular_file_read_rejects_target_identity_change(
     tmp_path, monkeypatch
 ):
-    if os.name == "nt":
-        pytest.skip("inode identity check is POSIX-only")
     entry = tmp_path / "entry.md"
     entry.write_text("content", encoding="utf-8")
     actual = entry.stat()

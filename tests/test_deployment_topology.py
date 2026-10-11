@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import httpx
@@ -21,10 +20,6 @@ from workgate.persistence import FileStateStore
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.topology,
-    pytest.mark.skipif(
-        os.name == "nt",
-        reason="deployment topology process acceptance runs on POSIX CI",
-    ),
 ]
 
 

@@ -1,5 +1,4 @@
 import base64
-import os
 import shutil
 import subprocess
 import threading
@@ -206,9 +205,7 @@ async def test_terminal_bridge_rejects_malformed_capabilities_and_chunks(
 
 
 @pytest.mark.skipif(
-    os.name == "nt"
-    or shutil.which("tmux") is None
-    or shutil.which("bash") is None,
+    shutil.which("tmux") is None or shutil.which("bash") is None,
     reason="requires POSIX tmux and bash",
 )
 @pytest.mark.asyncio
