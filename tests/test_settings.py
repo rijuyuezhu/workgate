@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from workgate.config.executor import resolve_executor_config
@@ -93,9 +91,8 @@ def test_loading_settings_does_not_create_runtime_directories(tmp_path):
     assert not workspace.exists()
     assert state.is_dir()
     assert settings.audit_log_path.parent.is_dir()
-    if os.name != "nt":
-        assert state.stat().st_mode & 0o777 == 0o700
-        assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
+    assert state.stat().st_mode & 0o777 == 0o700
+    assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
 
     assert resolve_executor_config(
         settings

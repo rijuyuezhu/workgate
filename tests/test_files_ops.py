@@ -216,9 +216,6 @@ def test_list_files_reports_limit_and_truncation(tmp_path, monkeypatch):
     assert complete.is_truncated is False
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="symlink creation may require elevated privileges"
-)
 def test_list_and_delete_preserve_final_symlink(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
@@ -328,7 +325,6 @@ def test_write_text_does_not_read_existing_file_before_overwrite(
     assert (tmp_path / "existing.txt").read_bytes().decode("utf-8") == "new"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are not portable")
 def test_atomic_write_preserves_existing_file_mode(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
@@ -439,10 +435,9 @@ async def test_fetch_reports_non_utf8_errors(tmp_path, monkeypatch):
 def test_default_workdir_does_not_confine_absolute_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
-    if os.name != "nt":
-        assert _resolve_ambient_path("/etc/passwd") == Path(
-            "/etc/passwd"
-        ).resolve(strict=False)
+    assert _resolve_ambient_path("/etc/passwd") == Path("/etc/passwd").resolve(
+        strict=False
+    )
 
     outside_default = tmp_path.parent / "outside-default"
     assert _resolve_ambient_path(outside_default) == Path(

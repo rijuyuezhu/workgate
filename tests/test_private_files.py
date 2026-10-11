@@ -1,53 +1,6 @@
-import errno
-import sys
-from types import SimpleNamespace
-
 import pytest
 
 import workgate.utils.private_files as private_files
-
-
-def test_windows_file_lock_retries_contention(monkeypatch, tmp_path):
-    calls: list[int] = []
-    sleeps: list[float] = []
-
-    def locking(_fd: int, mode: int, _length: int) -> None:
-        calls.append(mode)
-        if mode == 2 and calls.count(mode) < 3:
-            raise OSError(errno.EDEADLK, "fixture contention")
-
-    fake_msvcrt = SimpleNamespace(
-        LK_NBLCK=2,
-        LK_UNLCK=0,
-        locking=locking,
-    )
-    path = tmp_path / "lock"
-    with path.open("a+b") as handle:
-        monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-        monkeypatch.setattr(private_files.os, "name", "nt")
-        monkeypatch.setattr(private_files.time, "sleep", sleeps.append)
-        private_files._lock_handle(handle)
-        private_files._unlock_handle(handle)
-
-    assert calls == [2, 2, 2, 0]
-    assert sleeps == [0.01, 0.01]
-
-
-def test_windows_file_lock_does_not_retry_other_errors(monkeypatch, tmp_path):
-    def locking(_fd: int, _mode: int, _length: int) -> None:
-        raise OSError(errno.EIO, "fixture I/O error")
-
-    fake_msvcrt = SimpleNamespace(
-        LK_NBLCK=2,
-        LK_UNLCK=0,
-        locking=locking,
-    )
-    path = tmp_path / "lock"
-    with path.open("a+b") as handle:
-        monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-        monkeypatch.setattr(private_files.os, "name", "nt")
-        with pytest.raises(OSError, match="fixture I/O error"):
-            private_files._lock_handle(handle)
 
 
 def test_private_file_lock_initializes_and_repairs_empty_file(tmp_path):
@@ -132,3 +85,35 @@ def test_lock_file_initialization_retries_empty_file_permission_race(
 
     assert path.stat().st_size >= 1
     assert sleeps == [0.01]
+
+
+def test_private_lock_retry_wait_is_bounded_by_deadline(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(private_files.time, "sleep", sleeps.append)
+    private_files._retry_private_lock_io(
+        private_files.time.monotonic() + 0.05,
+        timeout_message="deadline expired",
+        retry_interval_s=0.01,
+    )
+    assert len(sleeps) == 1
+    assert 0 < sleeps[0] <= 0.01
+
+
+def test_private_lock_unexpected_posix_error_is_not_swallowed(
+    monkeypatch, tmp_path
+):
+    import errno
+    import fcntl
+
+    path = tmp_path / "lock"
+    path.write_bytes(b"\0")
+
+    def unexpected_error(*args):
+        raise OSError(errno.EIO, "filesystem error")
+
+    monkeypatch.setattr(fcntl, "flock", unexpected_error)
+    with (
+        path.open("r+b") as handle,
+        pytest.raises(OSError, match="filesystem error"),
+    ):
+        private_files._try_lock_handle(handle)

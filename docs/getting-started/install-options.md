@@ -63,8 +63,7 @@ PyGObject/AT-SPI bindings (for example, the distro's Python GI and AT-SPI
 typelib packages); Wayland uses the desktop portal and X11 uses the session's
 X server. Executors without supported bindings or a usable Linux graphical session
 omit `gui.v1`. Runtime permission or desktop-session failures are reported
-explicitly; GUI tools never fall back to the control machine. Windows native GUI
-automation is not supported.
+explicitly; GUI tools never fall back to the control machine.
 
 ## Release archive
 

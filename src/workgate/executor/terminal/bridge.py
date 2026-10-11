@@ -1,10 +1,9 @@
 """Connection-scoped raw PTY bridges for persistent shells.
 
 The public persistent-shell tools intentionally remain snapshot based. This
-module is an internal WebUI transport. POSIX bridges start a short-lived
-``tmux attach-session`` client; Windows bridges subscribe to the existing
-ConPTY session's shared reader. Closing either bridge removes only the raw
-client and preserves the underlying persistent shell.
+module is an internal WebUI transport. Bridges start a short-lived
+``tmux attach-session`` client; closing a bridge removes only that client
+and preserves the underlying persistent shell.
 """
 
 import asyncio
@@ -34,9 +33,7 @@ from ...protocol.terminal import (
     TerminalBridgeBusyError,
     TerminalBridgeError,
     TerminalBridgeNotFoundError,
-    TerminalBridgeUnsupportedError,
 )
-from . import conpty
 from .tmux import detached_tmux_env, require_tmux
 
 TERMINAL_BRIDGE_MAX_WAIT_MS = 1_000
@@ -112,10 +109,6 @@ def _decode_chunk(value: Any) -> bytes:
     return data
 
 
-def _use_conpty_bridge() -> bool:
-    return os.name == "nt"
-
-
 class _TerminalProcess(Protocol):
     backend: str
     shell_id: str
@@ -135,11 +128,6 @@ class _UnixTmuxAttach:
     backend = TERMINAL_BRIDGE_BACKEND
 
     def __init__(self, shell_id: str, cols: int, rows: int) -> None:
-        if os.name == "nt":  # pragma: no cover - exercised by platform guards.
-            raise TerminalBridgeUnsupportedError(
-                "Raw tmux terminal bridges require POSIX PTY support"
-            )
-
         import fcntl
         import pty
         import struct
@@ -544,33 +532,14 @@ async def open_terminal_bridge_execute(
         bridge_id = secrets.token_urlsafe(32)
         process: _TerminalProcess | None = None
         try:
-            if _use_conpty_bridge():
-                if not conpty.is_available():
-                    raise TerminalBridgeUnsupportedError(
-                        "Raw terminal bridges on Windows require pywinpty"
-                    )
 
-                async def create_process() -> _TerminalProcess:
-                    try:
-                        return await asyncio.to_thread(
-                            conpty.open_raw_attachment,
-                            normalized_shell,
-                            bridge_id,
-                            columns,
-                            lines,
-                        )
-                    except RuntimeError as exc:
-                        raise TerminalBridgeNotFoundError(str(exc)) from exc
-
-            else:
-
-                async def create_process() -> _TerminalProcess:
-                    return await asyncio.to_thread(
-                        _UnixTmuxAttach,
-                        normalized_shell,
-                        columns,
-                        lines,
-                    )
+            async def create_process() -> _TerminalProcess:
+                return await asyncio.to_thread(
+                    _UnixTmuxAttach,
+                    normalized_shell,
+                    columns,
+                    lines,
+                )
 
             creation_task = asyncio.create_task(create_process())
             try:

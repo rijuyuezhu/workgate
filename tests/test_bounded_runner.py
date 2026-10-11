@@ -57,23 +57,6 @@ def _install_fake_launchd_coalitions(monkeypatch):
     )
 
 
-def test_shell_command_args_support_native_windows_shells():
-    assert bounded_runner._shell_command_args("pwsh.exe", "echo ok") == [
-        "pwsh.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "echo ok",
-    ]
-    assert bounded_runner._shell_command_args("cmd.exe", "echo ok") == [
-        "cmd.exe",
-        "/D",
-        "/S",
-        "/C",
-        "echo ok",
-    ]
-
-
 def test_handled_signals_omit_platform_missing_sighup(monkeypatch):
     monkeypatch.delattr(bounded_runner.signal, "SIGHUP", raising=False)
 
@@ -84,7 +67,7 @@ def test_handled_signals_omit_platform_missing_sighup(monkeypatch):
 
 
 def test_enable_child_subreaper_is_disabled_off_linux(monkeypatch):
-    monkeypatch.setattr(bounded_runner.sys, "platform", "win32")
+    monkeypatch.setattr(bounded_runner.sys, "platform", "darwin")
 
     assert bounded_runner._enable_child_subreaper() is False
 
@@ -1302,7 +1285,6 @@ def test_bounded_runner_argparse_rejects_incomplete_launchd_child_args():
         )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_child_streams_output_and_publishes_status(tmp_path):
     stdout_path = tmp_path / "stdout.fifo"
     stderr_path = tmp_path / "stderr.fifo"
@@ -1337,7 +1319,6 @@ def test_launchd_child_streams_output_and_publishes_status(tmp_path):
         os.close(stderr_fd)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_child_waits_for_coalition_release(tmp_path, monkeypatch):
     stdout_path = tmp_path / "stdout.fifo"
     stderr_path = tmp_path / "stderr.fifo"
@@ -1609,7 +1590,6 @@ def test_bounded_runner_argv_uses_platform_native_absolute_script(monkeypatch):
     ]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_plist_uses_frozen_cli_subcommand(monkeypatch):
     _install_fake_launchd_coalitions(monkeypatch)
     program_arguments: list[str] = []
@@ -1641,7 +1621,6 @@ def test_launchd_plist_uses_frozen_cli_subcommand(monkeypatch):
     ]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_cleans_uncertain_timed_out_bootstrap(
     monkeypatch, capsys
 ):
@@ -1669,7 +1648,6 @@ def test_launchd_parent_cleans_uncertain_timed_out_bootstrap(
     assert "registration failed" in capsys.readouterr().err
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_forwards_output_and_real_status(monkeypatch, capsys):
     _install_fake_launchd_coalitions(monkeypatch)
     child_threads: list[threading.Thread] = []
@@ -1737,7 +1715,6 @@ def test_launchd_parent_forwards_output_and_real_status(monkeypatch, capsys):
     assert captured.err == "parent-err"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_falls_back_to_user_domain(monkeypatch):
     _install_fake_launchd_coalitions(monkeypatch)
     child_threads: list[threading.Thread] = []
@@ -1807,7 +1784,6 @@ def test_launchd_parent_falls_back_to_user_domain(monkeypatch):
     assert calls[2][1].startswith("user/1000/workgate.bounded.")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX FIFOs")
 def test_launchd_parent_fails_closed_when_cleanup_is_unconfirmed(
     monkeypatch, capsys
 ):
@@ -1892,3 +1868,43 @@ def test_bounded_runner_main_parses_arguments(monkeypatch):
         bounded_runner.main()
 
     assert calls == [("sh", "echo ok")]
+
+
+def test_direct_children_reports_reaped_pid_as_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(bounded_runner, "PROCFS_ROOT", tmp_path / "fake-proc")
+    assert bounded_runner._direct_children(12345) == []
+
+
+@pytest.mark.parametrize(("prctl_result", "expected"), [(0, True), (1, False)])
+def test_child_subreaper_reports_posix_prctl_status(
+    monkeypatch, prctl_result, expected
+):
+    monkeypatch.setattr(bounded_runner.sys, "platform", "linux")
+    monkeypatch.setattr(
+        bounded_runner.ctypes,
+        "CDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            prctl=lambda *_args: prctl_result
+        ),
+    )
+    assert bounded_runner._enable_child_subreaper() is expected
+
+
+def test_direct_children_missing_proc_file_with_denied_process_metadata(
+    monkeypatch, tmp_path
+):
+    from pathlib import Path
+
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    (proc_root / "42").mkdir()
+    monkeypatch.setattr(bounded_runner, "PROCFS_ROOT", proc_root)
+    original_stat = Path.stat
+
+    def denied_stat(path, *args, **kwargs):
+        if path == proc_root / "42":
+            raise PermissionError("inaccessible proc metadata")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denied_stat)
+    assert bounded_runner._direct_children(42) is None

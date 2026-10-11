@@ -1,4 +1,4 @@
-"""Cross-platform helpers for private state files and lock files."""
+"""POSIX helpers for private state files and lock files."""
 
 import contextlib
 import errno
@@ -70,7 +70,7 @@ def _open_lock_handle(
     timeout_s: float | None = None,
     retry_interval_s: float = 0.01,
 ) -> BinaryIO:
-    """Open an initialized lock file despite transient Windows sharing races."""
+    """Open an initialized lock file, retrying transient missing paths."""
     deadline = (
         None if timeout_s is None else time.monotonic() + max(0.0, timeout_s)
     )
@@ -85,7 +85,7 @@ def _open_lock_handle(
             )
 
 
-def _is_lock_contention_error(exc: OSError, *, windows: bool) -> bool:
+def _is_lock_contention_error(exc: OSError) -> bool:
     """Return whether one non-blocking lock error means ordinary contention."""
     contention_errors = {
         errno.EACCES,
@@ -93,27 +93,18 @@ def _is_lock_contention_error(exc: OSError, *, windows: bool) -> bool:
         getattr(errno, "EDEADLK", errno.EACCES),
         getattr(errno, "EDEADLOCK", errno.EACCES),
     }
-    return (
-        isinstance(exc, BlockingIOError)
-        or exc.errno in contention_errors
-        or (windows and getattr(exc, "winerror", None) in {32, 33})
-    )
+    return isinstance(exc, BlockingIOError) or exc.errno in contention_errors
 
 
 def _try_lock_handle(handle: BinaryIO) -> bool:
     """Attempt one non-blocking cross-platform file-lock acquisition."""
     handle.seek(0)
     try:
-        if os.name == "nt":
-            import msvcrt
+        import fcntl
 
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
-        if _is_lock_contention_error(exc, windows=os.name == "nt"):
+        if _is_lock_contention_error(exc):
             return False
         raise
     return True
@@ -141,14 +132,9 @@ def _lock_handle(
 
 def _unlock_handle(handle: BinaryIO) -> None:
     handle.seek(0)
-    if os.name == "nt":
-        import msvcrt
+    import fcntl
 
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager

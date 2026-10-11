@@ -1,5 +1,4 @@
 import json
-import os
 
 import pytest
 
@@ -107,7 +106,6 @@ def test_load_agent_manifest_valid_config(tmp_path):
     assert manifest.data.skills.directory == "skills"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX ownership/mode contract")
 def test_agent_manifest_directory_is_tightened_to_private_mode(tmp_path):
     config_dir = tmp_path / "agent"
     config_dir.mkdir(mode=0o755)
@@ -120,9 +118,6 @@ def test_agent_manifest_directory_is_tightened_to_private_mode(tmp_path):
     assert config_dir.stat().st_mode & 0o777 == 0o700
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="symlink creation requires privileges on Windows"
-)
 def test_agent_manifest_rejects_symlink_config_directory(tmp_path):
     actual = tmp_path / "actual"
     actual.mkdir()

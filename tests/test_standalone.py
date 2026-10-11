@@ -208,13 +208,10 @@ def test_private_launcher_bootstrap_becomes_normal_executor_profile(
         revoked_at=trust.revoked_at,
     )
     assert maybe_import_standalone_bootstrap(profile_store) is False
-    if os.name != "nt":
-        assert (
-            stat.S_IMODE(
-                executor_store.layout.executor_profile_path.stat().st_mode
-            )
-            == 0o600
-        )
+    assert (
+        stat.S_IMODE(executor_store.layout.executor_profile_path.stat().st_mode)
+        == 0o600
+    )
 
 
 def test_standalone_control_child_generates_and_reuses_private_oauth_pin(
@@ -232,8 +229,7 @@ def test_standalone_control_child_generates_and_reuses_private_oauth_pin(
     assert second.oauth_admin_pin == first.oauth_admin_pin
     pin_path = state_dir / "oauth-admin-pin"
     assert pin_path.read_text(encoding="utf-8").strip() == first.oauth_admin_pin
-    if os.name != "nt":
-        assert stat.S_IMODE(pin_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(pin_path.stat().st_mode) == 0o600
 
 
 def test_private_launcher_channels_require_explicit_child_markers(
@@ -480,13 +476,8 @@ def test_prepare_standalone_writes_private_role_configs(
     assert prepared.executor_profile_path.parent != (
         prepared.child_config.control_state_dir / "executor"
     )
-    if os.name != "nt":
-        assert (
-            stat.S_IMODE(prepared.control_config_path.stat().st_mode) == 0o600
-        )
-        assert (
-            stat.S_IMODE(prepared.executor_config_path.stat().st_mode) == 0o600
-        )
+    assert stat.S_IMODE(prepared.control_config_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(prepared.executor_config_path.stat().st_mode) == 0o600
 
 
 def test_prepare_standalone_removes_stale_bootstrap_when_profile_exists(
@@ -858,8 +849,7 @@ def test_owner_action_marker_is_private(
     mark_standalone_executor_owner_action()
 
     assert path.read_text(encoding="utf-8") == "owner-action\n"
-    if os.name != "nt":
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 @pytest.mark.asyncio
@@ -1218,10 +1208,6 @@ def test_run_standalone_maps_lock_contention(
 
 @pytest.mark.integration
 @pytest.mark.topology
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="POSIX process-group cleanup is used for the real standalone smoke",
-)
 def test_real_standalone_bootstraps_offline_and_protects_loopback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1282,8 +1268,7 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
     signing_secret_path.write_text(
         "topology-signing-secret-" * 4 + "\n", encoding="utf-8"
     )
-    if os.name != "nt":
-        signing_secret_path.chmod(0o600)
+    signing_secret_path.chmod(0o600)
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             argv,
@@ -1377,10 +1362,6 @@ def test_real_standalone_bootstraps_offline_and_protects_loopback(
 
 @pytest.mark.integration
 @pytest.mark.topology
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="real standalone process restart coverage is exercised on POSIX",
-)
 def test_two_real_standalone_instances_share_xdg_roots_without_state_collision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1452,10 +1433,6 @@ def test_two_real_standalone_instances_share_xdg_roots_without_state_collision(
 
 @pytest.mark.integration
 @pytest.mark.topology
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="real standalone process restart coverage is exercised on POSIX",
-)
 def test_real_supervisor_restarts_control_and_executor_independently(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1507,10 +1484,6 @@ def test_real_supervisor_restarts_control_and_executor_independently(
 
 @pytest.mark.integration
 @pytest.mark.topology
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="real standalone owner-action process exit is exercised on POSIX",
-)
 def test_real_standalone_requires_repair_after_complete_trust_reset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

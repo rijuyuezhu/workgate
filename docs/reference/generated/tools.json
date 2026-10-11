@@ -9843,11 +9843,6 @@
                 "title": "Browser",
                 "type": "boolean"
               },
-              "conpty": {
-                "description": "Whether Windows ConPTY is available.",
-                "title": "Conpty",
-                "type": "boolean"
-              },
               "gui": {
                 "description": "Whether native desktop GUI automation is available on this executor.",
                 "title": "Gui",
@@ -9861,7 +9856,6 @@
             },
             "required": [
               "raw_pty",
-              "conpty",
               "browser",
               "gui"
             ],
@@ -11032,11 +11026,6 @@
                 "title": "Browser",
                 "type": "boolean"
               },
-              "conpty": {
-                "description": "Whether Windows ConPTY is available.",
-                "title": "Conpty",
-                "type": "boolean"
-              },
               "gui": {
                 "description": "Whether native desktop GUI automation is available on this executor.",
                 "title": "Gui",
@@ -11050,7 +11039,6 @@
             },
             "required": [
               "raw_pty",
-              "conpty",
               "browser",
               "gui"
             ],

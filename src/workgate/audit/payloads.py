@@ -57,8 +57,7 @@ def _prepare_payload_root(settings: SharedRoleConfig) -> Path:
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if root.is_symlink() or not root.is_dir():
         raise OSError("audit payload directory is not a regular directory")
-    if os.name != "nt":
-        os.chmod(root, 0o700)
+    os.chmod(root, 0o700)
     return root
 
 

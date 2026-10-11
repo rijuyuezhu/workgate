@@ -58,7 +58,7 @@ class ExecutorRuntime:
     agent_bridge: ExecutorAgentBridgeService
     """Executor-owned stdio Agent Bridge integration and credential boundary."""
     terminal_runtime: TerminalRuntime
-    """Executor-owned terminal bridge and ConPTY live state."""
+    """Executor-owned raw-terminal bridge lifecycle."""
     dispatcher: ExecutorDispatcher
     """Executor-local machine operation dispatcher."""
     shell: ShellService
@@ -509,7 +509,6 @@ def build_executor_runtime(
         agent_bridge=agent_bridge,
         shell=shell_service,
         terminal_runtime=build_terminal_runtime(
-            services.state_store,
             idle_timeout_s=config.ui_terminal_idle_timeout_s,
             max_connections=config.ui_terminal_max_connections,
         ),

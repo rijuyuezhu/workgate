@@ -1,6 +1,6 @@
 import argparse
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
 import pytest
@@ -22,7 +22,7 @@ class FakeField:
 
 
 def test_path_defaults_use_portable_posix_separators():
-    value = PureWindowsPath(r"\workspace\.workgate")
+    value = PurePosixPath("/workspace/.workgate")
 
     assert surface.default_to_string(value) == "/workspace/.workgate"
     assert surface.yaml_default(value) == "/workspace/.workgate"

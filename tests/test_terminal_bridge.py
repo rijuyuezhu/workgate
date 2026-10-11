@@ -1,5 +1,4 @@
 import base64
-import os
 import shutil
 import subprocess
 import threading
@@ -25,14 +24,13 @@ from workgate.executor.terminal.runtime import (
     build_terminal_runtime,
     use_terminal_runtime,
 )
-from workgate.persistence import get_state_store
 
 
 @pytest.fixture(autouse=True)
 async def _terminal_runtime(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
-    runtime = build_terminal_runtime(get_state_store(), idle_timeout_s=60)
+    runtime = build_terminal_runtime(idle_timeout_s=60)
     await runtime.start()
     try:
         with use_terminal_runtime(runtime):
@@ -60,7 +58,6 @@ def test_terminal_bridge_policy_is_bounded_at_composition():
     assert short.max_connections == 7
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 def test_terminal_bridge_retries_short_and_blocked_writes(monkeypatch):
     attach = object.__new__(bridge_module._UnixTmuxAttach)
     attach._closed = False
@@ -94,7 +91,6 @@ def test_terminal_bridge_retries_short_and_blocked_writes(monkeypatch):
     assert outcomes == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 @pytest.mark.asyncio
 async def test_terminal_bridge_registry_bounds_and_lifecycle(monkeypatch):
     instances = []
@@ -179,66 +175,6 @@ async def test_terminal_bridge_registry_bounds_and_lifecycle(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_terminal_bridge_uses_conpty_backend_and_optional_resize(
-    monkeypatch,
-):
-    instances = []
-
-    class FakeConPtyAttachment:
-        backend = bridge_module.conpty.CONPTY_BACKEND
-
-        def __init__(self, shell_id):
-            self.shell_id = shell_id
-            self.closed = False
-            self.writes = []
-            instances.append(self)
-
-        def read_wait(self, max_bytes, wait_ms):
-            return b"windows-output", False
-
-        def write_all(self, data):
-            self.writes.append(bytes(data))
-
-        def resize(self, cols, rows):
-            return False
-
-        def close_sync(self):
-            self.closed = True
-
-    monkeypatch.setattr(bridge_module, "_use_conpty_bridge", lambda: True)
-    monkeypatch.setattr(bridge_module.conpty, "is_available", lambda: True)
-    monkeypatch.setattr(
-        bridge_module.conpty,
-        "open_raw_attachment",
-        lambda shell_id, attachment_id, cols, rows: FakeConPtyAttachment(
-            shell_id
-        ),
-    )
-
-    opened = await open_terminal_bridge_execute("windows-demo", 100, 30)
-    bridge_id = opened["bridge_id"]
-    assert opened["backend"] == "conpty"
-
-    read = await read_terminal_bridge_execute(bridge_id, 1024, 0)
-    assert base64.b64decode(read["data_b64"]) == b"windows-output"
-
-    written = await write_terminal_bridge_execute(
-        bridge_id,
-        base64.b64encode("你好".encode()).decode("ascii"),
-    )
-    assert written["written_bytes"] == len("你好".encode())
-    assert instances[0].writes == ["你好".encode()]
-
-    resized = await resize_terminal_bridge_execute(bridge_id, 120, 40)
-    assert resized["resized"] is False
-    assert resized["backend"] == "conpty"
-
-    await close_terminal_bridge_execute(bridge_id)
-    assert instances[0].closed is True
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
-@pytest.mark.asyncio
 async def test_terminal_bridge_rejects_malformed_capabilities_and_chunks(
     monkeypatch,
 ):
@@ -268,9 +204,7 @@ async def test_terminal_bridge_rejects_malformed_capabilities_and_chunks(
 
 
 @pytest.mark.skipif(
-    os.name == "nt"
-    or shutil.which("tmux") is None
-    or shutil.which("bash") is None,
+    shutil.which("tmux") is None or shutil.which("bash") is None,
     reason="requires POSIX tmux and bash",
 )
 @pytest.mark.asyncio
@@ -366,7 +300,6 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 def test_unix_terminal_bridge_uses_resolved_tmux(monkeypatch):
     calls = []
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,123,0")
@@ -387,3 +320,135 @@ def test_unix_terminal_bridge_uses_resolved_tmux(monkeypatch):
     assert calls[0][0] == ["/bundle/tmux", "has-session", "-t", "=demo"]
     assert "TMUX" not in calls[0][1]["env"]
     assert "TMUX_PANE" not in calls[0][1]["env"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_bridge_eof_releases_attachment_without_killing_shell(
+    monkeypatch,
+):
+    attachments = []
+
+    class EofAttach:
+        backend = TERMINAL_BRIDGE_BACKEND
+
+        def __init__(self, shell_id, cols, rows):
+            self.shell_id = shell_id
+            self.closed = False
+            attachments.append(self)
+
+        def read_wait(self, max_bytes, wait_ms):
+            return b"", True
+
+        def close_sync(self):
+            self.closed = True
+
+    monkeypatch.setattr(bridge_module, "_UnixTmuxAttach", EofAttach)
+    opened = await open_terminal_bridge_execute("eof-demo")
+    result = await read_terminal_bridge_execute(opened["bridge_id"])
+    assert result["eof"] is True
+    assert result["bytes"] == 0
+    assert attachments[0].closed
+    with pytest.raises(TerminalBridgeNotFoundError):
+        await read_terminal_bridge_execute(opened["bridge_id"])
+
+
+@pytest.mark.asyncio
+async def test_terminal_bridge_expiry_reschedules_live_attachment_and_closes_idle_one(
+    monkeypatch,
+):
+    registry = bridge_module._bridge_registry()
+    closed = []
+    process = SimpleNamespace(close_sync=lambda: closed.append("closed"))
+    bridge = bridge_module._Bridge(
+        bridge_id="A" * 32,
+        shell_id="idle-shell",
+        process=cast(Any, process),
+        cols=80,
+        rows=24,
+        idle_timeout_s=60,
+    )
+    registry.bridges[bridge.bridge_id] = bridge
+    registry.shell_bridges[bridge.shell_id] = bridge.bridge_id
+    scheduled = []
+    monkeypatch.setattr(
+        bridge_module,
+        "_schedule_expiry_locked",
+        lambda _registry, _bridge, delay=None: scheduled.append(delay),
+    )
+    bridge_module._expire_bridge(registry, bridge.bridge_id)
+    assert len(scheduled) == 1
+    assert scheduled[0] > 0
+    assert bridge.bridge_id in registry.bridges
+
+    bridge.last_activity -= 120
+    bridge_module._expire_bridge(registry, bridge.bridge_id)
+    assert closed == ["closed"]
+    assert bridge.bridge_id not in registry.bridges
+    assert bridge.shell_id not in registry.shell_bridges
+    bridge_module._expire_bridge(registry, bridge.bridge_id)  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_terminal_bridge_registry_propagates_posix_attachment_cleanup_failure():
+    registry = bridge_module.TerminalBridgeRegistry()
+    await registry.start()
+
+    def failed_close():
+        raise OSError("PTY close failure")
+
+    bridge = bridge_module._Bridge(
+        bridge_id="B" * 32,
+        shell_id="error-shell",
+        process=cast(Any, SimpleNamespace(close_sync=failed_close)),
+        cols=80,
+        rows=24,
+        idle_timeout_s=60,
+    )
+    registry.bridges[bridge.bridge_id] = bridge
+    registry.shell_bridges[bridge.shell_id] = bridge.bridge_id
+    with pytest.raises(RuntimeError, match="failed to close 1 terminal bridge"):
+        await registry.aclose()
+    assert not registry.bridges
+    assert not registry.shell_bridges
+
+
+@pytest.mark.asyncio
+async def test_terminal_bridge_open_cancellation_releases_created_posix_attachment(
+    monkeypatch,
+):
+    import asyncio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    attached = []
+
+    class SlowAttach:
+        backend = TERMINAL_BRIDGE_BACKEND
+
+        def __init__(self, shell_id, cols, rows):
+            self.closed = False
+            attached.append(self)
+
+        def close_sync(self):
+            self.closed = True
+
+    real_to_thread = asyncio.to_thread
+
+    async def wait_for_attach(function, *args, **kwargs):
+        if function is SlowAttach:
+            started.set()
+            await release.wait()
+            return SlowAttach(*args)
+        return await real_to_thread(function, *args, **kwargs)
+
+    monkeypatch.setattr(bridge_module, "_UnixTmuxAttach", SlowAttach)
+    monkeypatch.setattr(bridge_module.asyncio, "to_thread", wait_for_attach)
+    opening = asyncio.create_task(open_terminal_bridge_execute("cancel-demo"))
+    await asyncio.wait_for(started.wait(), 1)
+    opening.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(opening, 2)
+    assert len(attached) == 1
+    assert attached[0].closed
+    assert not bridge_module._bridge_registry().pending_shells

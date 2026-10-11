@@ -80,7 +80,6 @@ class SessionCapabilitiesEnvironment(BaseModel):
     raw_pty: bool = Field(
         description="Whether a raw persistent-terminal backend is available."
     )
-    conpty: bool = Field(description="Whether Windows ConPTY is available.")
     browser: bool = Field(
         description="Whether structured Playwright browser automation is available on this executor."
     )

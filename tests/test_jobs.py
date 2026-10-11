@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -181,25 +180,6 @@ async def _test_job_retry_execute(
         )
 
 
-def test_runner_command_quotes_powershell_arguments():
-    command = job_lifecycle._runner_command(
-        [
-            r"C:\Program Files\Python\python.exe",
-            "-m",
-            "workgate.main",
-            "--status-file",
-            r"C:\state dir\job's-status.json",
-        ],
-        "powershell.exe",
-    )
-
-    assert command == (
-        "& 'C:\\Program Files\\Python\\python.exe' '-m' "
-        "'workgate.main' '--status-file' "
-        "'C:\\state dir\\job''s-status.json'"
-    )
-
-
 def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     tmp_path, monkeypatch
 ):
@@ -221,9 +201,6 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     assert Path(argv[1]).name == "runner_bootstrap.py"
     assert Path(argv[1]).is_absolute()
     assert argv[2] == "--command-file"
-    assert job_lifecycle._runner_command(
-        ["echo", "hello world"], "cmd.exe"
-    ) == ('echo "hello world"')
 
     paths["log"].write_bytes(b"abcdef\n")
     assert (
@@ -662,20 +639,14 @@ def test_job_runner_persists_bounded_output_and_terminal_status(
 ):
     _configure_job_state(tmp_path, monkeypatch)
     paths = _attempt_paths_untyped("job_runner", 1)
-    command = (
-        "echo prefix-" + "x" * 100 + "-suffix"
-        if os.name == "nt"
-        else python_shell_command("print('prefix-' + 'x' * 100 + '-suffix')")
-    )
+    command = python_shell_command("print('prefix-' + 'x' * 100 + '-suffix')")
     paths["command"].write_text(command, encoding="utf-8")
     args = SimpleNamespace(
         command_file=str(paths["command"]),
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell=os.environ.get("COMSPEC", "cmd.exe")
-        if os.name == "nt"
-        else "/bin/bash",
+        shell="/bin/bash",
         max_log_bytes=32,
     )
 
@@ -696,12 +667,8 @@ def test_job_runner_persists_bounded_output_and_terminal_status(
 def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
     _configure_job_state(tmp_path, monkeypatch)
     paths = _attempt_paths_untyped("job_failed", 1)
-    command = (
-        "echo failed-output & exit /b 7"
-        if os.name == "nt"
-        else python_shell_command(
-            "import sys; print('failed-output'); sys.exit(7)"
-        )
+    command = python_shell_command(
+        "import sys; print('failed-output'); sys.exit(7)"
     )
     paths["command"].write_text(command, encoding="utf-8")
     args = SimpleNamespace(
@@ -709,9 +676,7 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell=os.environ.get("COMSPEC", "cmd.exe")
-        if os.name == "nt"
-        else "/bin/bash",
+        shell="/bin/bash",
         max_log_bytes=1024,
     )
 
@@ -724,23 +689,6 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
     assert status["exit_code"] == 7
     assert status["error"] is None
     assert [line.rstrip() for line in output_lines] == ["failed-output"]
-
-
-def test_job_runner_shell_args_cover_windows_shell_families():
-    assert job_runner._runner_shell_args("pwsh", "Write-Output ok") == [
-        "pwsh",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Write-Output ok",
-    ]
-    assert job_runner._runner_shell_args("cmd.exe", "echo ok") == [
-        "cmd.exe",
-        "/D",
-        "/S",
-        "/C",
-        "echo ok",
-    ]
 
 
 def test_job_runner_records_startup_error_before_process_spawn(tmp_path):
@@ -3067,16 +3015,10 @@ def test_job_runner_applies_configured_environment_filters(
     monkeypatch.setenv("PRIVATE_TOKEN", "hidden")
     monkeypatch.setenv("KEEP_VISIBLE", "visible")
     paths = _attempt_paths_untyped("job_env_filter", 1)
-    command = (
-        "if defined EXACT_SECRET (exit /b 21) else if defined PRIVATE_TOKEN "
-        '(exit /b 22) else if not "%KEEP_VISIBLE%"=="visible" '
-        "(exit /b 23) else echo filtered"
-        if os.name == "nt"
-        else python_shell_command(
-            "import os; "
-            "print('|'.join(os.environ.get(name, '<missing>') for name in "
-            "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
-        )
+    command = python_shell_command(
+        "import os; "
+        "print('|'.join(os.environ.get(name, '<missing>') for name in "
+        "('EXACT_SECRET', 'PRIVATE_TOKEN', 'KEEP_VISIBLE')))"
     )
     paths["command"].write_text(
         command,
@@ -3087,9 +3029,7 @@ def test_job_runner_applies_configured_environment_filters(
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell=os.environ.get("COMSPEC", "cmd.exe")
-        if os.name == "nt"
-        else "/bin/bash",
+        shell="/bin/bash",
         max_log_bytes=1024,
         blocked_env_name=["EXACT_SECRET"],
         blocked_env_prefix=["PRIVATE_"],
@@ -3100,7 +3040,7 @@ def test_job_runner_applies_configured_environment_filters(
 
     assert exit_info.value.code == 0
     assert paths["log"].read_text(encoding="utf-8").strip() == (
-        "filtered" if os.name == "nt" else "<missing>|<missing>|visible"
+        "<missing>|<missing>|visible"
     )
 
 

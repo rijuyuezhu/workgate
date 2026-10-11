@@ -101,10 +101,9 @@ async def test_stdio_tools_use_selected_session_cwd_and_new_process_each_time(
     assert two["cwd"] == str(second_dir)
     assert three["cwd"] == str(first_dir)
     assert len({one["instance"], two["instance"], three["instance"]}) == 3
-    if os.name != "nt":
-        for pid in (one["pid"], two["pid"], three["pid"]):
-            with pytest.raises(ProcessLookupError):
-                os.kill(pid, 0)
+    for pid in (one["pid"], two["pid"], three["pid"]):
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
 
     third_dir = root / "changed"
     third_dir.mkdir()

@@ -2,7 +2,6 @@
 
 import re
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 
@@ -79,17 +78,8 @@ def _runner_argv(
     ]
 
 
-def _powershell_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _runner_command(argv: list[str], shell: str) -> str:
-    """Quote an internal runner invocation for the configured parent shell."""
-    name = Path(shell).name.lower()
-    if name in {"powershell.exe", "powershell", "pwsh.exe", "pwsh"}:
-        return "& " + " ".join(_powershell_quote(value) for value in argv)
-    if name in {"cmd.exe", "cmd"}:
-        return subprocess.list2cmdline(argv)
+def _runner_command(argv: list[str]) -> str:
+    """Quote an internal runner invocation for the POSIX parent shell."""
     return shlex.join(argv)
 
 
@@ -106,4 +96,4 @@ def _prepare_attempt(
     paths["log"].unlink(missing_ok=True)
     paths["status"].unlink(missing_ok=True)
     argv = _runner_argv(config, paths, cwd)
-    return paths, _runner_command(argv, config.shell_executable)
+    return paths, _runner_command(argv)

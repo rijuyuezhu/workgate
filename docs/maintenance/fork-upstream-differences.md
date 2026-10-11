@@ -1,5 +1,7 @@
 # Historical fork and upstream differences
 
+> Historical upstream-difference audit (as recorded at the time). Current Workgate supports Linux and macOS hosts only; Windows references below are superseded by #201 and do not describe the maintained tree.
+
 This document preserves a pre-control/executor and pre-TUI-removal migration
 snapshot from the upstream-porting audit. Names such as remote worker,
 `target="remote"`, and `remote_admin` below are historical evidence, not the

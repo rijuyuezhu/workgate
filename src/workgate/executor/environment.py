@@ -27,7 +27,6 @@ from ..schemas.result_models.session import (
 from ..version import package_version
 from .browser import browser_capability_available
 from .gui import gui_capability_available
-from .terminal.conpty import is_available as conpty_available
 from .terminal.tmux import resolve_tmux
 
 _PROBE_TIMEOUT_S = 1.5
@@ -58,14 +57,12 @@ def _normalized_os(system: str) -> str:
     lowered = system.strip().lower()
     if lowered == "darwin":
         return "macos"
-    if lowered.startswith("win"):
-        return "windows"
     return _safe_token(lowered, "unknown")
 
 
 def _resolve_command(value: str) -> tuple[str, ...] | None:
     try:
-        parts = shlex.split(value, posix=os.name != "nt")
+        parts = shlex.split(value)
     except ValueError:
         return None
     if not parts:
@@ -79,24 +76,8 @@ def _resolve_command(value: str) -> tuple[str, ...] | None:
 
 
 def _version_command(command: tuple[str, ...], kind: str) -> tuple[str, ...]:
-    executable_name = Path(command[0]).name.lower()
-    if kind == "shell" and executable_name in {"cmd", "cmd.exe"}:
-        return (*command, "/d", "/c", "ver")
     if kind == "tmux":
         return (*command, "-V")
-    if kind == "shell" and executable_name in {
-        "powershell",
-        "powershell.exe",
-        "pwsh",
-        "pwsh.exe",
-    }:
-        return (
-            *command,
-            "-NoLogo",
-            "-NoProfile",
-            "-Command",
-            "$PSVersionTable.PSVersion.ToString()",
-        )
     return (*command, "--version")
 
 
@@ -257,13 +238,11 @@ def collect_executor_session_environment(
             ripgrep=unavailable,
             tmux=unavailable,
         )
-    conpty = conpty_available()
     return SessionEnvironment(
         runtime=_runtime_environment(),
         tools=tools,
         capabilities=SessionCapabilitiesEnvironment(
-            raw_pty=conpty or tools.tmux.available,
-            conpty=conpty,
+            raw_pty=tools.tmux.available,
             browser=browser_capability_available(),
             gui=gui_capability_available(),
         ),

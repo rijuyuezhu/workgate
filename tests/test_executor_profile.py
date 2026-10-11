@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -44,11 +43,8 @@ def test_executor_profile_roundtrips_private_bearer_without_repr_leak(
         encoding="utf-8"
     )
     assert profile.credential not in repr(profile)
-    if os.name != "nt":
-        assert (
-            store.layout.executor_profile_path.stat().st_mode & 0o777 == 0o600
-        )
-        assert store.layout.executor_dir.stat().st_mode & 0o777 == 0o700
+    assert store.layout.executor_profile_path.stat().st_mode & 0o777 == 0o600
+    assert store.layout.executor_dir.stat().st_mode & 0o777 == 0o700
 
 
 def test_executor_profile_reader_bound_covers_writer_state_space(

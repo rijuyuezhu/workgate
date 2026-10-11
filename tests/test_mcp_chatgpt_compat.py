@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import json
-import os
 import re
 import time
 from typing import Any
@@ -966,8 +965,7 @@ def test_oauth_approved_clients_persist_across_app_rebuild(
 
     store_path = client_store_path()
     assert store_path.exists()
-    if os.name != "nt":
-        assert store_path.stat().st_mode & 0o777 == 0o600
+    assert store_path.stat().st_mode & 0o777 == 0o600
     stored = json.loads(store_path.read_text())
     assert [client["client_id"] for client in stored["clients"]] == [client_id]
     assert stored["clients"][0]["approved_at"] is not None

@@ -7,7 +7,6 @@ pairing or executor credentials.
 
 import hashlib
 import json
-import ntpath
 import os
 import platform
 import plistlib
@@ -38,8 +37,6 @@ from .runtime_update import (
 
 _SERVICE_NAME = "workgate-executor"
 _LAUNCHD_LABEL = "com.workgate.executor"
-_WINDOWS_TASK_NAME = "Workgate Executor"
-_WINDOWS_TASK_PATH = "\\"
 _MAX_COMMAND_OUTPUT = 32_768
 _MAX_LOG_READ_BYTES = 256 * 1024
 _DEFAULT_LOG_LINES = 100
@@ -56,15 +53,6 @@ _LAUNCHD_DEFAULT_PATH_DIRS = (
     "/opt/homebrew/bin",
     "/opt/homebrew/sbin",
     *_POSIX_DEFAULT_PATH_DIRS,
-)
-_WINDOWS_SCHEDULER_SUCCESS_RESULTS = frozenset(
-    {
-        0,
-        *range(0x00041300, 0x00041309),
-        0x0004131B,
-        0x0004131C,
-        0x00041325,
-    }
 )
 
 
@@ -142,10 +130,6 @@ def _executor_service_settings_digest(config: ExecutorConfig) -> str:
     return _settings_payload_digest(_executor_service_settings(config))
 
 
-def _powershell_literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
 def _systemd_quote(value: str, *, escape_dollar: bool = True) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
     if escape_dollar:
@@ -185,10 +169,6 @@ class ExecutorServiceManager:
     @property
     def launcher_path(self) -> Path:
         return self.service_dir / "launcher.py"
-
-    @property
-    def windows_frozen_launcher_path(self) -> Path:
-        return self.service_dir / "launcher.ps1"
 
     @property
     def metadata_path(self) -> Path:
@@ -240,34 +220,6 @@ class ExecutorServiceManager:
             )
         return result
 
-    def _powershell_executable(self) -> str | None:
-        return (
-            shutil.which("powershell.exe")
-            or shutil.which("pwsh.exe")
-            or shutil.which("powershell")
-            or shutil.which("pwsh")
-        )
-
-    def _run_powershell(
-        self, script: str, *, check: bool = True
-    ) -> subprocess.CompletedProcess[str]:
-        executable = self._powershell_executable()
-        if executable is None:
-            raise UnsupportedExecutorServiceError(
-                "PowerShell is required for the Windows executor service"
-            )
-        fail_closed_script = "$ErrorActionPreference = 'Stop'\n" + script
-        return self._run(
-            [
-                executable,
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                fail_closed_script,
-            ],
-            check=check,
-        )
-
     def backend(self, *, require_available: bool = False) -> str:
         if self.system == "Linux":
             if require_available:
@@ -290,12 +242,6 @@ class ExecutorServiceManager:
                     "launchctl is required on macOS"
                 )
             return "launchd"
-        if self.system == "Windows":
-            if require_available and self._powershell_executable() is None:
-                raise UnsupportedExecutorServiceError(
-                    "PowerShell is required on Windows"
-                )
-            return "scheduled-task"
         raise UnsupportedExecutorServiceError(
             f"managed executor services are unsupported on {self.system}"
         )
@@ -320,80 +266,18 @@ class ExecutorServiceManager:
         self, runtime_ownership: ExecutorRuntimeOwnership
     ) -> str:
         config_path = str(self.config_path.resolve())
-        log_path = str(self.log_path.resolve())
-        windows_path = self._managed_windows_path()
         return (
             '"""Private Workgate managed-executor launcher. Generated; do not edit."""\n'
-            "import contextlib\n"
-            "import os\n"
-            "import sys\n"
-            "import traceback\n"
-            "from pathlib import Path\n\n"
-            f"CONFIG_PATH = {config_path!r}\n"
-            f"LOG_PATH = {log_path!r}\n"
-            f"WINDOWS_PATH = {windows_path!r}\n\n"
+            "import os\n\n"
+            f"CONFIG_PATH = {config_path!r}\n\n"
             "for _name in list(os.environ):\n"
             "    if _name.startswith('WORKGATE_'):\n"
             "        os.environ.pop(_name, None)\n"
             "os.environ['PYTHONUNBUFFERED'] = '1'\n"
-            "if os.name == 'nt' and WINDOWS_PATH:\n"
-            "    _existing_path = os.environ.get('PATH', '')\n"
-            "    os.environ['PATH'] = WINDOWS_PATH + (os.pathsep + _existing_path if _existing_path else '')\n\n"
-            "def _run() -> None:\n"
-            "    from workgate.main import main\n"
-            "    main(['executor', 'run', '--managed-service', "
+            "from workgate.main import main\n"
+            "main(['executor', 'run', '--managed-service', "
             f"'--runtime-ownership', {runtime_ownership.value!r}, "
-            "'--config', CONFIG_PATH])\n\n"
-            "if os.name == 'nt':\n"
-            "    Path(LOG_PATH).parent.mkdir(parents=True, exist_ok=True)\n"
-            "    with open(LOG_PATH, 'a', encoding='utf-8', buffering=1) as _log:\n"
-            "        with contextlib.redirect_stdout(_log), contextlib.redirect_stderr(_log):\n"
-            "            try:\n"
-            "                _run()\n"
-            "            except BaseException:\n"
-            "                traceback.print_exc()\n"
-            "                raise\n"
-            "else:\n"
-            "    _run()\n"
-        )
-
-    def _windows_frozen_launcher_source(self, command: list[str]) -> str:
-        invocation = " ".join(_powershell_literal(item) for item in command)
-        log_path = _powershell_literal(str(self.log_path.resolve()))
-        managed_path = self._managed_windows_path()
-        managed_path_literal = _powershell_literal(managed_path)
-        return "\n".join(
-            [
-                "$ErrorActionPreference = 'Stop'",
-                f"$logPath = {log_path}",
-                f"$managedPath = {managed_path_literal}",
-                (
-                    "if ($managedPath) { "
-                    "$env:PATH = if ($env:PATH) { "
-                    "$managedPath + ';' + $env:PATH "
-                    "} else { $managedPath } }"
-                ),
-                "$utf8 = New-Object System.Text.UTF8Encoding($false)",
-                "function Write-WorkgateLog([string]$line) {",
-                "    [System.IO.File]::AppendAllText(",
-                "        $logPath,",
-                "        $line + [Environment]::NewLine,",
-                "        $utf8",
-                "    )",
-                "}",
-                "try {",
-                f"    & {invocation} 2>&1 | ForEach-Object {{",
-                "        Write-WorkgateLog ([string]$_)",
-                "    }",
-                "    $exitCode = $LASTEXITCODE",
-                "    if ($null -eq $exitCode) { $exitCode = 1 }",
-                "} catch {",
-                "    Write-WorkgateLog ([string]$_)",
-                "    $exitCode = 1",
-                "}",
-                "exit $exitCode",
-                "",
-            ]
+            "'--config', CONFIG_PATH])\n"
         )
 
     def _write_launcher(
@@ -406,14 +290,6 @@ class ExecutorServiceManager:
         ownership = runtime_ownership or self._runtime_ownership()
         if command is None:
             command = self._runtime_command(ownership)
-        if frozen and self.system == "Windows":
-            atomic_write_private_text(
-                self.windows_frozen_launcher_path,
-                self._windows_frozen_launcher_source(command),
-            )
-            self.launcher_path.unlink(missing_ok=True)
-            return
-        self.windows_frozen_launcher_path.unlink(missing_ok=True)
         if frozen:
             self.launcher_path.unlink(missing_ok=True)
             return
@@ -449,29 +325,7 @@ class ExecutorServiceManager:
                 "--config",
                 str(self.config_path.resolve()),
             ]
-        if self.system == "Windows":
-            pythonw = executable.with_name("pythonw.exe")
-            if pythonw.is_file():
-                executable = pythonw
         return [str(executable), str(self.launcher_path.resolve())]
-
-    def _windows_service_command(self, runtime_command: list[str]) -> list[str]:
-        if not getattr(sys, "frozen", False):
-            return runtime_command
-        executable = self._powershell_executable()
-        if executable is None:
-            raise UnsupportedExecutorServiceError(
-                "PowerShell is required for the Windows executor service"
-            )
-        return [
-            executable,
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(self.windows_frozen_launcher_path.resolve()),
-        ]
 
     def _read_metadata(self) -> dict[str, Any] | None:
         try:
@@ -531,8 +385,6 @@ class ExecutorServiceManager:
     def _runtime_launcher_present(self) -> bool:
         if not getattr(sys, "frozen", False):
             return self.launcher_path.is_file()
-        if self.system == "Windows":
-            return self.windows_frozen_launcher_path.is_file()
         return True
 
     def _runtime_current(self) -> bool:
@@ -574,14 +426,6 @@ class ExecutorServiceManager:
             *defaults,
         )
         return ":".join(dict.fromkeys(entries))
-
-    def _managed_windows_path(self) -> str:
-        entries: list[str] = []
-        for raw_entry in self.environ.get("PATH", "").split(";"):
-            entry = raw_entry.strip().strip('"')
-            if entry and ntpath.isabs(entry):
-                entries.append(entry)
-        return ";".join(dict.fromkeys(entries))
 
     def _systemd_environment_lines(self) -> list[str]:
         values = [
@@ -679,107 +523,6 @@ class ExecutorServiceManager:
         )
         return self.launchd_plist_path
 
-    def _windows_registration_script(self, command: list[str]) -> str:
-        executable, *arguments = command
-        argument_text = subprocess.list2cmdline(arguments)
-        return "\n".join(
-            [
-                "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
-                (
-                    "$action = New-ScheduledTaskAction "
-                    f"-Execute {_powershell_literal(executable)} "
-                    f"-Argument {_powershell_literal(argument_text)} "
-                    f"-WorkingDirectory {_powershell_literal(str(self.service_dir.resolve()))}"
-                ),
-                "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
-                (
-                    "$settings = New-ScheduledTaskSettingsSet "
-                    "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
-                    "-ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew "
-                    "-RestartCount 255 -RestartInterval (New-TimeSpan -Minutes 1) "
-                    "-StartWhenAvailable"
-                ),
-                (
-                    "$principal = New-ScheduledTaskPrincipal -UserId $user "
-                    "-LogonType Interactive -RunLevel Limited"
-                ),
-                (
-                    "Register-ScheduledTask "
-                    f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
-                    f"-TaskName {_powershell_literal(_WINDOWS_TASK_NAME)} "
-                    "-Action $action -Trigger $trigger -Settings $settings "
-                    "-Principal $principal "
-                    f"-Description {_powershell_literal('Workgate executor')} "
-                    "-Force | Out-Null"
-                ),
-            ]
-        )
-
-    def _windows_task_status(self) -> dict[str, Any] | None:
-        script = "\n".join(
-            [
-                (
-                    "$task = Get-ScheduledTask "
-                    f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
-                    f"-TaskName {_powershell_literal(_WINDOWS_TASK_NAME)} "
-                    "-ErrorAction SilentlyContinue"
-                ),
-                "if ($null -eq $task) { exit 3 }",
-                "$info = Get-ScheduledTaskInfo -InputObject $task",
-                (
-                    "[Console]::Out.Write(([pscustomobject]@{"
-                    "state=$task.State.ToString(); "
-                    "last_result=[int64]$info.LastTaskResult"
-                    "} | ConvertTo-Json -Compress))"
-                ),
-            ]
-        )
-        result = self._run_powershell(script, check=False)
-        if result.returncode == 3:
-            return None
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip()
-            raise RuntimeError(f"failed to query executor task: {detail}")
-        try:
-            payload = json.loads(result.stdout)
-        except ValueError as exc:
-            raise RuntimeError(
-                "invalid executor task status returned by PowerShell"
-            ) from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError(
-                "invalid executor task status returned by PowerShell"
-            )
-        return payload
-
-    def _start_windows_task(self) -> None:
-        self._run_powershell(
-            "Start-ScheduledTask "
-            f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
-            f"-TaskName {_powershell_literal(_WINDOWS_TASK_NAME)}"
-        )
-
-    def _stop_windows_task(self) -> None:
-        task = self._windows_task_status()
-        if task is None:
-            return
-        task_state = str(task.get("state", "")).lower()
-        if task_state not in {"running", "queued"}:
-            return
-        self._run_powershell(
-            "Stop-ScheduledTask "
-            f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
-            f"-TaskName {_powershell_literal(_WINDOWS_TASK_NAME)}"
-        )
-
-    def _unregister_windows_task(self) -> None:
-        self._run_powershell(
-            "Unregister-ScheduledTask "
-            f"-TaskPath {_powershell_literal(_WINDOWS_TASK_PATH)} "
-            f"-TaskName {_powershell_literal(_WINDOWS_TASK_NAME)} "
-            "-Confirm:$false"
-        )
-
     def install(
         self,
         *,
@@ -828,16 +571,6 @@ class ExecutorServiceManager:
                 command,
                 service_file=service_file,
             )
-        else:
-            service_file = self.metadata_path
-            if self._windows_task_status() is not None:
-                self._stop_windows_task()
-            service_command = self._windows_service_command(command)
-            self._run_powershell(
-                self._windows_registration_script(service_command)
-            )
-            self._write_metadata(backend, command)
-            self._start_windows_task()
 
         runtime_store.service_runtime_state(runtime_state.ownership)
         return self.status()
@@ -922,19 +655,9 @@ class ExecutorServiceManager:
             )
             if loaded.returncode == 0:
                 raise RuntimeError("failed to unload executor LaunchAgent")
-        else:
-            if self._windows_task_status() is not None:
-                self._stop_windows_task()
-                self._unregister_windows_task()
-                if self._windows_task_status() is not None:
-                    raise RuntimeError(
-                        "failed to remove executor scheduled task"
-                    )
-
         for path in (
             self.config_path,
             self.launcher_path,
-            self.windows_frozen_launcher_path,
             self.metadata_path,
             self.state_store.layout.executor_runtime_path,
             self.log_path,
@@ -968,8 +691,6 @@ class ExecutorServiceManager:
                         str(self.launchd_plist_path),
                     ]
                 )
-        else:
-            self._start_windows_task()
         return self.status()
 
     def stop(self) -> ExecutorServiceStatus:
@@ -995,8 +716,6 @@ class ExecutorServiceManager:
                         "failed to stop executor LaunchAgent"
                         + (f": {detail}" if detail else "")
                     )
-        else:
-            self._stop_windows_task()
         return self.status()
 
     def restart(self) -> ExecutorServiceStatus:
@@ -1030,9 +749,6 @@ class ExecutorServiceManager:
                         str(self.launchd_plist_path),
                     ]
                 )
-        else:
-            self._stop_windows_task()
-            self._start_windows_task()
         return self.status()
 
     def _require_installed(self) -> None:
@@ -1042,81 +758,6 @@ class ExecutorServiceManager:
                 "executor service is not installed; run "
                 "`workgate executor install-service` first"
             )
-
-    def _windows_status(self) -> ExecutorServiceStatus:
-        metadata_present = self.metadata_path.exists()
-        try:
-            task = self._windows_task_status()
-        except (RuntimeError, UnsupportedExecutorServiceError) as exc:
-            return ExecutorServiceStatus(
-                backend="scheduled-task",
-                state=ExecutorServiceState.FAILED,
-                installed=metadata_present,
-                running=False,
-                detail=str(exc),
-                log_path=str(self.log_path),
-                runtime_current=(
-                    self._runtime_current() if metadata_present else False
-                ),
-            )
-
-        if task is None:
-            if not metadata_present:
-                return ExecutorServiceStatus(
-                    backend="scheduled-task",
-                    state=ExecutorServiceState.NOT_INSTALLED,
-                    installed=False,
-                    running=False,
-                    log_path=str(self.log_path),
-                )
-            return ExecutorServiceStatus(
-                backend="scheduled-task",
-                state=ExecutorServiceState.FAILED,
-                installed=False,
-                running=False,
-                detail="service metadata exists but scheduled task is missing",
-                log_path=str(self.log_path),
-                runtime_current=False,
-            )
-
-        task_state = str(task.get("state", ""))
-        normalized_task_state = task_state.lower()
-        last_result = task.get("last_result")
-        if normalized_task_state == "running":
-            state = ExecutorServiceState.RUNNING
-            running = True
-        elif normalized_task_state == "disabled":
-            state = ExecutorServiceState.FAILED
-            running = False
-        elif normalized_task_state == "queued":
-            state = ExecutorServiceState.INSTALLED
-            running = False
-        elif (
-            isinstance(last_result, int)
-            and last_result not in _WINDOWS_SCHEDULER_SUCCESS_RESULTS
-        ):
-            state = ExecutorServiceState.FAILED
-            running = False
-        else:
-            state = ExecutorServiceState.STOPPED
-            running = False
-
-        detail_parts = [f"{task_state}; last result={last_result}"]
-        if not metadata_present:
-            detail_parts.append(
-                "service metadata missing; reinstall to refresh"
-            )
-        return ExecutorServiceStatus(
-            backend="scheduled-task",
-            state=state,
-            installed=True,
-            running=running,
-            detail="; ".join(detail_parts),
-            log_path=str(self.log_path),
-            runtime_current=(
-                self._runtime_current() if metadata_present else False
-            ),
-        )
 
     def _systemd_status(self, service_file: Path) -> ExecutorServiceStatus:
         definition_present = service_file.exists()
@@ -1329,10 +970,8 @@ class ExecutorServiceManager:
         backend = self.backend()
         if backend == "systemd":
             status = self._systemd_status(self.systemd_unit_path)
-        elif backend == "launchd":
-            status = self._launchd_status(self.launchd_plist_path)
         else:
-            status = self._windows_status()
+            status = self._launchd_status(self.launchd_plist_path)
         runtime = ExecutorRuntimeStateStore(self.state_store).load()
         if runtime is None:
             return status

@@ -91,53 +91,12 @@ def test_service_helpers_cover_nested_settings_and_command_failures(
         {"paths": [str(child)]},
     ]
 
-    manager = ExecutorServiceManager(
-        _config(tmp_path),
-        home=tmp_path / "home",
-        environ={},
-        system="Windows",
-    )
-    monkeypatch.setattr(manager, "_powershell_executable", lambda: None)
-    with pytest.raises(
-        service.UnsupportedExecutorServiceError,
-        match="PowerShell is required",
-    ):
-        manager._run_powershell("Write-Output test")
-
-
-def test_powershell_lifecycle_commands_fail_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = ExecutorServiceManager(
-        _config(tmp_path),
-        home=tmp_path / "home",
-        environ={},
-        system="Windows",
-    )
-    monkeypatch.setattr(
-        manager, "_powershell_executable", lambda: "powershell.exe"
-    )
-    captured: list[list[str]] = []
-    monkeypatch.setattr(
-        manager,
-        "_run",
-        lambda command, **_kwargs: (
-            captured.append(command) or _completed(command)
-        ),
-    )
-
-    manager._run_powershell("Start-ScheduledTask -TaskName 'Workgate Executor'")
-
-    assert captured[0][-1].startswith("$ErrorActionPreference = 'Stop'\n")
-    assert "Start-ScheduledTask" in captured[0][-1]
-
 
 @pytest.mark.parametrize(
     ("system", "message"),
     [
         ("Linux", "systemd --user is required"),
         ("Darwin", "launchctl is required"),
-        ("Windows", "PowerShell is required"),
         ("Haiku", "unsupported on Haiku"),
     ],
 )
@@ -154,7 +113,6 @@ def test_backend_reports_unavailable_native_manager(
         system=system,
     )
     monkeypatch.setattr(service.shutil, "which", lambda _name: None)
-    monkeypatch.setattr(manager, "_powershell_executable", lambda: None)
 
     with pytest.raises(service.UnsupportedExecutorServiceError, match=message):
         manager.backend(require_available=True)
@@ -432,12 +390,10 @@ def test_systemd_install_is_private_idempotent_and_preserves_identity(
     assert "--managed-service" in launcher
     assert "--runtime-ownership" in launcher
     assert "'source'" in launcher
-    assert "traceback.print_exc()" in launcher
 
-    if os.name != "nt":
-        assert stat.S_IMODE(manager.config_path.stat().st_mode) == 0o600
-        assert stat.S_IMODE(manager.launcher_path.stat().st_mode) == 0o600
-        assert stat.S_IMODE(manager.systemd_unit_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(manager.config_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(manager.launcher_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(manager.systemd_unit_path.stat().st_mode) == 0o600
 
     saved = ExecutorProfileStore(manager.state_store).load()
     assert saved == profile
@@ -1082,283 +1038,6 @@ def test_launchd_status_and_uninstall_recover_loaded_orphan(
         command == ["launchctl", "bootout", manager._launchd_service_target]
         for command in calls
     )
-
-
-def test_windows_stop_is_idempotent_for_non_running_task(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager, _profile_value = _paired_manager(tmp_path, system="Windows")
-    scripts: list[str] = []
-    task: dict[str, object] = {"state": "Ready", "last_result": 0}
-    monkeypatch.setattr(manager, "_windows_task_status", lambda: task)
-    monkeypatch.setattr(
-        manager,
-        "_run_powershell",
-        lambda script, **_kwargs: scripts.append(script),
-    )
-
-    manager._stop_windows_task()
-    assert scripts == []
-
-    task["state"] = "Running"
-    manager._stop_windows_task()
-    assert len(scripts) == 1
-    assert "Stop-ScheduledTask" in scripts[0]
-
-
-def test_windows_task_is_per_user_persistent_and_secret_free(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    python = tmp_path / "runtime" / "python.exe"
-    python.parent.mkdir(parents=True)
-    python.write_bytes(b"")
-    pythonw = python.with_name("pythonw.exe")
-    pythonw.write_bytes(b"")
-    manager, profile = _paired_manager(
-        tmp_path,
-        system="Windows",
-        executable=python,
-    )
-    manager.environ["PATH"] = r"C:\Tools;relative;D:\Git\bin;C:\Tools"
-    registered = False
-    running = False
-    scripts: list[str] = []
-
-    monkeypatch.setattr(service.shutil, "which", lambda _name: "powershell.exe")
-
-    def fake_run(
-        command: list[str], **_kwargs
-    ) -> subprocess.CompletedProcess[str]:
-        nonlocal registered, running
-        script = command[-1]
-        scripts.append(script)
-        if "Register-ScheduledTask" in script:
-            registered = True
-            return _completed(command)
-        if "Start-ScheduledTask" in script:
-            running = True
-            return _completed(command)
-        if "Stop-ScheduledTask" in script:
-            running = False
-            return _completed(command)
-        if "Get-ScheduledTask" in script:
-            if not registered:
-                return _completed(command, returncode=3)
-            payload = {
-                "state": "Running" if running else "Ready",
-                "last_result": 267009 if running else 0,
-            }
-            return _completed(command, stdout=json.dumps(payload))
-        return _completed(command)
-
-    monkeypatch.setattr(manager, "_run", fake_run)
-
-    status = manager.install()
-    registration = next(
-        script for script in scripts if "Register-ScheduledTask" in script
-    )
-
-    assert status.state == ExecutorServiceState.RUNNING
-    assert str(pythonw.resolve()) in registration
-    assert "New-ScheduledTaskTrigger -AtLogOn" in registration
-    assert "-AllowStartIfOnBatteries" in registration
-    assert "-DontStopIfGoingOnBatteries" in registration
-    assert "-MultipleInstances IgnoreNew" in registration
-    assert "-RestartCount 255" in registration
-    assert "-RestartCount 999" not in registration
-    assert "-RunLevel Limited" in registration
-    assert "-TaskPath '\\'" in registration
-    assert all(
-        "-TaskPath '\\'" in script
-        for script in scripts
-        if "Get-ScheduledTask " in script or "Start-ScheduledTask " in script
-    )
-    assert str(profile.credential) not in registration
-    assert profile.control_url not in registration
-    assert manager._managed_windows_path() == r"C:\Tools;D:\Git\bin"
-    launcher = manager.launcher_path.read_text(encoding="utf-8")
-    assert f"WINDOWS_PATH = {manager._managed_windows_path()!r}" in launcher
-    assert "relative" not in launcher
-
-
-def test_windows_frozen_service_uses_logging_launcher_without_hiding_runtime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    executable = tmp_path / "release" / "workgate.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"")
-    manager, profile = _paired_manager(
-        tmp_path,
-        system="Windows",
-        executable=executable,
-    )
-    manager.environ["PATH"] = r"C:\Tools;relative;D:\Git\bin;C:\Tools"
-    monkeypatch.setattr(service.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(
-        manager,
-        "_powershell_executable",
-        lambda: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-    )
-
-    runtime_command = manager._runtime_command()
-    manager._write_launcher(runtime_command)
-    service_command = manager._windows_service_command(runtime_command)
-    registration = manager._windows_registration_script(service_command)
-    launcher = manager.windows_frozen_launcher_path.read_text(encoding="utf-8")
-
-    assert runtime_command[0] == str(executable.absolute())
-    assert service_command[-2:] == [
-        "-File",
-        str(manager.windows_frozen_launcher_path.resolve()),
-    ]
-    assert "powershell.exe" in registration.lower()
-    assert str(manager.windows_frozen_launcher_path.resolve()) in registration
-    assert str(executable.absolute()).replace("'", "''") in launcher
-    assert str(manager.log_path.resolve()).replace("'", "''") in launcher
-    assert "AppendAllText" in launcher
-    assert "2>&1 | ForEach-Object" in launcher
-    assert "$LASTEXITCODE" in launcher
-    assert f"$managedPath = '{manager._managed_windows_path()}'" in launcher
-    assert "relative" not in launcher
-    assert str(profile.credential) not in launcher
-    assert profile.control_url not in launcher
-
-    manager._write_service_config()
-    manager._write_metadata("scheduled-task", runtime_command)
-    assert manager._runtime_current() is True
-    assert (
-        json.loads(manager.metadata_path.read_text(encoding="utf-8"))["command"]
-        == runtime_command
-    )
-
-
-@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell")
-def test_windows_generated_powershell_scripts_parse_on_windows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    executable = tmp_path / "release with spaces" / "workgate.exe"
-    executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"")
-    manager, _profile_value = _paired_manager(
-        tmp_path,
-        system="Windows",
-        executable=executable,
-    )
-    manager.environ["PATH"] = r"C:\Tools;relative;D:\Git\bin;C:\Tools"
-    monkeypatch.setattr(service.sys, "frozen", True, raising=False)
-    powershell = manager._powershell_executable()
-    assert powershell is not None
-
-    runtime_command = manager._runtime_command()
-    manager._write_launcher(runtime_command)
-    service_command = manager._windows_service_command(runtime_command)
-    registration_path = tmp_path / "register task.ps1"
-    registration_path.write_text(
-        manager._windows_registration_script(service_command),
-        encoding="utf-8",
-    )
-
-    for script_path in (
-        manager.windows_frozen_launcher_path,
-        registration_path,
-    ):
-        literal = service._powershell_literal(str(script_path))
-        parser_command = (
-            "$tokens = $null; $errors = $null; "
-            "[System.Management.Automation.Language.Parser]::ParseFile("
-            f"{literal}, [ref]$tokens, [ref]$errors) | Out-Null; "
-            "if ($errors.Count -gt 0) { "
-            "$errors | ForEach-Object { "
-            "[Console]::Error.WriteLine($_.ToString()) }; exit 1 }"
-        )
-        result = subprocess.run(
-            [
-                powershell,
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                parser_command,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, result.stderr
-
-
-def test_windows_failed_reregistration_does_not_mark_new_runtime_current(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager, _profile_value = _paired_manager(tmp_path, system="Windows")
-    old_command = [r"C:\old\python.exe", r"C:\old\launcher.py"]
-    manager._write_metadata("scheduled-task", old_command)
-    monkeypatch.setattr(
-        manager, "_powershell_executable", lambda: "powershell.exe"
-    )
-    monkeypatch.setattr(manager, "_windows_task_status", lambda: None)
-
-    def fail_registration(_script: str, **_kwargs):
-        raise RuntimeError("registration failed")
-
-    monkeypatch.setattr(manager, "_run_powershell", fail_registration)
-
-    with pytest.raises(RuntimeError, match="registration failed"):
-        manager.install()
-
-    payload = json.loads(manager.metadata_path.read_text(encoding="utf-8"))
-    assert payload["command"] == old_command
-    assert manager._runtime_current() is False
-
-
-@pytest.mark.parametrize(
-    ("task_state", "last_result", "expected"),
-    [
-        ("Ready", 0x00041303, ExecutorServiceState.STOPPED),
-        ("Queued", 0x00041325, ExecutorServiceState.INSTALLED),
-        ("Disabled", 0x00041302, ExecutorServiceState.FAILED),
-        ("Ready", 1, ExecutorServiceState.FAILED),
-    ],
-)
-def test_windows_status_distinguishes_scheduler_status_from_process_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    task_state: str,
-    last_result: int,
-    expected: ExecutorServiceState,
-) -> None:
-    manager, _profile_value = _paired_manager(tmp_path, system="Windows")
-    manager._write_service_config()
-    manager._write_launcher()
-    manager._write_metadata("scheduled-task", manager._runtime_command())
-    monkeypatch.setattr(
-        manager,
-        "_windows_task_status",
-        lambda: {"state": task_state, "last_result": last_result},
-    )
-
-    status = manager.status()
-
-    assert status.state == expected
-    assert status.running is False
-
-
-def test_windows_status_uses_native_task_when_metadata_is_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager, _profile_value = _paired_manager(tmp_path, system="Windows")
-    monkeypatch.setattr(
-        manager,
-        "_windows_task_status",
-        lambda: {"state": "Ready", "last_result": 0x00041303},
-    )
-
-    status = manager.status()
-
-    assert status.installed is True
-    assert status.state == ExecutorServiceState.STOPPED
-    assert status.service_file is None
-    assert status.runtime_current is False
-    assert "metadata missing" in status.detail
 
 
 def test_uninstall_preserves_executor_profile(

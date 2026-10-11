@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -47,9 +46,6 @@ def test_linux_relative_xdg_roots_fall_back(tmp_path: Path) -> None:
     assert paths.runtime_dir.name.startswith("workgate-")
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="POSIX XDG runtime ownership/mode contract"
-)
 def test_linux_uses_suitable_runtime_dir(tmp_path: Path) -> None:
     runtime = tmp_path / "xdg-runtime"
     runtime.mkdir(mode=0o700)
@@ -127,26 +123,6 @@ def test_private_directory_tolerates_racing_creator(
 
     assert ensure_private_directory(private) == private
     assert private.is_dir()
-
-
-def test_windows_uses_native_roaming_and_local_namespaces(
-    tmp_path: Path,
-) -> None:
-    roaming = tmp_path / "roaming"
-    local = tmp_path / "local"
-    paths = resolve_app_paths(
-        env={"APPDATA": str(roaming), "LOCALAPPDATA": str(local)},
-        home=tmp_path / "home",
-        platform="win32",
-        temp_root=tmp_path / "tmp",
-    )
-
-    assert paths.config_dir == roaming / "workgate" / "config"
-    assert paths.state_dir == local / "workgate" / "state"
-    assert paths.data_dir == local / "workgate" / "data"
-    assert paths.runtime_dir.parent == tmp_path / "tmp" / "workgate"
-    assert paths.runtime_dir.name.startswith("runtime-")
-    assert paths.state_dir != paths.data_dir
 
 
 def test_runtime_fallback_nonce_is_lazy_and_reused(
