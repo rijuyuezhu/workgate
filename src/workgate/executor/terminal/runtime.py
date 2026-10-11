@@ -4,7 +4,6 @@ from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 
-from ...persistence import StateStore
 from .bridge import TerminalBridgeRegistry, use_terminal_bridge_registry
 
 
@@ -61,7 +60,6 @@ def use_terminal_runtime(runtime: TerminalRuntime) -> Generator[None]:
 
 
 def build_terminal_runtime(
-    state_store: StateStore,
     *,
     idle_timeout_s: int = 300,
     max_connections: int = 8,

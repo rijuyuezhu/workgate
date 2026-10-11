@@ -7,13 +7,12 @@ from workgate.executor.terminal.runtime import (
     build_terminal_runtime,
     use_terminal_runtime,
 )
-from workgate.persistence import get_state_store
 
 
 @pytest.mark.asyncio
 async def test_terminal_runtime_context_nested_and_reversible():
-    outer = build_terminal_runtime(get_state_store())
-    inner = build_terminal_runtime(get_state_store())
+    outer = build_terminal_runtime()
+    inner = build_terminal_runtime()
     await outer.start()
     await inner.start()
     try:
@@ -31,7 +30,7 @@ async def test_terminal_runtime_context_nested_and_reversible():
 
 @pytest.mark.asyncio
 async def test_terminal_runtime_start_and_close_idempotent():
-    runtime = build_terminal_runtime(get_state_store())
+    runtime = build_terminal_runtime()
     await runtime.start()
     await runtime.start()
     await runtime.aclose()
@@ -42,7 +41,7 @@ async def test_terminal_runtime_start_and_close_idempotent():
 
 @pytest.mark.asyncio
 async def test_terminal_runtime_lifespan_closes_bridges():
-    runtime = build_terminal_runtime(get_state_store())
+    runtime = build_terminal_runtime()
     async with runtime.lifespan():
         with use_terminal_runtime(runtime):
             assert bridge_module._bridge_registry() is runtime.bridges
@@ -51,7 +50,7 @@ async def test_terminal_runtime_lifespan_closes_bridges():
 
 @pytest.mark.asyncio
 async def test_terminal_runtime_start_failure_closes_admission(monkeypatch):
-    runtime = build_terminal_runtime(get_state_store())
+    runtime = build_terminal_runtime()
 
     async def fail_start():
         raise RuntimeError("bridge startup failed")
@@ -67,7 +66,7 @@ async def test_terminal_runtime_start_failure_closes_admission(monkeypatch):
 async def test_terminal_runtime_stops_bridge_admission_before_close(
     monkeypatch,
 ):
-    runtime = build_terminal_runtime(get_state_store())
+    runtime = build_terminal_runtime()
     events = []
     original_stop = runtime.bridges.stop_admission
     original_close = runtime.bridges.aclose

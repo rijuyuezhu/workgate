@@ -509,7 +509,6 @@ def build_executor_runtime(
         agent_bridge=agent_bridge,
         shell=shell_service,
         terminal_runtime=build_terminal_runtime(
-            services.state_store,
             idle_timeout_s=config.ui_terminal_idle_timeout_s,
             max_connections=config.ui_terminal_max_connections,
         ),
