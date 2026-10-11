@@ -122,24 +122,12 @@ jobs:
         include:
           - artifact: linux-x86_64
             runner: ubuntu-latest
-            binary: workgate
-            archive: tar.gz
           - artifact: linux-aarch64
             runner: ubuntu-24.04-arm
-            binary: workgate
-            archive: tar.gz
           - artifact: macos-x86_64
             runner: macos-15-intel
-            binary: workgate
-            archive: tar.gz
           - artifact: macos-aarch64
             runner: macos-15
-            binary: workgate
-            archive: tar.gz
-          - artifact: windows-x86_64
-            runner: windows-latest
-            binary: workgate.exe
-            archive: zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
@@ -153,36 +141,17 @@ jobs:
           enable-cache: true
 
       - name: Build self-contained executable
-        shell: bash
-        run: |
-          PYINSTALLER_ARGS=(
-            --clean
-            --onefile
-            --name workgate
-            --collect-all workgate
-            --collect-all mcp
-            --collect-all uvicorn
-            --collect-all fastapi
-            --collect-all starlette
-            --exclude-module cryptography
-          )
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            PYINSTALLER_ARGS+=(--collect-all winpty)
-          fi
-          uv run --extra gui --with pyinstaller --with typer pyinstaller \
-            "${PYINSTALLER_ARGS[@]}" \
-            scripts/release/pyinstaller-entry.py
+        run: bash scripts/release/build-binary.sh
 
-      - name: Smoke test executable
-        shell: bash
-        run: ./dist/${{ matrix.binary }} --help
+      - name: Smoke frozen CLI, control health, and WebUI
+        run: python scripts/release/smoke-binary.py dist/workgate
 
       - name: Package executable
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release/workgate-${{ matrix.artifact }}
-          cp dist/${{ matrix.binary }} release/workgate-${{ matrix.artifact }}/
+          cp dist/workgate release/workgate-${{ matrix.artifact }}/
           cp README.md LICENSE release/workgate-${{ matrix.artifact }}/
           cat > release/workgate-${{ matrix.artifact }}/QUICKSTART.txt <<'EOF'
           Start the Workgate control:
@@ -210,11 +179,7 @@ jobs:
           Workspace and machine policy belong to the executor, not the control.
           EOF
           cd release
-          if [[ "${{ matrix.archive }}" == "zip" ]]; then
-            7z a workgate-${{ matrix.artifact }}.zip workgate-${{ matrix.artifact }} >/dev/null
-          else
-            tar -czf workgate-${{ matrix.artifact }}.tar.gz workgate-${{ matrix.artifact }}
-          fi
+          tar -czf workgate-${{ matrix.artifact }}.tar.gz workgate-${{ matrix.artifact }}
 
       - name: Generate binary checksums
         shell: bash
@@ -272,7 +237,6 @@ jobs:
           linux-aarch64
           macos-x86_64
           macos-aarch64
-          windows-x86_64
           \`\`\`
 
           Start the standalone executable:

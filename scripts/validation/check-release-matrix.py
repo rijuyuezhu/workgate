@@ -11,7 +11,6 @@ EXPECTED_BINARY_ARTIFACTS = {
     "linux-aarch64",
     "macos-x86_64",
     "macos-aarch64",
-    "windows-x86_64",
 }
 
 
@@ -39,22 +38,60 @@ def main() -> int:
     binary = _section(release, "build-binary")
     publish = _section(release, "github-release")
     smoke = _section(ci, "package-smoke")
+    binary_smoke = _section(ci, "standalone-binary-smoke")
     expected = EXPECTED_BINARY_ARTIFACTS
     actual = set(
         re.findall(r"^          - artifact: ([\w-]+)$", binary, re.MULTILINE)
     )
     if actual != expected:
         raise SystemExit(
-            f"standalone artifact matrix mismatch: {sorted(actual)}"
+            f"standalone release artifact matrix mismatch: {sorted(actual)}"
+        )
+    ci_artifacts = set(
+        re.findall(
+            r"^          - artifact: ([\w-]+)$", binary_smoke, re.MULTILINE
+        )
+    )
+    if ci_artifacts != expected:
+        raise SystemExit(
+            f"standalone CI artifact matrix mismatch: {sorted(ci_artifacts)}"
+        )
+    if "windows-" in binary or "windows-" in binary_smoke:
+        raise SystemExit("standalone binary jobs must not include Windows")
+    for job, section in (("release", binary), ("CI", binary_smoke)):
+        fields = set(
+            re.findall(r"^          - ([a-z_]+):", section, re.MULTILINE)
+        )
+        fields.update(
+            re.findall(r"^            ([a-z_]+):", section, re.MULTILINE)
+        )
+        references = set(re.findall(r"matrix\.([a-z_]+)", section))
+        if undefined := references - fields:
+            raise SystemExit(
+                f"undefined standalone {job} matrix fields: {sorted(undefined)}"
+            )
+    if (
+        "cp dist/workgate release/workgate-${{ matrix.artifact }}/"
+        not in binary
+    ):
+        raise SystemExit(
+            "release must package the built dist/workgate executable"
         )
     required = (
         (package, ("uv build", "check-python-dist.py", "name: python-dist")),
         (
             binary,
             (
-                "scripts/release/pyinstaller-entry.py",
-                "uv run --extra gui --with pyinstaller",
+                "bash scripts/release/build-binary.sh",
+                "python scripts/release/smoke-binary.py dist/workgate",
                 "name: binary-",
+            ),
+        ),
+        (
+            binary_smoke,
+            (
+                "bash scripts/release/build-binary.sh",
+                "python scripts/release/smoke-binary.py dist/workgate",
             ),
         ),
         (
@@ -83,8 +120,18 @@ def main() -> int:
                 raise SystemExit(
                     f"missing universal release contract: {fragment}"
                 )
+    builder = (ROOT / "scripts/release/build-binary.sh").read_text()
+    for fragment in (
+        "--clean --noconfirm --onefile --name workgate",
+        "--collect-all workgate",
+        "scripts/release/pyinstaller-entry.py",
+    ):
+        if fragment not in builder:
+            raise SystemExit(
+                f"missing shared PyInstaller build contract: {fragment}"
+            )
     print(
-        "Release matrix: one universal Python wheel + sdist and five standalone binaries"
+        "Release matrix: universal Python wheel + sdist and four standalone binaries"
     )
     return 0
 
