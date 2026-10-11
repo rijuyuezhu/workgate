@@ -31,9 +31,13 @@ pairing an executor. See [Executors](../guides/executors.md).
 
 ## Let a local client start stdio
 
-For clients that support command-launched MCP servers, install Workgate from a
-[GitHub release](install-options.md) or have the client launch the pinned GitHub
-revision through `uvx`. The generic JSON shape is:
+A stdio-only Workgate control has **no HTTP executor connection or pairing
+endpoint**. Unlike standalone HTTP, it cannot attach an executor for shell,
+filesystem, or session operations. Use HTTP above for ordinary workspace tasks.
+
+If your local client needs the control-only MCP interface, install Workgate from
+a [GitHub release](install-options.md) or launch the pinned GitHub revision
+through `uvx`. The generic JSON shape is:
 
 ```json
 {
@@ -57,10 +61,7 @@ Use the appropriate release tag in place of the prerelease example above.
 
 Stdio communicates only with its parent process, not over a public network.
 The `--auth-mode none` example is **only for that local stdio process**; do not
-copy it into a public HTTP deployment. Stdio starts a control process, **not**
-a standalone executor or an HTTP pairing endpoint. Tool discovery works, but
-machine-facing operations still require an eligible executor; for normal local
-workspace access, the standalone HTTP setup above is simpler.
+copy it into a public HTTP deployment.
 
 ## First check
 
@@ -69,7 +70,7 @@ After connecting, ask the client:
 > List the Workgate tools and report the Workgate server version. Do not change
 > any files.
 
-If you have a connected executor, continue with:
+If you use HTTP with a connected executor, continue with:
 
 > Start a session in my configured project workdir and report the Git status.
 > Do not modify anything.
