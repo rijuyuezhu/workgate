@@ -35,6 +35,7 @@ their lifecycle can remain separate from checkout-only automation.
 | `validation/check-doc-reference-assets.py` | Validates that generated-reference widgets in a built MkDocs site resolve to local JSON assets without escaping the site root. | It is a post-build documentation validator and has no runtime or generation ownership. |
 | `validation/check-no-future-annotations.py` | Rejects postponed-annotation future imports in first-party Python while ignoring generated dependency environments. | Workgate targets Python 3.14, so this keeps the repository annotation convention explicit and prevents generators or new modules from silently reintroducing the obsolete import. |
 | `validation/check-python-dist.py` | Checks that one pure universal wheel and one source distribution include browser terminal assets and no native UI payload. | Reused by package smoke and release publishing without an installed project. |
+| `validation/check-release-provenance.py` | Verifies release SHA, Git tag, current default branch, and successful main-push CI through GitHub REST before build and publish. | Keeps release authorization as a small zero-install check, separate from packaging. |
 | `validation/check-release-matrix.py` | Checks the project/release Python baseline, universal package smoke, and standalone binary artifact matrix. | It validates repository workflow completeness before installation and therefore belongs beside other zero-install validation gates rather than release builders. |
 
 ## `generation`
