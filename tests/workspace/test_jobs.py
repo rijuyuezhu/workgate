@@ -2736,6 +2736,18 @@ async def test_legacy_managed_job_migrates_to_lost_and_can_retry(
             break
     assert current is not None
     assert current.status == "succeeded"
+    # The durable result may become visible before the owner's task finishes.
+    # Wait for that task before simulating a legacy row with no lease.
+    for _ in range(100):
+        with job_recovery.store_transaction() as store:
+            row = job_state.find_session_job(store, session_id, started.job_id)
+            still_running = job_managed.managed_jobs_runtime().has_local_task(
+                row
+            )
+        if not still_running:
+            break
+        await asyncio.sleep(0.01)
+    assert not still_running
 
     with job_recovery.store_transaction() as store:
         row = job_state.find_session_job(store, session_id, started.job_id)

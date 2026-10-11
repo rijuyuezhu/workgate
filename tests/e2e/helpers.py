@@ -29,7 +29,7 @@ from workgate.protocol.credentials import (
 from workgate.protocol.ids import new_executor_id
 from workgate.tools.mcp_text import has_explicit_tool_text
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
 
 
