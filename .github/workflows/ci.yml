@@ -231,6 +231,17 @@ jobs:
           /tmp/workgate-wheel-venv/bin/python -m pip install dist/*.whl
           /tmp/workgate-wheel-venv/bin/workgate --version
           /tmp/workgate-wheel-venv/bin/workgate version
+      - name: Smoke pinned GitHub uvx and pipx installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Validate Git-based installation, independently of the current PR's wheel smoke.
+          package='git+https://github.com/${{ github.repository }}.git@v5.0.0a1'
+          uvx --python 3.14 --from "$package" workgate --help >/dev/null
+          export PIPX_HOME="${RUNNER_TEMP}/workgate-pipx-home"
+          export PIPX_BIN_DIR="${RUNNER_TEMP}/workgate-pipx-bin"
+          uvx --python 3.14 --from pipx pipx install "$package" --python python3.14
+          "$PIPX_BIN_DIR/workgate" --version
 
   release-matrix:
     name: Release matrix check
