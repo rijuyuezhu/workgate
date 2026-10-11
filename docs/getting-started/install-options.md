@@ -16,18 +16,32 @@ uv sync
 
 Then follow the [Quickstart](quickstart.md).
 
-## Python package
+## Python installation from GitHub
 
-For a normal Python installation:
+Workgate is **not published to PyPI**. Choose a tag from
+[GitHub Releases](https://github.com/rijuyuezhu/workgate/releases) and install
+from that Git revision, not from `pip install workgate` or `uvx workgate`.
+The examples below pin `v5.0.0a1` (**prerelease**); choose a non-prerelease
+release tag for a stable deployment.
+
+Run without a persistent installation (requires Python 3.14):
 
 ```bash
-pipx install workgate
-# or
-pip install workgate
+uvx --python 3.14 --from 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a1' workgate --help
 ```
 
-The Python distribution contains one universal wheel and one source distribution.
-Use the browser WebUI for interactive management and persistent terminals.
+Or install the CLI in an isolated environment:
+
+```bash
+pipx install 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a1' --python python3.14
+workgate --help
+```
+
+Replace the tag in both commands when choosing a different GitHub release.
+Use `@main` or a full commit hash only when deliberately testing development
+code, not for a normal installation. The Python distribution builds a universal
+wheel and source distribution; use the browser WebUI for interactive management
+and persistent terminals.
 
 ## Native desktop automation
 
@@ -36,9 +50,9 @@ OAuth scope and run only on the executor that owns the selected Workgate session
 For source or Python-package executors, install the optional GUI bindings:
 
 ```bash
-uv sync --extra gui                  # source checkout
-pipx install 'workgate[gui]'         # isolated CLI install
-pip install 'workgate[gui]'          # Python environment
+uv sync --extra gui  # source checkout
+pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a1' --python python3.14
+python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a1'  # existing environment
 ```
 
 Release standalone executables already bundle the corresponding Python GUI bindings.
