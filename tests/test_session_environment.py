@@ -226,3 +226,36 @@ def test_resolve_command_rejects_invalid_or_missing(monkeypatch):
     assert env_ops._resolve_command("'") is None
     monkeypatch.setattr(env_ops.shutil, "which", lambda _value: None)
     assert env_ops._resolve_command("missing-tool") is None
+
+
+def test_tool_collection_sanitizes_unexpected_probe_failure(
+    monkeypatch, tmp_path
+):
+    config = _config(tmp_path)
+    probes = tuple(
+        env_ops._CommandProbe(name, (name,), "configured")
+        for name in ("shell", "git", "ripgrep", "tmux")
+    )
+    monkeypatch.setattr(
+        env_ops,
+        "_tool_probe_context",
+        lambda _config: (("probe-failure-regression",), probes),
+    )
+
+    def probe(spec):
+        if spec.name == "git":
+            raise RuntimeError("secret from subprocess")
+        return SessionToolProbe(available=True, status="available")
+
+    monkeypatch.setattr(env_ops, "_probe_command", probe)
+    with env_ops._CACHE_LOCK:
+        env_ops._TOOL_CACHE.clear()
+    tools = env_ops._collect_tools(config)
+    assert tools.git.status == "error"
+    assert tools.git.available is False
+    assert tools.shell.available is True
+    assert "secret" not in json.dumps(tools.model_dump())
+
+
+def test_resolve_command_rejects_blank_after_posix_tokenization():
+    assert env_ops._resolve_command("   ") is None

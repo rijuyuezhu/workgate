@@ -183,3 +183,38 @@ async def test_mcp_shell_error_uses_standard_tool_error(
             "bash",
             {"session_id": session["session_id"], "command": "echo ok"},
         )
+
+
+def test_process_start_distinguishes_missing_executable_from_existing_cwd(
+    tmp_path,
+):
+    exc = FileNotFoundError(2, "No such file", "/missing/executable")
+    classified = process_start_not_found_error(
+        exc, executable="missing", command="echo ok", cwd=tmp_path
+    )
+    assert isinstance(classified, ShellExecutableNotFoundError)
+    assert classified.cwd == str(tmp_path)
+
+
+def test_process_start_prefers_cwd_named_in_syscall_even_when_recreated(
+    tmp_path,
+):
+    exc = FileNotFoundError(2, "No such file", str(tmp_path))
+    classified = process_start_not_found_error(
+        exc, executable="sh", command="echo ok", cwd=tmp_path
+    )
+    assert isinstance(classified, PathNotFoundError)
+    assert classified.path == tmp_path
+
+
+def test_raw_missing_path_error_is_classified_for_remote_transfer(tmp_path):
+    missing = tmp_path / "not-found.bin"
+    exc = FileNotFoundError(2, "No such file", str(missing))
+    payload = tool_error_payload(exc)
+    assert payload["status"] == "not_found"
+    assert payload["path"] == str(missing)
+
+
+def test_remote_termination_without_session_id_fails_closed():
+    with pytest.raises(ValueError, match="requires session_id"):
+        exception_from_tool_error({"status": "termination_requested"})

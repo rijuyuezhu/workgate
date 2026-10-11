@@ -1661,3 +1661,15 @@ def test_configured_filter_wins_after_frozen_loader_restore(
 
     assert "LD_LIBRARY_PATH" not in env
     assert "LD_LIBRARY_PATH_ORIG" not in env
+
+
+def test_posix_shell_command_environment_overrides_are_quoted_and_validated():
+    config = _executor_config()
+    assert (
+        shell_ops._command_with_env(
+            config, "echo ok", {"SPECIAL_VALUE": "a b'c"}
+        )
+        == "SPECIAL_VALUE='a b'\"'\"'c' echo ok"
+    )
+    with pytest.raises(ValueError, match="Invalid environment variable name"):
+        shell_ops._command_with_env(config, "echo ok", {"bad-name": "value"})

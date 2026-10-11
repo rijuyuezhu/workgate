@@ -1,3 +1,5 @@
+import pytest
+
 import workgate.utils.private_files as private_files
 
 
@@ -83,3 +85,35 @@ def test_lock_file_initialization_retries_empty_file_permission_race(
 
     assert path.stat().st_size >= 1
     assert sleeps == [0.01]
+
+
+def test_private_lock_retry_wait_is_bounded_by_deadline(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(private_files.time, "sleep", sleeps.append)
+    private_files._retry_private_lock_io(
+        private_files.time.monotonic() + 0.05,
+        timeout_message="deadline expired",
+        retry_interval_s=0.01,
+    )
+    assert len(sleeps) == 1
+    assert 0 < sleeps[0] <= 0.01
+
+
+def test_private_lock_unexpected_posix_error_is_not_swallowed(
+    monkeypatch, tmp_path
+):
+    import errno
+    import fcntl
+
+    path = tmp_path / "lock"
+    path.write_bytes(b"\0")
+
+    def unexpected_error(*args):
+        raise OSError(errno.EIO, "filesystem error")
+
+    monkeypatch.setattr(fcntl, "flock", unexpected_error)
+    with (
+        path.open("r+b") as handle,
+        pytest.raises(OSError, match="filesystem error"),
+    ):
+        private_files._try_lock_handle(handle)

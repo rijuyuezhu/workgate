@@ -1868,3 +1868,43 @@ def test_bounded_runner_main_parses_arguments(monkeypatch):
         bounded_runner.main()
 
     assert calls == [("sh", "echo ok")]
+
+
+def test_direct_children_reports_reaped_pid_as_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(bounded_runner, "PROCFS_ROOT", tmp_path / "fake-proc")
+    assert bounded_runner._direct_children(12345) == []
+
+
+@pytest.mark.parametrize(("prctl_result", "expected"), [(0, True), (1, False)])
+def test_child_subreaper_reports_posix_prctl_status(
+    monkeypatch, prctl_result, expected
+):
+    monkeypatch.setattr(bounded_runner.sys, "platform", "linux")
+    monkeypatch.setattr(
+        bounded_runner.ctypes,
+        "CDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            prctl=lambda *_args: prctl_result
+        ),
+    )
+    assert bounded_runner._enable_child_subreaper() is expected
+
+
+def test_direct_children_missing_proc_file_with_denied_process_metadata(
+    monkeypatch, tmp_path
+):
+    from pathlib import Path
+
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    (proc_root / "42").mkdir()
+    monkeypatch.setattr(bounded_runner, "PROCFS_ROOT", proc_root)
+    original_stat = Path.stat
+
+    def denied_stat(path, *args, **kwargs):
+        if path == proc_root / "42":
+            raise PermissionError("inaccessible proc metadata")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denied_stat)
+    assert bounded_runner._direct_children(42) is None
