@@ -18,7 +18,10 @@ def main() -> None:
 
     for args in (("--version",), ("version",), ("--help",)):
         subprocess.run(
-            [str(binary), *args], check=True, timeout=45, capture_output=True
+            [str(binary), *args],
+            check=True,
+            timeout=45,
+            stdout=subprocess.DEVNULL,
         )
 
     with tempfile.TemporaryDirectory(
