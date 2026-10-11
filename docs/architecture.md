@@ -47,7 +47,7 @@ have been removed and must not be restored.
 
 The package root is frozen to `__init__.py`, `main.py`, `errors.py`, and
 `version.py`. Every other implementation must live in an explicitly owned
-subpackage; `tests/test_architecture.py` enforces this allowlist.
+subpackage; `tests/repo/test_architecture.py` enforces this allowlist.
 
 General rules:
 
@@ -209,7 +209,7 @@ transport-neutral operations, version reporting, and Starlette ASGI types.
 The package must not import `workgate.control` or UI modules, and no removed `server`
 namespace may be reintroduced as an intermediary.
 
-`tests/test_http_route_parity.py` locks the shared `/healthz`, `/readyz`,
+`tests/e2e/test_http_route_parity.py` locks the shared `/healthz`, `/readyz`,
 `/version`, and `/download/{token}` route signatures, order, installation, and
 public-matcher classification across both debug HTTP and MCP-over-HTTP control adapters.
 

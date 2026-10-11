@@ -1,0 +1,33 @@
+import pytest
+
+from tests.e2e.browser.harness import BrowserHarness
+from tests.e2e.browser.scenario_auth_dashboard import run_auth_dashboard
+from tests.e2e.browser.scenario_executors import run_executor_admin
+from tests.e2e.browser.scenario_files_todos_audit import run_files_todos_audit
+from tests.e2e.browser.scenario_layout import run_webui_layout
+from tests.e2e.browser.scenario_live_workspace import (
+    run_live_workspace,
+    run_live_workspace_remount,
+)
+from tests.e2e.browser.scenario_mobile_drilldown import run_mobile_drilldown
+from tests.e2e.browser.scenario_terminals import run_terminals
+
+pytestmark = [pytest.mark.browser, pytest.mark.timeout(240)]
+
+
+def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
+    run_auth_dashboard(browser_harness)
+    run_webui_layout(browser_harness)
+    run_live_workspace(browser_harness)
+    run_executor_admin(browser_harness)
+    run_files_todos_audit(browser_harness)
+    run_terminals(browser_harness)
+    run_mobile_drilldown(browser_harness)
+    browser_harness.assert_clean_browser()
+
+
+def test_live_workspace_remount_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    run_live_workspace_remount(browser_harness)
+    browser_harness.assert_clean_browser()

@@ -1,0 +1,690 @@
+import asyncio
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Protocol
+
+import httpx
+import httpx2
+import pytest
+import yaml
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
+
+from workgate.control.state import ControlState, ExecutorTrustRecord
+from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
+from workgate.persistence import FileStateStore
+from workgate.protocol.credentials import (
+    executor_credential_verifier,
+    new_executor_credential,
+)
+from workgate.protocol.ids import new_executor_id
+from workgate.tools.mcp_text import has_explicit_tool_text
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = PROJECT_ROOT / "src"
+
+
+class ToolClient(Protocol):
+    async def list_tools(self) -> set[str]: ...
+
+    async def call_tool(
+        self, name: str, args: dict[str, Any] | None = None
+    ) -> Any: ...
+
+
+@dataclass(frozen=True)
+class E2EExecutor:
+    executor_id: str
+    workspace: Path
+
+
+def free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def isolated_process_env(
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Return a deterministic child environment without Workgate config overrides."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("WORKGATE_")
+    }
+    env["PYTHONPATH"] = str(SRC_ROOT)
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    env["no_proxy"] = "127.0.0.1,localhost"
+    if extra:
+        forbidden = sorted(key for key in extra if key.startswith("WORKGATE_"))
+        if forbidden:
+            raise ValueError(
+                f"real-process E2E env must not override Workgate settings: {forbidden}"
+            )
+        env.update(extra)
+    return env
+
+
+def write_yaml_config(path: Path, values: dict[str, Any]) -> Path:
+    """Write one role-owned temporary YAML config for real-process E2E."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(values, sort_keys=True, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return path
+
+
+def isolated_xdg_env(root: Path) -> dict[str, str]:
+    """Create private XDG roots for one real-process E2E topology."""
+    config = root / "config"
+    state = root / "state"
+    data = root / "data"
+    cache = root / "cache"
+    runtime = root / "runtime"
+    for path in (config, state, data, cache, runtime):
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    return {
+        "XDG_CONFIG_HOME": str(config),
+        "XDG_STATE_HOME": str(state),
+        "XDG_DATA_HOME": str(data),
+        "XDG_CACHE_HOME": str(cache),
+        "XDG_RUNTIME_DIR": str(runtime),
+    }
+
+
+def control_env(
+    *,
+    mode: str,
+    state_dir: Path,
+    port: int | None = None,
+    agent_bridge_enabled: bool = False,
+) -> dict[str, str]:
+    env = os.environ.copy()
+    pythonpath = str(SRC_ROOT)
+    if env.get("PYTHONPATH"):
+        pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
+    env.update(
+        {
+            "PYTHONPATH": pythonpath,
+            "WORKGATE_STATE_DIR": str(state_dir),
+            "WORKGATE_MODE": mode,
+            "WORKGATE_HOST": "127.0.0.1",
+            "WORKGATE_AUTH_MODE": "none",
+            "WORKGATE_AGENT_BRIDGE_ENABLED": str(agent_bridge_enabled).lower(),
+            "WORKGATE_TOOL_TIMEOUT_S": "15",
+        }
+    )
+    if port is not None:
+        env["WORKGATE_PORT"] = str(port)
+        env["WORKGATE_BASE_URL"] = f"http://127.0.0.1:{port}"
+    return env
+
+
+def executor_env(
+    default_workdir: Path,
+    *,
+    mode: str,
+    state_dir: Path,
+    agent_bridge_enabled: bool = False,
+) -> dict[str, str]:
+    env = control_env(
+        mode=mode,
+        state_dir=state_dir,
+        agent_bridge_enabled=agent_bridge_enabled,
+    )
+    env.update(
+        {
+            "WORKGATE_DEFAULT_WORKDIR": str(default_workdir),
+            "WORKGATE_RUN_SHELL_DEFAULT_TIMEOUT_S": "5",
+            "WORKGATE_RUN_SHELL_MAX_TIMEOUT_S": "10",
+        }
+    )
+    return env
+
+
+def provision_executor_pair(
+    *,
+    control_state_dir: Path,
+    executor_state_dir: Path,
+    control_url: str,
+    name: str = "e2e-executor",
+) -> str:
+    """Seed matching production trust/profile state for non-interactive E2E setup."""
+    executor_id = new_executor_id()
+    credential = new_executor_credential()
+
+    control_store = FileStateStore(lambda: control_state_dir)
+    state = ControlState(control_store)
+    state.start()
+    try:
+        state.put_executor(
+            ExecutorTrustRecord(
+                executor_id=executor_id,
+                name=name,
+                credential_verifier=executor_credential_verifier(credential),
+                created_at=time.time(),
+            )
+        )
+    finally:
+        state.close()
+
+    executor_store = FileStateStore(lambda: executor_state_dir)
+    ExecutorProfileStore(executor_store).save(
+        ExecutorProfile(
+            control_url=control_url,
+            executor_id=executor_id,
+            credential=credential,
+        )
+    )
+    return executor_id
+
+
+def _start_logged_process(
+    argv: list[str],
+    *,
+    env: dict[str, str],
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+) -> subprocess.Popen[str]:
+    if (stdout_path is None) != (stderr_path is None):
+        raise ValueError("stdout/stderr paths must be provided together")
+    popen_kwargs = {
+        "cwd": PROJECT_ROOT,
+        "env": env,
+        "text": True,
+    }
+    if stdout_path is None:
+        return subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **popen_kwargs,
+        )
+    assert stderr_path is not None
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout,
+        stderr_path.open("w", encoding="utf-8") as stderr,
+    ):
+        return subprocess.Popen(
+            argv,
+            stdout=stdout,
+            stderr=stderr,
+            **popen_kwargs,
+        )
+
+
+def start_control_process(
+    config_path: Path,
+    *,
+    env: dict[str, str] | None = None,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+) -> subprocess.Popen[str]:
+    """Start one final control process from an explicit YAML config."""
+    return _start_logged_process(
+        [
+            sys.executable,
+            "-m",
+            "workgate.main",
+            "control",
+            "--config",
+            str(config_path),
+        ],
+        env=isolated_process_env(env),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+
+def start_executor_process(
+    config_path: Path,
+    *,
+    env: dict[str, str] | None = None,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+) -> subprocess.Popen[str]:
+    """Start one final executor process from a pre-provisioned profile."""
+    return _start_logged_process(
+        [
+            sys.executable,
+            "-m",
+            "workgate.main",
+            "executor",
+            "run",
+            "--config",
+            str(config_path),
+        ],
+        env=isolated_process_env(env),
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+
+
+def stop_process(process: subprocess.Popen[str]) -> None:
+    """Terminate one E2E child process, escalating only when needed."""
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _captured_process_output(
+    process: subprocess.Popen[str],
+    *,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+) -> tuple[str, str]:
+    if stdout_path is not None and stderr_path is not None:
+        return (
+            stdout_path.read_text(encoding="utf-8", errors="replace")
+            if stdout_path.exists()
+            else "",
+            stderr_path.read_text(encoding="utf-8", errors="replace")
+            if stderr_path.exists()
+            else "",
+        )
+    stdout, stderr = process.communicate(timeout=1)
+    return stdout or "", stderr or ""
+
+
+async def wait_for_executor_online(
+    base_url: str,
+    process: subprocess.Popen[str],
+    executor_id: str,
+    *,
+    after_last_seen: float | None = None,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+    timeout_s: float = 10,
+) -> float:
+    """Wait for authenticated executor activity and return its last-seen timestamp."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
+        while True:
+            if process.poll() is not None:
+                stdout, stderr = _captured_process_output(
+                    process,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
+                raise AssertionError(
+                    f"executor exited early with code {process.returncode}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            try:
+                response = await client.get(f"{base_url}/api/ui/executors")
+                if response.status_code == 200:
+                    rows = response.json().get("data", {}).get("executors", [])
+                    for row in rows:
+                        if (
+                            row.get("executor_id") != executor_id
+                            or row.get("online") is not True
+                        ):
+                            continue
+                        last_seen = row.get("last_seen_at")
+                        if not isinstance(last_seen, int | float):
+                            continue
+                        if (
+                            after_last_seen is None
+                            or float(last_seen) > after_last_seen
+                        ):
+                            return float(last_seen)
+            except httpx.HTTPError, json.JSONDecodeError:
+                pass
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError(
+                    f"executor {executor_id} did not publish fresh authenticated activity at {base_url}"
+                )
+            await asyncio.sleep(0.05)
+
+
+async def wait_for_http_ready(
+    base_url: str,
+    process: subprocess.Popen[str],
+    *,
+    stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
+    timeout_s: float = 10,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    async with httpx.AsyncClient(timeout=1, trust_env=False) as client:
+        while True:
+            if process.poll() is not None:
+                stdout, stderr = _captured_process_output(
+                    process,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
+                raise AssertionError(
+                    f"server exited early with code {process.returncode}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            try:
+                response = await client.get(f"{base_url}/healthz")
+                if (
+                    response.status_code == 200
+                    and response.json().get("ok") is True
+                ):
+                    return
+            except httpx.HTTPError, json.JSONDecodeError:
+                pass
+            if asyncio.get_running_loop().time() >= deadline:
+                stop_process(process)
+                stdout, stderr = _captured_process_output(
+                    process,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
+                raise AssertionError(
+                    f"server did not become ready at {base_url}\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+            await asyncio.sleep(0.05)
+
+
+@asynccontextmanager
+async def run_http_process_with_executors(
+    tmp_path: Path,
+    *,
+    mode: str,
+    executor_workspaces: tuple[Path, ...],
+    agent_bridge_enabled: bool = False,
+    control_overrides: dict[str, Any] | None = None,
+    control_env_overrides: dict[str, str] | None = None,
+) -> AsyncGenerator[tuple[str, tuple[E2EExecutor, ...]]]:
+    """Run final control/executor processes from separate temporary YAML configs."""
+    if not executor_workspaces:
+        raise ValueError("at least one executor workspace is required")
+
+    port = free_tcp_port()
+    base_url = f"http://127.0.0.1:{port}"
+    control_state_dir = tmp_path / f"control-state-{mode}"
+    control_data_dir = tmp_path / f"control-data-{mode}"
+    config_dir = tmp_path / f"process-config-{mode}"
+    log_dir = tmp_path / f"process-logs-{mode}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    process_env = isolated_xdg_env(tmp_path / f"xdg-{mode}")
+    control_env = dict(process_env)
+    if control_env_overrides:
+        control_env.update(control_env_overrides)
+
+    control_values: dict[str, Any] = {
+        "mode": mode,
+        "host": "127.0.0.1",
+        "port": port,
+        "base_url": base_url,
+        "auth_mode": "none",
+        "state_dir": str(control_state_dir),
+        "data_dir": str(control_data_dir),
+        "agent_bridge_enabled": agent_bridge_enabled,
+        "tool_timeout_s": 15,
+    }
+    if control_overrides:
+        control_values.update(control_overrides)
+    control_config = write_yaml_config(
+        config_dir / "control.yaml",
+        control_values,
+    )
+
+    executor_specs: list[tuple[E2EExecutor, Path]] = []
+    for index, workspace in enumerate(executor_workspaces, start=1):
+        workspace.mkdir(parents=True, exist_ok=True)
+        state_dir = tmp_path / f"executor-state-{mode}-{index}"
+        executor_id = provision_executor_pair(
+            control_state_dir=control_state_dir,
+            executor_state_dir=state_dir,
+            control_url=base_url,
+            name=f"e2e-executor-{index}",
+        )
+        executor_config = write_yaml_config(
+            config_dir / f"executor-{index}.yaml",
+            {
+                "default_workdir": str(workspace),
+                "state_dir": str(state_dir),
+                "run_shell_default_timeout_s": 5,
+                "run_shell_max_timeout_s": 10,
+            },
+        )
+        executor_specs.append(
+            (
+                E2EExecutor(executor_id=executor_id, workspace=workspace),
+                executor_config,
+            )
+        )
+
+    control_stdout = log_dir / "control.stdout.log"
+    control_stderr = log_dir / "control.stderr.log"
+    control_process = start_control_process(
+        control_config,
+        env=control_env,
+        stdout_path=control_stdout,
+        stderr_path=control_stderr,
+    )
+    executor_processes: list[subprocess.Popen[str]] = []
+    try:
+        await wait_for_http_ready(
+            base_url,
+            control_process,
+            stdout_path=control_stdout,
+            stderr_path=control_stderr,
+        )
+        for index, (executor, executor_config) in enumerate(
+            executor_specs, start=1
+        ):
+            executor_stdout = log_dir / f"executor-{index}.stdout.log"
+            executor_stderr = log_dir / f"executor-{index}.stderr.log"
+            child = start_executor_process(
+                executor_config,
+                env=process_env,
+                stdout_path=executor_stdout,
+                stderr_path=executor_stderr,
+            )
+            executor_processes.append(child)
+            await wait_for_executor_online(
+                base_url,
+                child,
+                executor.executor_id,
+                stdout_path=executor_stdout,
+                stderr_path=executor_stderr,
+            )
+        yield (
+            base_url,
+            tuple(executor for executor, _config in executor_specs),
+        )
+    finally:
+        for child in (*reversed(executor_processes), control_process):
+            stop_process(child)
+
+
+@asynccontextmanager
+async def run_http_process(
+    tmp_path: Path,
+    *,
+    mode: str,
+    agent_bridge_enabled: bool = False,
+    workspace_setup: Callable[[Path], None] | None = None,
+) -> AsyncGenerator[tuple[str, Path]]:
+    """Run one control process and one final executor for normal process E2E tests."""
+    workspace = tmp_path / f"workspace-{mode}"
+    workspace.mkdir(parents=True, exist_ok=True)
+    if workspace_setup is not None:
+        workspace_setup(workspace)
+    async with run_http_process_with_executors(
+        tmp_path,
+        mode=mode,
+        executor_workspaces=(workspace,),
+        agent_bridge_enabled=agent_bridge_enabled,
+    ) as (base_url, executors):
+        yield base_url, executors[0].workspace
+
+
+def decode_jsonish(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return value
+    return value
+
+
+def unwrap_tool_payload(value: Any) -> Any:
+    decoded = decode_jsonish(value)
+    if (
+        isinstance(decoded, dict)
+        and decoded.get("ok") is True
+        and "data" in decoded
+    ):
+        return decoded["data"]
+    return decoded
+
+
+@dataclass
+class DebugHttpToolClient:
+    """In-process MCP tool semantics over the actual debug HTTP endpoint."""
+
+    base_url: str
+
+    async def list_tools(self) -> set[str]:
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=20, trust_env=False
+        ) as client:
+            response = await client.get("/tools")
+        response.raise_for_status()
+        return {tool["name"] for tool in response.json()["tools"]}
+
+    async def call_tool(
+        self, name: str, args: dict[str, Any] | None = None
+    ) -> Any:
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=20, trust_env=False
+        ) as client:
+            response = await client.post(f"/tools/{name}", json=args or {})
+        response.raise_for_status()
+        result = response.json()
+        error_text = next(
+            (
+                item.get("text", "")
+                for item in result.get("content", [])
+                if item.get("type") == "text"
+            ),
+            "",
+        )
+        assert not result["isError"], error_text
+        if result.get(
+            "structuredContent"
+        ) is not None and has_explicit_tool_text(name):
+            return unwrap_tool_payload(result["structuredContent"])
+        return unwrap_tool_payload(error_text)
+
+
+class McpSessionToolClient:
+    def __init__(self, session: ClientSession):
+        self._session = session
+        self.server_version = (
+            session.server_info.version if session.server_info else None
+        )
+
+    async def list_tools(self) -> set[str]:
+        result = await self._session.list_tools()
+        return {tool.name for tool in result.tools}
+
+    async def call_tool_result(
+        self, name: str, args: dict[str, Any] | None = None
+    ) -> Any:
+        try:
+            async with asyncio.timeout(45):
+                return await self._session.call_tool(name, args or {})
+        except TimeoutError:
+            raise AssertionError(f"MCP tool call timed out: {name}") from None
+
+    async def call_tool(
+        self, name: str, args: dict[str, Any] | None = None
+    ) -> Any:
+        result = await self.call_tool_result(name, args)
+        error_text = (
+            getattr(result.content[0], "text", "") if result.content else ""
+        )
+        assert not result.is_error, error_text
+        if result.structured_content is not None and has_explicit_tool_text(
+            name
+        ):
+            return unwrap_tool_payload(result.structured_content)
+        assert result.content
+        text = getattr(result.content[0], "text", "")
+        return unwrap_tool_payload(text)
+
+
+@asynccontextmanager
+async def streamable_http_tool_client(
+    base_url: str,
+) -> AsyncGenerator[McpSessionToolClient]:
+    async with (
+        httpx2.AsyncClient(timeout=20, trust_env=False) as client,
+        streamable_http_client(f"{base_url}/mcp", http_client=client) as (
+            read,
+            write,
+        ),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        yield McpSessionToolClient(session)
+
+
+@asynccontextmanager
+async def stdio_tool_client(
+    tmp_path: Path,
+) -> AsyncGenerator[tuple[McpSessionToolClient, Path]]:
+    workspace = tmp_path / "workspace-stdio"
+    workspace.mkdir()
+    state_dir = tmp_path / "control-state-stdio"
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-m",
+            "workgate.main",
+            "control",
+            "--mode",
+            "stdio",
+            "--auth-mode",
+            "none",
+            "--state-dir",
+            str(state_dir),
+            "--agent-bridge-enabled",
+            "false",
+        ],
+        cwd=str(PROJECT_ROOT),
+        env=control_env(mode="stdio", state_dir=state_dir),
+    )
+    async with (
+        stdio_client(params) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        yield McpSessionToolClient(session), workspace
+
+
+async def assert_required_tools(client: ToolClient, required: set[str]) -> None:
+    tools = await client.list_tools()
+    missing = required - tools
+    assert not missing, f"missing tools: {sorted(missing)}"
+
+
+pytestmark = pytest.mark.integration

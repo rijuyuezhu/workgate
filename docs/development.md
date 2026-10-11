@@ -35,12 +35,19 @@ workspace merely because it is running from a checkout.
 Start focused, then run the full gates before review:
 
 ```bash
-uv run pytest tests/test_tool_surface.py -q
+uv run pytest tests/contracts/test_tool_surface.py -q
 uv run pre-commit run --all-files
 uv run pyright
 uv run pytest -q
 uv run --group docs mkdocs build --strict
 ```
+
+The test suite is grouped by ownership in `tests/{agent,control,executor,webui,workspace}/`;
+`tests/contracts/` holds cross-cutting public contracts, `tests/repo/` checks
+packaging and repository invariants, and `tests/e2e/` holds process and browser
+scenarios. Shared helpers live in `tests/support/`, with E2E process harnesses
+under `tests/e2e/`. Keep host/XDG isolation in root `tests/conftest.py`, and
+put domain-specific fixtures beside their consumers.
 
 The CI coverage ratchet is implemented by
 `scripts/validation/check-coverage.py`. Run it locally after generating a
@@ -75,7 +82,7 @@ editing generated output by hand.
 Keep dependency direction visible: control must not import executor
 implementations, and normal runtime policy should come from the resolved role
 config/service graph rather than ambient settings or service locators.
-`tests/test_architecture.py` contains the executable boundary checks.
+`tests/repo/test_architecture.py` contains the executable boundary checks.
 
 ## Documentation and release work
 

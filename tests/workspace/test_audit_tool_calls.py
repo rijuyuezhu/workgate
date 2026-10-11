@@ -1,0 +1,272 @@
+import gzip
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+from mcp.server.mcpserver.exceptions import ToolError
+
+from tests.support.paired import build_paired_http_app, build_paired_mcp
+from tests.support.responses import mcp_structured
+from workgate.config.settings import clear_settings_cache, get_settings
+
+
+def _audit_records(path):
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+
+
+def _tool_call_pairs(records, tool_name, *, transport):
+    starts = [
+        r
+        for r in records
+        if r.get("event") == "tool_call_start"
+        and r.get("tool") == tool_name
+        and r.get("transport") == transport
+    ]
+    ends = [
+        r
+        for r in records
+        if r.get("event") == "tool_call_end"
+        and r.get("tool") == tool_name
+        and r.get("transport") == transport
+    ]
+    return starts, ends
+
+
+def test_http_tool_calls_audit_full_input_output_and_auth_context(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "alpha.txt").write_text("hello", encoding="utf-8")
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    app, _harness = build_paired_http_app(get_settings())
+    client = TestClient(app)
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
+    response = client.post(
+        "/tools/read",
+        json={"session_id": session["session_id"], "path": "alpha.txt"},
+    )
+
+    assert response.status_code == 200
+    records = _audit_records(get_settings().audit_log_path)
+    starts, ends = _tool_call_pairs(records, "read", transport="mcp")
+
+    assert len(starts) == 1
+    assert len(ends) == 1
+    assert starts[0]["call_id"] == ends[0]["call_id"]
+    assert starts[0]["transport"] == "mcp"
+    assert starts[0]["input"] == {
+        "session_id": session["session_id"],
+        "path": "alpha.txt",
+    }
+    assert ends[0]["ok"] is True
+    assert ends[0]["output"] == response.json()["structuredContent"]
+    assert ends[0]["duration_ms"] >= 0
+
+
+def test_task_tool_audit_records_durable_report_and_plan_prose(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    settings = get_settings()
+    app, _harness = build_paired_http_app(settings)
+    client = TestClient(app)
+    created = client.post(
+        "/tools/task",
+        json={"action": "create", "objective": "initial objective"},
+    )
+    assert created.status_code == 200
+    task_id = created.json()["structuredContent"]["result"]["task_id"]
+    marker = "task-audit-secret-marker"
+    long_content = marker + "-" + ("x" * 6_000)
+
+    reported = client.post(
+        "/tools/task",
+        json={
+            "action": "report",
+            "task_id": task_id,
+            "objective": f"{marker}-objective",
+            "summary": f"{marker}-summary",
+            "findings": [f"{marker}-finding"],
+            "next_action": f"{marker}-next",
+            "blockers": [f"{marker}-blocker"],
+        },
+    )
+    assert reported.status_code == 200
+    planned = client.post(
+        "/tools/task_plan",
+        json={
+            "task_id": task_id,
+            "steps": [
+                {
+                    "id": "step-1",
+                    "content": long_content,
+                    "status": "in_progress",
+                    "priority": "high",
+                }
+            ],
+        },
+    )
+    assert planned.status_code == 200
+    rejected_extra = client.post(
+        "/tools/task_plan",
+        json={
+            "task_id": task_id,
+            "steps": [
+                {
+                    "id": "step-1",
+                    "content": "unchanged",
+                    "private_context": f"{marker}-extra",
+                }
+            ],
+        },
+    )
+    assert rejected_extra.json()["isError"] is True
+    assert (
+        client.post(
+            "/tools/task", json={"action": "get", "task_id": task_id}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/tools/read_todos", json={"task_id": task_id}).status_code
+        == 200
+    )
+    compat = client.post(
+        "/tools/write_todos",
+        json={
+            "task_id": task_id,
+            "todos": [
+                {
+                    "id": "step-1",
+                    "content": f"{marker}-compat-content",
+                    "status": "completed",
+                    "priority": "high",
+                }
+            ],
+        },
+    )
+    assert compat.status_code == 200
+    history = client.post("/tools/audit_tail", json={"task_id": task_id})
+    assert history.status_code == 200
+    assert any(
+        entry.get("tool") == "task" and entry.get("task") == task_id
+        for entry in history.json()["structuredContent"]["entries"]
+    )
+
+    audit_text = settings.audit_log_path.read_text(encoding="utf-8")
+    assert marker in audit_text
+    retained_payloads = []
+    for payload_path in settings.audit_payload_dir.glob("*.json.gz"):
+        with gzip.open(payload_path, "rt", encoding="utf-8") as handle:
+            retained_payloads.append(handle.read())
+    assert any(marker in data for data in retained_payloads)
+
+    records = _audit_records(settings.audit_log_path)
+    task_starts, task_ends = _tool_call_pairs(records, "task", transport="mcp")
+    assert len(task_starts) == 3
+    assert len(task_ends) == 3
+    assert all(row.get("task") == task_id for row in task_ends)
+    report_start = next(
+        row
+        for row in task_starts
+        if row.get("input", {}).get("action") == "report"
+    )
+    assert report_start["input"]["summary"] == f"{marker}-summary"
+    assert all(row["output"] != "<redacted>" for row in task_ends)
+
+    plan_starts, plan_ends = _tool_call_pairs(
+        records, "task_plan", transport="mcp"
+    )
+    assert len(plan_starts) == 2
+    assert len(plan_ends) == 2
+    assert all(row["task"] == task_id for row in plan_starts)
+    assert all(row["input"] != "<redacted>" for row in plan_starts)
+    assert plan_ends[0]["output"] != "<redacted>"
+    assert plan_ends[1]["ok"] is False
+
+    todo_starts, todo_ends = _tool_call_pairs(
+        records, "write_todos", transport="mcp"
+    )
+    assert todo_starts[0]["task"] == task_id
+    assert todo_starts[0]["input"] != "<redacted>"
+    assert todo_ends[0]["output"] != "<redacted>"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_calls_audit_full_input_output(tmp_path, monkeypatch):
+    (tmp_path / "beta.txt").write_text("world", encoding="utf-8")
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    mcp, _harness = build_paired_mcp(get_settings())
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    response = await mcp.call_tool(
+        "read",
+        {"session_id": session["session_id"], "path": "beta.txt:raw"},
+    )
+    payload = mcp_structured(response)
+
+    records = _audit_records(get_settings().audit_log_path)
+    starts, ends = _tool_call_pairs(records, "read", transport="mcp")
+
+    assert len(starts) == 1
+    assert len(ends) == 1
+    assert starts[0]["call_id"] == ends[0]["call_id"]
+    assert starts[0]["transport"] == "mcp"
+    assert starts[0]["input"]["session_id"] == session["session_id"]
+    assert starts[0]["input"]["path"] == "beta.txt:raw"
+    assert "binary_preview_bytes" not in starts[0]["input"]
+    assert ends[0]["ok"] is True
+    assert ends[0]["output"] == payload
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_structured_errors_are_audited_with_input_and_output(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    mcp, _harness = build_paired_mcp(get_settings())
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    with pytest.raises(ToolError, match="Error executing tool read"):
+        await mcp.call_tool(
+            "read",
+            {"session_id": session["session_id"], "path": "missing.txt"},
+        )
+
+    records = _audit_records(get_settings().audit_log_path)
+    starts, ends = _tool_call_pairs(records, "read", transport="mcp")
+
+    assert len(starts) == 1
+    assert len(ends) == 1
+    assert starts[0]["input"]["session_id"] == session["session_id"]
+    assert starts[0]["input"]["path"] == "missing.txt"
+    assert "binary_preview_bytes" not in starts[0]["input"]
+    assert ends[0]["ok"] is False
+    assert ends[0]["error"]["type"] == "FileNotFoundError"
+    assert "missing.txt" in ends[0]["error"]["message"]

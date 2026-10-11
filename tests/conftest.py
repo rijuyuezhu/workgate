@@ -15,11 +15,6 @@ _SYSTEM_TMP_SEQUENCE = itertools.count()
 atexit.register(shutil.rmtree, _SYSTEM_TMP_ROOT, ignore_errors=True)
 
 
-def _reset_managed_deferred_sequence(job_recovery) -> None:
-    with job_recovery._MANAGED_DEFERRED_SEQUENCE_LOCK:
-        job_recovery._MANAGED_DEFERRED_NEXT_SEQUENCE = None
-
-
 @pytest.fixture(autouse=True)
 def isolated_runtime_paths(monkeypatch, tmp_path):
     state_dir = tmp_path / ".workgate"
@@ -41,7 +36,7 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(tempfile, "tempdir", str(system_tmp))
     clear_settings_cache()
-    from tests.helpers import configure_test_tool_session_store
+    from tests.support.sessions import configure_test_tool_session_store
     from workgate.config.settings import get_settings
     from workgate.executor.path import resolve_path
     from workgate.executor.tool_session.store import ToolSessionStore
@@ -80,22 +75,3 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
     finally:
         configure_test_tool_session_store(previous_tool_session_store)
         clear_settings_cache()
-
-
-@pytest.fixture
-async def managed_jobs_runtime_owner():
-    from workgate.jobs import recovery as job_recovery
-    from workgate.jobs.managed import (
-        ManagedJobsRuntime,
-        use_managed_jobs_runtime,
-    )
-
-    runtime = ManagedJobsRuntime()
-    await runtime.start()
-    _reset_managed_deferred_sequence(job_recovery)
-    try:
-        with use_managed_jobs_runtime(runtime):
-            yield runtime
-    finally:
-        await runtime.aclose()
-        _reset_managed_deferred_sequence(job_recovery)
