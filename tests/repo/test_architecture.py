@@ -789,9 +789,7 @@ def test_final_control_executor_cleanup_surfaces_do_not_return() -> None:
 def test_current_docs_do_not_restore_removed_remote_architecture() -> None:
     current_docs = (
         _PROJECT_ROOT / "README.md",
-        _PROJECT_ROOT / "docs" / "architecture.md",
-        _PROJECT_ROOT / "docs" / "architecture" / "control-executor.md",
-        _PROJECT_ROOT / "docs" / "comparison.md",
+        _PROJECT_ROOT / "docs" / "getting-started" / "deployment.md",
         _PROJECT_ROOT / "docs" / "reference" / "cli.md",
     )
     forbidden = (
