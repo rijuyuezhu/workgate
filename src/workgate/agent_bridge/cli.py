@@ -45,6 +45,7 @@ def register_mcp_cli(subparsers: Any) -> argparse.ArgumentParser:
     register_config_and_setting_args(
         mcp_parser,
         setting_names=CONTROL_SETTING_NAMES,
+        cli_setting_names={"state_dir", "agent_mcp_call_timeout_s"},
     )
     mcp_subparsers = mcp_parser.add_subparsers(
         dest="mcp_command", required=True

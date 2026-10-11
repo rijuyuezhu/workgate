@@ -243,7 +243,7 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
     connect.add_argument("--name", default=None)
     register_config_and_setting_args(
         connect,
-        setting_names=EXECUTOR_SETTING_NAMES,
+        setting_names={"state_dir"},
         default_config_path=app_paths().executor_config_file,
         setting_defaults={"state_dir": app_paths().executor_state_dir},
     )
@@ -299,6 +299,11 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
         register_config_and_setting_args(
             parser,
             setting_names=EXECUTOR_SETTING_NAMES,
+            cli_setting_names=(
+                EXECUTOR_SETTING_NAMES
+                if name == "install-service"
+                else {"state_dir"}
+            ),
             default_config_path=app_paths().executor_config_file,
             setting_defaults={"state_dir": app_paths().executor_state_dir},
         )
@@ -320,6 +325,7 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
     register_config_and_setting_args(
         logs,
         setting_names=EXECUTOR_SETTING_NAMES,
+        cli_setting_names={"state_dir"},
         default_config_path=app_paths().executor_config_file,
         setting_defaults={"state_dir": app_paths().executor_state_dir},
     )

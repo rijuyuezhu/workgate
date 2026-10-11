@@ -13,6 +13,7 @@ def register_config_and_setting_args(
     parser: argparse.ArgumentParser,
     *,
     setting_names: Collection[str] | None = None,
+    cli_setting_names: Collection[str] | None = None,
     exclude_setting_names: Collection[str] = (),
     default_config_path: str | Path | None = None,
     setting_defaults: Mapping[str, Any] | None = None,
@@ -29,7 +30,9 @@ def register_config_and_setting_args(
     )
     register_setting_cli_args(
         parser,
-        include_names=setting_names,
+        include_names=cli_setting_names
+        if cli_setting_names is not None
+        else setting_names,
         exclude_names=exclude_setting_names,
     )
     parser.set_defaults(
