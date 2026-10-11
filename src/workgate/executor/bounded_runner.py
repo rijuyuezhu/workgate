@@ -1341,7 +1341,7 @@ def register_bounded_runner_cli(subparsers: Any) -> argparse.ArgumentParser:
     """Register the private bounded process runner."""
     parser = subparsers.add_parser(
         "bounded-runner",
-        help=argparse.SUPPRESS,
+        help="Run one bounded command and reap descendants (internal)",
         description="Run one bounded command and reap descendants. Internal interface.",
     )
     parser.add_argument("--shell", required=True)
