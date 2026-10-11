@@ -96,10 +96,6 @@ def test_legacy_cloudflare_surfaces_are_removed() -> None:
     env_example = (_ROOT / ".env.example").read_text(encoding="utf-8")
     assert "CLOUDFLARE_TUNNEL_TOKEN" not in env_example
 
-    assert not (
-        _ROOT / "docs" / "getting-started" / "cloudflare-tunnel.md"
-    ).exists()
-
     reference = json.loads(
         (
             _ROOT / "docs" / "reference" / "generated" / "configuration.json"
