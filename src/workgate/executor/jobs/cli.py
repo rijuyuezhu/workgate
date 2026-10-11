@@ -17,4 +17,10 @@ def register_job_runner_cli(subparsers: Any) -> argparse.ArgumentParser:
     )
     configure_job_runner_parser(parser)
     parser.set_defaults(handler=run_job_runner_from_args)
+    # argparse.SUPPRESS hides descriptions, not the choice rows themselves.
+    subparsers._choices_actions = [
+        action
+        for action in subparsers._choices_actions
+        if action.dest not in {"bounded-runner", "job-runner"}
+    ]
     return parser

@@ -221,15 +221,17 @@ def test_root_help_lists_registered_commands():
         "mcp",
         "executor",
         "version",
-        "job-runner",
     ):
         assert command in help_text
         assert command in subparsers.choices
+    for command in ("job-runner", "bounded-runner"):
+        assert command in subparsers.choices
+        assert command not in help_text
     assert "server" not in subparsers.choices
     assert "tui" not in subparsers.choices
     with pytest.raises(SystemExit):
         parser.parse_args(["tui"])
-    assert "Run one durable job attempt (internal)" in help_text
+    assert "Run one durable job attempt (internal)" not in help_text
 
 
 def test_control_help_omits_executor_machine_policy(capsys):
@@ -260,15 +262,14 @@ def test_control_cli_excludes_every_executor_only_setting():
     assert EXECUTOR_ONLY_SETTING_NAMES.isdisjoint(CONTROL_SETTING_NAMES)
 
 
-def test_agent_bridge_cli_exposes_only_control_role_settings():
+def test_agent_bridge_cli_exposes_only_credential_settings():
     parser = _command_parser("mcp")
     option_strings = {
         option for action in parser._actions for option in action.option_strings
     }
-    for spec in SETTING_SPECS:
-        assert (spec.cli_flag in option_strings) == (
-            spec.name in CONTROL_SETTING_NAMES
-        )
+    assert {
+        spec.name for spec in SETTING_SPECS if spec.cli_flag in option_strings
+    } == {"state_dir", "agent_mcp_call_timeout_s"}
 
 
 def test_resolved_control_config_matches_explicit_role_surface():
@@ -299,24 +300,78 @@ def test_standalone_executor_child_settings_match_executor_config():
     assert SHARED_SETTING_NAMES <= EXECUTOR_SETTING_NAMES
 
 
-def test_executor_cli_exposes_only_executor_role_settings():
-    for command in ("connect", "run"):
-        executor = _command_parser("executor")
-        actions = next(
-            action
-            for action in executor._actions
-            if isinstance(action, argparse._SubParsersAction)
-        )
+def test_executor_cli_exposes_action_owned_settings():
+    executor = _command_parser("executor")
+    actions = next(
+        action
+        for action in executor._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    for command in (
+        "connect",
+        "run",
+        "install-service",
+        "status",
+        "start",
+        "stop",
+        "restart",
+        "uninstall-service",
+        "logs",
+    ):
         parser = actions.choices[command]
         option_strings = {
             option
             for action in parser._actions
             for option in action.option_strings
         }
-        for spec in SETTING_SPECS:
-            assert (spec.cli_flag in option_strings) == (
-                spec.name in EXECUTOR_SETTING_NAMES
-            )
+        expected = (
+            EXECUTOR_SETTING_NAMES
+            if command in ("run", "install-service")
+            else {"state_dir"}
+        )
+        assert {
+            spec.name
+            for spec in SETTING_SPECS
+            if spec.cli_flag in option_strings
+        } == expected
+
+
+def test_narrow_cli_rejects_unowned_flags_but_keeps_service_settings(
+    tmp_path, monkeypatch
+):
+    from workgate.config.cli import settings_from_args
+
+    parser = cli._build_parser()
+    for args in (
+        [
+            "executor",
+            "connect",
+            "https://example.com",
+            "--default-workdir",
+            "/tmp",
+        ],
+        ["executor", "status", "--default-workdir", "/tmp"],
+        ["executor", "logs", "--shell-executable", "/bin/sh"],
+        ["mcp", "--port", "9999", "secret", "list"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(args)
+
+    monkeypatch.delenv("WORKGATE_DEFAULT_WORKDIR", raising=False)
+    config = tmp_path / "executor.yaml"
+    config.write_text(
+        "default_workdir: /tmp/workgate-custom\n", encoding="utf-8"
+    )
+    status = parser.parse_args(["executor", "status", "--config", str(config)])
+    assert str(settings_from_args(status).default_workdir) == (
+        "/tmp/workgate-custom"
+    )
+    assert (
+        parser.parse_args(
+            ["executor", "install-service", "--default-workdir", "/tmp"]
+        ).default_workdir
+        == "/tmp"
+    )
 
 
 def test_role_cli_loading_does_not_import_foreign_config_values(
@@ -581,8 +636,8 @@ def test_executor_connect_subcommand_parses_final_pairing_contract():
             "https://example.com",
             "--name",
             "npu-4card",
-            "--default-workdir",
-            "/home/user/project",
+            "--state-dir",
+            "/home/user/.workgate",
         ]
     )
 
@@ -590,7 +645,7 @@ def test_executor_connect_subcommand_parses_final_pairing_contract():
     assert args.executor_command == "connect"
     assert args.control_url == "https://example.com"
     assert args.name == "npu-4card"
-    assert args.default_workdir == "/home/user/project"
+    assert str(args.state_dir) == "/home/user/.workgate"
     assert not hasattr(args, "invite")
 
 
@@ -758,7 +813,7 @@ def test_internal_job_runner_is_dispatched_by_argparse(monkeypatch):
 
     monkeypatch.setattr(jobs_cli, "run_job_runner_from_args", run_job_runner)
 
-    assert "job-runner" in help_text
+    assert "job-runner" not in help_text
     cli.main(
         [
             "job-runner",
