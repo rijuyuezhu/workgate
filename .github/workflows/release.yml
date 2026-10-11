@@ -151,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release/workgate-${{ matrix.artifact }}
-          cp dist/${{ matrix.binary }} release/workgate-${{ matrix.artifact }}/
+          cp dist/workgate release/workgate-${{ matrix.artifact }}/
           cp README.md LICENSE release/workgate-${{ matrix.artifact }}/
           cat > release/workgate-${{ matrix.artifact }}/QUICKSTART.txt <<'EOF'
           Start the Workgate control:

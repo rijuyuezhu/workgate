@@ -58,6 +58,25 @@ def main() -> int:
         )
     if "windows-" in binary or "windows-" in binary_smoke:
         raise SystemExit("standalone binary jobs must not include Windows")
+    for job, section in (("release", binary), ("CI", binary_smoke)):
+        fields = set(
+            re.findall(r"^          - ([a-z_]+):", section, re.MULTILINE)
+        )
+        fields.update(
+            re.findall(r"^            ([a-z_]+):", section, re.MULTILINE)
+        )
+        references = set(re.findall(r"matrix\.([a-z_]+)", section))
+        if undefined := references - fields:
+            raise SystemExit(
+                f"undefined standalone {job} matrix fields: {sorted(undefined)}"
+            )
+    if (
+        "cp dist/workgate release/workgate-${{ matrix.artifact }}/"
+        not in binary
+    ):
+        raise SystemExit(
+            "release must package the built dist/workgate executable"
+        )
     required = (
         (package, ("uv build", "check-python-dist.py", "name: python-dist")),
         (
