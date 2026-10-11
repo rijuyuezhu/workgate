@@ -4,10 +4,11 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Any, Protocol, cast
+from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult, Icon, ToolAnnotations
 
 from ...audit import (
     audit,
@@ -17,7 +18,7 @@ from ...audit import (
     new_audit_call_id,
 )
 from ...config.control import ControlConfig
-from ...errors import public_error_type
+from ...errors import PublicToolError, public_error_type
 from ...jobs.managed import ManagedJobsRuntime
 from ...oauth.core.state import OAuthState
 from ...persistence import StateStore
@@ -28,14 +29,6 @@ from ..execution_context import control_execution_context
 from ..tool_timeouts import SHELL_COMMAND_TOOL_NAMES, tool_timeout_s
 
 
-class AuditedMcpToolFn(Protocol):
-    """Callable MCP tool wrapper marked after audit/watchdog installation."""
-
-    __workgate_audit_watchdog__: bool
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Awaitable[Any]: ...
-
-
 class PublicToolTimeoutError(TimeoutError):
     """Signals that a public tool timed out and should return structured retry guidance instead of a generic failure."""
 
@@ -43,7 +36,7 @@ class PublicToolTimeoutError(TimeoutError):
 
 
 def _mcp_tool_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-    """Represent FastMCP positional/keyword arguments as the routed tool input payload."""
+    """Represent MCPServer positional/keyword arguments as the routed tool input payload."""
     if kwargs and not args:
         return kwargs
     if args and not kwargs:
@@ -53,8 +46,7 @@ def _mcp_tool_input(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     return {}
 
 
-def _mcp_tool_is_app_only(tool: Any) -> bool:
-    meta = getattr(tool, "meta", None)
+def _mcp_tool_is_app_only(meta: dict[str, Any] | None) -> bool:
     if not isinstance(meta, dict):
         return False
     ui = meta.get("ui")
@@ -70,7 +62,7 @@ def _mcp_tool_audit_watchdog_wrapper(
     managed_jobs_runtime: ManagedJobsRuntime | None,
     agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
     | None,
-) -> AuditedMcpToolFn:
+) -> Callable[..., Awaitable[Any]]:
     """Return a wrapper that audits every MCP tool call and enforces the tool timeout."""
 
     mcp_error_handler = mcp_handler_error_handler(original)
@@ -121,7 +113,7 @@ def _mcp_tool_audit_watchdog_wrapper(
             if mcp_error_handler is not None:
                 payload = mcp_error_handler(exc, args, kwargs)
             else:
-                # Let FastMCP report the timeout as a tool execution error.
+                # Let MCPServer report the timeout as a tool execution error.
                 payload = None
             audit_tool_call_end(
                 call_id=call_id,
@@ -139,7 +131,7 @@ def _mcp_tool_audit_watchdog_wrapper(
                 task_ids=task_ids,
             )
             if payload is None:
-                raise exc from None
+                raise ToolError(str(exc)) from None
             return payload
         except BaseException as exc:
             duration_ms = int((time.time() - start) * 1000)
@@ -157,12 +149,14 @@ def _mcp_tool_audit_watchdog_wrapper(
                 session_ids=session_ids,
                 task_ids=task_ids,
             )
+            if isinstance(exc, PublicToolError):
+                raise ToolError(str(exc)) from None
             raise
         duration_ms = int((time.time() - start) * 1000)
         audit_output = (
-            result.structuredContent
+            result.structured_content
             if isinstance(result, CallToolResult)
-            and result.structuredContent is not None
+            and result.structured_content is not None
             and has_explicit_tool_text(tool_name)
             else result
         )
@@ -180,44 +174,62 @@ def _mcp_tool_audit_watchdog_wrapper(
 
     if hasattr(original, "__signature__"):
         wrapped.__signature__ = original.__signature__  # type: ignore[attr-defined]
-    audited = cast(AuditedMcpToolFn, wrapped)
-    audited.__workgate_audit_watchdog__ = True
-    return audited
+    return wrapped
 
 
-def install_mcp_tool_watchdogs(
-    mcp: FastMCP,
-    config: ControlConfig,
-    state_store: StateStore,
-    *,
-    oauth_state: OAuthState | None = None,
-    managed_jobs_runtime: ManagedJobsRuntime | None = None,
-    agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
-    | None = None,
-) -> None:
-    """Wrap MCP tools under the explicit control execution context."""
-    cast(Any, mcp)._workgate_install_tool_watchdogs = lambda target: (
-        install_mcp_tool_watchdogs(
-            target,
-            config,
-            state_store,
-            oauth_state=oauth_state,
-            managed_jobs_runtime=managed_jobs_runtime,
-            agent_activity_observer=agent_activity_observer,
-        )
-    )
-    for tool in mcp._tool_manager._tools.values():
-        if getattr(tool.fn, "__workgate_audit_watchdog__", False):
-            continue
+class WorkgateMCPServer(MCPServer):
+    """Register audited tools using only the SDK's public add_tool API."""
+
+    def __init__(
+        self,
+        *,
+        config: ControlConfig,
+        state_store: StateStore,
+        oauth_state: OAuthState | None,
+        managed_jobs_runtime: ManagedJobsRuntime | None,
+        agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
+        | None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._workgate_config = config
+        self._workgate_state_store = state_store
+        self._workgate_oauth_state = oauth_state
+        self._workgate_managed_jobs_runtime = managed_jobs_runtime
+        self._workgate_agent_activity_observer = agent_activity_observer
+
+    def add_tool(
+        self,
+        fn: Callable[..., Any],
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        annotations: ToolAnnotations | None = None,
+        icons: list[Icon] | None = None,
+        meta: dict[str, Any] | None = None,
+        structured_output: bool | None = None,
+    ) -> None:
+        tool_name = name or fn.__name__
         observer = (
-            None if _mcp_tool_is_app_only(tool) else agent_activity_observer
+            None
+            if _mcp_tool_is_app_only(meta)
+            else self._workgate_agent_activity_observer
         )
-        tool.fn = _mcp_tool_audit_watchdog_wrapper(
-            tool.fn,
-            tool.name,
-            config,
-            state_store,
-            oauth_state,
-            managed_jobs_runtime,
-            observer,
+        super().add_tool(
+            _mcp_tool_audit_watchdog_wrapper(
+                fn,
+                tool_name,
+                self._workgate_config,
+                self._workgate_state_store,
+                self._workgate_oauth_state,
+                self._workgate_managed_jobs_runtime,
+                observer,
+            ),
+            name=tool_name,
+            title=title,
+            description=description,
+            annotations=annotations,
+            icons=icons,
+            meta=meta,
+            structured_output=structured_output,
         )

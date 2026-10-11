@@ -17,17 +17,11 @@ from workgate.control.mcp.app import build_mcp
 from workgate.control.mcp.instructions import SERVER_INSTRUCTIONS
 from workgate.tools.catalog import build_tool_catalog
 from workgate.tools.declarative import DeclarativeToolRegistry
-from workgate.utils.serialization import to_jsonable
 
 
 def _tool_to_jsonable_dict(tool: Any) -> dict[str, Any]:
-    """Return a JSON-serializable representation of one MCP tool."""
-    data = to_jsonable(tool, exclude_none=True)
-    if isinstance(data, dict):
-        return data
-    if hasattr(tool, "dict"):
-        return tool.dict(exclude_none=True)
-    raise TypeError(f"Unsupported tool object type: {type(tool)!r}")
+    """Serialize an MCP tool with protocol (camelCase) field aliases."""
+    return tool.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
 async def export_tools() -> list[dict[str, Any]]:

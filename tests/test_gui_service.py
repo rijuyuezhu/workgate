@@ -128,8 +128,8 @@ def service(tmp_path: Path) -> tuple[GuiService, FakeGuiBackend, Any, str, str]:
 
 
 def structured(result) -> dict[str, Any]:
-    assert isinstance(result.structuredContent, dict)
-    return result.structuredContent
+    assert isinstance(result.structured_content, dict)
+    return result.structured_content
 
 
 def test_gui_action_schema_is_closed_and_bounded() -> None:
@@ -450,9 +450,9 @@ async def test_gui_state_native_content_crosses_session_executor_routing(
     )
     assert isinstance(response, CallToolResult)
     assert isinstance(response.content[0], ImageContent)
-    assert response.structuredContent is not None
-    assert response.structuredContent["session_id"] == session_id
-    state_id = response.structuredContent["state_id"]
+    assert response.structured_content is not None
+    assert response.structured_content["session_id"] == session_id
+    state_id = response.structured_content["state_id"]
 
     acted = mcp_structured(
         await mcp.call_tool(

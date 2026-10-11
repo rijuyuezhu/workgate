@@ -8,6 +8,7 @@ from mcp.types import CallToolResult
 from pydantic import ValidationError
 
 from ..agent_bridge.management import ManagedMcpConfig
+from ..errors import PublicToolValueError
 from ..tools.contracts import McpToolContext, ToolRegistry
 from ..tools.declarative import DeclarativeToolRegistry, ToolDefinition
 from ..tools.machine import MACHINE_TOOL_NAMES
@@ -245,7 +246,7 @@ class ControlToolRouter:
                     else None
                 )
             except ValidationError:
-                raise ValueError(
+                raise PublicToolValueError(
                     "Invalid MCP config: use private secret references, not literal credentials"
                 ) from None
             return await self._agent_bridge.manage(

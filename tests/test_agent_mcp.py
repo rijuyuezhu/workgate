@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mcp.types import Tool
+from mcp.types import ListToolsResult, Tool
 
 import workgate.agent_bridge.mcp as agent_mcp_module
 import workgate.agent_bridge.service as agent_service
@@ -32,7 +32,7 @@ def test_normalize_mcp_tool_preserves_schema():
     sdk_tool = SimpleNamespace(
         name="search",
         description="Search docs",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"query": {"type": "string"}},
         },
@@ -52,7 +52,7 @@ def test_normalize_mcp_tool_handles_sdk_tool_model():
     sdk_tool = Tool(
         name="search",
         description="Search docs",
-        inputSchema={
+        input_schema={
             "type": "object",
             "properties": {"query": {"type": "string"}},
         },
@@ -71,7 +71,7 @@ def test_normalize_mcp_tool_handles_sdk_tool_model():
 def test_normalize_tool_result_handles_text_content():
     result = SimpleNamespace(
         content=[SimpleNamespace(type="text", text="hello")],
-        structuredContent=None,
+        structured_content=None,
         isError=False,
     )
 
@@ -116,12 +116,12 @@ def test_stdio_connections_end_after_each_discovery_or_call(monkeypatch):
             events.append("initialize")
 
         async def list_tools(self, *, params=None):
-            return SimpleNamespace(
+            return ListToolsResult(
                 tools=[
-                    SimpleNamespace(
+                    Tool(
                         name="ping",
                         description="Ping",
-                        inputSchema={"type": "object"},
+                        input_schema={"type": "object"},
                     )
                 ]
             )
@@ -129,7 +129,7 @@ def test_stdio_connections_end_after_each_discovery_or_call(monkeypatch):
         async def call_tool(self, tool, args):
             return SimpleNamespace(
                 content=[SimpleNamespace(type="text", text="done")],
-                structuredContent=None,
+                structured_content=None,
                 isError=False,
             )
 
@@ -237,25 +237,25 @@ async def test_client_manager_list_tools_accumulates_paginated_pages(
             cursor = params.cursor if params else None
             self.cursors.append(cursor)
             if cursor is None:
-                return SimpleNamespace(
+                return ListToolsResult(
                     tools=[
-                        SimpleNamespace(
+                        Tool(
                             name="search",
                             description="Search docs",
-                            inputSchema={"type": "object"},
+                            input_schema={"type": "object"},
                         )
                     ],
-                    nextCursor="next-page",
+                    next_cursor="next-page",
                 )
             if cursor == "next-page":
-                return SimpleNamespace(
+                return ListToolsResult(
                     tools=[
-                        SimpleNamespace(
+                        Tool(
                             name="fetch",
                             description="Fetch doc",
-                            inputSchema={"type": "object"},
+                            input_schema={"type": "object"},
                         )
-                    ]
+                    ],
                 )
             raise AssertionError(f"unexpected cursor: {cursor}")
 
@@ -290,7 +290,7 @@ async def test_client_manager_call_tool_uses_session_and_normalizes_result(
             self.calls.append((tool, args))
             return SimpleNamespace(
                 content=[SimpleNamespace(type="text", text="done")],
-                structuredContent={"ok": True},
+                structured_content={"ok": True},
                 isError=False,
             )
 

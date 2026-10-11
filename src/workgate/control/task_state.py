@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..audit import audit
 from ..config.control import ControlConfig
+from ..errors import PublicToolValueError
 from ..oauth.core.context import current_oauth_claims
 from ..persistence import StateStore
 from ..protocol.ids import TaskId, new_task_id
@@ -286,7 +287,7 @@ class ControlTaskService:
             self._path(task_id), max_bytes=self._stored_task_max_bytes
         )
         if value is None:
-            raise ValueError(f"unknown task_id {task_id!r}")
+            raise PublicToolValueError(f"unknown task_id {task_id!r}")
         try:
             stored = _StoredTask.model_validate(value)
         except ValidationError as exc:

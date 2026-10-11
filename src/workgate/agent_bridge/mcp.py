@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
+import httpx2
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -142,7 +142,7 @@ async def _list_session_tools(session: ClientSession) -> list[AgentMcpTool]:
             if catalog_bytes > MAX_SERVER_DESCRIPTOR_BYTES:
                 raise ValueError("MCP server tool catalog exceeds size limit")
             tools.append(tool)
-        cursor = getattr(result, "nextCursor", None)
+        cursor = result.next_cursor
         if not cursor:
             return tools
 
@@ -235,7 +235,7 @@ class AgentMcpClientManager:
 
     def _oauth_auth(
         self, name: str, server: AgentMcpServerConfig
-    ) -> httpx.Auth | None:
+    ) -> httpx2.Auth | None:
         if server.auth.mode != "oauth":
             return None
         if self.oauth_provider_factory is not None:
@@ -280,13 +280,12 @@ class AgentMcpClientManager:
                 if not server.url:
                     raise ValueError("http MCP server requires url")
                 async with (
-                    httpx.AsyncClient(
+                    httpx2.AsyncClient(
                         headers=headers or None, auth=auth
                     ) as client,
                     streamable_http_client(server.url, http_client=client) as (
                         read_stream,
                         write_stream,
-                        _get_session_id,
                     ),
                     ClientSession(read_stream, write_stream) as session,
                 ):

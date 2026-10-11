@@ -2,6 +2,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -54,10 +55,10 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
     assert "workspace_open" in tools
     open_tool = tools["workspace_open"]
     assert open_tool.meta is not None
-    assert "task_id" in open_tool.inputSchema["properties"]
-    assert "task_id" in open_tool.inputSchema["required"]
-    assert "session_id" in open_tool.inputSchema["properties"]
-    assert "session_id" not in open_tool.inputSchema["required"]
+    assert "task_id" in open_tool.input_schema["properties"]
+    assert "task_id" in open_tool.input_schema["required"]
+    assert "session_id" in open_tool.input_schema["properties"]
+    assert "session_id" not in open_tool.input_schema["required"]
 
     open_meta = open_tool.meta
     assert open_meta["ui/resourceUri"].startswith(
@@ -70,6 +71,19 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
         "shell:read",
         "audit:read",
     ]
+
+    for name in ("workspace_open", "workspace_snapshot"):
+        annotations = tools[name].annotations
+        assert annotations is not None
+        assert annotations.read_only_hint is True
+    for name, expected in (
+        ("workspace_task_control", True),
+        ("workspace_continuation", False),
+        ("workspace_end", True),
+    ):
+        annotations = tools[name].annotations
+        assert annotations is not None
+        assert annotations.destructive_hint is expected
 
     for name in (
         "workspace_snapshot",
@@ -85,7 +99,51 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
         str(resource.uri): resource for resource in await mcp.list_resources()
     }
     assert "ui://workgate/live-workspace.html" in resources
-    assert open_meta["ui/resourceUri"] in resources
+    templates = {
+        template.uri_template
+        for template in await mcp.list_resource_templates()
+    }
+    assert "ui://workgate/live-workspace-{digest}.html" in templates
+    for uri in (
+        open_meta["ui/resourceUri"],
+        "ui://workgate/live-workspace-0123456789abcdef.html",
+    ):
+        result = await mcp.read_resource(uri)
+        assert "Workgate Live Workspace" in str(result)
+    with pytest.raises(
+        ResourceError, match="Invalid Live Workspace resource cache key"
+    ):
+        await mcp.read_resource("ui://workgate/live-workspace-invalid.html")
+
+
+@pytest.mark.asyncio
+async def test_live_workspace_mcp_remount_reports_unattached_session(
+    tmp_path, monkeypatch
+):
+    settings = _http_settings(tmp_path, monkeypatch)
+    harness = build_paired_control_harness(settings)
+    task_id, session_id = await _task_session(harness)
+    other_task = await harness.control.task_service.create_task(
+        label="unrelated task"
+    )
+    mcp = build_mcp(runtime=harness.control)
+
+    for tool in ("workspace_open", "workspace_snapshot"):
+        with pytest.raises(ToolError, match="not attached to task_id"):
+            await mcp.call_tool(
+                tool, {"task_id": other_task.task_id, "session_id": session_id}
+            )
+    # Failure cannot rebind the session or infer another one for the task.
+    snapshot = await live.live_workspace_snapshot(
+        harness.control, other_task.task_id
+    )
+    assert snapshot.session is None
+    assert all(
+        session.session_id != session_id for session in snapshot.sessions
+    )
+    assert (
+        await live.live_workspace_snapshot(harness.control, task_id, session_id)
+    ).session
 
 
 @pytest.mark.asyncio
@@ -461,3 +519,23 @@ async def test_mcp_task_activity_invalidates_pending_continuation(
     assert stale["valid"] is False
     status = await service.continuation_status(task.task_id)
     assert status["due_at"] == clock[0] + 900
+
+
+@pytest.mark.asyncio
+async def test_live_workspace_missing_scope_is_model_visible():
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from workgate.control.mcp.live_workspace import _require_mcp_scopes
+    from workgate.oauth.core.context import (
+        bind_oauth_claims,
+        reset_oauth_claims,
+    )
+
+    token = bind_oauth_claims({"scope": "shell:read"})
+    try:
+        with pytest.raises(
+            ToolError, match="Missing required OAuth scope: audit:read"
+        ):
+            _require_mcp_scopes(("shell:read", "audit:read"))
+    finally:
+        reset_oauth_claims(token)

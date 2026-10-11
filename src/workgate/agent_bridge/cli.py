@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-import httpx
+import httpx2
+from mcp.client.auth import AuthorizationCodeResult
 from mcp.client.auth.utils import (
     build_oauth_authorization_server_metadata_discovery_urls,
     build_protected_resource_metadata_discovery_urls,
@@ -191,7 +192,7 @@ class LoopbackOAuthCallback:
 
     def __init__(self) -> None:
         self._server: asyncio.AbstractServer | None = None
-        self._result: asyncio.Future[tuple[str, str | None]] | None = None
+        self._result: asyncio.Future[AuthorizationCodeResult] | None = None
         self.redirect_uri = ""
 
     async def __aenter__(self) -> LoopbackOAuthCallback:
@@ -213,7 +214,7 @@ class LoopbackOAuthCallback:
             self._server.close()
             await self._server.wait_closed()
 
-    async def wait(self) -> tuple[str, str | None]:
+    async def wait(self) -> AuthorizationCodeResult:
         """Wait for the single valid authorization callback result."""
         if self._result is None:
             raise RuntimeError("OAuth callback listener has not started")
@@ -254,7 +255,11 @@ class LoopbackOAuthCallback:
             if not code:
                 raise ValueError("OAuth callback omitted authorization code")
             if self._result is not None and not self._result.done():
-                self._result.set_result((code, state))
+                self._result.set_result(
+                    AuthorizationCodeResult(
+                        code=code, state=state, iss=query.get("iss", [None])[0]
+                    )
+                )
             status = "200 OK"
             body = "Authorization complete. You may close this window."
         except Exception as exc:
@@ -305,7 +310,6 @@ async def authorize_server(
             redirect_uri=callback.redirect_uri,
             redirect_handler=redirect_handler,
             callback_handler=callback.wait,
-            timeout=max(30, settings.agent_mcp_call_timeout_s),
         )
         manager = AgentMcpClientManager(
             settings.agent_mcp_call_timeout_s,
@@ -330,7 +334,7 @@ class RevocationResult:
 
 
 async def _discover_oauth_metadata(
-    client: httpx.AsyncClient, server_url: str
+    client: httpx2.AsyncClient, server_url: str
 ) -> OAuthMetadata | None:
     initial = await client.get(server_url)
     hint = extract_resource_metadata_from_www_auth(initial)
@@ -376,7 +380,7 @@ async def revoke_stored_oauth(
     token = tokens.refresh_token or tokens.access_token
     hint = "refresh_token" if tokens.refresh_token else "access_token"
     try:
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             timeout=10, follow_redirects=True
         ) as client:
             metadata = await _discover_oauth_metadata(client, server.url)
@@ -385,7 +389,7 @@ async def revoke_stored_oauth(
                     "unsupported", "no revocation endpoint advertised"
                 )
             data: dict[str, str] = {"token": token, "token_type_hint": hint}
-            auth: httpx.Auth | None = None
+            auth: httpx2.Auth | None = None
             if client_info is not None and client_info.client_id:
                 data["client_id"] = client_info.client_id
                 method = client_info.token_endpoint_auth_method or "none"
@@ -393,7 +397,7 @@ async def revoke_stored_oauth(
                     client_info.client_secret
                     and method == "client_secret_basic"
                 ):
-                    auth = httpx.BasicAuth(
+                    auth = httpx2.BasicAuth(
                         client_info.client_id, client_info.client_secret
                     )
                 elif (

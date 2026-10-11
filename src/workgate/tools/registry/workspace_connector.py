@@ -26,10 +26,7 @@ class WorkspaceConnectorToolRegistry(DeclarativeToolRegistry):
     as code search, file reads, shell commands, edits, or executor operations unless
     the client is in Developer Mode or otherwise supports the full MCP tool set.
 
-    search/fetch use mcp_security_profile="connector_compatible" so MCP
-    clients can discover them as document-source tools. oauth_scopes remains
-    the server-enforced source of truth; the connector profile only affects MCP
-    securitySchemes metadata.
+    search/fetch advertise the same enforced authentication as other tools.
     """
 
     name = "workspace_connector"
@@ -42,7 +39,6 @@ workspace_connector_tool = WorkspaceConnectorToolRegistry.get_tool_decorator()
 @workspace_connector_tool(
     http_method="POST",
     http_path="/tools/workspace_search",
-    mcp_security_profile="connector_compatible",
     oauth_scopes=("shell:read",),
     annotations="read_only",
     mcp_error_handler=search_error_output,
@@ -58,7 +54,6 @@ async def workspace_search(
 @workspace_connector_tool(
     http_method="POST",
     http_path="/tools/fetch",
-    mcp_security_profile="connector_compatible",
     oauth_scopes=("shell:read",),
     annotations="read_only",
     mcp_error_handler=fetch_error_output,

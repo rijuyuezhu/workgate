@@ -544,7 +544,7 @@ class GuiService:
                     image_content = ImageContent(
                         type="image",
                         data=base64.b64encode(image_data).decode("ascii"),
-                        mimeType=mime_type,
+                        mime_type=mime_type,
                     )
                     screenshot_meta = {
                         "mime_type": mime_type,
@@ -620,7 +620,7 @@ class GuiService:
             self._touch_owner(owner_session_id)
             return CallToolResult(
                 content=content,
-                structuredContent=metadata,
+                structured_content=metadata,
             )
         finally:
             if screenshot_path is not None:

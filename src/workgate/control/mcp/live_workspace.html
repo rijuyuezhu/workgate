@@ -131,6 +131,7 @@
   let continuationBusy = false;
   let continuationTimer = null;
   let continuationAttempt = null;
+  let recoveringSession = false;
 
   function createStandardBridge() {
     let nextId = 1;
@@ -274,6 +275,7 @@
     }
     if (boundTaskId === null) boundTaskId = candidateTaskId;
     snapshot = candidate;
+    persistSessionIdentity(candidate);
     const task = snapshot.task;
     const session = snapshot.session || null;
     const sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
@@ -407,13 +409,64 @@
     return accepted;
   }
 
+  function storedSessionIdentity(globals = window.openai) {
+    const stored = globals?.widgetState?.workgateLiveWorkspace;
+    if (!stored || typeof stored.task_id !== "string" || !stored.task_id ||
+        typeof stored.session_id !== "string" || !stored.session_id ||
+        stored.task_id.length > 256 || stored.session_id.length > 256) return null;
+    return { task_id: stored.task_id, session_id: stored.session_id };
+  }
+
+  function persistSessionIdentity(data) {
+    const host = window.openai;
+    if (!host || typeof host.setWidgetState !== "function") return;
+    const identity = data.session
+      ? { task_id: data.task.task_id, session_id: data.session.session_id }
+      : null;
+    const existing = storedSessionIdentity();
+    if ((!identity && !existing) ||
+        (identity && existing && identity.task_id === existing.task_id &&
+         identity.session_id === existing.session_id)) return;
+    try {
+      Promise.resolve(host.setWidgetState({
+        ...(host.widgetState || {}),
+        workgateLiveWorkspace: identity,
+      })).catch(() => { $("status").textContent = "Unable to save session identity in the host."; });
+    } catch {
+      $("status").textContent = "Unable to save session identity in the host.";
+    }
+  }
+
+  async function recoverHostSession(globals = window.openai) {
+    if (recoveringSession || snapshot) return;
+    const identity = storedSessionIdentity(globals);
+    if (!identity) {
+      $("status").textContent = "No original snapshot or host-persisted Workgate session identity.";
+      return;
+    }
+    recoveringSession = true;
+    try {
+      acceptHostSnapshot(await callTool("workspace_snapshot", identity));
+    } catch (error) {
+      $("status").textContent = `Unable to recover saved Workgate session: ${error instanceof Error ? error.message : error}`;
+    } finally {
+      recoveringSession = false;
+    }
+  }
+
   async function callTool(name, args) {
     if (shuttingDown) throw new Error("Live Workspace is closed.");
-    if (window.openai && typeof window.openai.callTool === "function") {
-      return payload(await window.openai.callTool(name, args));
+    const result = window.openai && typeof window.openai.callTool === "function"
+      ? await window.openai.callTool(name, args)
+      : standardBridge
+        ? await standardBridge.callTool(name, args)
+        : null;
+    if (!result) throw new Error("This host does not expose an MCP App tool bridge.");
+    if (result.isError) {
+      throw new Error(result.content?.find((item) => item.type === "text")?.text ||
+        "Workgate tool call failed.");
     }
-    if (standardBridge) return payload(await standardBridge.callTool(name, args));
-    throw new Error("This host does not expose an MCP App tool bridge.");
+    return payload(result);
   }
 
   function boundedText(value, limit) {
@@ -621,13 +674,16 @@
 
   async function startHostBridge() {
     if (window.openai && typeof window.openai.callTool === "function") {
-      acceptHostSnapshot(payload(window.openai.toolOutput));
       window.addEventListener("openai:set_globals", (event) => {
         const globals = event && event.detail && event.detail.globals;
-        if (globals && globals.toolOutput) {
+        if (globals && payload(globals.toolOutput)?.task) {
           acceptHostSnapshot(payload(globals.toolOutput));
+        } else if (globals && !snapshot) {
+          void recoverHostSession(globals);
         }
       });
+      if (!payload(window.openai.toolOutput)?.task) await recoverHostSession();
+      else acceptHostSnapshot(payload(window.openai.toolOutput));
       return;
     }
 

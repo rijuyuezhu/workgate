@@ -18,6 +18,7 @@ from tests.e2e_scenarios import (
     exercise_todo_tools,
     exercise_workspace_connector_tools,
 )
+from workgate import __version__
 
 pytestmark = pytest.mark.integration
 
@@ -37,6 +38,7 @@ async def test_mcp_streamable_http_process_exercises_core_tool_categories(
         assert page.status_code == 200
         assert bootstrap.status_code == 200
 
+        assert client.server_version == __version__
         await assert_core_tool_surface(client)
         await exercise_environment_tool(client, workspace)
         await exercise_explicit_session_workflow(client, workspace)
@@ -67,10 +69,10 @@ async def test_mcp_streamable_http_returns_native_image_content(tmp_path):
             {"session_id": session["session_id"], "path": "pixel.png"},
         )
 
-        assert result.isError is False
+        assert result.is_error is False
         assert isinstance(result.content[0], ImageContent)
         assert base64.b64decode(result.content[0].data) == png
-        assert result.structuredContent is not None
-        assert result.structuredContent["session_id"] == session["session_id"]
-        assert result.structuredContent["mime_type"] == "image/png"
-        assert result.structuredContent["bytes"] == len(png)
+        assert result.structured_content is not None
+        assert result.structured_content["session_id"] == session["session_id"]
+        assert result.structured_content["mime_type"] == "image/png"
+        assert result.structured_content["bytes"] == len(png)

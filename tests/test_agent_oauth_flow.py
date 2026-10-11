@@ -3,8 +3,9 @@ import json
 import time
 from urllib.parse import parse_qs, urlsplit
 
-import httpx
+import httpx2 as httpx
 import pytest
+from mcp.client.auth import AuthorizationCodeResult
 from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthMetadata,
@@ -83,8 +84,10 @@ async def test_sdk_oauth_flow_uses_discovery_dcr_pkce_and_persists_tokens(
         assert query["scope"] == ["tools.read"]
         assert "code_verifier" not in query
 
-    async def callback_handler() -> tuple[str, str | None]:
-        return "authorization-code", state_holder["state"]
+    async def callback_handler() -> AuthorizationCodeResult:
+        return AuthorizationCodeResult(
+            code="authorization-code", state=state_holder["state"], iss=None
+        )
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(
@@ -274,7 +277,7 @@ async def test_logout_revokes_refresh_token_when_endpoint_is_advertised(
         kwargs["transport"] = httpx.MockTransport(handler)
         return original_client(*args, **kwargs)
 
-    monkeypatch.setattr(agent_cli.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(agent_cli.httpx2, "AsyncClient", client_factory)
 
     result = await revoke_stored_oauth(store, "docs", _server())
 
@@ -484,7 +487,7 @@ async def test_revoke_oauth_covers_absent_unsupported_http_failure_and_exception
 
     monkeypatch.setattr(agent_cli, "_discover_oauth_metadata", no_metadata)
     monkeypatch.setattr(
-        agent_cli.httpx, "AsyncClient", lambda **_kwargs: FakeClient(200)
+        agent_cli.httpx2, "AsyncClient", lambda **_kwargs: FakeClient(200)
     )
     unsupported = await revoke_stored_oauth(store, "docs", _server())
     assert unsupported.status == "unsupported"
@@ -494,7 +497,7 @@ async def test_revoke_oauth_covers_absent_unsupported_http_failure_and_exception
 
     monkeypatch.setattr(agent_cli, "_discover_oauth_metadata", metadata)
     monkeypatch.setattr(
-        agent_cli.httpx, "AsyncClient", lambda **_kwargs: FakeClient(500)
+        agent_cli.httpx2, "AsyncClient", lambda **_kwargs: FakeClient(500)
     )
     failed = await revoke_stored_oauth(store, "docs", _server())
     assert failed.status == "failed"
@@ -502,7 +505,7 @@ async def test_revoke_oauth_covers_absent_unsupported_http_failure_and_exception
     assert "HTTP 500" in failed.detail
 
     monkeypatch.setattr(
-        agent_cli.httpx,
+        agent_cli.httpx2,
         "AsyncClient",
         lambda **_kwargs: FakeClient(RuntimeError("network fixture")),
     )

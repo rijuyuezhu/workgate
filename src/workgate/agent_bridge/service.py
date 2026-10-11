@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from ..config.control import ControlConfig, get_control_config
+from ..errors import RedactedAgentMcpError
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
     AgentConfigStatusOutput,
@@ -120,10 +121,10 @@ def agent_mcp_tool_row(
 
 def redacted_mcp_call_error(
     exc: Exception, *maps: dict[str, str]
-) -> ValueError:
+) -> RedactedAgentMcpError:
     """Wrap upstream MCP call failures after removing configured secrets."""
     error = _redact_text(redact_configured_values(str(exc), *maps))
-    return ValueError(f"Agent MCP tool call failed: {error}")
+    return RedactedAgentMcpError(f"Agent MCP tool call failed: {error}")
 
 
 def redact_mcp_payload_strings(value: Any, *maps: dict[str, str]) -> Any:
@@ -287,11 +288,11 @@ async def call_agent_mcp_tool_payload(
     """Call one upstream MCP tool and redact configured secrets from errors."""
     record = registry.mcp_servers.get(server)
     if record is None:
-        raise ValueError(f"Unknown agent MCP server: {server}")
+        raise RedactedAgentMcpError(f"Unknown agent MCP server: {server}")
     if not record.config.enabled:
-        raise ValueError(f"MCP server {server} is disabled")
+        raise RedactedAgentMcpError(f"MCP server {server} is disabled")
     if not record.available:
-        raise ValueError(
+        raise RedactedAgentMcpError(
             f"MCP server {server} is unavailable: "
             f"{_agent_mcp_unavailable_error(registry, record)}"
         )
@@ -301,7 +302,7 @@ async def call_agent_mcp_tool_payload(
             registry.client_manager, server, record.config
         )
     except Exception:
-        raise ValueError(
+        raise RedactedAgentMcpError(
             "Agent MCP tool call failed: credential redaction history unavailable"
         ) from None
     before_env, before_headers = manager_redaction_maps(
@@ -320,7 +321,7 @@ async def call_agent_mcp_tool_payload(
                 redaction_cursor,
             )
         except Exception:
-            raise ValueError(
+            raise RedactedAgentMcpError(
                 "Agent MCP tool call failed: credential redaction history unavailable"
             ) from None
         raise redacted_mcp_call_error(
@@ -339,7 +340,7 @@ async def call_agent_mcp_tool_payload(
             redaction_cursor,
         )
     except Exception:
-        raise ValueError(
+        raise RedactedAgentMcpError(
             "Agent MCP tool call failed: credential redaction history unavailable"
         ) from None
     output = redact_mcp_result_payload(

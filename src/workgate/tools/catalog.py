@@ -81,7 +81,7 @@ class ToolCatalog:
         return MappingProxyType(handlers)
 
     def register_mcp(self, mcp, context: McpToolContext) -> None:
-        """Register this catalog's MCP surface on one FastMCP application."""
+        """Register this catalog's MCP surface on one MCPServer application."""
         for registry in self.registries:
             registry.register_mcp(mcp, context)
 

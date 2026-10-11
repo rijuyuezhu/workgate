@@ -125,7 +125,7 @@ async def test_executor_view_image_returns_native_mcp_content(tmp_path: Path):
     assert isinstance(result.content[0], ImageContent)
     assert base64.b64decode(result.content[0].data) == PNG_BYTES
     assert isinstance(result.content[1], TextContent)
-    assert result.structuredContent == {
+    assert result.structured_content == {
         "session_id": session_id,
         "path": "pixel.png",
         "mime_type": "image/png",
@@ -151,7 +151,7 @@ async def test_view_image_tool_returns_native_mcp_content(
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
     assert "view_image" in tools
-    assert set(tools["view_image"].inputSchema["required"]) == {
+    assert set(tools["view_image"].input_schema["required"]) == {
         "session_id",
         "path",
     }
@@ -163,7 +163,7 @@ async def test_view_image_tool_returns_native_mcp_content(
     )
     assert isinstance(response.content[0], ImageContent)
     assert base64.b64decode(response.content[0].data) == PNG_BYTES
-    assert response.structuredContent == {
+    assert response.structured_content == {
         "session_id": session_id,
         "path": "pixel.png",
         "mime_type": "image/png",

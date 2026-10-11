@@ -4,7 +4,8 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
-import httpx
+import httpx2
+from mcp.client.auth import AuthorizationCodeResult
 from mcp.client.auth.oauth2 import OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
 
@@ -16,7 +17,7 @@ from .models import (
     AgentSecretReference,
 )
 
-type OAuthProviderFactory = Callable[[str, AgentMcpServerConfig], httpx.Auth]
+type OAuthProviderFactory = Callable[[str, AgentMcpServerConfig], httpx2.Auth]
 
 
 def literal_config_mapping(
@@ -101,11 +102,11 @@ class PersistentOAuthClientProvider(OAuthClientProvider):
                 self.context.oauth_metadata
             )
 
-    async def _handle_token_response(self, response: httpx.Response) -> None:
+    async def _handle_token_response(self, response: httpx2.Response) -> None:
         await super()._handle_token_response(response)
         self._persist_authorization_metadata()
 
-    async def _handle_refresh_response(self, response: httpx.Response) -> bool:
+    async def _handle_refresh_response(self, response: httpx2.Response) -> bool:
         result = await super()._handle_refresh_response(response)
         if result:
             self._persist_authorization_metadata()
@@ -140,7 +141,6 @@ def build_stored_oauth_provider(
     redirect_uri: str = "http://127.0.0.1/callback",
     redirect_handler=None,
     callback_handler=None,
-    timeout: float = 300,
 ) -> PersistentOAuthClientProvider:
     """Create the MCP SDK provider for one stored Agent Bridge OAuth identity."""
     if not server.url:
@@ -154,7 +154,7 @@ def build_stored_oauth_provider(
             f"OAuth reauthorization required for {server_name}; run workgate mcp auth {server_name}"
         )
 
-    async def deny_callback() -> tuple[str, str | None]:
+    async def deny_callback() -> AuthorizationCodeResult:
         raise RuntimeError(
             f"OAuth reauthorization required for {server_name}; run workgate mcp auth {server_name}"
         )
@@ -167,7 +167,6 @@ def build_stored_oauth_provider(
         storage,
         redirect_handler=effective_redirect_handler,
         callback_handler=effective_callback_handler,
-        timeout=timeout,
     )
 
 

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.shared.auth import OAuthToken
 
 from tests.helpers import build_paired_mcp, mcp_structured, mcp_text
@@ -27,7 +27,7 @@ from workgate.tools.registry import agent as tools_module
 
 
 def _payload(response: Any) -> dict[str, Any]:
-    structured = getattr(response, "structuredContent", None)
+    structured = getattr(response, "structured_content", None)
     if isinstance(structured, dict):
         return cast(dict[str, Any], structured)
     if isinstance(response, tuple) and isinstance(response[1], dict):
@@ -365,10 +365,10 @@ async def test_session_bound_stdio_mcp_runs_on_executor_with_executor_secret(
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 Path(os.environ["START_MARKER"]).write_text("started", encoding="utf-8")
-mcp = FastMCP("executor-secret-test")
+mcp = MCPServer("executor-secret-test")
 
 @mcp.tool()
 def secret_fingerprint() -> dict[str, str]:

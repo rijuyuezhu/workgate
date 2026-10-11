@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
 from tests.helpers import build_paired_mcp, mcp_structured
@@ -352,8 +352,8 @@ async def test_refresh_reprobes_executor_and_updates_discovery_cache(
 
     def write_server(tool: str) -> None:
         script.write_text(
-            "from mcp.server.fastmcp import FastMCP\n"
-            "mcp = FastMCP('refresh-example')\n"
+            "from mcp.server.mcpserver import MCPServer\n"
+            "mcp = MCPServer('refresh-example')\n"
             f"@mcp.tool()\ndef {tool}() -> str:\n    return 'ok'\n"
             "mcp.run(transport='stdio')\n",
             encoding="utf-8",

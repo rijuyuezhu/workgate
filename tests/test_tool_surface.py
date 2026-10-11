@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
 
 import workgate.control.http.tool_routes as http_tool_routes_module
@@ -111,7 +111,7 @@ async def test_session_copy_public_defaults_are_safe_and_tracked(
     clear_settings_cache()
 
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
-    properties = tools["session_copy"].inputSchema["properties"]
+    properties = tools["session_copy"].input_schema["properties"]
     overwrite = properties["overwrite"]
     background = properties["background"]
 
@@ -131,7 +131,7 @@ async def test_browser_actions_are_structured_and_bounded(
     clear_settings_cache()
 
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
-    actions = tools["browser_act"].inputSchema["properties"]["actions"]
+    actions = tools["browser_act"].input_schema["properties"]["actions"]
 
     assert actions["minItems"] == 1
     assert actions["maxItems"] == 50
@@ -182,7 +182,7 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
 
     unexpected_identityless = set()
     for name, tool in tools.items():
-        required = set(tool.inputSchema.get("required", []))
+        required = set(tool.input_schema.get("required", []))
         has_single_session = "session_id" in required
         has_copy_sessions = {"src_session_id", "dst_session_id"} <= required
         has_task = "task_id" in required
@@ -194,18 +194,18 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
 
     assert unexpected_identityless == set()
     assert "session_id" not in set(
-        tools["task"].inputSchema.get("required", [])
+        tools["task"].input_schema.get("required", [])
     )
-    assert "task_id" not in set(tools["task"].inputSchema.get("required", []))
+    assert "task_id" not in set(tools["task"].input_schema.get("required", []))
     for name in ("task", "task_plan", "write_todos"):
         assert "expected_revision" not in set(
-            tools[name].inputSchema.get("properties", {})
+            tools[name].input_schema.get("properties", {})
         )
     audit_properties = set(
-        tools["audit_tail"].inputSchema.get("properties", {})
+        tools["audit_tail"].input_schema.get("properties", {})
     )
     assert {"task_id", "session_id"} <= audit_properties
-    assert not set(tools["audit_tail"].inputSchema.get("required", []))
+    assert not set(tools["audit_tail"].input_schema.get("required", []))
 
 
 @pytest.mark.asyncio
@@ -249,7 +249,7 @@ async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
         assert len(descriptions[name]) < 300
     assert (
         "SWAP"
-        in tools["hashline_edit"].inputSchema["properties"]["input"][
+        in tools["hashline_edit"].input_schema["properties"]["input"][
             "description"
         ]
     )
@@ -312,8 +312,8 @@ async def test_http_version_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
 def _mcp_payload_data(response):
     if isinstance(response, CallToolResult):
-        assert isinstance(response.structuredContent, dict)
-        return response.structuredContent
+        assert isinstance(response.structured_content, dict)
+        return response.structured_content
     return (
         response[1]
         if isinstance(response, tuple)
@@ -362,21 +362,21 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
 
     started = await mcp.call_tool("session_start", {})
     assert isinstance(started, CallToolResult)
-    assert isinstance(started.structuredContent, dict)
+    assert isinstance(started.structured_content, dict)
     assert isinstance(started.content[0], TextContent)
-    assert started.structuredContent["session_id"] in started.content[0].text
-    assert started.structuredContent["workdir"] in started.content[0].text
-    assert started.structuredContent["workdir"] == str(tmp_path)
+    assert started.structured_content["session_id"] in started.content[0].text
+    assert started.structured_content["workdir"] in started.content[0].text
+    assert started.structured_content["workdir"] == str(tmp_path)
     assert not started.content[0].text.lstrip().startswith("{")
-    session_id = started.structuredContent["session_id"]
+    session_id = started.structured_content["session_id"]
 
     read = await mcp.call_tool(
         "read", {"session_id": session_id, "path": "context.txt:1-3"}
     )
     assert isinstance(read, CallToolResult)
-    assert isinstance(read.structuredContent, dict)
+    assert isinstance(read.structured_content, dict)
     assert isinstance(read.content[0], TextContent)
-    assert read.content[0].text == read.structuredContent["content"]
+    assert read.content[0].text == read.structured_content["content"]
 
     search = await mcp.call_tool(
         "search",
@@ -388,14 +388,14 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
         },
     )
     assert isinstance(search, CallToolResult)
-    assert isinstance(search.structuredContent, dict)
+    assert isinstance(search.structured_content, dict)
     assert isinstance(search.content[0], TextContent)
-    numbered = search.structuredContent["numbered_content"]
-    stderr = search.structuredContent["stderr"].strip()
+    numbered = search.structured_content["numbered_content"]
+    stderr = search.structured_content["stderr"].strip()
     expected_search_text = (
         numbered
         or stderr
-        or ("No matches." if search.structuredContent["count"] == 0 else "")
+        or ("No matches." if search.structured_content["count"] == 0 else "")
     )
     assert search.content[0].text == expected_search_text
 
@@ -404,7 +404,7 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
         {"session_id": session_id, "command": "printf shell-output"},
     )
     assert isinstance(bash, CallToolResult)
-    assert isinstance(bash.structuredContent, dict)
+    assert isinstance(bash.structured_content, dict)
     assert isinstance(bash.content[0], TextContent)
     assert bash.content[0].text == "shell-output"
 
@@ -412,17 +412,17 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
         "tree_view", {"session_id": session_id, "cwd": ".", "depth": 1}
     )
     assert isinstance(tree, CallToolResult)
-    assert isinstance(tree.structuredContent, dict)
+    assert isinstance(tree.structured_content, dict)
     assert isinstance(tree.content[0], TextContent)
-    assert tree.content[0].text == "\n".join(tree.structuredContent["entries"])
+    assert tree.content[0].text == "\n".join(tree.structured_content["entries"])
 
     glob = await mcp.call_tool(
         "glob_search", {"session_id": session_id, "pattern": "**/*.txt"}
     )
     assert isinstance(glob, CallToolResult)
-    assert isinstance(glob.structuredContent, dict)
+    assert isinstance(glob.structured_content, dict)
     assert isinstance(glob.content[0], TextContent)
-    paths = glob.structuredContent["paths"]
+    paths = glob.structured_content["paths"]
     assert glob.content[0].text == (
         "\n".join(paths) if paths else "No matches."
     )
@@ -489,14 +489,14 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
         },
     )
     assert isinstance(mcp_edit, CallToolResult)
-    assert isinstance(mcp_edit.structuredContent, dict)
-    assert set(mcp_edit.structuredContent) == set(http_edit)
-    assert set(mcp_edit.structuredContent["context"]) == compact_context_keys
+    assert isinstance(mcp_edit.structured_content, dict)
+    assert set(mcp_edit.structured_content) == set(http_edit)
+    assert set(mcp_edit.structured_content["context"]) == compact_context_keys
     assert len(mcp_edit.content) == 1
     assert isinstance(mcp_edit.content[0], TextContent)
     assert (
         mcp_edit.content[0].text
-        == (mcp_edit.structuredContent["context"]["numbered_content"])
+        == (mcp_edit.structured_content["context"]["numbered_content"])
     )
     assert not mcp_edit.content[0].text.lstrip().startswith("{")
 
@@ -513,18 +513,18 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
         },
     )
     assert isinstance(hash_edit, CallToolResult)
-    assert isinstance(hash_edit.structuredContent, dict)
-    assert "context" not in hash_edit.structuredContent
-    assert hash_edit.structuredContent["hunk_count"] == 2
+    assert isinstance(hash_edit.structured_content, dict)
+    assert "context" not in hash_edit.structured_content
+    assert hash_edit.structured_content["hunk_count"] == 2
     assert all(
         set(hunk["context"]) == compact_context_keys
-        for hunk in hash_edit.structuredContent["hunks"]
+        for hunk in hash_edit.structured_content["hunks"]
     )
     assert len(hash_edit.content) == 1
     assert isinstance(hash_edit.content[0], TextContent)
     assert hash_edit.content[0].text == "\n\n".join(
         hunk["context"]["numbered_content"]
-        for hunk in hash_edit.structuredContent["hunks"]
+        for hunk in hash_edit.structured_content["hunks"]
     )
     assert not hash_edit.content[0].text.lstrip().startswith("{")
 

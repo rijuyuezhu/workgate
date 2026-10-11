@@ -4,8 +4,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from mcp.server.fastmcp import FastMCP
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import MCPServer
 
 from ..config.control import ControlConfig
 
@@ -34,8 +33,6 @@ class McpToolContext:
 
     settings: ControlConfig
     """Resolved control-owned settings exposed to public tool metadata."""
-    read_only_tool_annotations: ToolAnnotations
-    """MCP annotation applied to read-only tools."""
 
 
 class ToolRegistry:
@@ -52,6 +49,6 @@ class ToolRegistry:
         """Return canonical tool-name to HTTP invocation handler mappings."""
         return {}
 
-    def register_mcp(self, mcp: FastMCP, context: McpToolContext) -> None:
+    def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
         """Register MCP tools for this registry onto the provided app."""
         return None
