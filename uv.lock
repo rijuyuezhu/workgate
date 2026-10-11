@@ -1992,12 +1992,6 @@ dev = [
 docs = [
     { name = "mkdocs-material" },
 ]
-worker = [
-    { name = "pathspec" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pyyaml" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -2035,13 +2029,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "ruff", specifier = ">=0.15.20" },
+    { name = "ruff", specifier = "==0.17.0" },
     { name = "wheel", specifier = ">=0.46.3" },
 ]
 docs = [{ name = "mkdocs-material", specifier = ">=9.7.7" }]
-worker = [
-    { name = "pathspec", specifier = ">=1.1.1" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pydantic-settings", specifier = ">=2.14.2" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-]
