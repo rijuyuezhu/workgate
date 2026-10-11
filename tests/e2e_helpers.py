@@ -556,72 +556,43 @@ def unwrap_tool_payload(value: Any) -> Any:
     return decoded
 
 
-REST_ROUTES: dict[str, tuple[str, str]] = {
-    "audit_tail": ("GET", "/tools/audit_tail"),
-    "agent_config_status": ("GET", "/tools/agent_config_status"),
-    "list_agent_skills": ("GET", "/tools/list_agent_skills"),
-    "activate_agent_skill": ("POST", "/tools/activate_agent_skill"),
-    "read_agent_skill_file": ("POST", "/tools/read_agent_skill_file"),
-    "bash": ("POST", "/tools/bash"),
-    "job": ("POST", "/tools/job"),
-    "session_start": ("POST", "/tools/session_start"),
-    "session_change_workdir": ("POST", "/tools/session_change_workdir"),
-    "session_copy": ("POST", "/tools/session_copy"),
-    "read": ("POST", "/tools/read"),
-    "search": ("POST", "/tools/search"),
-    "workspace_search": ("POST", "/tools/workspace_search"),
-    "fetch": ("POST", "/tools/fetch"),
-    "list_files": ("POST", "/tools/list_files"),
-    "tree_view": ("POST", "/tools/tree"),
-    "glob_search": ("POST", "/tools/glob"),
-    "write_file": ("POST", "/tools/write_file"),
-    "edit_lines": ("POST", "/tools/edit_lines"),
-    "hashline_edit": ("POST", "/tools/hashline_edit"),
-    "apply_patch": ("POST", "/tools/apply_patch"),
-    "delete_file_or_dir": ("POST", "/tools/delete"),
-    "create_file_link": ("POST", "/tools/file_link/create"),
-    "list_file_links": ("GET", "/tools/file_link/list"),
-    "revoke_file_link": ("POST", "/tools/file_link/revoke"),
-    "secret_scan": ("POST", "/tools/secret_scan"),
-    "run_python_code": ("POST", "/tools/run_python_code"),
-    "list_persistent_shells": ("GET", "/tools/list_persistent_shells"),
-    "send_persistent_shell_input": (
-        "POST",
-        "/tools/send_persistent_shell_input",
-    ),
-    "resize_persistent_shell": ("POST", "/tools/resize_persistent_shell"),
-    "read_persistent_shell_output": (
-        "POST",
-        "/tools/read_persistent_shell_output",
-    ),
-    "kill_persistent_shell": ("POST", "/tools/kill_persistent_shell"),
-    "task": ("POST", "/tools/task"),
-    "task_plan": ("POST", "/tools/task-plan"),
-    "read_todos": ("GET", "/tools/todo"),
-    "write_todos": ("POST", "/tools/todo"),
-}
-
-
 @dataclass
-class RestToolClient:
+class DebugHttpToolClient:
+    """In-process MCP tool semantics over the actual debug HTTP endpoint."""
+
     base_url: str
 
     async def list_tools(self) -> set[str]:
-        return set(REST_ROUTES)
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=20, trust_env=False
+        ) as client:
+            response = await client.get("/tools")
+        response.raise_for_status()
+        return {tool["name"] for tool in response.json()["tools"]}
 
     async def call_tool(
         self, name: str, args: dict[str, Any] | None = None
     ) -> Any:
-        method, path = REST_ROUTES[name]
         async with httpx.AsyncClient(
             base_url=self.base_url, timeout=20, trust_env=False
         ) as client:
-            if method == "GET":
-                response = await client.get(path, params=args or {})
-            else:
-                response = await client.post(path, json=args or {})
+            response = await client.post(f"/tools/{name}", json=args or {})
         response.raise_for_status()
-        return unwrap_tool_payload(response.json())
+        result = response.json()
+        error_text = next(
+            (
+                item.get("text", "")
+                for item in result.get("content", [])
+                if item.get("type") == "text"
+            ),
+            "",
+        )
+        assert not result["isError"], error_text
+        if result.get(
+            "structuredContent"
+        ) is not None and has_explicit_tool_text(name):
+            return unwrap_tool_payload(result["structuredContent"])
+        return unwrap_tool_payload(error_text)
 
 
 class McpSessionToolClient:

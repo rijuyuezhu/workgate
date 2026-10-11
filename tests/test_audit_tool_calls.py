@@ -52,7 +52,9 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
 
     app, _harness = build_paired_http_app(get_settings())
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
     response = client.post(
         "/tools/read",
         json={"session_id": session["session_id"], "path": "alpha.txt"},
@@ -60,18 +62,18 @@ def test_http_tool_calls_audit_full_input_output_and_auth_context(
 
     assert response.status_code == 200
     records = _audit_records(get_settings().audit_log_path)
-    starts, ends = _tool_call_pairs(records, "read", transport="http")
+    starts, ends = _tool_call_pairs(records, "read", transport="mcp")
 
     assert len(starts) == 1
     assert len(ends) == 1
     assert starts[0]["call_id"] == ends[0]["call_id"]
-    assert starts[0]["transport"] == "http"
+    assert starts[0]["transport"] == "mcp"
     assert starts[0]["input"] == {
         "session_id": session["session_id"],
         "path": "alpha.txt",
     }
     assert ends[0]["ok"] is True
-    assert ends[0]["output"] == response.json()
+    assert ends[0]["output"] == response.json()["structuredContent"]
     assert ends[0]["duration_ms"] >= 0
 
 
@@ -92,7 +94,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
         json={"action": "create", "objective": "initial objective"},
     )
     assert created.status_code == 200
-    task_id = created.json()["task_id"]
+    task_id = created.json()["structuredContent"]["result"]["task_id"]
     marker = "task-audit-secret-marker"
     long_content = marker + "-" + ("x" * 6_000)
 
@@ -110,7 +112,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
     )
     assert reported.status_code == 200
     planned = client.post(
-        "/tools/task-plan",
+        "/tools/task_plan",
         json={
             "task_id": task_id,
             "steps": [
@@ -125,7 +127,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
     )
     assert planned.status_code == 200
     rejected_extra = client.post(
-        "/tools/task-plan",
+        "/tools/task_plan",
         json={
             "task_id": task_id,
             "steps": [
@@ -137,7 +139,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
             ],
         },
     )
-    assert rejected_extra.status_code == 400
+    assert rejected_extra.json()["isError"] is True
     assert (
         client.post(
             "/tools/task", json={"action": "get", "task_id": task_id}
@@ -145,11 +147,11 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
         == 200
     )
     assert (
-        client.get("/tools/todo", params={"task_id": task_id}).status_code
+        client.post("/tools/read_todos", json={"task_id": task_id}).status_code
         == 200
     )
     compat = client.post(
-        "/tools/todo",
+        "/tools/write_todos",
         json={
             "task_id": task_id,
             "todos": [
@@ -163,11 +165,11 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
         },
     )
     assert compat.status_code == 200
-    history = client.get("/tools/audit_tail", params={"task_id": task_id})
+    history = client.post("/tools/audit_tail", json={"task_id": task_id})
     assert history.status_code == 200
     assert any(
         entry.get("tool") == "task" and entry.get("task") == task_id
-        for entry in history.json()["entries"]
+        for entry in history.json()["structuredContent"]["entries"]
     )
 
     audit_text = settings.audit_log_path.read_text(encoding="utf-8")
@@ -179,7 +181,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
     assert any(marker in data for data in retained_payloads)
 
     records = _audit_records(settings.audit_log_path)
-    task_starts, task_ends = _tool_call_pairs(records, "task", transport="http")
+    task_starts, task_ends = _tool_call_pairs(records, "task", transport="mcp")
     assert len(task_starts) == 3
     assert len(task_ends) == 3
     assert all(row.get("task") == task_id for row in task_ends)
@@ -192,7 +194,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
     assert all(row["output"] != "<redacted>" for row in task_ends)
 
     plan_starts, plan_ends = _tool_call_pairs(
-        records, "task_plan", transport="http"
+        records, "task_plan", transport="mcp"
     )
     assert len(plan_starts) == 2
     assert len(plan_ends) == 2
@@ -202,7 +204,7 @@ def test_task_tool_audit_records_durable_report_and_plan_prose(
     assert plan_ends[1]["ok"] is False
 
     todo_starts, todo_ends = _tool_call_pairs(
-        records, "write_todos", transport="http"
+        records, "write_todos", transport="mcp"
     )
     assert todo_starts[0]["task"] == task_id
     assert todo_starts[0]["input"] != "<redacted>"

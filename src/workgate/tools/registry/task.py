@@ -26,10 +26,7 @@ task_tool = TaskToolRegistry.get_tool_decorator()
 
 
 @task_tool(
-    http_method="POST",
-    http_path="/tools/task",
     oauth_scopes=("shell:read", "shell:write"),
-    timeout_cancellable=False,
 )
 async def task(
     action: TaskActionArg,
@@ -56,10 +53,7 @@ async def task(
 
 
 @task_tool(
-    http_method="POST",
-    http_path="/tools/task-plan",
     oauth_scopes=("shell:read", "shell:write"),
-    timeout_cancellable=False,
 )
 async def task_plan(
     task_id: TaskIdArg,

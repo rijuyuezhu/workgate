@@ -1,9 +1,13 @@
-"""Build the FastAPI REST HTTP application."""
+"""Build the HTTP debug host for the canonical MCP tool surface."""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
+from mcp.types import CallToolResult, TextContent
 from starlette.routing import BaseRoute
 
 from ... import __version__
@@ -20,17 +24,13 @@ from ...tools.catalog import ToolCatalog
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..execution_context import ControlExecutionContextMiddleware
 from ..executor_bootstrap import executor_bootstrap_routes
+from ..mcp.app import build_mcp
 from ..runtime import ControlRuntime, build_control_runtime
 from ..server import run_uvicorn
 from .errors import install_error_handlers
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
 from .stream_routes import terminal_stream_routes
-from .tool_routes import (
-    install_tool_cache_control_middleware,
-    install_tools_timeout_middleware,
-    register_http_tool_routes,
-)
 
 
 def _fastapi_documentation_routes(app: FastAPI) -> list[BaseRoute]:
@@ -58,7 +58,7 @@ def _install_public_routes(
     *,
     runtime: ControlRuntime | None = None,
 ) -> list[BaseRoute]:
-    """Install public non-tool routes for the REST app. It returns public routes for oauth usage."""
+    """Install non-tool HTTP routes and identify paths exempt from OAuth."""
     documentation_routes = _fastapi_documentation_routes(app)
     installed_routes = [
         *public_http_routes(settings),
@@ -83,7 +83,7 @@ def _install_public_routes(
 
 
 def _control_runtime_lifespan(runtime: ControlRuntime):
-    """Build the REST host lifespan for one control runtime owner."""
+    """Build the HTTP host lifespan for one control runtime owner."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
@@ -98,7 +98,7 @@ def build_http_app(
     tool_catalog: ToolCatalog | None = None,
     runtime: ControlRuntime | None = None,
 ) -> FastAPI:
-    """Construct the authenticated REST API from one explicit tool catalog."""
+    """Expose registered MCP tools through one thin authenticated debug API."""
     if runtime is None and tool_catalog is None:
         runtime = build_control_runtime(get_settings())
     settings = (
@@ -116,7 +116,7 @@ def build_http_app(
         )
 
     app = FastAPI(
-        title="workgate REST API",
+        title="workgate debug HTTP API",
         version=__version__,
         lifespan=(
             _control_runtime_lifespan(runtime) if runtime is not None else None
@@ -125,17 +125,40 @@ def build_http_app(
 
     app.state.control_runtime = runtime
     install_error_handlers(app)
-    install_tools_timeout_middleware(app, catalog)
     public_routes = _install_public_routes(app, settings, runtime=runtime)
-    register_http_tool_routes(
-        app,
-        catalog,
-        agent_activity_observer=(
-            None
-            if runtime is None or getattr(runtime, "task_service", None) is None
-            else runtime.task_service.observe_agent_activity
-        ),
-    )
+    mcp = build_mcp(tool_catalog=catalog, runtime=runtime)
+
+    @app.get("/tools")
+    async def list_debug_tools(response: Response) -> dict[str, object]:
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "tools": [
+                tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+                for tool in await mcp.list_tools()
+            ]
+        }
+
+    @app.post("/tools/{tool_name}")
+    async def call_debug_tool(
+        tool_name: str,
+        arguments: dict[str, object] | None = None,
+    ) -> JSONResponse:
+        try:
+            result = await mcp.call_tool(tool_name, arguments or {})
+        except ToolError as exc:
+            result = CallToolResult(
+                is_error=True, content=[TextContent(type="text", text=str(exc))]
+            )
+        except MCPError as exc:
+            # Protocol errors are not tool results; preserve the SDK error data.
+            return JSONResponse(
+                status_code=400,
+                content=exc.error.model_dump(mode="json", exclude_none=True),
+            )
+        return JSONResponse(
+            result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+
     ui_routes, ui_public_routes = human_ui_routes(settings)
     app.router.routes.extend(ui_routes)
     public_routes.extend(ui_public_routes)
@@ -156,7 +179,6 @@ def build_http_app(
     )
     if settings.auth_mode != "none":
         app.add_middleware(AuthMiddleware, public_routes=public_routes)
-    install_tool_cache_control_middleware(app)
     state_store = (
         runtime.state_store
         if runtime is not None
@@ -179,7 +201,7 @@ def run_http(
     runtime: ControlRuntime,
     tool_catalog: ToolCatalog | None = None,
 ) -> None:
-    """Run the REST HTTP server with one explicit control runtime owner."""
+    """Run debug HTTP with one explicit control runtime owner."""
     validate_public_oauth_configuration(runtime.config)
     app = build_http_app(tool_catalog=tool_catalog, runtime=runtime)
     run_uvicorn(app, config=runtime.config)

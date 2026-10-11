@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from tests.e2e_helpers import RestToolClient, run_http_process
+from tests.e2e_helpers import DebugHttpToolClient, run_http_process
 from tests.e2e_scenarios import (
     assert_core_tool_surface,
     exercise_environment_tool,
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 @pytest.mark.asyncio
 async def test_http_rest_process_exercises_core_tool_categories(tmp_path):
     async with run_http_process(tmp_path, mode="http") as (base_url, workspace):
-        client = RestToolClient(base_url)
+        client = DebugHttpToolClient(base_url)
 
         await assert_core_tool_surface(client)
         await exercise_environment_tool(client, workspace)
@@ -38,7 +38,7 @@ async def test_http_rest_process_exercises_core_tool_categories(tmp_path):
 @pytest.mark.asyncio
 async def test_http_rest_process_exercises_file_download_links(tmp_path):
     async with run_http_process(tmp_path, mode="http") as (base_url, workspace):
-        client = RestToolClient(base_url)
+        client = DebugHttpToolClient(base_url)
         payload = b"download-payload-\x00-binary"
         (workspace / "artifact.bin").write_bytes(payload)
         session = await client.call_tool("session_start", {"workdir": "."})

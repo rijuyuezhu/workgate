@@ -183,7 +183,9 @@ def test_http_shell_error_is_not_misreported_as_workspace_path(
 
     app, _harness = build_paired_http_app(get_settings())
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
     response = client.post(
         "/tools/bash",
         json={
@@ -192,12 +194,11 @@ def test_http_shell_error_is_not_misreported_as_workspace_path(
         },
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"] == "FileNotFoundError"
-    assert response.json()["message"] == (
-        f"FileNotFoundError: Shell executable not found: {executable}"
-    )
-    assert str(tmp_path) not in response.json()["message"]
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    text = response.json()["content"][0]["text"]
+    assert "Shell executable not found" in text
+    assert str(tmp_path) not in text
 
 
 @pytest.mark.asyncio

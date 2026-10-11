@@ -48,8 +48,6 @@ def _bash_description(context: McpToolContext) -> str:
 
 
 @shell_tool(
-    http_method="POST",
-    http_path="/tools/bash",
     description=_bash_description,
     oauth_scopes=("shell:read", "shell:execute"),
 )
@@ -87,8 +85,6 @@ def _run_python_code_description(context: McpToolContext) -> str:
 
 
 @shell_tool(
-    http_method="POST",
-    http_path="/tools/run_python_code",
     description=_run_python_code_description,
     oauth_scopes=("shell:read", "shell:execute"),
 )
@@ -121,8 +117,6 @@ async def run_python_code(
 
 
 @shell_tool(
-    http_method="POST",
-    http_path="/tools/send_persistent_shell_input",
     oauth_scopes=("shell:read", "shell:execute"),
 )
 async def send_persistent_shell_input(
@@ -137,8 +131,6 @@ async def send_persistent_shell_input(
 
 
 @shell_tool(
-    http_method="POST",
-    http_path="/tools/resize_persistent_shell",
     oauth_scopes=("shell:read", "shell:execute"),
 )
 async def resize_persistent_shell(
@@ -153,8 +145,6 @@ async def resize_persistent_shell(
 
 
 @shell_tool(
-    http_method="POST",
-    http_path="/tools/read_persistent_shell_output",
     annotations="read_only",
     oauth_scopes=("shell:read",),
 )
@@ -169,8 +159,6 @@ async def read_persistent_shell_output(
 
 
 @shell_tool(
-    http_method="POST",
-    http_path="/tools/kill_persistent_shell",
     oauth_scopes=("shell:read", "shell:execute"),
 )
 async def kill_persistent_shell(
@@ -183,8 +171,6 @@ async def kill_persistent_shell(
 
 
 @shell_tool(
-    http_method="GET",
-    http_path="/tools/list_persistent_shells",
     annotations="read_only",
     oauth_scopes=("shell:read",),
 )

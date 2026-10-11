@@ -16,8 +16,6 @@ todo_tool = TodoToolRegistry.get_tool_decorator()
 
 
 @todo_tool(
-    http_method="GET",
-    http_path="/tools/todo",
     annotations="read_only",
     oauth_scopes=("shell:read",),
 )
@@ -28,10 +26,7 @@ async def read_todos(task_id: TaskIdArg) -> ReadTodosOutput:
 
 
 @todo_tool(
-    http_method="POST",
-    http_path="/tools/todo",
     oauth_scopes=("shell:read", "shell:write"),
-    timeout_cancellable=False,
 )
 async def write_todos(
     task_id: TaskIdArg,

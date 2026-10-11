@@ -17,8 +17,6 @@ image_tool = ImageToolRegistry.get_tool_decorator()
 
 
 @image_tool(
-    http_method=None,
-    http_path=None,
     annotations="read_only",
     oauth_scopes=("shell:read",),
 )

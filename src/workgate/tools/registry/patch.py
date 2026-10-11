@@ -23,11 +23,8 @@ def _apply_patch_description(context: McpToolContext) -> str:
 
 
 @patch_tool(
-    http_method="POST",
-    http_path="/tools/apply_patch",
     description=_apply_patch_description,
     oauth_scopes=("shell:read", "shell:write"),
-    timeout_cancellable=False,
 )
 async def apply_patch(
     session_id: SessionIdArg,

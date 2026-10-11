@@ -60,8 +60,6 @@ agent_bridge_tool = AgentBridgeToolRegistry.get_tool_decorator()
 
 
 @agent_bridge_tool(
-    http_method="GET",
-    http_path="/tools/agent_config_status",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -71,8 +69,6 @@ async def agent_config_status() -> AgentConfigStatusOutput:
 
 
 @agent_bridge_tool(
-    http_method="GET",
-    http_path="/tools/list_agent_skills",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -84,8 +80,6 @@ async def list_agent_skills(
 
 
 @agent_bridge_tool(
-    http_method="POST",
-    http_path="/tools/activate_agent_skill",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -98,8 +92,6 @@ async def activate_agent_skill(
 
 
 @agent_bridge_tool(
-    http_method="POST",
-    http_path="/tools/read_agent_skill_file",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -115,8 +107,6 @@ async def read_agent_skill_file(
 
 
 @agent_bridge_tool(
-    http_method="GET",
-    http_path="/tools/list_agent_mcp_servers",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -144,8 +134,6 @@ _LOCAL_DISCOVERY = McpDiscovery(_local_search_rows)
 
 
 @agent_bridge_tool(
-    http_method="POST",
-    http_path="/tools/search_agent_mcp_tools",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -170,8 +158,6 @@ async def search_agent_mcp_tools(
 
 
 @agent_bridge_tool(
-    http_method="POST",
-    http_path="/tools/inspect_agent_mcp_tool",
     enabled=_agent_bridge_enabled,
     annotations="read_only",
 )
@@ -191,8 +177,6 @@ async def inspect_agent_mcp_tool(
 
 
 @agent_bridge_tool(
-    http_method="POST",
-    http_path="/tools/call_agent_mcp_tool",
     enabled=_agent_bridge_enabled,
 )
 async def call_agent_mcp_tool(
@@ -212,8 +196,6 @@ async def call_agent_mcp_tool(
 
 
 @agent_bridge_tool(
-    http_method="POST",
-    http_path="/tools/manage_agent_mcp_server",
     enabled=_agent_bridge_enabled,
 )
 async def manage_agent_mcp_server(

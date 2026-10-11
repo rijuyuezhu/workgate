@@ -24,10 +24,7 @@ def _executor_tool_enabled(settings: ControlConfig) -> bool:
 
 
 @executor_tool(
-    http_method="POST",
-    http_path="/tools/executor",
     oauth_scopes=("executor:use",),
-    timeout_cancellable=False,
     enabled=_executor_tool_enabled,
 )
 async def executor(

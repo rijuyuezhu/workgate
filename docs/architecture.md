@@ -18,7 +18,7 @@ workgate/
   standalone/             lifecycle-only local two-process supervisor
   control/
     mcp/                   MCP control-plane adapter and middleware
-    http/                  REST/tool HTTP control-plane adapter
+    http/                  debug HTTP control-plane adapter
   executor/
     jobs/                  shell-backed job lifecycle and durable runner
     tool_session/          machine session, grounding, and resource ownership
@@ -36,7 +36,7 @@ workgate/
   utils/                   small dependency-leaf technical primitives
 ```
 
-MCP and REST/tool HTTP delivery adapters live under `control`. The executor
+MCP and debug HTTP delivery adapters live under `control`. The executor
 process composition owner and all machine-authoritative session, filesystem,
 shell/job, PTY, and local-integration implementations live under `executor`.
 The standalone supervisor may compose process lifecycle and private launcher
@@ -98,7 +98,7 @@ to establish the colocated executor's normal long-lived profile. The supervisor
 does not hold a shared mutable runtime `Settings` object with either child.
 
 The control runtime is entered by the transport host, not by domain code.
-REST HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
+Debug HTTP owns it through the FastAPI application lifespan. MCP-over-HTTP owns
 it through the outer Starlette lifespan that also owns the SDK session manager.
 The MCP v2 SDK owns HTTP session capacity and idle expiry via `max_sessions`
 and `session_idle_timeout`; a full session pool receives the SDK-native HTTP 503.
@@ -166,7 +166,7 @@ The `control/mcp` package owns framework-specific MCP composition and runtime
 policy. It converts transport-neutral tool registries and shared services into a
 MCPServer server, then runs that server over stdio or wraps the MCP SDK's ASGI app
 for HTTP delivery. The HTTP wrapper installs the same `ui/http` routes used by
-the REST control adapter before the catch-all MCP mount. The browser shell and assets
+the debug HTTP control adapter before the catch-all MCP mount. The browser shell and assets
 remain public, while WebUI APIs retain their OAuth and session access checks.
 
 Allowed dependencies include tools, operations, OAuth adapters, remote route
@@ -178,39 +178,30 @@ selects and invokes it after argparse dispatch; `main.py` imports only that regi
 Rejected ownership alternatives:
 
 - `server/mcp`: “server” obscures that this is one selectable control adapter beside
-  REST/tool HTTP delivery and WebUI delivery.
+  debug HTTP and WebUI delivery.
 - `http`: stdio execution, MCPServer registration, MCP sessions, and MCP tool
   wrappers are MCP delivery-adapter concerns, not shared HTTP infrastructure.
 - `tools`: tool declarations are transport-neutral; MCPServer registration and
   MCP-specific presentation must depend on tools, not the reverse.
 
-## `control/http`: REST/tool HTTP control adapter
+## `control/http`: HTTP debug and WebUI control adapter
 
-The `control/http` package owns the FastAPI application that exposes routed tool
-registries as REST endpoints. It defines the REST error representation, applies
-tool-route timeout and cache policy, records HTTP-routed tool invocations, and
-composes public route contributions and authentication into one runnable app.
+The `control/http` package assembles the FastAPI application for WebUI,
+control/executor routes, authentication, and an optional debug HTTP tool API.
+Debug tool discovery and invocation use the **registered MCPServer** directly:
+`GET /tools` lists MCP tools and `POST /tools/{tool_name}` returns an MCP tool
+result. Tool validation, scope checks, timeouts, and audits belong to the MCP
+surface; HTTP does not maintain a second tool registry or error contract.
 
-Allowed dependencies include tools, operations, OAuth adapters, executor route
-contributions, delivery-adapter-neutral `http` infrastructure, framework-specific
-FastAPI/Starlette types, and the explicit `ui.http.routes.human_ui_routes`
-composition contract. Lower-level packages must not import this control adapter.
-
-Rejected ownership alternatives:
-
-- `server/http`: “server” conflates executable REST composition with WebUI
-  delivery and shared HTTP infrastructure.
-- top-level `http`: generic request limits, health, and download response
-  mechanics are shared; REST tool registration and error envelopes are not.
-- `tools`: REST route generation consumes transport-neutral tool registries;
-  putting it in `tools` would make the domain layer own a specific delivery adapter.
-- `ui/http`: the REST control adapter consumes UI route contributions, but it also runs
-  correctly without WebUI and owns all non-UI REST tool behavior.
+Shared request limits, health, and download response mechanics belong in the
+top-level `http` package. Executor and WebUI routes retain their independent
+non-tool responsibilities. The HTTP adapter must not be imported by lower-level
+packages.
 
 ## `http`: delivery-adapter-neutral HTTP infrastructure
 
 The `http` package contains ASGI and HTTP behavior needed by more than one control
-delivery adapter. It does not decide which adapter runs and does not own REST tools,
+delivery adapter. It does not decide which adapter runs and does not register model-facing tools,
 MCP protocol behavior, OAuth business rules, executor business logic, or
 WebUI workflows.
 
@@ -221,7 +212,7 @@ namespace may be reintroduced as an intermediary.
 
 `tests/test_http_route_parity.py` locks the shared `/healthz`, `/readyz`,
 `/version`, and `/download/{token}` route signatures, order, installation, and
-public-matcher classification across both REST and MCP-over-HTTP control adapters.
+public-matcher classification across both debug HTTP and MCP-over-HTTP control adapters.
 
 Rejected ownership alternatives:
 
@@ -341,7 +332,7 @@ Rejected ownership alternatives:
   that these files belong exclusively to the WebUI product surface.
 - `ui/http/static`: HTTP adapters serve the files, but the same assets are UI
   product resources packaged independently of any specific control delivery adapter.
-- `control/http`: the REST control adapter composes routes and middleware; it must not
+- `control/http`: the debug HTTP control adapter composes routes and middleware; it must not
   own browser presentation resources.
 
 ### `ui/http`: WebUI delivery adapters
@@ -349,15 +340,15 @@ Rejected ownership alternatives:
 The `ui/http` package owns Starlette request parsing, authorization checks,
 response normalization, route composition, and WebSocket delivery for the
 WebUI. It may consume transport-neutral UI core and domain capabilities, but it must
-not depend on either control delivery adapter. The REST control adapter consumes only
+not depend on either control delivery adapter. The debug HTTP control adapter consumes only
 `ui.http.routes.human_ui_routes` during application composition; no intermediate
 `server` namespace remains.
 
 Rejected ownership alternatives:
 
 - `server/http`: that path mixed one product surface with a generic “server”
-  namespace and obscured the separation between MCP and REST control adapters.
-- `control/http`: the REST control adapter assembles middleware and route contributions;
+  namespace and obscured the separation between MCP and debug HTTP control adapters.
+- `control/http`: the debug HTTP control adapter assembles middleware and route contributions;
   it should not own WebUI feature adapters or static assets.
 - transport-neutral `ui` core modules: Starlette requests, responses, scopes, and
   WebSockets are delivery details and must not leak into reusable UI contracts.

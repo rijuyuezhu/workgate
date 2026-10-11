@@ -33,7 +33,6 @@ from ...schemas.result_models.transfer import (
     TransferUnpackArchiveOutput,
     TransferWriteChunkOutput,
 )
-from ..contracts import HttpToolRoute
 from ..declarative import DeclarativeToolRegistry
 
 
@@ -48,10 +47,6 @@ class TransferToolRegistry(DeclarativeToolRegistry):
     name = "transfer"
     """Registry group name used for tool-surface organization."""
 
-    def http_routes(self) -> tuple[HttpToolRoute, ...]:
-        """Keep raw transfer primitives off the public REST surface."""
-        return ()
-
     def register_mcp(self, *args: Any, **kwargs: Any) -> None:
         """Keep raw transfer primitives off the public MCP surface."""
         return None
@@ -61,8 +56,6 @@ transfer_tool = TransferToolRegistry.get_tool_decorator()
 
 
 @transfer_tool(
-    http_method="POST",
-    http_path="/tools/transfer_stat",
     annotations="read_only",
 )
 async def transfer_stat(
@@ -76,7 +69,7 @@ async def transfer_stat(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_copy_file")
+@transfer_tool()
 async def transfer_copy_file(
     source_path: TransferPathArg,
     destination_path: TransferDestinationPathArg,
@@ -98,8 +91,6 @@ async def transfer_copy_file(
 
 
 @transfer_tool(
-    http_method="POST",
-    http_path="/tools/transfer_read_chunk",
     annotations="read_only",
 )
 async def transfer_read_chunk(
@@ -118,7 +109,7 @@ async def transfer_read_chunk(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_begin_write")
+@transfer_tool()
 async def transfer_begin_write(
     path: TransferPathArg,
     overwrite: TransferOverwriteArg = True,
@@ -137,7 +128,7 @@ async def transfer_begin_write(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_write_chunk")
+@transfer_tool()
 async def transfer_write_chunk(
     path: TransferPathArg,
     transfer_id: TransferIdArg,
@@ -158,7 +149,7 @@ async def transfer_write_chunk(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_finish_write")
+@transfer_tool()
 async def transfer_finish_write(
     path: TransferPathArg,
     transfer_id: TransferIdArg,
@@ -177,7 +168,7 @@ async def transfer_finish_write(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_abort_write")
+@transfer_tool()
 async def transfer_abort_write(
     path: TransferPathArg,
     transfer_id: TransferIdArg,
@@ -192,7 +183,7 @@ async def transfer_abort_write(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_alloc_temp_path")
+@transfer_tool()
 async def transfer_alloc_temp_path(
     suffix: TransferSuffixArg = ".bin",
     session_id: OptionalSessionIdArg = None,
@@ -203,7 +194,7 @@ async def transfer_alloc_temp_path(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_pack_dir")
+@transfer_tool()
 async def transfer_pack_dir(
     path: TransferPathArg,
     compression: TransferCompressionArg = "gz",
@@ -218,7 +209,7 @@ async def transfer_pack_dir(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_unpack_archive")
+@transfer_tool()
 async def transfer_unpack_archive(
     archive_path: TransferArchivePathArg,
     dst_path: TransferDestinationPathArg,
@@ -239,7 +230,7 @@ async def transfer_unpack_archive(
     )
 
 
-@transfer_tool(http_method="POST", http_path="/tools/transfer_delete_temp_path")
+@transfer_tool()
 async def transfer_delete_temp_path(
     path: TransferPathArg,
 ) -> TransferDeleteTempPathOutput:

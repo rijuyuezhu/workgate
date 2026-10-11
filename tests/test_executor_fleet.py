@@ -2,12 +2,14 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 
 from workgate import __version__
 from workgate.config.settings import Settings
 from workgate.control import executors as executor_fleet_module
 from workgate.control.executor_transport import ExecutorTransportError
+from workgate.control.mcp.app import build_mcp
 from workgate.control.runtime import build_control_runtime
 from workgate.control.state import (
     ControlSessionRecord,
@@ -123,11 +125,14 @@ async def test_fleet_list_explains_eligibility_and_scale_up(
         assert entry.session_admission is True
         assert entry.session_admission_reasons == []
 
-        routed = await runtime.tool_catalog.handlers()["executor"](
-            {"action": "inspect", "executor_id": executor_id}
+        routed = await build_mcp(runtime=runtime).call_tool(
+            "executor", {"action": "inspect", "executor_id": executor_id}
         )
-        assert routed.executor is not None
-        assert routed.executor.executor_id == executor_id
+        assert isinstance(routed, CallToolResult)
+        assert routed.structured_content is not None
+        assert (
+            routed.structured_content["executor"]["executor_id"] == executor_id
+        )
 
 
 @pytest.mark.asyncio
@@ -353,22 +358,21 @@ async def test_executor_tool_requires_executor_use_scope(
 ) -> None:
     runtime = _runtime(tmp_path)
     async with runtime.lifespan():
-        handler = runtime.tool_catalog.handlers()["executor"]
+        mcp = build_mcp(runtime=runtime)
 
         token = bind_oauth_claims({"scope": "shell:read"})
         try:
-            with pytest.raises(HTTPException) as exc_info:
-                await handler({"action": "list"})
+            with pytest.raises(
+                ToolError, match="Missing required OAuth scope: executor:use"
+            ):
+                await mcp.call_tool("executor", {"action": "list"})
         finally:
             reset_oauth_claims(token)
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == (
-            "Missing required OAuth scope: executor:use"
-        )
-
         token = bind_oauth_claims({"scope": "executor:use"})
         try:
-            result = await handler({"action": "list"})
+            result = await mcp.call_tool("executor", {"action": "list"})
         finally:
             reset_oauth_claims(token)
-        assert result.action == "list"
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        assert result.structured_content["action"] == "list"

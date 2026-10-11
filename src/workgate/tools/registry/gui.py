@@ -28,8 +28,6 @@ gui_tool = GuiToolRegistry.get_tool_decorator()
 
 
 @gui_tool(
-    http_method=None,
-    http_path=None,
     annotations="read_only",
     oauth_scopes=("gui:use",),
 )
@@ -40,8 +38,6 @@ async def gui_list(session_id: SessionIdArg) -> GuiListOutput:
 
 
 @gui_tool(
-    http_method=None,
-    http_path=None,
     oauth_scopes=("gui:use",),
 )
 async def gui_state(
@@ -65,10 +61,7 @@ async def gui_state(
 
 
 @gui_tool(
-    http_method=None,
-    http_path=None,
     oauth_scopes=("gui:use",),
-    timeout_cancellable=False,
 )
 async def gui_action(
     session_id: SessionIdArg,

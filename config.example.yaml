@@ -3,7 +3,7 @@
 
 # Server.
 # Server transport mode.
-# Choices: mcp, http, both, stdio.
+# Choices: mcp, http, stdio.
 mode: "mcp"
 # Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments.
 host: "127.0.0.1"

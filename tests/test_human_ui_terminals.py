@@ -270,7 +270,7 @@ def test_terminal_http_surface_preserves_explicit_session_ownership(
     client, backend, harness = _client(monkeypatch, tmp_path)
     started_session = client.post("/tools/session_start", json={"workdir": "."})
     assert started_session.status_code == 200
-    session_id = started_session.json()["session_id"]
+    session_id = started_session.json()["structuredContent"]["session_id"]
 
     listed = client.get("/api/ui/terminals", params={"session_id": session_id})
     started = client.post(

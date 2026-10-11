@@ -197,6 +197,7 @@ class WorkgateMCPServer(MCPServer):
         self._workgate_oauth_state = oauth_state
         self._workgate_managed_jobs_runtime = managed_jobs_runtime
         self._workgate_agent_activity_observer = agent_activity_observer
+        self._registered_tool_names: set[str] = set()
 
     def add_tool(
         self,
@@ -210,6 +211,8 @@ class WorkgateMCPServer(MCPServer):
         structured_output: bool | None = None,
     ) -> None:
         tool_name = name or fn.__name__
+        if tool_name in self._registered_tool_names:
+            raise ValueError(f"Duplicate MCP tool: {tool_name}")
         observer = (
             None
             if _mcp_tool_is_app_only(meta)
@@ -233,3 +236,4 @@ class WorkgateMCPServer(MCPServer):
             meta=meta,
             structured_output=structured_output,
         )
+        self._registered_tool_names.add(tool_name)

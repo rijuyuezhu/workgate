@@ -84,7 +84,7 @@ def _register_file(
 def _public_session(client: FastAPITestClient) -> str:
     response = client.post("/tools/session_start", json={"workdir": "."})
     assert response.status_code == 200
-    return str(response.json()["session_id"])
+    return str(response.json()["structuredContent"]["session_id"])
 
 
 def test_shareable_size_rejects_invalid_and_over_limit_values() -> None:
@@ -104,7 +104,7 @@ def test_public_create_share_link_serves_executor_snapshot(
     session_id = _public_session(client)
 
     created = client.post(
-        "/tools/file_link/create",
+        "/tools/create_file_link",
         json={
             "session_id": session_id,
             "path": "hello.txt",
@@ -114,13 +114,13 @@ def test_public_create_share_link_serves_executor_snapshot(
         },
     )
     assert created.status_code == 200
-    link = created.json()
+    link = created.json()["structuredContent"]
     assert link["url"].startswith("https://files.example.test/download/")
     assert link["link_id"].startswith("link_")
     assert "payload_id" not in link
-    listed = client.get(
-        "/tools/file_link/list", params={"session_id": session_id}
-    ).json()["links"]
+    listed = client.post(
+        "/tools/list_file_links", json={"session_id": session_id}
+    ).json()["structuredContent"]["links"]
     assert listed[0]["link_id"] == link["link_id"]
     assert listed[0]["token_fingerprint"] == download_token_fingerprint(
         link["token"]
@@ -193,33 +193,33 @@ def test_file_links_are_shared_session_owned(tmp_path, monkeypatch):
     second = _public_session(client)
 
     link = client.post(
-        "/tools/file_link/create",
+        "/tools/create_file_link",
         json={"session_id": first, "path": "hello.txt"},
-    ).json()
+    ).json()["structuredContent"]
 
-    first_links = client.get(
-        "/tools/file_link/list", params={"session_id": first}
-    ).json()["links"]
-    second_links = client.get(
-        "/tools/file_link/list", params={"session_id": second}
-    ).json()["links"]
+    first_links = client.post(
+        "/tools/list_file_links", json={"session_id": first}
+    ).json()["structuredContent"]["links"]
+    second_links = client.post(
+        "/tools/list_file_links", json={"session_id": second}
+    ).json()["structuredContent"]["links"]
     assert [item["link_id"] for item in first_links] == [link["link_id"]]
     assert "token" not in first_links[0]
     assert "url" not in first_links[0]
     assert second_links == []
 
     wrong_owner = client.post(
-        "/tools/file_link/revoke",
+        "/tools/revoke_file_link",
         json={"session_id": second, "link_id": link["link_id"]},
     )
     assert wrong_owner.status_code == 200
-    assert wrong_owner.json()["revoked"] is False
+    assert wrong_owner.json()["structuredContent"]["revoked"] is False
     owner = client.post(
-        "/tools/file_link/revoke",
+        "/tools/revoke_file_link",
         json={"session_id": first, "link_id": link["link_id"]},
     )
     assert owner.status_code == 200
-    assert owner.json()["revoked"] is True
+    assert owner.json()["structuredContent"]["revoked"] is True
 
 
 @pytest.mark.asyncio
@@ -305,13 +305,13 @@ def test_download_tokens_are_visible_in_owner_audit_logs(tmp_path, monkeypatch):
     client = FastAPITestClient(app)
     session_id = _public_session(client)
     link = client.post(
-        "/tools/file_link/create",
+        "/tools/create_file_link",
         json={"session_id": session_id, "path": "hello.txt"},
-    ).json()
+    ).json()["structuredContent"]
     token = link["token"]
     assert (
         client.post(
-            "/tools/file_link/revoke",
+            "/tools/revoke_file_link",
             json={"session_id": session_id, "link_id": link["link_id"]},
         ).status_code
         == 200
@@ -345,11 +345,11 @@ def test_file_link_remains_available_after_executor_goes_offline(
     client = FastAPITestClient(app)
     session_id = _public_session(client)
     response = client.post(
-        "/tools/file_link/create",
+        "/tools/create_file_link",
         json={"session_id": session_id, "path": "offline.txt"},
     )
     assert response.status_code == 200
-    link = response.json()
+    link = response.json()["structuredContent"]
 
     async def executor_offline(*args, **kwargs):
         raise RuntimeError("executor is offline")

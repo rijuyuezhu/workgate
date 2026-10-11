@@ -66,7 +66,7 @@ valid but lacks a required scope.
 
 ## Common problems
 
-- **`/ui` returns 404:** confirm the server is in supported `mcp` or `http` mode and the UI is enabled. The reserved `both` mode does not start a server.
+- **`/ui` returns 404:** confirm the server is in supported `mcp` or `http` mode and the UI is enabled.
 - **An executor-backed panel is unavailable:** verify that the executor is online, the session is bound to it, and it supports the requested operation.
 - **A terminal looks disconnected:** verify the executor connection, then reattach to the persistent shell.
 - **An action is forbidden:** sign in again with the scopes required for that operation.

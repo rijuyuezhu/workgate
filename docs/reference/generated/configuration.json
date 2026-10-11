@@ -42,7 +42,7 @@
           {
             "code": "WORKGATE_MODE"
           },
-          "mcp | http | both | stdio",
+          "mcp | http | stdio",
           {
             "code": "mcp"
           },
@@ -1995,7 +1995,6 @@
       "choices": [
         "mcp",
         "http",
-        "both",
         "stdio"
       ],
       "cli": "--mode",
@@ -2006,7 +2005,7 @@
       "name": "mode",
       "nullable": false,
       "section": "Server",
-      "type": "mcp | http | both | stdio",
+      "type": "mcp | http | stdio",
       "unset_cli": null
     },
     {

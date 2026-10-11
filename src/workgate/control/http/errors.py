@@ -7,7 +7,7 @@ from ...errors import SessionTerminationRequestedError, public_error_type
 
 
 def install_error_handlers(app: FastAPI) -> None:
-    """Install JSON exception handlers for REST API errors."""
+    """Install JSON handlers for non-tool HTTP errors."""
 
     @app.exception_handler(SessionTerminationRequestedError)
     async def session_termination_handler(

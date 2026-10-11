@@ -37,8 +37,6 @@ workspace_connector_tool = WorkspaceConnectorToolRegistry.get_tool_decorator()
 
 
 @workspace_connector_tool(
-    http_method="POST",
-    http_path="/tools/workspace_search",
     oauth_scopes=("shell:read",),
     annotations="read_only",
     mcp_error_handler=search_error_output,
@@ -52,8 +50,6 @@ async def workspace_search(
 
 
 @workspace_connector_tool(
-    http_method="POST",
-    http_path="/tools/fetch",
     oauth_scopes=("shell:read",),
     annotations="read_only",
     mcp_error_handler=fetch_error_output,

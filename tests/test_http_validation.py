@@ -46,11 +46,9 @@ def test_http_missing_required_argument_returns_validation_error(
 
     response = TestClient(build_http_app()).post("/tools/read", json={})
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": "validation_error",
-        "message": "Missing required argument: session_id",
-    }
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert "session_id" in response.json()["content"][0]["text"]
 
 
 def test_http_argument_validation_uses_consistent_error_envelope(
@@ -68,9 +66,9 @@ def test_http_argument_validation_uses_consistent_error_envelope(
         json={"workdir": ".", "label": ""},
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"] == "validation_error"
-    assert "at least 1 character" in response.json()["message"]
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert "at least 1 character" in response.json()["content"][0]["text"]
 
 
 def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):
@@ -84,11 +82,9 @@ def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):
         json={"session_id": "BAD00000", "path": "missing.txt"},
     )
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": "validation_error",
-        "message": "unknown session_id 'BAD00000'; call session_start first",
-    }
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert response.json()["content"][0]["text"] == "Error executing tool read"
 
 
 def test_http_app_exposes_oauth_public_routes(tmp_path, monkeypatch):
@@ -139,8 +135,8 @@ def test_http_localhost_bypass_is_opt_in(tmp_path, monkeypatch):
         base_url="http://127.0.0.1:8765",
         client=("127.0.0.1", 50000),
     ).post("/tools/read", json={})
-    assert bypassed.status_code == 400
-    assert bypassed.json()["error"] == "validation_error"
+    assert bypassed.status_code == 200
+    assert bypassed.json()["isError"] is True
 
 
 @pytest.mark.parametrize(
@@ -168,8 +164,8 @@ def test_http_localhost_bypass_accepts_direct_loopback(
         build_http_app(), base_url=base_url, client=peer
     ).post("/tools/read", json={}, headers=headers)
 
-    assert response.status_code == 400
-    assert response.json()["error"] == "validation_error"
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
 
 
 @pytest.mark.parametrize(
@@ -247,3 +243,39 @@ def test_direct_localhost_predicate_fails_closed_on_ambiguous_inputs(
     request = _auth_request(peer=peer, host=host, headers=headers)
 
     assert is_direct_localhost_request(request) is expected
+
+
+def test_non_tool_http_routes_keep_error_handlers() -> None:
+    """MCP errors stay in the tool result, but unrelated HTTP routes keep HTTP errors."""
+    from fastapi import FastAPI
+
+    from workgate.control.http.errors import install_error_handlers
+
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.get("/invalid")
+    def invalid() -> None:
+        raise ValueError("invalid non-tool input")
+
+    @app.get("/os-error")
+    def os_error() -> None:
+        raise FileNotFoundError("missing non-tool file")
+
+    @app.get("/internal")
+    def internal() -> None:
+        raise RuntimeError("unexpected non-tool error")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    invalid_response = client.get("/invalid")
+    assert invalid_response.status_code == 400
+    assert invalid_response.json()["error"] == "validation_error"
+    assert invalid_response.json()["message"] == "invalid non-tool input"
+
+    missing_response = client.get("/os-error")
+    assert missing_response.status_code == 400
+    assert missing_response.json()["error"] == "FileNotFoundError"
+
+    unexpected_response = client.get("/internal")
+    assert unexpected_response.status_code == 500
+    assert unexpected_response.json()["error"] == "internal_error"

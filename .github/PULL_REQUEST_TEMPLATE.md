@@ -13,6 +13,6 @@
 ## Safety checklist
 
 - [ ] No credentials or private workspace data are committed.
-- [ ] New or changed MCP/REST tools are documented and tested.
+- [ ] New or changed MCP tools and their debug HTTP wrapper are documented and tested.
 - [ ] Host-control, remote-worker, file-link, or credential behavior is described.
 - [ ] Backwards compatibility impact is noted.

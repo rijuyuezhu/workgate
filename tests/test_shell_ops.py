@@ -12,11 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.server.mcpserver.exceptions import ToolError
 
-import workgate.control.http.tool_routes as http_tool_routes_module
 import workgate.control.mcp.watchdogs as mcp_watchdogs
 import workgate.executor.shell as shell_ops
 from tests.helpers import (
-    build_paired_http_app,
     build_paired_mcp,
     mcp_structured,
 )
@@ -1586,42 +1584,6 @@ async def test_mcp_bounded_python_watchdog_honors_requested_timeout(
     assert "completed" in result["result"]["stdout"]
 
 
-def test_http_bounded_python_watchdog_honors_requested_timeout(
-    tmp_path, monkeypatch
-):
-    from workgate.config.control import resolve_control_config
-
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    clear_settings_cache()
-    app, _harness = build_paired_http_app(get_settings())
-    client = TestClient(app)
-    session_id = client.post(
-        "/tools/session_start", json={"workdir": "."}
-    ).json()["session_id"]
-    tiny_control = replace(
-        resolve_control_config(get_settings()), tool_timeout_s=0.01
-    )
-    monkeypatch.setattr(
-        http_tool_routes_module,
-        "tool_timeout_s",
-        lambda name, *, args=None: tool_timeout_s(
-            name, config=tiny_control, args=args
-        ),
-    )
-    response = client.post(
-        "/tools/run_python_code",
-        json={
-            "session_id": session_id,
-            "code": "import time; time.sleep(0.1); print('completed')",
-            "timeout_s": 10,
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["result"]["ok"] is True
-    assert "completed" in response.json()["result"]["stdout"]
-
-
 @pytest.mark.asyncio
 async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
     tmp_path, monkeypatch
@@ -1656,121 +1618,6 @@ async def test_mcp_shell_timeout_returns_partial_output_after_cleanup(
     assert result["timed_out"] is True
     assert "partial-out" in result["stdout"]
     assert "partial-err" in result["stderr"]
-
-
-def test_rest_shell_timeout_returns_partial_output_after_cleanup(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    clear_settings_cache()
-
-    app, _harness = build_paired_http_app(get_settings())
-    client = TestClient(app)
-    session_id = client.post(
-        "/tools/session_start", json={"workdir": "."}
-    ).json()["session_id"]
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "15")
-    clear_settings_cache()
-    command = _python_shell_command(
-        'import sys, time; print("partial-out", flush=True); '
-        'print("partial-err", file=sys.stderr, flush=True); time.sleep(10)'
-    )
-    response = client.post(
-        "/tools/bash",
-        json={
-            "session_id": session_id,
-            "command": command,
-            "timeout_s": 3,
-        },
-    )
-    result = response.json()["result"]
-
-    assert response.status_code == 200
-    assert result["timed_out"] is True
-    assert "partial-out" in result["stdout"]
-    assert "partial-err" in result["stderr"]
-
-
-def test_rest_tool_watchdog_returns_timeout(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    clear_settings_cache()
-
-    async def hanging_call_tool(*args, **kwargs):
-        await asyncio.sleep(5)
-
-    monkeypatch.setattr(
-        http_tool_routes_module, "call_http_tool", hanging_call_tool
-    )
-
-    response = TestClient(build_http_app()).post(
-        "/tools/list_files", json={"path": "."}
-    )
-
-    assert response.status_code == 504
-    assert response.json()["error"] == "tool_timeout"
-
-
-def test_rest_tool_watchdog_times_out_sync_tool(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    clear_settings_cache()
-
-    app, harness = build_paired_http_app(get_settings())
-    client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
-    monkeypatch.setattr(
-        http_tool_routes_module, "tool_timeout_s", lambda _name: 0.01
-    )
-
-    original_call = harness.call
-
-    async def blocking_call(executor_id, op, args=None, **kwargs):
-        if op == "list_files":
-            await asyncio.sleep(0.2)
-        return await original_call(executor_id, op, args, **kwargs)
-
-    monkeypatch.setattr(
-        harness.control.executor_transport, "call", blocking_call
-    )
-    response = client.post(
-        "/tools/list_files",
-        json={"session_id": session["session_id"], "path": "."},
-    )
-
-    assert response.status_code == 504
-    assert response.json()["error"] == "tool_timeout"
-
-
-def test_rest_tool_watchdog_preserves_file_and_todo_mutations(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_TOOL_TIMEOUT_S", "0.01")
-    clear_settings_cache()
-
-    async def delayed_call_http_tool(tool_name, args, **_kwargs):
-        await asyncio.sleep(0.05)
-        return {"tool": tool_name}
-
-    monkeypatch.setattr(
-        http_tool_routes_module, "call_http_tool", delayed_call_http_tool
-    )
-    client = TestClient(build_http_app())
-
-    write_response = client.post("/tools/write_file", json={})
-    todo_write_response = client.post("/tools/todo", json={})
-    todo_read_response = client.get("/tools/todo")
-
-    assert write_response.status_code == 200
-    assert write_response.json() == {"tool": "write_file"}
-    assert todo_write_response.status_code == 200
-    assert todo_write_response.json() == {"tool": "write_todos"}
-    assert todo_read_response.status_code == 504
-    assert todo_read_response.json()["error"] == "tool_timeout"
 
 
 def test_rest_readyz_does_not_expose_default_workdir(tmp_path, monkeypatch):

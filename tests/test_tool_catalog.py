@@ -1,10 +1,11 @@
 import pytest
+from mcp.types import CallToolResult
 
 from workgate.config.control import ControlConfig, resolve_control_config
 from workgate.config.settings import Settings
+from workgate.control.mcp.app import build_mcp
 from workgate.tools.catalog import (
     BUILTIN_TOOL_REGISTRY_FACTORIES,
-    ToolCatalog,
     build_tool_catalog,
 )
 from workgate.tools.contracts import ToolRegistry
@@ -71,10 +72,10 @@ def test_catalog_builds_fresh_instances_but_shares_immutable_definitions() -> (
 
 
 @pytest.mark.asyncio
-async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
+async def test_factory_override_binds_dependency_to_canonical_mcp_tool() -> (
     None
 ):
-    dependency = object()
+    dependency = "bound dependency"
 
     class BoundSearchRegistry(ToolRegistry):
         name = "search"
@@ -82,14 +83,10 @@ async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
         def __init__(self, settings: ControlConfig | None) -> None:
             self.settings = settings
 
-        def http_handlers(self):
-            async def search_handler(args):
-                return {
-                    "dependency": dependency,
-                    "query": args["query"],
-                }
-
-            return {"search": search_handler}
+        def register_mcp(self, mcp, context):
+            @mcp.tool()
+            async def search(query: str) -> dict[str, str]:
+                return {"dependency": dependency, "query": query}
 
     settings = resolve_control_config(Settings())
     catalog = build_tool_catalog(
@@ -99,11 +96,15 @@ async def test_factory_override_can_bind_a_narrow_dependency_to_handler() -> (
     registry = next(
         registry for registry in catalog.registries if registry.name == "search"
     )
-
     assert isinstance(registry, BoundSearchRegistry)
     assert registry.settings is settings
-    result = await catalog.handlers()["search"]({"query": "needle"})
-    assert result == {"dependency": dependency, "query": "needle"}
+    mcp = build_mcp(tool_catalog=catalog)
+    output = await mcp.call_tool("search", {"query": "needle"})
+    assert isinstance(output, CallToolResult)
+    assert output.structured_content == {
+        "dependency": dependency,
+        "query": "needle",
+    }
 
 
 def test_catalog_rejects_unknown_factory_override() -> None:
@@ -113,19 +114,32 @@ def test_catalog_rejects_unknown_factory_override() -> None:
         )
 
 
-def test_catalog_rejects_duplicate_handler_names() -> None:
-    async def handler(_args):
-        return None
+@pytest.mark.asyncio
+async def test_internal_transfer_tools_fail_closed_when_not_composed() -> None:
+    """The internal transfer adapter must not silently run without executor services."""
+    from workgate.tools.registry.transfer import (
+        TransferToolRegistry,
+        transfer_stat,
+    )
 
-    class FirstRegistry(ToolRegistry):
-        def http_handlers(self):
-            return {"duplicate": handler}
+    assert "transfer_stat" not in {
+        tool.name for tool in await build_mcp().list_tools()
+    }
+    with pytest.raises(
+        RuntimeError, match="require composed executor services"
+    ):
+        await transfer_stat.func(path="unused")
+    assert TransferToolRegistry().name == "transfer"
 
-    class SecondRegistry(ToolRegistry):
-        def http_handlers(self):
-            return {"duplicate": handler}
 
-    catalog = ToolCatalog((FirstRegistry(), SecondRegistry()))
+def test_base_tool_registry_registers_nothing() -> None:
+    """An empty registry is legal without defining a second tool surface."""
+    from mcp.server.mcpserver import MCPServer
 
-    with pytest.raises(ValueError, match="Duplicate tool handler: duplicate"):
-        catalog.handlers()
+    empty = ToolRegistry()
+    mcp = MCPServer("empty-catalog")
+    from workgate.tools.contracts import McpToolContext
+
+    empty.register_mcp(
+        mcp, McpToolContext(settings=resolve_control_config(Settings()))
+    )

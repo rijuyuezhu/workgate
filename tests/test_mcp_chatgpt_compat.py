@@ -165,9 +165,7 @@ def test_oauth_urls_ignore_untrusted_request_host_headers(
     ("mode", "auth_mode", "expected"),
     [
         ("mcp", "oauth", "oauth2"),
-        ("both", "oauth", "oauth2"),
         ("mcp", "none", "noauth"),
-        ("both", "none", "noauth"),
         ("stdio", "oauth", "noauth"),
     ],
 )
@@ -1259,7 +1257,7 @@ def test_oauth_scope_enforced_for_rest_tools(tmp_path, monkeypatch):
         "/tools/session_start", json={"workdir": "."}, headers=headers
     )
     assert session_response.status_code == 200
-    session_id = session_response.json()["session_id"]
+    session_id = session_response.json()["structuredContent"]["session_id"]
 
     search_response = client.post(
         "/tools/workspace_search",
@@ -1273,10 +1271,11 @@ def test_oauth_scope_enforced_for_rest_tools(tmp_path, monkeypatch):
         json={"session_id": session_id, "command": "echo ok"},
         headers=headers,
     )
-    assert bash_response.status_code == 403
+    assert bash_response.status_code == 200
+    assert bash_response.json()["isError"] is True
     assert (
         "Missing required OAuth scope: shell:execute"
-        in bash_response.json()["message"]
+        in bash_response.json()["content"][0]["text"]
     )
 
 
@@ -1502,12 +1501,15 @@ def test_oauth_authorize_form_escapes_reflected_fields(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_browser_script_rejects_missing_browser_or_shell_scope() -> None:
-    from fastapi import HTTPException
+    from mcp.server.mcpserver import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
 
+    from workgate.config.control import resolve_control_config
     from workgate.oauth.core.context import (
         bind_oauth_claims,
         reset_oauth_claims,
     )
+    from workgate.tools.contracts import McpToolContext
     from workgate.tools.registry.browser import BrowserToolRegistry
 
     tool = next(
@@ -1515,17 +1517,20 @@ async def test_browser_script_rejects_missing_browser_or_shell_scope() -> None:
         for tool in BrowserToolRegistry()._enabled_tools()
         if tool.name == "browser_run_script"
     )
+    server = MCPServer("test-scopes")
+    tool.register_mcp(
+        server, McpToolContext(settings=resolve_control_config(get_settings()))
+    )
     for scopes, missing in (
         ("browser:use shell:read", "shell:execute"),
         ("shell:read shell:execute", "browser:use"),
     ):
         token = bind_oauth_claims({"scope": scopes})
         try:
-            with pytest.raises(HTTPException) as caught:
-                await tool.call_from_mapping(
-                    {"session_id": "sess_fake", "script": "print(1)"}
+            with pytest.raises(ToolError, match=missing):
+                await server.call_tool(
+                    "browser_run_script",
+                    {"session_id": "ABCDEFGH", "script": "print(1)"},
                 )
-            assert caught.value.status_code == 403
-            assert missing in str(caught.value.detail)
         finally:
             reset_oauth_claims(token)

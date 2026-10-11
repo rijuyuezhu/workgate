@@ -296,16 +296,16 @@ def test_cold_query_enforces_oauth_read_and_full_scope(tmp_path, monkeypatch):
     client = TestClient(app, base_url=base_url)
     params = {"event": "cold_oauth_marker", "task_id": task.task_id}
     assert (
-        client.get(
-            "/tools/audit_tail", params=params, headers=headers("shell:read")
-        ).status_code
-        == 403
+        client.post(
+            "/tools/audit_tail", json=params, headers=headers("shell:read")
+        ).json()["isError"]
+        is True
     )
-    listing = client.get(
-        "/tools/audit_tail", params=params, headers=headers(SCOPE_AUDIT_READ)
+    listing = client.post(
+        "/tools/audit_tail", json=params, headers=headers(SCOPE_AUDIT_READ)
     )
     assert listing.status_code == 200, listing.text
-    entry = listing.json()["entries"][0]
+    entry = listing.json()["structuredContent"]["entries"][0]
     assert "$workgate_audit_payload" in entry["payload"]
     detail_params = {
         "task_id": task.task_id,
@@ -313,20 +313,23 @@ def test_cold_query_enforces_oauth_read_and_full_scope(tmp_path, monkeypatch):
         "include_full_payloads": "true",
     }
     assert (
-        client.get(
+        client.post(
             "/tools/audit_tail",
-            params=detail_params,
+            json=detail_params,
             headers=headers(SCOPE_AUDIT_READ),
-        ).status_code
-        == 403
+        ).json()["isError"]
+        is True
     )
-    full = client.get(
+    full = client.post(
         "/tools/audit_tail",
-        params=detail_params,
+        json=detail_params,
         headers=headers(f"{SCOPE_AUDIT_READ} {SCOPE_AUDIT_FULL}"),
     )
     assert full.status_code == 200
-    assert full.json()["entries"][0]["payload"] == "oauth-cold-content-" * 900
+    assert (
+        full.json()["structuredContent"]["entries"][0]["payload"]
+        == "oauth-cold-content-" * 900
+    )
 
 
 def test_cold_segments_coalesce_out_of_order_nested_events(

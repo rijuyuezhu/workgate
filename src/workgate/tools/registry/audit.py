@@ -27,8 +27,6 @@ audit_tool = AuditToolRegistry.get_tool_decorator()
 
 
 @audit_tool(
-    http_method="GET",
-    http_path="/tools/audit_tail",
     annotations="read_only",
     oauth_scopes=(SCOPE_AUDIT_READ,),
 )

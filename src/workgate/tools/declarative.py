@@ -2,16 +2,14 @@
 
 import inspect
 import re
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, ClassVar, Literal, Protocol
 
-from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import TypeAdapter, ValidationError
 
 from ..config.control import ControlConfig, get_control_config
 from ..errors import (
@@ -26,10 +24,7 @@ from ..oauth.core.context import (
 from ..oauth.core.scopes import SUPPORTED_OAUTH_SCOPES
 from ..utils.serialization import to_jsonable
 from .contracts import (
-    HttpMethod,
-    HttpToolRoute,
     McpToolContext,
-    ToolHandler,
     ToolRegistry,
 )
 from .mcp_text import has_explicit_tool_text, render_tool_text
@@ -43,19 +38,6 @@ type McpErrorHandler = Callable[
     [Exception, tuple[Any, ...], dict[str, Any]], Any
 ]
 _MCP_HANDLER_ERROR_HANDLER_ATTR = "__workgate_error_handler__"
-
-
-def _oauth_scope_http_error(exc: MissingOAuthScopeError) -> HTTPException:
-    """Return the transport error shape for one missing OAuth scope."""
-    return HTTPException(status_code=403, detail=str(exc))
-
-
-def _enforce_oauth_scopes(required_scopes: tuple[str, ...]) -> None:
-    """Translate OAuth scope failures to the transport error shape."""
-    try:
-        require_oauth_scopes(required_scopes)
-    except MissingOAuthScopeError as exc:
-        raise _oauth_scope_http_error(exc) from exc
 
 
 def mark_mcp_handler_error_handler(
@@ -81,15 +63,12 @@ class ToolDecoratorFactory(Protocol):
     def __call__(
         self,
         *,
-        http_method: HttpMethod | None,
-        http_path: str | None,
         name: str | None = None,
         oauth_scopes: tuple[str, ...] | None = None,
         annotations: ToolAnnotation | None = None,
         description: ToolDescription | None = None,
         mcp_error_handler: McpErrorHandler | None = None,
         enabled: ToolEnabled = ...,
-        timeout_cancellable: bool = True,
     ) -> Callable[[ToolFunc], ToolDefinition]: ...
 
 
@@ -107,45 +86,14 @@ def _normalize_description(text: str) -> str:
     )
 
 
-def _coerce_tool_arg(parameter: inspect.Parameter, value: Any) -> Any:
-    """Coerce HTTP-style mapped values through the tool signature annotation."""
-    if parameter.annotation is inspect.Parameter.empty:
-        return value
-    try:
-        return TypeAdapter(parameter.annotation).validate_python(value)
-    except ValidationError as exc:
-        raise ValueError(str(exc)) from exc
-
-
-def _tool_kwargs_from_mapping(
-    signature: inspect.Signature, args: Mapping[str, Any]
-) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    for name, parameter in signature.parameters.items():
-        if parameter.kind in {
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        }:
-            continue
-        if name in args:
-            kwargs[name] = _coerce_tool_arg(parameter, args[name])
-        elif parameter.default is inspect.Parameter.empty:
-            raise ValueError(f"Missing required argument: {name}")
-    return kwargs
-
-
 @dataclass(frozen=True)
 class ToolDefinition:
-    """Tool definition used to derive MCP and HTTP exposure."""
+    """Tool definition registered on the canonical MCP surface."""
 
     func: ToolFunc
     """Typed coroutine that implements the tool's canonical behavior."""
     name: str
-    """Tool name exposed to MCP clients and HTTP dispatch."""
-    http_method: HttpMethod | None
-    """HTTP method for the REST adapter route, or None for MCP-only tools."""
-    http_path: str | None
-    """HTTP path for the REST adapter route, or None for MCP-only tools."""
+    """Canonical MCP tool name."""
     oauth_scopes: tuple[str, ...] | None = None
     """Server-enforced OAuth scopes for this tool. Also drives MCP security metadata."""
     annotations: ToolAnnotation | None = None
@@ -156,50 +104,19 @@ class ToolDefinition:
     """Optional MCP exception-to-result conversion used for tool errors and timeouts."""
     enabled: ToolEnabled = _always_enabled
     """Predicate controlling whether the tool is exposed for current settings."""
-    timeout_cancellable: bool = True
-    """Whether the REST watchdog may cancel this tool on timeout."""
 
     @property
     def signature(self) -> inspect.Signature:
-        """Return the fully resolved public signature advertised to adapters."""
+        """Return the resolved public signature for MCP tool registration."""
         return inspect.signature(self.func, eval_str=True)
 
     def is_enabled(self, settings: ControlConfig) -> bool:
         """Return whether this tool should be exposed for current settings."""
         return self.enabled(settings)
 
-    def http_route(self) -> HttpToolRoute | None:
-        """Return the HTTP route for this tool, if it has one."""
-        if self.http_method is None or self.http_path is None:
-            return None
-        return HttpToolRoute(
-            self.http_method,
-            self.http_path,
-            self.name,
-            timeout_cancellable=self.timeout_cancellable,
-        )
-
     def required_oauth_scopes(self) -> tuple[str, ...]:
         """Return server-enforced OAuth scopes for this tool."""
         return self.oauth_scopes or tuple(SUPPORTED_OAUTH_SCOPES)
-
-    async def call_from_mapping(self, args: Mapping[str, Any]) -> Any:
-        """Invoke the typed tool function from an HTTP-style argument mapping."""
-        _enforce_oauth_scopes(self.required_oauth_scopes())
-        try:
-            return await self.func(
-                **_tool_kwargs_from_mapping(self.signature, args)
-            )
-        except MissingOAuthScopeError as exc:
-            raise _oauth_scope_http_error(exc) from exc
-
-    def http_handler(self) -> Callable[[dict[str, Any]], Awaitable[Any]]:
-        """Return a HTTP invocation handler for this tool."""
-
-        async def handler(args: dict[str, Any]) -> Any:
-            return await self.call_from_mapping(args)
-
-        return handler
 
     def _mcp_annotations(self) -> ToolAnnotations:
         """Build the complete annotation once from the declared tool behavior."""
@@ -297,29 +214,23 @@ class DeclarativeToolRegistry(ToolRegistry):
 
         def registry_tool(
             *,
-            http_method: HttpMethod | None,
-            http_path: str | None,
             name: str | None = None,
             oauth_scopes: tuple[str, ...] | None = None,
             annotations: ToolAnnotation | None = None,
             description: ToolDescription | None = None,
             mcp_error_handler: McpErrorHandler | None = None,
             enabled: ToolEnabled = _always_enabled,
-            timeout_cancellable: bool = True,
         ) -> Callable[[ToolFunc], ToolDefinition]:
             def decorator(func: ToolFunc) -> ToolDefinition:
                 return cls.register_tool(
                     ToolDefinition(
                         func=func,
                         name=name or func.__name__,
-                        http_method=http_method,
-                        http_path=http_path,
                         oauth_scopes=oauth_scopes,
                         annotations=annotations,
                         description=description,
                         mcp_error_handler=mcp_error_handler,
                         enabled=enabled,
-                        timeout_cancellable=timeout_cancellable,
                     )
                 )
 
@@ -337,22 +248,6 @@ class DeclarativeToolRegistry(ToolRegistry):
         if self._configured_settings is not None:
             return self._configured_settings
         return get_control_config()
-
-    def http_routes(self) -> Iterable[HttpToolRoute]:
-        """Return enabled declarative REST routes."""
-        return tuple(
-            route
-            for tool in self._enabled_tools()
-            if (route := tool.http_route()) is not None
-        )
-
-    def http_handlers(
-        self,
-    ) -> Mapping[str, ToolHandler]:
-        """Return enabled declarative HTTP handlers keyed by tool name."""
-        return {
-            tool.name: tool.http_handler() for tool in self._enabled_tools()
-        }
 
     def register_mcp(self, mcp: MCPServer, context: McpToolContext) -> None:
         """Register enabled declarative tools on the provided MCPServer app."""

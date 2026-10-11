@@ -328,29 +328,29 @@ def test_http_audit_tail_enforces_read_and_full_scopes(monkeypatch, tmp_path):
     )
     client = TestClient(app, base_url=base_url)
 
-    denied_read = client.get(
+    denied_read = client.post(
         "/tools/audit_tail",
-        params={"task_id": task.task_id},
+        json={"task_id": task.task_id},
         headers=headers("shell:read"),
     )
-    listing = client.get(
+    listing = client.post(
         "/tools/audit_tail",
-        params={"task_id": task.task_id, "event": "route-large-entry"},
+        json={"task_id": task.task_id, "event": "route-large-entry"},
         headers=headers(SCOPE_AUDIT_READ),
     )
-    entry_id = listing.json()["entries"][0]["id"]
-    denied_full = client.get(
+    entry_id = listing.json()["structuredContent"]["entries"][0]["id"]
+    denied_full = client.post(
         "/tools/audit_tail",
-        params={
+        json={
             "task_id": task.task_id,
             "entry_id": entry_id,
             "include_full_payloads": "true",
         },
         headers=headers(SCOPE_AUDIT_READ),
     )
-    full = client.get(
+    full = client.post(
         "/tools/audit_tail",
-        params={
+        json={
             "task_id": task.task_id,
             "entry_id": entry_id,
             "include_full_payloads": "true",
@@ -358,11 +358,11 @@ def test_http_audit_tail_enforces_read_and_full_scopes(monkeypatch, tmp_path):
         headers=headers(f"{SCOPE_AUDIT_READ} {SCOPE_AUDIT_FULL}"),
     )
 
-    assert denied_read.status_code == 403
+    assert denied_read.json()["isError"] is True
     assert listing.status_code == 200
-    assert denied_full.status_code == 403
+    assert denied_full.json()["isError"] is True
     assert full.status_code == 200
-    assert full.json()["entries"][0]["payload"] == {
+    assert full.json()["structuredContent"]["entries"][0]["payload"] == {
         "token": "route-secret",
         "body": "route-" * 4_000,
     }

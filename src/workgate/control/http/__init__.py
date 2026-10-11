@@ -1,1 +1,1 @@
-"""REST/tool HTTP control-plane adapters."""
+"""Debug HTTP and non-tool control-plane adapters."""

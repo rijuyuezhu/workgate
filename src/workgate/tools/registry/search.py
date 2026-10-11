@@ -51,8 +51,6 @@ def _search_description(context: McpToolContext) -> str:
 
 
 @search_tool(
-    http_method="POST",
-    http_path="/tools/tree",
     description=_tree_view_description,
     annotations="read_only",
     oauth_scopes=("shell:read",),
@@ -69,8 +67,6 @@ async def tree_view(
 
 
 @search_tool(
-    http_method="POST",
-    http_path="/tools/glob",
     description=_glob_search_description,
     annotations="read_only",
     oauth_scopes=("shell:read",),
@@ -87,8 +83,6 @@ async def glob_search(
 
 
 @search_tool(
-    http_method="POST",
-    http_path="/tools/search",
     description=_search_description,
     annotations="read_only",
     oauth_scopes=("shell:read",),

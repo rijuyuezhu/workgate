@@ -65,10 +65,6 @@ def _dispatch_control(settings: Any) -> None:
             run_http(runtime=runtime)
         case "mcp" | "stdio":
             run_mcp(runtime=runtime)
-        case "both":
-            raise SystemExit(
-                "mode=both is reserved; run separate mcp/http processes for now"
-            )
         case _:
             raise SystemExit(f"Unsupported mode: {runtime.config.mode}")
 

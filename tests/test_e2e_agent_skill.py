@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e_helpers import RestToolClient, run_http_process
+from tests.e2e_helpers import DebugHttpToolClient, run_http_process
 
 pytestmark = pytest.mark.integration
 
@@ -78,7 +78,7 @@ async def test_real_code_humanizer_skill_installation_over_http(tmp_path):
         agent_bridge_enabled=True,
         workspace_setup=_install_code_humanizer,
     ) as (base_url, _workspace):
-        client = RestToolClient(base_url)
+        client = DebugHttpToolClient(base_url)
 
         status = await client.call_tool("agent_config_status")
         assert status["skills"]["count"] == 0
