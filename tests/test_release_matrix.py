@@ -73,7 +73,7 @@ def test_release_matrix_rejects_mismatched_package_version(tmp_path):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / relative, destination)
     runtime = tmp_path / "src/workgate/__init__.py"
-    runtime.write_text(runtime.read_text().replace("5.0.0a1", "999.0.0"))
+    runtime.write_text('__version__ = "999.0.0"\n')
     completed = subprocess.run(
         [sys.executable, "-S", "scripts/validation/check-release-matrix.py"],
         cwd=tmp_path,
