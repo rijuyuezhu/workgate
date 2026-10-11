@@ -34,6 +34,7 @@ def main() -> int:
         ].removeprefix(">=")
     if f'  PYTHON_VERSION: "{project_python}"' not in release:
         raise SystemExit("release Python version must match project minimum")
+    validation = _section(release, "validate-release")
     package = _section(release, "build-python-package")
     binary = _section(release, "build-binary")
     publish = _section(release, "github-release")
@@ -78,6 +79,10 @@ def main() -> int:
             "release must package the built dist/workgate executable"
         )
     required = (
+        (
+            validation,
+            ("python scripts/validation/check-release-provenance.py",),
+        ),
         (package, ("uv build", "check-python-dist.py", "name: python-dist")),
         (
             binary,
@@ -108,6 +113,8 @@ def main() -> int:
             (
                 "- build-python-package",
                 "- build-binary",
+                "actions/checkout@v6",
+                "python scripts/validation/check-release-provenance.py",
                 "name: python-dist",
                 "pattern: binary-*",
                 "files: dist/*",

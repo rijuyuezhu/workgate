@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -78,6 +79,10 @@ jobs:
           print(f"version={version}")
           print(f"prerelease={'true' if prerelease else 'false'}")
           PY
+      - name: Require current main and successful CI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/validation/check-release-provenance.py
   build-python-package:
     name: Build Python package
     runs-on: ubuntu-latest
@@ -202,11 +207,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     needs:
       - validate-release
       - build-python-package
       - build-binary
     steps:
+      - uses: actions/checkout@v6
       - name: Download Python package artifacts
         uses: actions/download-artifact@v8
         with:
@@ -249,6 +256,11 @@ jobs:
 
           Python package version in \`pyproject.toml\`: \`${{ needs.validate-release.outputs.version }}\`
           EOF
+
+      - name: Recheck current main and successful CI before publishing
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/validation/check-release-provenance.py
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
