@@ -10,6 +10,7 @@ shells, jobs, and terminals.
 - Follow the [Quickstart](getting-started/quickstart.md) for the simplest local setup.
 - Use [Choose a deployment](getting-started/deployment.md) for public HTTPS, VPS, or multi-machine setups.
 - Pair another machine with [Executors](guides/executors.md).
+- Connect [another MCP client](getting-started/mcp-clients.md) over HTTP or local stdio.
 - Connect the service to [ChatGPT](getting-started/chatgpt-connector.md).
 - Read [Security](security.md) before exposing Workgate outside localhost.
 
