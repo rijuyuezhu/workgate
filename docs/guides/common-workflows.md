@@ -69,6 +69,18 @@ Copy artifacts/report.json from the build session on gpu1 into reports/latest.js
 
 The service chooses the supported transfer route. Users normally do not select one. Operators may configure an S3-compatible object store for cross-executor copies; byte-route unavailability can fall back to the durable control relay, while configuration or destination errors remain visible.
 
+## Share a file
+
+Use `create_file_link` with the owning `session_id` and a regular file path
+to publish a snapshot download URL. Set a short TTL and, for a one-time
+handoff, `max_downloads=1`. Share the returned URL privately: it is a bearer
+secret, so anyone with the URL can download the snapshot within its limits.
+
+Use `list_file_links` to inspect active link metadata, and `revoke_file_link`
+with the returned `link_id` to end access early. The listing does **not**
+recover the original bearer URL. See [Security](../security.md#file-links-and-transfers)
+for the access boundary.
+
 ## Work on another executor
 
 Pair or select the intended executor, then start a session with its stable executor id and workdir:

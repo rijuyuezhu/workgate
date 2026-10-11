@@ -87,8 +87,7 @@ Use the following resources for deeper inspection:
 
 - [Upstream repository](https://github.com/fwerkor/local-shell-mcp)
 - [GitHub code comparison](https://github.com/fwerkor/local-shell-mcp/compare/main...rijuyuezhu:workgate:main)
-- [Historical fork/upstream migration audit](maintenance/fork-upstream-differences.md)
-- [Chronological upstream commit review](maintenance/upstream-commit-review.md)
+- [Workgate issue #158 and linked PRs](https://github.com/rijuyuezhu/workgate/issues/158) for the review and implementation history
 
 The GitHub comparison is useful for source history, but it is not a complete
 feature comparison. The projects often implement the same outcome through
