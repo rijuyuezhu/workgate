@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, TextContent
 
 from tests.helpers import build_paired_http_app
@@ -22,6 +24,7 @@ def debug_client(tmp_path, monkeypatch):
 def test_discovery_is_exact_mcp_registration_and_hides_transfer(debug_client):
     discovery = debug_client.get("/tools")
     assert discovery.status_code == 200
+    assert discovery.headers["Cache-Control"] == "no-store"
     tools = {tool["name"]: tool for tool in discovery.json()["tools"]}
     assert "read" in tools
     assert "version" in tools
@@ -50,6 +53,11 @@ def test_debug_result_and_validation_use_mcp_wire_shape(debug_client):
     assert result.is_error is False
     assert result.structured_content is not None
     assert "version" in result.structured_content
+
+    # MCP calls accept omitted arguments; the debug wrapper has the same default.
+    missing_body = debug_client.post("/tools/version")
+    assert missing_body.status_code == 200
+    assert missing_body.json() == success.json()
 
     invalid = debug_client.post("/tools/read", json={})
     assert invalid.status_code == 200
@@ -134,3 +142,88 @@ def test_late_mcp_tool_automatically_appears_in_debug_http(
         assert reply.status_code == 200
         assert reply.json()["structuredContent"] == {"message": "registered"}
         assert reply.json()["isError"] is False
+
+
+def test_debug_errors_distinguish_tool_failures_from_protocol_errors(
+    tmp_path, monkeypatch
+):
+    """Use SDK error results for tools and SDK ErrorData for protocol errors."""
+    from workgate.tools.catalog import ToolCatalog
+    from workgate.tools.contracts import ToolRegistry
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    clear_settings_cache()
+
+    class ErrorRegistry(ToolRegistry):
+        def register_mcp(self, mcp, context):
+            @mcp.tool(name="expected_error")
+            async def expected() -> str:
+                raise ToolError("safe diagnostic")
+
+            @mcp.tool(name="unexpected_error")
+            async def unexpected() -> str:
+                raise ValueError("secret-like internal diagnostic")
+
+            @mcp.tool(name="protocol_error")
+            async def protocol() -> str:
+                raise MCPError(
+                    -32602, "Invalid protocol parameters", {"reason": "bad"}
+                )
+
+    with TestClient(
+        build_http_app(tool_catalog=ToolCatalog((ErrorRegistry(),)))
+    ) as client:
+        expected_response = client.post("/tools/expected_error", json={})
+        assert expected_response.status_code == 200
+        expected_result = CallToolResult.model_validate(
+            expected_response.json()
+        )
+        assert expected_result.is_error is True
+        assert isinstance(expected_result.content[0], TextContent)
+        assert "safe diagnostic" in expected_result.content[0].text
+
+        unexpected_response = client.post("/tools/unexpected_error", json={})
+        assert unexpected_response.status_code == 200
+        unexpected_result = CallToolResult.model_validate(
+            unexpected_response.json()
+        )
+        assert unexpected_result.is_error is True
+        assert "secret-like internal diagnostic" not in str(unexpected_result)
+
+        protocol_response = client.post("/tools/protocol_error", json={})
+        assert protocol_response.status_code == 400
+        assert protocol_response.json() == {
+            "code": -32602,
+            "message": "Invalid protocol parameters",
+            "data": {"reason": "bad"},
+        }
+
+
+def test_duplicate_mcp_tool_registration_fails_closed(tmp_path, monkeypatch):
+    """MCP and debug HTTP never silently choose one of two tool definitions."""
+    from workgate.tools.catalog import ToolCatalog
+    from workgate.tools.contracts import ToolRegistry
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    clear_settings_cache()
+
+    class FirstRegistry(ToolRegistry):
+        def register_mcp(self, mcp, context):
+            @mcp.tool(name="collision")
+            async def first() -> str:
+                return "first"
+
+    class SecondRegistry(ToolRegistry):
+        def register_mcp(self, mcp, context):
+            @mcp.tool(name="collision")
+            async def second() -> str:
+                return "second"
+
+    with pytest.raises(ValueError, match="Duplicate MCP tool: collision"):
+        build_http_app(
+            tool_catalog=ToolCatalog((FirstRegistry(), SecondRegistry()))
+        )
+    with pytest.raises(ValueError, match="Duplicate MCP tool: collision"):
+        build_mcp(tool_catalog=ToolCatalog((FirstRegistry(), SecondRegistry())))

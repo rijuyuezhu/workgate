@@ -3,8 +3,10 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, TextContent
 from starlette.routing import BaseRoute
 
@@ -127,7 +129,8 @@ def build_http_app(
     mcp = build_mcp(tool_catalog=catalog, runtime=runtime)
 
     @app.get("/tools")
-    async def list_debug_tools() -> dict[str, object]:
+    async def list_debug_tools(response: Response) -> dict[str, object]:
+        response.headers["Cache-Control"] = "no-store"
         return {
             "tools": [
                 tool.model_dump(mode="json", by_alias=True, exclude_none=True)
@@ -137,15 +140,24 @@ def build_http_app(
 
     @app.post("/tools/{tool_name}")
     async def call_debug_tool(
-        tool_name: str, arguments: dict[str, object]
-    ) -> dict[str, object]:
+        tool_name: str,
+        arguments: dict[str, object] | None = None,
+    ) -> JSONResponse:
         try:
-            result = await mcp.call_tool(tool_name, arguments)
+            result = await mcp.call_tool(tool_name, arguments or {})
         except ToolError as exc:
             result = CallToolResult(
                 is_error=True, content=[TextContent(type="text", text=str(exc))]
             )
-        return result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        except MCPError as exc:
+            # Protocol errors are not tool results; preserve the SDK error data.
+            return JSONResponse(
+                status_code=400,
+                content=exc.error.model_dump(mode="json", exclude_none=True),
+            )
+        return JSONResponse(
+            result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
 
     ui_routes, ui_public_routes = human_ui_routes(settings)
     app.router.routes.extend(ui_routes)

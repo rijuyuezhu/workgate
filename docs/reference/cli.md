@@ -46,7 +46,9 @@ The debug endpoints are `GET /tools` (MCP tool metadata) and
 `POST /tools/{tool_name}` with the MCP argument object as JSON. Calls return
 MCP `CallToolResult` JSON (`content`, `structuredContent`, `isError`), including
 MCP tool validation and scope failures; they do not use the former individual
-REST routes or HTTP status/error envelopes. For example:
+REST routes or HTTP status/error envelopes. An omitted argument body is `{}`;
+protocol-level MCP errors return the SDK error data (`code`, `message`, optional
+`data`) with HTTP 400 rather than pretending to be a tool result. For example:
 
 ```bash
 curl http://127.0.0.1:8765/tools
