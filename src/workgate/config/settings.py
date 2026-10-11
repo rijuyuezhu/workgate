@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     """Pydantic settings configuration for environment loading."""
 
     # Server.
-    mode: Literal["mcp", "http", "both", "stdio"] = "mcp"
+    mode: Literal["mcp", "http", "stdio"] = "mcp"
     """Server transport mode."""
     host: str = "127.0.0.1"
     """Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments."""

@@ -28,8 +28,6 @@ def _job_description(_context: object) -> str:
 
 
 @job_tool(
-    http_method="POST",
-    http_path="/tools/job",
     description=_job_description,
     oauth_scopes=("shell:read", "shell:execute"),
 )

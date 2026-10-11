@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from tests.e2e_helpers import (
-    RestToolClient,
+    DebugHttpToolClient,
     free_tcp_port,
     isolated_xdg_env,
     provision_executor_pair,
@@ -116,11 +116,8 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
                 f"{base_url}/tools/session_start",
                 json={"workdir": "."},
             )
-        assert unavailable.status_code >= 400
-        assert (
-            "session_start requires exactly one eligible executor or an explicit executor_id"
-            in unavailable.text
-        )
+        assert unavailable.status_code == 200
+        assert unavailable.json()["isError"] is True
 
         executor = start_executor_process(
             executor_config,
@@ -136,7 +133,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
             stderr_path=logs / "executor-1.stderr.log",
         )
 
-        client = RestToolClient(base_url)
+        client = DebugHttpToolClient(base_url)
         session = await client.call_tool(
             "session_start",
             {"workdir": ".", "executor_id": executor_id},

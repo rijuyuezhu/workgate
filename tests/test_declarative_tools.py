@@ -2,7 +2,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import pytest
-from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
@@ -15,42 +14,6 @@ from workgate.oauth.core.context import (
 from workgate.tools.declarative import DeclarativeToolRegistry, ToolDefinition
 
 
-@pytest.mark.asyncio
-async def test_tool_definition_call_from_mapping_uses_defaults_and_filters_extra_args():
-    async def sample_tool(required: str, optional: int = 3) -> dict:
-        return {"required": required, "optional": optional}
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-    )
-
-    assert await definition.call_from_mapping(
-        {"required": "value", "ignored": "extra"}
-    ) == {"required": "value", "optional": 3}
-    assert await definition.call_from_mapping(
-        {"required": "value", "optional": 9}
-    ) == {"required": "value", "optional": 9}
-
-
-@pytest.mark.asyncio
-async def test_unannotated_tool_argument_is_passed_through():
-    async def sample_tool(value):
-        return {"value": value}
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method=None,
-        http_path=None,
-    )
-    assert await definition.call_from_mapping({"value": ["unchanged"]}) == {
-        "value": ["unchanged"]
-    }
-
-
 def test_registry_rejects_duplicate_tool_names():
     class SampleRegistry(DeclarativeToolRegistry):
         pass
@@ -58,67 +21,12 @@ def test_registry_rejects_duplicate_tool_names():
     definition = ToolDefinition(
         func=_sample_tool,
         name="sample_tool",
-        http_method=None,
-        http_path=None,
     )
     SampleRegistry.register_tool(definition)
     with pytest.raises(
         ValueError, match="Duplicate tool definition: sample_tool"
     ):
         SampleRegistry.register_tool(definition)
-
-
-@pytest.mark.asyncio
-async def test_tool_definition_call_from_mapping_reports_missing_required_arg():
-    async def sample_tool(required: str, optional: int = 3) -> dict:
-        return {"required": required, "optional": optional}
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-    )
-
-    with pytest.raises(ValueError, match="Missing required argument: required"):
-        await definition.call_from_mapping({"optional": 9})
-
-
-@pytest.mark.asyncio
-async def test_tool_definition_call_from_mapping_ignores_varargs_and_kwargs():
-    async def sample_tool(
-        required: str,
-        *args: str,
-        keyword: int = 1,
-        **kwargs: str,
-    ) -> dict:
-        return {
-            "required": required,
-            "args": args,
-            "keyword": keyword,
-            "kwargs": kwargs,
-        }
-
-    definition = ToolDefinition(
-        func=sample_tool,
-        name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
-    )
-
-    assert await definition.call_from_mapping(
-        {
-            "required": "value",
-            "args": ["not", "passed"],
-            "keyword": 5,
-            "unexpected": "not passed to **kwargs",
-        }
-    ) == {
-        "required": "value",
-        "args": (),
-        "keyword": 5,
-        "kwargs": {},
-    }
 
 
 def _sample_context():
@@ -157,8 +65,6 @@ async def test_mcp_handler_enforces_required_oauth_scopes():
     definition = ToolDefinition(
         func=sample_tool,
         name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
         oauth_scopes=("shell:read", "shell:execute"),
     )
     mcp = _FakeMcp()
@@ -184,21 +90,14 @@ async def test_mcp_handler_enforces_required_oauth_scopes():
 
 
 @pytest.mark.asyncio
-async def test_explicit_mcp_text_projection_does_not_change_canonical_http_result():
+async def test_explicit_mcp_text_projection_preserves_canonical_structured_result():
     async def sample_tool() -> dict[str, object]:
         return {"kind": "file", "content": "compact"}
 
     definition = ToolDefinition(
         func=sample_tool,
         name="read",
-        http_method="POST",
-        http_path="/tools/sample_tool",
     )
-
-    assert await definition.call_from_mapping({}) == {
-        "kind": "file",
-        "content": "compact",
-    }
 
     mcp = _FakeMcp()
     definition.register_mcp(cast(Any, mcp), _sample_context())
@@ -222,20 +121,10 @@ async def test_dynamic_oauth_scope_failures_use_standard_tool_error_shape():
     definition = ToolDefinition(
         func=sample_tool,
         name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
         oauth_scopes=("shell:read",),
     )
     claims_token = bind_oauth_claims({"scope": "shell:read"})
     try:
-        with pytest.raises(HTTPException) as http_exc:
-            await definition.call_from_mapping({})
-        assert http_exc.value.status_code == 403
-        assert (
-            http_exc.value.detail
-            == "Missing required OAuth scope: shell:execute"
-        )
-
         mcp = _FakeMcp()
         definition.register_mcp(cast(Any, mcp), _sample_context())
         assert mcp.handler is not None
@@ -252,8 +141,6 @@ def test_tool_definition_rejects_unknown_annotations():
     definition = ToolDefinition(
         func=_sample_tool,
         name="sample_tool",
-        http_method="POST",
-        http_path="/tools/sample_tool",
         annotations="future-annotation",  # type: ignore[arg-type]
     )
 
@@ -271,9 +158,9 @@ async def test_session_termination_remains_model_visible_on_mcp_v2():
         raise SessionTerminationRequestedError(session_id)
 
     mcp = MCPServer("termination-test")
-    ToolDefinition(
-        func=stopped, name="stopped", http_method=None, http_path=None
-    ).register_mcp(mcp, _sample_context())
+    ToolDefinition(func=stopped, name="stopped").register_mcp(
+        mcp, _sample_context()
+    )
     with pytest.raises(
         ToolError, match="Stop immediately.*Do not perform any further work"
     ):
@@ -291,8 +178,6 @@ async def test_agent_tool_arbitrary_value_error_is_not_exposed():
     ToolDefinition(
         func=call_agent_mcp_tool,
         name="call_agent_mcp_tool",
-        http_method=None,
-        http_path=None,
     ).register_mcp(mcp, _sample_context())
     with pytest.raises(
         ToolError, match="^Error executing tool call_agent_mcp_tool$"
@@ -309,8 +194,6 @@ async def test_mcp_enforced_scope_explains_denial_to_client():
     ToolDefinition(
         func=protected,
         name="protected",
-        http_method=None,
-        http_path=None,
         oauth_scopes=("shell:read", "shell:write"),
     ).register_mcp(mcp, _sample_context())
     token = bind_oauth_claims({"scope": "shell:read"})

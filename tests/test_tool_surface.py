@@ -1,23 +1,16 @@
 import json
-from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
 
-import workgate.control.http.tool_routes as http_tool_routes_module
 from tests.helpers import build_paired_http_app, mcp_text
 from workgate import __version__
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
-from workgate.tools.catalog import ToolCatalog, build_tool_catalog
-from workgate.tools.contracts import (
-    HttpMethod,
-    HttpToolRoute,
-    ToolRegistry,
-)
+from workgate.tools.catalog import build_tool_catalog
 from workgate.tools.declarative import _normalize_description
 
 LOCAL_MCP_TOOL_NAMES = {
@@ -261,12 +254,7 @@ def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):
 
     catalog = build_tool_catalog()
     registry_names = {registry.name for registry in catalog.registries}
-    route_names = {route.tool_name for route in catalog.http_routes()}
-    handler_names = set(catalog.handlers())
-
     assert "remote" not in registry_names
-    assert "remote_admin" not in route_names
-    assert "remote_admin" not in handler_names
 
 
 def test_http_openapi_version_matches_package_version(tmp_path, monkeypatch):
@@ -303,7 +291,11 @@ async def test_http_version_matches_mcp_tool_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    http_payload = TestClient(build_http_app()).get("/tools/version").json()
+    http_payload = (
+        TestClient(build_http_app())
+        .post("/tools/version", json={})
+        .json()["structuredContent"]
+    )
     mcp_response = await build_mcp().call_tool("version", {})
 
     assert http_payload == _mcp_payload_data(mcp_response)
@@ -337,10 +329,14 @@ async def test_http_list_files_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={}).json()
+    session = client.post("/tools/session_start", json={}).json()[
+        "structuredContent"
+    ]
     assert session["workdir"] == str(tmp_path)
     args = {"session_id": session["session_id"], "path": "."}
-    http_payload = client.post("/tools/list_files", json=args).json()
+    http_payload = client.post("/tools/list_files", json=args).json()[
+        "structuredContent"
+    ]
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "list_files", args
     )
@@ -442,7 +438,9 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
     session_id = session["session_id"]
     compact_context_keys = {
         "path",
@@ -456,7 +454,7 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
     first_read = client.post(
         "/tools/read",
         json={"session_id": session_id, "path": "edit.txt:2"},
-    ).json()
+    ).json()["structuredContent"]
     http_edit = client.post(
         "/tools/edit_lines",
         json={
@@ -467,7 +465,7 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
             "replacement": "TWO",
             "snapshot_id": first_read["file"]["snapshot_id"],
         },
-    ).json()
+    ).json()["structuredContent"]
     assert set(http_edit["context"]) == compact_context_keys
     assert "content" not in http_edit["context"]
     assert "lines" not in http_edit["context"]
@@ -476,7 +474,7 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
     second_read = client.post(
         "/tools/read",
         json={"session_id": session_id, "path": "edit.txt:3"},
-    ).json()
+    ).json()["structuredContent"]
     mcp_edit = await mcp.call_tool(
         "edit_lines",
         {
@@ -503,7 +501,7 @@ async def test_edit_tools_return_compact_grounded_mcp_content(
     hash_read = client.post(
         "/tools/read",
         json={"session_id": session_id, "path": "edit.txt:1-4"},
-    ).json()
+    ).json()["structuredContent"]
     header = hash_read["content"].splitlines()[0]
     hash_edit = await mcp.call_tool(
         "hashline_edit",
@@ -539,9 +537,13 @@ async def test_http_read_todos_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    task = client.post("/tools/task", json={"action": "create"}).json()
-    args = {"task_id": task["task_id"]}
-    http_payload = client.get("/tools/todo", params=args).json()
+    task = client.post("/tools/task", json={"action": "create"}).json()[
+        "structuredContent"
+    ]
+    args = {"task_id": task["result"]["task_id"]}
+    http_payload = client.post("/tools/read_todos", json=args).json()[
+        "structuredContent"
+    ]
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "read_todos", args
     )
@@ -566,7 +568,7 @@ async def test_http_task_matches_mcp_and_progress_mutates_it(
         json={"action": "create", "objective": "Durable task"},
     )
     assert created.status_code == 200
-    task_id = created.json()["task_id"]
+    task_id = created.json()["structuredContent"]["result"]["task_id"]
     reported = client.post(
         "/tools/task",
         json={
@@ -578,16 +580,18 @@ async def test_http_task_matches_mcp_and_progress_mutates_it(
     assert reported.status_code == 200
 
     args = {"action": "get", "task_id": task_id}
-    http_payload = client.post("/tools/task", json=args).json()
+    http_payload = client.post("/tools/task", json=args).json()[
+        "structuredContent"
+    ]
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "task", args
     )
 
     mcp_payload = _mcp_payload_data(mcp_response)
     assert isinstance(mcp_payload, dict)
-    assert http_payload == mcp_payload["result"]
-    assert http_payload["objective"] == "Durable task"
-    assert http_payload["progress"]["summary"] == "Reported over HTTP"
+    assert http_payload == mcp_payload
+    assert http_payload["result"]["objective"] == "Durable task"
+    assert http_payload["result"]["progress"]["summary"] == "Reported over HTTP"
 
 
 @pytest.mark.asyncio
@@ -622,13 +626,13 @@ def test_http_task_router_validates_actions_and_covers_lifecycle(
         "/tools/task", json={"action": "create", "summary": "not allowed"}
     )
     missing_task = client.post("/tools/task", json={"action": "get"})
-    assert invalid_create.status_code == 400
-    assert invalid_create_report.status_code == 400
-    assert missing_task.status_code == 400
+    assert invalid_create.json()["isError"] is True
+    assert invalid_create_report.json()["isError"] is True
+    assert missing_task.json()["isError"] is True
 
     task_id = client.post("/tools/task", json={"action": "create"}).json()[
-        "task_id"
-    ]
+        "structuredContent"
+    ]["result"]["task_id"]
     invalid_get = client.post(
         "/tools/task",
         json={"action": "get", "task_id": task_id, "summary": "not allowed"},
@@ -641,8 +645,8 @@ def test_http_task_router_validates_actions_and_covers_lifecycle(
             "label": "not allowed",
         },
     )
-    assert invalid_get.status_code == 400
-    assert invalid_block.status_code == 400
+    assert invalid_get.json()["isError"] is True
+    assert invalid_block.json()["isError"] is True
 
     blocked = client.post(
         "/tools/task",
@@ -663,15 +667,15 @@ def test_http_task_router_validates_actions_and_covers_lifecycle(
     rejected_session = client.post(
         "/tools/session_start", json={"workdir": ".", "task_id": task_id}
     )
-    assert rejected_session.status_code == 400
-    assert "completed task" in rejected_session.json()["message"]
+    assert rejected_session.json()["isError"] is True
+    assert rejected_session.json()["isError"] is True
 
     deleted = client.post(
         "/tools/task",
         json={"action": "delete", "task_id": task_id},
     )
     assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
+    assert deleted.json()["structuredContent"]["result"]["deleted"] is True
 
 
 def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
@@ -683,8 +687,8 @@ def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
 
     client = TestClient(_build_paired_surface_http_app())
     task_id = client.post("/tools/task", json={"action": "create"}).json()[
-        "task_id"
-    ]
+        "structuredContent"
+    ]["result"]["task_id"]
     cancelled = client.post(
         "/tools/task",
         json={
@@ -698,8 +702,8 @@ def test_session_start_rejects_terminal_task_attachment(tmp_path, monkeypatch):
         "/tools/session_start",
         json={"workdir": ".", "task_id": task_id},
     )
-    assert start.status_code == 400
-    assert "cancelled task" in start.json()["message"]
+    assert start.status_code == 200
+    assert start.json()["isError"] is True
 
 
 def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
@@ -713,17 +717,17 @@ def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
         _build_paired_surface_http_app(), raise_server_exceptions=False
     )
     task_id = client.post("/tools/task", json={"action": "create"}).json()[
-        "task_id"
-    ]
+        "structuredContent"
+    ]["result"]["task_id"]
     first = client.post(
-        "/tools/task-plan",
+        "/tools/task_plan",
         json={
             "task_id": task_id,
             "steps": [{"id": "one", "content": "first"}],
         },
     )
     replacement = client.post(
-        "/tools/task-plan",
+        "/tools/task_plan",
         json={
             "task_id": task_id,
             "steps": [{"id": "one", "content": "replacement"}],
@@ -731,10 +735,13 @@ def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
     )
     assert first.status_code == 200
     assert replacement.status_code == 200
-    assert replacement.json()["plan"]["steps"][0]["content"] == "replacement"
+    assert (
+        replacement.json()["structuredContent"]["plan"]["steps"][0]["content"]
+        == "replacement"
+    )
 
     typo = client.post(
-        "/tools/task-plan",
+        "/tools/task_plan",
         json={
             "task_id": task_id,
             "steps": [
@@ -746,8 +753,8 @@ def test_http_task_plan_replaces_state_and_rejects_typos(tmp_path, monkeypatch):
             ],
         },
     )
-    assert typo.status_code == 400
-    assert "unsupported fields: state" in typo.json()["message"]
+    assert typo.json()["isError"] is True
+    assert typo.json()["content"][0]["text"] == "Error executing tool task_plan"
 
 
 @pytest.mark.asyncio
@@ -760,9 +767,13 @@ async def test_http_secret_scan_matches_mcp_tool_payload(tmp_path, monkeypatch):
 
     app = _build_paired_surface_http_app()
     client = TestClient(app)
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
     args = {"session_id": session["session_id"], "cwd": ".", "max_results": 10}
-    http_payload = client.post("/tools/secret_scan", json=args).json()
+    http_payload = client.post("/tools/secret_scan", json=args).json()[
+        "structuredContent"
+    ]
     mcp_response = await build_mcp(runtime=app.state.control_runtime).call_tool(
         "secret_scan", args
     )
@@ -777,32 +788,19 @@ def test_http_tool_name_is_not_request_overridable(tmp_path, monkeypatch):
     clear_settings_cache()
 
     client = TestClient(_build_paired_surface_http_app())
-    task = client.post("/tools/task", json={"action": "create"}).json()
-    response = client.get(
-        "/tools/todo",
-        params={
-            "task_id": task["task_id"],
+    task = client.post("/tools/task", json={"action": "create"}).json()[
+        "structuredContent"
+    ]
+    response = client.post(
+        "/tools/read_todos",
+        json={
+            "task_id": task["result"]["task_id"],
             "tool_name": "list_persistent_shells",
         },
     )
 
     assert response.status_code == 200
-    assert "todos" in response.json()
-
-
-def test_get_http_tools_disable_response_caching(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    clear_settings_cache()
-
-    client = TestClient(build_http_app())
-    response = client.get("/tools/version")
-
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    assert response.headers["pragma"] == "no-cache"
-    assert response.headers["expires"] == "0"
+    assert "todos" in response.json()["structuredContent"]
 
 
 def test_http_tool_missing_required_arg_returns_validation_error(
@@ -821,11 +819,9 @@ def test_http_tool_missing_required_arg_returns_validation_error(
     ):
         response = client.post(path, json=payload)
 
-        assert response.status_code == 400
-        assert response.json() == {
-            "error": "validation_error",
-            "message": "Missing required argument: session_id",
-        }
+        assert response.status_code == 200
+        assert response.json()["isError"] is True
+        assert "session_id" in response.json()["content"][0]["text"]
 
 
 def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
@@ -843,9 +839,11 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
     monkeypatch.setattr(download_ops, "_now_s", lambda: clock["now"])
 
     client = TestClient(_build_paired_surface_http_app())
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
     create_response = client.post(
-        "/tools/file_link/create",
+        "/tools/create_file_link",
         json={
             "session_id": session["session_id"],
             "path": "artifact.txt",
@@ -855,25 +853,25 @@ def test_http_get_query_params_are_type_coerced(tmp_path, monkeypatch):
     assert create_response.status_code == 200
 
     clock["now"] = 1_020.0
-    include_response = client.get(
-        "/tools/file_link/list",
-        params={
+    include_response = client.post(
+        "/tools/list_file_links",
+        json={
             "session_id": session["session_id"],
-            "include_expired": "true",
+            "include_expired": True,
         },
     )
     assert include_response.status_code == 200
-    assert len(include_response.json()["links"]) == 1
+    assert len(include_response.json()["structuredContent"]["links"]) == 1
 
-    prune_response = client.get(
-        "/tools/file_link/list",
-        params={
+    prune_response = client.post(
+        "/tools/list_file_links",
+        json={
             "session_id": session["session_id"],
-            "include_expired": "false",
+            "include_expired": False,
         },
     )
     assert prune_response.status_code == 200
-    assert prune_response.json()["links"] == []
+    assert prune_response.json()["structuredContent"]["links"] == []
 
 
 def test_todos_are_task_scoped(tmp_path, monkeypatch):
@@ -885,17 +883,17 @@ def test_todos_are_task_scoped(tmp_path, monkeypatch):
 
     client = TestClient(_build_paired_surface_http_app())
     first = client.post("/tools/task", json={"action": "create"}).json()[
-        "task_id"
-    ]
+        "structuredContent"
+    ]["result"]["task_id"]
     second = client.post("/tools/task", json={"action": "create"}).json()[
-        "task_id"
-    ]
+        "structuredContent"
+    ]["result"]["task_id"]
     first_items = [{"id": "first", "content": "one"}]
     second_items = [{"id": "second", "content": "two"}]
 
     assert (
         client.post(
-            "/tools/todo",
+            "/tools/write_todos",
             json={
                 "task_id": first,
                 "todos": first_items,
@@ -905,7 +903,7 @@ def test_todos_are_task_scoped(tmp_path, monkeypatch):
     )
     assert (
         client.post(
-            "/tools/todo",
+            "/tools/write_todos",
             json={
                 "task_id": second,
                 "todos": second_items,
@@ -914,10 +912,12 @@ def test_todos_are_task_scoped(tmp_path, monkeypatch):
         == 200
     )
 
-    first_payload = client.get("/tools/todo", params={"task_id": first}).json()
-    second_payload = client.get(
-        "/tools/todo", params={"task_id": second}
-    ).json()
+    first_payload = client.post(
+        "/tools/read_todos", json={"task_id": first}
+    ).json()["structuredContent"]
+    second_payload = client.post(
+        "/tools/read_todos", json={"task_id": second}
+    ).json()["structuredContent"]
     assert first_payload["todos"][0]["id"] == "first"
     assert first_payload["todos"][0]["content"] == "one"
     assert second_payload["todos"][0]["id"] == "second"
@@ -931,41 +931,16 @@ def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
     clear_settings_cache()
 
     client = TestClient(_build_paired_surface_http_app())
-    session = client.post("/tools/session_start", json={"workdir": "."}).json()
+    session = client.post("/tools/session_start", json={"workdir": "."}).json()[
+        "structuredContent"
+    ]
     response = client.post(
         "/tools/read",
         json={"session_id": session["session_id"], "path": "missing.txt"},
     )
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": "FileNotFoundError",
-        "message": f"FileNotFoundError: {tmp_path / 'missing.txt'}",
-    }
-
-
-def test_http_tool_unexpected_error_returns_json_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    clear_settings_cache()
-
-    async def broken_call_tool(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(
-        http_tool_routes_module, "call_http_tool", broken_call_tool
-    )
-
-    response = TestClient(build_http_app(), raise_server_exceptions=False).post(
-        "/tools/read", json={"path": "a.txt"}
-    )
-
-    assert response.status_code == 500
-    assert response.json() == {
-        "error": "internal_error",
-        "message": "Unhandled RuntimeError: boom",
-    }
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
 
 
 def test_http_mode_hides_remote_worker_routes(tmp_path, monkeypatch):
@@ -979,8 +954,9 @@ def test_http_mode_hides_remote_worker_routes(tmp_path, monkeypatch):
         "/tools/run_remote_shell_command", json={"command": "echo ok"}
     )
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Not Found"}
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert "Unknown tool" in response.json()["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -1025,53 +1001,6 @@ async def test_mcp_unknown_tool_uses_fastmcp_tool_error(tmp_path, monkeypatch):
         await build_mcp().call_tool("no_such_tool", {})
 
 
-def test_http_tool_routes_reject_unsupported_methods():
-    class RegistryWithUnsupportedRoute(ToolRegistry):
-        def http_routes(self):
-            return [
-                HttpToolRoute(
-                    cast(HttpMethod, "PUT"), "/tools/example", "read_todos"
-                )
-            ]
-
-    catalog = ToolCatalog((RegistryWithUnsupportedRoute(),))
-
-    with pytest.raises(ValueError, match="Unsupported HTTP tool method 'PUT'"):
-        build_http_app(tool_catalog=catalog)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("agent_bridge_enabled", ["false", "true"])
-async def test_mcp_tools_have_matching_http_routes_and_handlers(
-    tmp_path, monkeypatch, agent_bridge_enabled
-):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / "agents"))
-    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", agent_bridge_enabled)
-    clear_settings_cache()
-    catalog = build_tool_catalog()
-
-    mcp_tool_names = {
-        tool.name for tool in await build_mcp(tool_catalog=catalog).list_tools()
-    }
-    route_tool_names = {route.tool_name for route in catalog.http_routes()}
-    handler_tool_names = set(catalog.handlers())
-    transfer_registry = next(
-        registry
-        for registry in catalog.registries
-        if registry.name == "transfer"
-    )
-    internal_transfer_handlers = set(transfer_registry.http_handlers())
-
-    assert route_tool_names == mcp_tool_names - {
-        "gui_action",
-        "gui_list",
-        "gui_state",
-        "view_image",
-    }
-    assert handler_tool_names == mcp_tool_names | internal_transfer_handlers
-
-
 @pytest.mark.asyncio
 async def test_run_python_code_creates_temp_file(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
@@ -1083,7 +1012,7 @@ async def test_run_python_code_creates_temp_file(tmp_path, monkeypatch):
     client = TestClient(_build_paired_surface_http_app())
     session_id = client.post(
         "/tools/session_start", json={"workdir": "."}
-    ).json()["session_id"]
+    ).json()["structuredContent"]["session_id"]
     payload = client.post(
         "/tools/run_python_code",
         json={
@@ -1091,7 +1020,7 @@ async def test_run_python_code_creates_temp_file(tmp_path, monkeypatch):
             "code": "print('py314')",
             "cwd": ".",
         },
-    ).json()
+    ).json()["structuredContent"]
 
     assert payload["mode"] == "command"
     assert payload["cwd"] == str(tmp_path)

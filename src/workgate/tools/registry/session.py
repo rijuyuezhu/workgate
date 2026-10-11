@@ -57,8 +57,6 @@ def _session_end_description(_context: McpToolContext) -> str:
 
 
 @session_tool(
-    http_method="POST",
-    http_path="/tools/session_start",
     description=_session_start_description,
     oauth_scopes=("shell:read",),
 )
@@ -73,8 +71,6 @@ async def session_start(
 
 
 @session_tool(
-    http_method="POST",
-    http_path="/tools/session_change_workdir",
     description=_session_change_workdir_description,
     oauth_scopes=("shell:read",),
 )
@@ -87,8 +83,6 @@ async def session_change_workdir(
 
 
 @session_tool(
-    http_method="POST",
-    http_path="/tools/session_end",
     description=_session_end_description,
     oauth_scopes=("shell:execute",),
 )
@@ -100,8 +94,6 @@ async def session_end(
 
 
 @session_tool(
-    http_method="POST",
-    http_path="/tools/session_copy",
     description=_session_copy_description,
     oauth_scopes=("shell:read", "shell:write"),
 )

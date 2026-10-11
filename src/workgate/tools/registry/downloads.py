@@ -40,8 +40,6 @@ def _create_file_link_description(context: McpToolContext) -> str:
 
 
 @download_tool(
-    http_method="POST",
-    http_path="/tools/file_link/create",
     description=_create_file_link_description,
     oauth_scopes=("shell:read", "file:share"),
     enabled=_download_tools_enabled,
@@ -60,8 +58,6 @@ async def create_file_link(
 
 
 @download_tool(
-    http_method="GET",
-    http_path="/tools/file_link/list",
     annotations="read_only",
     oauth_scopes=("shell:read", "file:share"),
     enabled=_download_tools_enabled,
@@ -76,8 +72,6 @@ async def list_file_links(
 
 
 @download_tool(
-    http_method="POST",
-    http_path="/tools/file_link/revoke",
     oauth_scopes=("shell:read", "file:share"),
     enabled=_download_tools_enabled,
 )

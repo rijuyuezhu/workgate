@@ -644,10 +644,6 @@ def test_control_dispatches_transport_modes(monkeypatch):
         ("mcp", runtime),
     ]
 
-    runtime.config.mode = "both"
-    with pytest.raises(SystemExit, match="mode=both is reserved"):
-        server_cli._dispatch_control(settings)
-
     runtime.config.mode = "unexpected"
     with pytest.raises(SystemExit, match="Unsupported mode"):
         server_cli._dispatch_control(settings)

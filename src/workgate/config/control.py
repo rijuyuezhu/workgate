@@ -12,7 +12,7 @@ from .settings import Settings, get_settings
 class ControlConfig(SharedRoleConfig):
     """Resolved configuration containing only control-owned authority."""
 
-    mode: Literal["mcp", "http", "both", "stdio"]
+    mode: Literal["mcp", "http", "stdio"]
     host: str
     port: int
     log_level: Literal["critical", "error", "warning", "info", "debug"]

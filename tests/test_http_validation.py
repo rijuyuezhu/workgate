@@ -46,11 +46,9 @@ def test_http_missing_required_argument_returns_validation_error(
 
     response = TestClient(build_http_app()).post("/tools/read", json={})
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": "validation_error",
-        "message": "Missing required argument: session_id",
-    }
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert "session_id" in response.json()["content"][0]["text"]
 
 
 def test_http_argument_validation_uses_consistent_error_envelope(
@@ -68,9 +66,9 @@ def test_http_argument_validation_uses_consistent_error_envelope(
         json={"workdir": ".", "label": ""},
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"] == "validation_error"
-    assert "at least 1 character" in response.json()["message"]
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert "at least 1 character" in response.json()["content"][0]["text"]
 
 
 def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):
@@ -84,11 +82,9 @@ def test_http_unknown_session_returns_validation_error(tmp_path, monkeypatch):
         json={"session_id": "BAD00000", "path": "missing.txt"},
     )
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": "validation_error",
-        "message": "unknown session_id 'BAD00000'; call session_start first",
-    }
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
+    assert response.json()["content"][0]["text"] == "Error executing tool read"
 
 
 def test_http_app_exposes_oauth_public_routes(tmp_path, monkeypatch):
@@ -139,8 +135,8 @@ def test_http_localhost_bypass_is_opt_in(tmp_path, monkeypatch):
         base_url="http://127.0.0.1:8765",
         client=("127.0.0.1", 50000),
     ).post("/tools/read", json={})
-    assert bypassed.status_code == 400
-    assert bypassed.json()["error"] == "validation_error"
+    assert bypassed.status_code == 200
+    assert bypassed.json()["isError"] is True
 
 
 @pytest.mark.parametrize(
@@ -168,8 +164,8 @@ def test_http_localhost_bypass_accepts_direct_loopback(
         build_http_app(), base_url=base_url, client=peer
     ).post("/tools/read", json={}, headers=headers)
 
-    assert response.status_code == 400
-    assert response.json()["error"] == "validation_error"
+    assert response.status_code == 200
+    assert response.json()["isError"] is True
 
 
 @pytest.mark.parametrize(

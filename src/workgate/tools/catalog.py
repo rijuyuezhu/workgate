@@ -2,10 +2,9 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 
 from ..config.control import ControlConfig
-from .contracts import HttpToolRoute, McpToolContext, ToolHandler, ToolRegistry
+from .contracts import McpToolContext, ToolRegistry
 from .registry.agent import AgentBridgeToolRegistry
 from .registry.audit import AuditToolRegistry
 from .registry.browser import BrowserToolRegistry
@@ -57,28 +56,10 @@ BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
 
 @dataclass(frozen=True)
 class ToolCatalog:
-    """Fresh registry instances and derived tool surfaces for one composition."""
+    """Fresh registry instances for one MCP tool composition."""
 
     registries: tuple[ToolRegistry, ...]
     """Fresh built-in registry instances owned by this catalog."""
-
-    def http_routes(self) -> tuple[HttpToolRoute, ...]:
-        """Return all enabled REST route metadata from this catalog."""
-        return tuple(
-            route
-            for registry in self.registries
-            for route in registry.http_routes()
-        )
-
-    def handlers(self) -> Mapping[str, ToolHandler]:
-        """Return enabled invocation handlers with duplicate checks."""
-        handlers: dict[str, ToolHandler] = {}
-        for registry in self.registries:
-            for tool_name, handler in registry.http_handlers().items():
-                if tool_name in handlers:
-                    raise ValueError(f"Duplicate tool handler: {tool_name}")
-                handlers[tool_name] = handler
-        return MappingProxyType(handlers)
 
     def register_mcp(self, mcp, context: McpToolContext) -> None:
         """Register this catalog's MCP surface on one MCPServer application."""

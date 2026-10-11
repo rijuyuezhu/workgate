@@ -343,18 +343,6 @@ class _RoutedDeclarativeRegistry(ToolRegistry):
 
         return replace(tool, func=routed)
 
-    def http_routes(self):
-        return tuple(
-            route
-            for tool in self._enabled_tools()
-            if (route := tool.http_route()) is not None
-        )
-
-    def http_handlers(self):
-        return {
-            tool.name: tool.http_handler() for tool in self._enabled_tools()
-        }
-
     def register_mcp(self, mcp, context: McpToolContext) -> None:
         for tool in self._enabled_tools():
             tool.register_mcp(mcp, context)

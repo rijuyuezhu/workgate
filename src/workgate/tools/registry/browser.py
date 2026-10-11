@@ -46,8 +46,6 @@ browser_tool = BrowserToolRegistry.get_tool_decorator()
 
 
 @browser_tool(
-    http_method="POST",
-    http_path="/tools/browser_session",
     oauth_scopes=("browser:use",),
 )
 async def browser_session(
@@ -81,8 +79,6 @@ async def browser_session(
 
 
 @browser_tool(
-    http_method="POST",
-    http_path="/tools/browser_snapshot",
     oauth_scopes=("browser:use",),
 )
 async def browser_snapshot(
@@ -112,8 +108,6 @@ async def browser_snapshot(
 
 
 @browser_tool(
-    http_method="POST",
-    http_path="/tools/browser_act",
     oauth_scopes=("browser:use",),
 )
 async def browser_act(
@@ -129,8 +123,6 @@ async def browser_act(
 
 
 @browser_tool(
-    http_method="POST",
-    http_path="/tools/browser_run_script",
     oauth_scopes=("browser:use", "shell:read", "shell:execute"),
 )
 async def browser_run_script(

@@ -16,8 +16,6 @@ version_tool = VersionToolRegistry.get_tool_decorator()
 
 
 @version_tool(
-    http_method="GET",
-    http_path="/tools/version",
     annotations="read_only",
     oauth_scopes=("shell:read",),
 )

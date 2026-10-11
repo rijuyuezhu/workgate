@@ -610,7 +610,7 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
     assert csrf_rejected.status_code == 403
     assert csrf_rejected.json()["detail"] == "WebUI CSRF validation failed"
 
-    unrelated = client.get("/tools/list_persistent_shells")
+    unrelated = client.post("/tools/list_persistent_shells", json={})
     assert unrelated.status_code == 401
 
     logout = client.post(
@@ -953,8 +953,8 @@ def test_removed_native_ui_token_does_not_bypass_oauth(monkeypatch, tmp_path):
     loopback = TestClient(build_http_app(), client=("127.0.0.1", 50000))
     assert loopback.get("/api/ui/bootstrap", headers=headers).status_code == 401
     assert (
-        loopback.get(
-            "/tools/list_persistent_shells", headers=headers
+        loopback.post(
+            "/tools/list_persistent_shells", headers=headers, json={}
         ).status_code
         == 401
     )

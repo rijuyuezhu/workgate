@@ -22,8 +22,7 @@ workgate executor --help
 |---|---|
 | `mcp` | Serve MCP over HTTP at `/mcp`. This is the default public connector mode. |
 | `stdio` | Run a stdio MCP control process for local MCP clients. |
-| `http` | Start the REST/debug and WebUI HTTP service. |
-| `both` | Reserved and exits with an error. Run separate processes if both transports are needed. |
+| `http` | Start the WebUI and an HTTP debug wrapper of the registered MCP tools. |
 
 The control CLI intentionally does **not** expose executor machine
 settings such as `--default-workdir`, shell executables, or executor tool binary
@@ -37,11 +36,27 @@ Run MCP-over-HTTP locally without OAuth:
 WORKGATE_AUTH_MODE=none uv run workgate control --mode mcp
 ```
 
-Run the REST/debug API:
+Run the debug HTTP wrapper (the same MCP tools and result contract; not a second public tool protocol):
 
 ```bash
 WORKGATE_AUTH_MODE=none uv run workgate control --mode http
 ```
+
+The debug endpoints are `GET /tools` (MCP tool metadata) and
+`POST /tools/{tool_name}` with the MCP argument object as JSON. Calls return
+MCP `CallToolResult` JSON (`content`, `structuredContent`, `isError`), including
+MCP tool validation and scope failures; they do not use the former individual
+REST routes or HTTP status/error envelopes. For example:
+
+```bash
+curl http://127.0.0.1:8765/tools
+curl -X POST http://127.0.0.1:8765/tools/version -H 'Content-Type: application/json' -d '{}'
+```
+
+Keep this interface for local development and debugging, not as a replacement
+for an MCP client connection to `/mcp`. Running MCP HTTP and debug HTTP in the
+same process is not currently an advertised mode.
+
 
 Boolean CLI values are explicit:
 
