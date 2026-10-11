@@ -42,6 +42,13 @@ uv run pytest -q
 uv run --group docs mkdocs build --strict
 ```
 
+The test suite is grouped by ownership in `tests/{agent,control,executor,webui,workspace}/`;
+`tests/contracts/` holds cross-cutting public contracts, `tests/repo/` checks
+packaging and repository invariants, and `tests/e2e/` holds process and browser
+scenarios. Shared helpers live in `tests/support/`, with E2E process harnesses
+under `tests/e2e/`. Keep host/XDG isolation in root `tests/conftest.py`, and
+put domain-specific fixtures beside their consumers.
+
 The CI coverage ratchet is implemented by
 `scripts/validation/check-coverage.py`. Run it locally after generating a
 coverage JSON report when your change affects coverage policy. The script and
