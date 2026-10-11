@@ -139,7 +139,7 @@ jobs:
       - name: Install locked Chromium revision
         run: uv run playwright install --with-deps chromium
       - name: Run structured browser tool E2E
-        run: uv run pytest -q -m browser tests/test_browser_service.py
+        run: uv run pytest -q -m browser tests/webui/test_browser_service.py
       - name: Run real Chromium Human UI scenario
         run: uv run python scripts/testing/run-browser-e2e.py --artifacts browser-artifacts
       - uses: actions/upload-artifact@v7
@@ -211,8 +211,8 @@ jobs:
           test -f "$source_dir/deploy/cloudflared/README.md"
           test -f "$source_dir/deploy/cloudflared/workgate-cloudflared.service"
           test -f "$source_dir/scripts/validation/coverage-baseline.json"
-          test -f "$source_dir/tests/test_coverage_gate.py"
-          test -f "$source_dir/tests/test_tmux_helper.py"
+          test -f "$source_dir/tests/repo/test_coverage_gate.py"
+          test -f "$source_dir/tests/executor/test_tmux_helper.py"
           test ! -e "$source_dir/.coverage"
           test ! -e "$source_dir/coverage.json"
           test ! -e "$source_dir/coverage.xml"

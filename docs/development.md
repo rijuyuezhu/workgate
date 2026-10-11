@@ -35,7 +35,7 @@ workspace merely because it is running from a checkout.
 Start focused, then run the full gates before review:
 
 ```bash
-uv run pytest tests/test_tool_surface.py -q
+uv run pytest tests/contracts/test_tool_surface.py -q
 uv run pre-commit run --all-files
 uv run pyright
 uv run pytest -q
@@ -75,7 +75,7 @@ editing generated output by hand.
 Keep dependency direction visible: control must not import executor
 implementations, and normal runtime policy should come from the resolved role
 config/service graph rather than ambient settings or service locators.
-`tests/test_architecture.py` contains the executable boundary checks.
+`tests/repo/test_architecture.py` contains the executable boundary checks.
 
 ## Documentation and release work
 

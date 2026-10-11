@@ -1,0 +1,559 @@
+import base64
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
+
+import workgate.ui.http.terminals as terminal_module
+from tests.support.paired import PairedControlHarness, build_paired_http_app
+from workgate.config.settings import (
+    Settings,
+    clear_settings_cache,
+    get_settings,
+)
+from workgate.oauth.core.scopes import SCOPE_SHELL_EXECUTE, SCOPE_SHELL_READ
+from workgate.oauth.protocol.token_codec import issue_access_token
+from workgate.protocol.executor import ExecutorResult
+from workgate.protocol.ids import new_command_id
+from workgate.protocol.terminal import (
+    TERMINAL_BROWSER_SUBPROTOCOL,
+    TERMINAL_BROWSER_TOKEN_PROTOCOL_PREFIX,
+)
+
+BASE_URL = "https://workgate.example"
+UI_SESSION_BINDING = "b" * 43
+
+
+def test_terminal_settings_are_bounded():
+    assert Settings().ui_terminal_idle_timeout_s == 3600
+    assert Settings().ui_terminal_max_connections == 8
+    with pytest.raises(ValidationError):
+        Settings(ui_terminal_idle_timeout_s=-1)
+    for value in (0, 129):
+        with pytest.raises(ValidationError):
+            Settings(ui_terminal_max_connections=value)
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings_and_connections():
+    clear_settings_cache()
+    try:
+        yield
+    finally:
+        clear_settings_cache()
+
+
+def _configure(monkeypatch, tmp_path, *, auth_mode="none", **values):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("WORKGATE_BASE_URL", BASE_URL)
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    for name, value in values.items():
+        monkeypatch.setenv(f"WORKGATE_{name.upper()}", str(value).lower())
+    clear_settings_cache()
+
+
+class _ExecutorTestClient(TestClient):
+    def __init__(self, *args: Any, executor_id: str, **kwargs: Any) -> None:
+        self.executor_id = executor_id
+        super().__init__(*args, **kwargs)
+
+    def request(self, method: str, url: Any, **kwargs: Any):
+        if method.upper() in {"GET", "HEAD"}:
+            params = dict(kwargs.get("params") or {})
+            params.setdefault("executor_id", self.executor_id)
+            kwargs["params"] = params
+        else:
+            body = kwargs.get("json")
+            if isinstance(body, dict):
+                body = dict(body)
+                body.setdefault("executor_id", self.executor_id)
+                kwargs["json"] = body
+        return super().request(method, url, **kwargs)
+
+
+class _TerminalExecutorBackend:
+    """Deterministic final executor-side terminal test double."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.failures: dict[str, Exception] = {}
+        self.overrides: dict[str, Any] = {}
+        self.shells: list[dict[str, Any]] = [
+            {
+                "shell_id": "demo",
+                "name": None,
+                "cwd": "/workspace",
+                "command": None,
+            }
+        ]
+        self.read_output = "hello"
+        self.bridge_backend = "tmux-pty"
+
+    async def execute(self, op: str, args: dict[str, Any]) -> Any:
+        args = dict(args)
+        self.calls.append((op, args))
+        failure = self.failures.get(op)
+        if failure is not None:
+            raise failure
+        if op in self.overrides:
+            return self.overrides[op]
+
+        if op == "ui.terminals.list":
+            return {"shells": self.shells}
+        if op == "ui.terminals.start":
+            return {
+                "shell_id": "created",
+                "name": args.get("name"),
+                "cwd": args.get("cwd", "."),
+                "command": args.get("command") or "/bin/sh",
+            }
+        if op == "ui.terminals.read":
+            return {
+                "shell_id": args.get("shell_id"),
+                "output": self.read_output,
+            }
+        if op == "ui.terminals.kill":
+            return {
+                "shell_id": args.get("shell_id"),
+                "killed": True,
+                "stderr": None,
+            }
+        raise AssertionError(f"unexpected terminal op: {op}")
+
+
+def _client(
+    monkeypatch, tmp_path, *, auth_mode="none", **values
+) -> tuple[_ExecutorTestClient, _TerminalExecutorBackend, PairedControlHarness]:
+    _configure(monkeypatch, tmp_path, auth_mode=auth_mode, **values)
+    app, harness = build_paired_http_app(get_settings())
+    backend = _TerminalExecutorBackend()
+    monkeypatch.setattr(
+        harness.executor.ui_terminals, "execute", backend.execute
+    )
+    direct_call = harness.call
+
+    async def call(
+        executor_id: str,
+        op: str,
+        args: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
+        timeout_s: float | None = None,
+    ) -> ExecutorResult:
+        if op == "terminal.attach":
+            payload = dict(args or {})
+            backend.calls.append((op, payload))
+            failure = backend.failures.get(op)
+            if failure is not None:
+                raise failure
+            return ExecutorResult(
+                id=new_command_id(),
+                ok=True,
+                result={
+                    "stream_id": payload["stream_id"],
+                    "shell_id": payload["shell_id"],
+                    "backend": backend.bridge_backend,
+                    "connected": True,
+                },
+            )
+        return await direct_call(
+            executor_id,
+            op,
+            args,
+            session_id=session_id,
+            timeout_s=timeout_s,
+        )
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", call)
+    client = _ExecutorTestClient(
+        app,
+        executor_id=harness.executor_id,
+        base_url=BASE_URL,
+        client=("203.0.113.10", 50000),
+    )
+    return client, backend, harness
+
+
+def _ws_path(client: _ExecutorTestClient, path: str) -> str:
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}executor_id={client.executor_id}"
+
+
+def _bearer_token(scope: str) -> str:
+    return issue_access_token(
+        client_id="webui-test",
+        scope=scope,
+        resource=f"{BASE_URL}/mcp",
+    )
+
+
+def _bearer_protocol(scope: str) -> str:
+    encoded = (
+        base64.urlsafe_b64encode(_bearer_token(scope).encode())
+        .rstrip(b"=")
+        .decode()
+    )
+    return f"bearer.{encoded}"
+
+
+def test_terminal_connection_limit(monkeypatch, tmp_path):
+    _client_obj, _backend, harness = _client(
+        monkeypatch, tmp_path, ui_terminal_max_connections=1
+    )
+    connections = harness.control.human_ui_runtime.terminal_connections
+    marker = connections.reserve(1)
+    assert marker is not None
+    try:
+        assert connections.reserve(1) is None
+    finally:
+        connections.release(marker)
+
+
+def test_terminal_http_surface_dispatches_final_executor_ops(
+    monkeypatch, tmp_path
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+
+    listed = client.get("/api/ui/terminals")
+    assert listed.status_code == 200
+    assert listed.json()["data"] == {
+        "executor_id": client.executor_id,
+        "shells": [
+            {
+                "shell_id": "demo",
+                "name": None,
+                "cwd": "/workspace",
+                "command": None,
+            }
+        ],
+    }
+
+    started = client.post(
+        "/api/ui/terminals/start",
+        json={"cwd": ".", "name": "created", "command": "/bin/sh"},
+    )
+    read = client.get(
+        "/api/ui/terminals/read", params={"shell_id": "demo", "lines": 321}
+    )
+    killed = client.post("/api/ui/terminals/kill", json={"shell_id": "demo"})
+
+    assert [response.status_code for response in (started, read, killed)] == [
+        200
+    ] * 3
+    assert started.json()["data"]["executor_id"] == client.executor_id
+    assert started.json()["data"]["shell_id"] == "created"
+    assert read.json()["data"] == {
+        "executor_id": client.executor_id,
+        "shell_id": "demo",
+        "output": "hello",
+        "lines": 321,
+    }
+    assert backend.calls == [
+        ("ui.terminals.list", {}),
+        (
+            "ui.terminals.start",
+            {"cwd": ".", "name": "created", "command": "/bin/sh"},
+        ),
+        ("ui.terminals.read", {"shell_id": "demo", "lines": 321}),
+        ("ui.terminals.kill", {"shell_id": "demo"}),
+    ]
+    assert all("session_id" not in args for _, args in backend.calls)
+
+
+def test_terminal_http_surface_preserves_explicit_session_ownership(
+    monkeypatch, tmp_path
+):
+    client, backend, harness = _client(monkeypatch, tmp_path)
+    started_session = client.post("/tools/session_start", json={"workdir": "."})
+    assert started_session.status_code == 200
+    session_id = started_session.json()["structuredContent"]["session_id"]
+
+    listed = client.get("/api/ui/terminals", params={"session_id": session_id})
+    started = client.post(
+        "/api/ui/terminals/start",
+        json={"session_id": session_id, "cwd": ".", "name": "owned"},
+    )
+    read = client.get(
+        "/api/ui/terminals/read",
+        params={"session_id": session_id, "shell_id": "demo", "lines": 12},
+    )
+    killed = client.post(
+        "/api/ui/terminals/kill",
+        json={"session_id": session_id, "shell_id": "demo"},
+    )
+
+    assert [
+        response.status_code for response in (listed, started, read, killed)
+    ] == [200, 200, 200, 200]
+    assert backend.calls == [
+        ("ui.terminals.list", {"session_id": session_id}),
+        (
+            "ui.terminals.start",
+            {
+                "cwd": ".",
+                "name": "owned",
+                "command": None,
+                "session_id": session_id,
+            },
+        ),
+        (
+            "ui.terminals.read",
+            {"shell_id": "demo", "lines": 12, "session_id": session_id},
+        ),
+        ("ui.terminals.kill", {"shell_id": "demo", "session_id": session_id}),
+    ]
+
+    backend.calls.clear()
+    mismatch = TestClient(
+        client.app, base_url=BASE_URL, client=("203.0.113.12", 50002)
+    ).get(
+        "/api/ui/terminals",
+        params={"executor_id": "missing-executor", "session_id": session_id},
+    )
+    assert mismatch.status_code == 400
+    assert "is not bound to executor_id" in mismatch.json()["message"]
+    assert backend.calls == []
+    assert (
+        str(
+            harness.control.control_state.snapshot_sessions()[
+                session_id
+            ].executor_id
+        )
+        == client.executor_id
+    )
+
+
+def test_terminal_http_requires_explicit_eligible_executor(
+    monkeypatch, tmp_path
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    raw_client = TestClient(
+        client.app,
+        base_url=BASE_URL,
+        client=("203.0.113.12", 50002),
+    )
+
+    missing = raw_client.get("/api/ui/terminals")
+    unknown = raw_client.get(
+        "/api/ui/terminals", params={"executor_id": "missing-executor"}
+    )
+
+    assert missing.status_code == 400
+    assert "executor_id is required" in missing.json()["message"]
+    assert unknown.status_code == 502
+    assert "not currently eligible" in unknown.json()["message"]
+    assert backend.calls == []
+
+
+def test_terminal_http_actions_require_execute_scope(monkeypatch, tmp_path):
+    client, backend, _ = _client(monkeypatch, tmp_path, auth_mode="oauth")
+    read_headers = {
+        "Authorization": f"Bearer {_bearer_token(SCOPE_SHELL_READ)}"
+    }
+    execute_headers = {
+        "Authorization": (
+            "Bearer "
+            + _bearer_token(f"{SCOPE_SHELL_READ} {SCOPE_SHELL_EXECUTE}")
+        )
+    }
+
+    assert (
+        client.get("/api/ui/terminals", headers=read_headers).status_code == 200
+    )
+    denied = client.post(
+        "/api/ui/terminals/start", json={"cwd": "."}, headers=read_headers
+    )
+    allowed = client.post(
+        "/api/ui/terminals/start", json={"cwd": "."}, headers=execute_headers
+    )
+
+    assert denied.status_code == 403
+    assert SCOPE_SHELL_EXECUTE in denied.text
+    assert allowed.status_code == 200
+    assert [op for op, _ in backend.calls] == [
+        "ui.terminals.list",
+        "ui.terminals.start",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs", "message"),
+    [
+        (
+            "get",
+            "/api/ui/terminals/read",
+            {"params": {"shell_id": "bad/id"}},
+            "shell_id must be",
+        ),
+        (
+            "get",
+            "/api/ui/terminals/read",
+            {"params": {"shell_id": "demo", "lines": 5001}},
+            "lines must be between",
+        ),
+        (
+            "post",
+            "/api/ui/terminals/attach",
+            {"json": {"shell_id": "demo", "cols": 19, "rows": 30}},
+            "cols must be between",
+        ),
+    ],
+)
+def test_terminal_http_surface_rejects_invalid_bounds(
+    monkeypatch, tmp_path, method, path, kwargs, message
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    response = client.request(method, path, **kwargs)
+    assert response.status_code == 400
+    assert message in response.json()["message"]
+    assert backend.calls == []
+
+
+@pytest.mark.parametrize(
+    ("action", "payload"),
+    [
+        (
+            "send",
+            {"shell_id": "demo", "input_text": "printf ok", "enter": False},
+        ),
+        ("resize", {"shell_id": "demo", "cols": 132, "rows": 41}),
+    ],
+)
+def test_terminal_http_interactive_mutations_require_streamhub_attach(
+    monkeypatch, tmp_path, action, payload
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+
+    response = client.post(f"/api/ui/terminals/{action}", json=payload)
+
+    assert response.status_code == 400
+    assert (
+        response.json()["message"]
+        == "Interactive terminal input and resize require StreamHub attach"
+    )
+    assert backend.calls == []
+
+
+def test_terminal_attach_allocates_stream_grant_and_dispatches_executor_attach(
+    monkeypatch, tmp_path
+):
+    client, backend, harness = _client(monkeypatch, tmp_path, auth_mode="none")
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 101, "rows": 37},
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["executor_id"] == client.executor_id
+        assert data["shell_id"] == "demo"
+        assert data["stream_id"].startswith("stream_")
+        assert data["browser_token"]
+        assert data["mode"] == "pty"
+        assert data["backend"] == "tmux-pty"
+        attach = [args for op, args in backend.calls if op == "terminal.attach"]
+        assert attach == [
+            {
+                "stream_id": data["stream_id"],
+                "shell_id": "demo",
+                "cols": 101,
+                "rows": 37,
+            }
+        ]
+        assert harness.control.stream_hub.active_count() == 1
+        with (
+            client.websocket_connect(
+                f"/stream/{data['stream_id']}",
+                subprotocols=[
+                    TERMINAL_BROWSER_SUBPROTOCOL,
+                    f"{TERMINAL_BROWSER_TOKEN_PROTOCOL_PREFIX}wrong",
+                ],
+            ) as websocket,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            websocket.receive_text()
+        assert caught.value.code == 4401
+        assert harness.control.stream_hub.active_count() == 1
+
+
+def test_terminal_attach_failure_releases_pending_stream(monkeypatch, tmp_path):
+    client, backend, harness = _client(monkeypatch, tmp_path, auth_mode="none")
+    backend.failures["terminal.attach"] = RuntimeError("attach failed")
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 101, "rows": 37},
+        )
+
+        assert response.status_code == 502
+        assert "attach failed" in response.json()["message"]
+        assert harness.control.stream_hub.active_count() == 0
+
+
+def test_terminal_http_rejects_malformed_executor_inventory(
+    monkeypatch, tmp_path
+):
+    client, backend, _ = _client(monkeypatch, tmp_path)
+    backend.overrides["ui.terminals.list"] = {
+        "shells": [{"shell_id": "bad id"}]
+    }
+
+    response = client.get("/api/ui/terminals")
+
+    assert response.status_code == 502
+    assert "malformed terminal inventory" in response.json()["message"]
+
+
+def test_terminal_read_normalization_rejects_oversized_executor_output():
+    oversized = {
+        "shell_id": "demo",
+        "output": "x" * (terminal_module.UI_TERMINAL_OUTPUT_MAX_BYTES + 1),
+    }
+
+    with pytest.raises(RuntimeError, match="oversized terminal output"):
+        terminal_module._normalize_read("executor-a", "demo", 50, oversized)
+
+
+def test_terminal_http_maps_executor_connection_failure(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    async def fail_list(_runtime, _executor_id, _session_id=None):
+        raise ConnectionError("executor offline")
+
+    monkeypatch.setattr(terminal_module, "_list_shells", fail_list)
+
+    response = client.get("/api/ui/terminals")
+
+    assert response.status_code == 503
+    assert "executor offline" in response.json()["message"]
+
+
+def test_terminal_attach_rejects_missing_shell(monkeypatch, tmp_path):
+    client, backend, harness = _client(monkeypatch, tmp_path)
+    backend.shells = [{"shell_id": "other", "cwd": "/workspace"}]
+
+    with client:
+        response = client.post(
+            "/api/ui/terminals/attach",
+            json={"shell_id": "demo", "cols": 80, "rows": 24},
+        )
+
+    assert response.status_code == 400
+    assert "Persistent shell not found" in response.json()["message"]
+    assert harness.control.stream_hub.active_count() == 0
+
+
+def test_terminal_http_rejects_unknown_action(monkeypatch, tmp_path):
+    client, _, _ = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/ui/terminals/unknown", json={})
+
+    assert response.status_code == 400
+    assert "Unsupported terminal action" in response.json()["message"]

@@ -77,8 +77,8 @@ source-include = [
     "scripts/validation/check-release-matrix.py",
     "scripts/validation/check-python-dist.py",
     "scripts/validation/coverage-baseline.json",
-    "tests/test_coverage_gate.py",
-    "tests/test_tmux_helper.py",
+    "tests/repo/test_coverage_gate.py",
+    "tests/executor/test_tmux_helper.py",
 ]
 source-exclude = [
     "/ui-terminal/node_modules",
