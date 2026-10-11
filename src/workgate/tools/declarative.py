@@ -33,7 +33,7 @@ from .contracts import (
     ToolRegistry,
 )
 from .mcp_text import has_explicit_tool_text, render_tool_text
-from .metadata import mcp_security_meta
+from .metadata import mcp_security_meta, tool_safety_annotations
 
 type ToolAnnotation = Literal["read_only"]
 type ToolDescription = str | Callable[[McpToolContext], str]
@@ -201,16 +201,16 @@ class ToolDefinition:
 
         return handler
 
-    def _mcp_annotations(
-        self, context: McpToolContext
-    ) -> ToolAnnotations | None:
+    def _mcp_annotations(self) -> ToolAnnotations:
+        """Build the complete annotation once from the declared tool behavior."""
         match self.annotations:
             case "read_only":
-                return context.read_only_tool_annotations
+                read_only = True
             case None:
-                return None
+                read_only = False
             case _:
                 raise ValueError(f"Invalid annotations: {self.annotations}")
+        return tool_safety_annotations(self.name, read_only=read_only)
 
     def _mcp_description(self, context: McpToolContext) -> str | None:
         if callable(self.description):
@@ -260,7 +260,7 @@ class ToolDefinition:
         mcp_handler.__signature__ = self.signature  # type: ignore[attr-defined]
         mcp.tool(
             description=self._mcp_description(context),
-            annotations=self._mcp_annotations(context),
+            annotations=self._mcp_annotations(),
             meta=mcp_security_meta(
                 self.required_oauth_scopes(), settings=context.settings
             ),

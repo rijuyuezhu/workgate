@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from typing import Any, cast
 
 from mcp.server.mcpserver import MCPServer
-from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Mount
 
@@ -47,16 +46,6 @@ def _control_state_store(
         runtime.state_store
         if runtime is not None
         else FileStateStore(lambda: settings.state_dir)
-    )
-
-
-def _make_read_only_tool_annotations() -> ToolAnnotations:
-    """Mark a tool as read-only for MCP clients."""
-    return ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        idempotent_hint=True,
-        open_world_hint=False,
     )
 
 
@@ -120,10 +109,7 @@ def build_mcp(
     )
     cast(Any, mcp)._workgate_runtime = runtime
     cast(Any, mcp)._workgate_runtime_lifespan_owned = own_runtime_lifespan
-    context = McpToolContext(
-        settings=settings,
-        read_only_tool_annotations=_make_read_only_tool_annotations(),
-    )
+    context = McpToolContext(settings=settings)
     catalog.register_mcp(mcp, context)
     register_live_workspace(mcp, runtime)
     return mcp

@@ -1,10 +1,10 @@
 """Bounded progressive disclosure of external MCP tool metadata."""
 
 import asyncio
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from mcp.types import ListToolsResult, Tool
 
 from workgate.agent_bridge.discovery import McpDiscovery
 from workgate.agent_bridge.mcp import (
@@ -122,7 +122,9 @@ async def test_upstream_tool_pagination_is_bounded_before_caching() -> None:
             self.tools = tools
 
         async def list_tools(self, **_kwargs: Any) -> Any:
-            return SimpleNamespace(tools=self.tools, nextCursor=None)
+            return ListToolsResult(
+                tools=[Tool.model_validate(tool) for tool in self.tools]
+            )
 
     good = [{"name": "ping", "description": "ok", "inputSchema": {}}]
     assert len(await _list_session_tools(cast(Any, FakeSession(good)))) == 1

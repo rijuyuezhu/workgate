@@ -142,7 +142,7 @@ async def _list_session_tools(session: ClientSession) -> list[AgentMcpTool]:
             if catalog_bytes > MAX_SERVER_DESCRIPTOR_BYTES:
                 raise ValueError("MCP server tool catalog exceeds size limit")
             tools.append(tool)
-        cursor = getattr(result, "nextCursor", None)
+        cursor = result.next_cursor
         if not cursor:
             return tools
 

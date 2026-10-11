@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
-from mcp.types import ToolAnnotations
 
 from ..config.control import ControlConfig
 
@@ -34,8 +33,6 @@ class McpToolContext:
 
     settings: ControlConfig
     """Resolved control-owned settings exposed to public tool metadata."""
-    read_only_tool_annotations: ToolAnnotations
-    """MCP annotation applied to read-only tools."""
 
 
 class ToolRegistry:

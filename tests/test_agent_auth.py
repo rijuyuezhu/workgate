@@ -6,11 +6,11 @@ import subprocess
 import sys
 import threading
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from mcp.types import ListToolsResult
 
 import workgate.agent_bridge.auth_store as auth_store_module
 import workgate.agent_bridge.mcp as mcp_module
@@ -985,7 +985,7 @@ async def test_stdio_transport_receives_resolved_secret_env(
             return None
 
         async def list_tools(self, *, params=None):
-            return SimpleNamespace(tools=[], nextCursor=None)
+            return ListToolsResult(tools=[])
 
     monkeypatch.setattr(mcp_module, "stdio_client", fake_stdio)
     monkeypatch.setattr(
@@ -1040,7 +1040,7 @@ async def test_http_transport_receives_resolved_secret_header(
             return None
 
         async def list_tools(self, *, params=None):
-            return SimpleNamespace(tools=[], nextCursor=None)
+            return ListToolsResult(tools=[])
 
     monkeypatch.setattr(mcp_module.httpx2, "AsyncClient", FakeHttpClient)
     monkeypatch.setattr(mcp_module, "streamable_http_client", fake_streamable)

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mcp.types import Tool
+from mcp.types import ListToolsResult, Tool
 
 import workgate.agent_bridge.mcp as agent_mcp_module
 import workgate.agent_bridge.service as agent_service
@@ -116,9 +116,9 @@ def test_stdio_connections_end_after_each_discovery_or_call(monkeypatch):
             events.append("initialize")
 
         async def list_tools(self, *, params=None):
-            return SimpleNamespace(
+            return ListToolsResult(
                 tools=[
-                    SimpleNamespace(
+                    Tool(
                         name="ping",
                         description="Ping",
                         input_schema={"type": "object"},
@@ -237,25 +237,25 @@ async def test_client_manager_list_tools_accumulates_paginated_pages(
             cursor = params.cursor if params else None
             self.cursors.append(cursor)
             if cursor is None:
-                return SimpleNamespace(
+                return ListToolsResult(
                     tools=[
-                        SimpleNamespace(
+                        Tool(
                             name="search",
                             description="Search docs",
                             input_schema={"type": "object"},
                         )
                     ],
-                    nextCursor="next-page",
+                    next_cursor="next-page",
                 )
             if cursor == "next-page":
-                return SimpleNamespace(
+                return ListToolsResult(
                     tools=[
-                        SimpleNamespace(
+                        Tool(
                             name="fetch",
                             description="Fetch doc",
                             input_schema={"type": "object"},
                         )
-                    ]
+                    ],
                 )
             raise AssertionError(f"unexpected cursor: {cursor}")
 

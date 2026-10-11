@@ -18,13 +18,12 @@ from ...audit import (
     new_audit_call_id,
 )
 from ...config.control import ControlConfig
-from ...errors import public_error_type
+from ...errors import PublicToolError, public_error_type
 from ...jobs.managed import ManagedJobsRuntime
 from ...oauth.core.state import OAuthState
 from ...persistence import StateStore
 from ...tools.declarative import mcp_handler_error_handler
 from ...tools.mcp_text import has_explicit_tool_text
-from ...tools.metadata import tool_safety_annotations
 from ...utils.serialization import to_jsonable
 from ..execution_context import control_execution_context
 from ..tool_timeouts import SHELL_COMMAND_TOOL_NAMES, tool_timeout_s
@@ -150,6 +149,8 @@ def _mcp_tool_audit_watchdog_wrapper(
                 session_ids=session_ids,
                 task_ids=task_ids,
             )
+            if isinstance(exc, PublicToolError):
+                raise ToolError(str(exc)) from None
             raise
         duration_ms = int((time.time() - start) * 1000)
         audit_output = (
@@ -209,7 +210,6 @@ class WorkgateMCPServer(MCPServer):
         structured_output: bool | None = None,
     ) -> None:
         tool_name = name or fn.__name__
-        read_only = bool(annotations and annotations.read_only_hint)
         observer = (
             None
             if _mcp_tool_is_app_only(meta)
@@ -228,7 +228,7 @@ class WorkgateMCPServer(MCPServer):
             name=tool_name,
             title=title,
             description=description,
-            annotations=tool_safety_annotations(tool_name, read_only=read_only),
+            annotations=annotations,
             icons=icons,
             meta=meta,
             structured_output=structured_output,

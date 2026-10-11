@@ -2,7 +2,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from mcp.server.mcpserver.exceptions import ResourceError
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
 from tests.helpers import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -72,6 +72,19 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
         "audit:read",
     ]
 
+    for name in ("workspace_open", "workspace_snapshot"):
+        annotations = tools[name].annotations
+        assert annotations is not None
+        assert annotations.read_only_hint is True
+    for name, expected in (
+        ("workspace_task_control", True),
+        ("workspace_continuation", False),
+        ("workspace_end", True),
+    ):
+        annotations = tools[name].annotations
+        assert annotations is not None
+        assert annotations.destructive_hint is expected
+
     for name in (
         "workspace_snapshot",
         "workspace_task_control",
@@ -101,6 +114,36 @@ async def test_live_workspace_mcp_app_metadata_is_task_scoped(
         ResourceError, match="Invalid Live Workspace resource cache key"
     ):
         await mcp.read_resource("ui://workgate/live-workspace-invalid.html")
+
+
+@pytest.mark.asyncio
+async def test_live_workspace_mcp_remount_reports_unattached_session(
+    tmp_path, monkeypatch
+):
+    settings = _http_settings(tmp_path, monkeypatch)
+    harness = build_paired_control_harness(settings)
+    task_id, session_id = await _task_session(harness)
+    other_task = await harness.control.task_service.create_task(
+        label="unrelated task"
+    )
+    mcp = build_mcp(runtime=harness.control)
+
+    for tool in ("workspace_open", "workspace_snapshot"):
+        with pytest.raises(ToolError, match="not attached to task_id"):
+            await mcp.call_tool(
+                tool, {"task_id": other_task.task_id, "session_id": session_id}
+            )
+    # Failure cannot rebind the session or infer another one for the task.
+    snapshot = await live.live_workspace_snapshot(
+        harness.control, other_task.task_id
+    )
+    assert snapshot.session is None
+    assert all(
+        session.session_id != session_id for session in snapshot.sessions
+    )
+    assert (
+        await live.live_workspace_snapshot(harness.control, task_id, session_id)
+    ).session
 
 
 @pytest.mark.asyncio

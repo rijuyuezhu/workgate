@@ -13,6 +13,7 @@ from mcp.types import ToolAnnotations
 
 from ...audit import current_audit_call_id, query_audit
 from ...config.control import ControlConfig
+from ...errors import PublicToolValueError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_READ,
@@ -363,7 +364,7 @@ async def live_workspace_snapshot(
     if session_id is not None:
         selected = by_id.get(session_id)
         if selected is None:
-            raise ValueError(
+            raise PublicToolValueError(
                 f"session_id {session_id!r} is not attached to task_id {task_id!r}"
             )
         jobs_result, shells_result = await asyncio.gather(

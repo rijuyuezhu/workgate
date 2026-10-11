@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, TextContent
 
 from workgate.oauth.core.context import (
     bind_oauth_claims,
@@ -128,7 +128,6 @@ def _sample_context():
 
     return McpToolContext(
         settings=resolve_control_config(Settings()),
-        read_only_tool_annotations=ToolAnnotations(read_only_hint=True),
     )
 
 
@@ -261,7 +260,7 @@ def test_tool_definition_rejects_unknown_annotations():
     with pytest.raises(
         ValueError, match="Invalid annotations: future-annotation"
     ):
-        definition._mcp_annotations(_sample_context())
+        definition._mcp_annotations()
 
 
 @pytest.mark.asyncio
