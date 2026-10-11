@@ -39,10 +39,6 @@ def isolated_runtime_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
     if sys.platform == "darwin":
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    elif sys.platform.startswith("win"):
-        monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setattr(tempfile, "tempdir", str(system_tmp))
     clear_settings_cache()
     from tests.helpers import configure_test_tool_session_store

@@ -4,11 +4,6 @@ from types import SimpleNamespace
 import workgate.executor.gui as gui
 
 
-def test_gui_capability_is_absent_on_windows(monkeypatch) -> None:
-    monkeypatch.setattr(gui.platform, "system", lambda: "Windows")
-    assert gui.gui_capability_available() is False
-
-
 def test_gui_capability_is_absent_on_headless_linux(monkeypatch) -> None:
     monkeypatch.setattr(gui.platform, "system", lambda: "Linux")
     for name in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"):

@@ -208,16 +208,6 @@ def test_private_lock_file_preparation_timeouts(
         private_files._open_lock_handle(opened, timeout_s=0)
 
 
-def test_windows_lock_contention_error_is_classified() -> None:
-    class WindowsBusyError(OSError):
-        winerror = 32
-
-    busy = WindowsBusyError(999, "busy")
-
-    assert private_files._is_lock_contention_error(busy, windows=True)
-    assert not private_files._is_lock_contention_error(busy, windows=False)
-
-
 def test_job_store_thread_lock_timeout_is_bounded_and_redacted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -363,7 +353,6 @@ def test_managed_updates_defer_in_order_and_replay_once(
         for path in deferred_paths
     ] == ["append_log", "update_progress", "finish"]
     if os.name != "nt":
-        # Windows does not expose POSIX owner/group/other permission semantics.
         assert all(
             (path.stat().st_mode & 0o077) == 0 for path in deferred_paths
         )

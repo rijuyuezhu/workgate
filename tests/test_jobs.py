@@ -181,25 +181,6 @@ async def _test_job_retry_execute(
         )
 
 
-def test_runner_command_quotes_powershell_arguments():
-    command = job_lifecycle._runner_command(
-        [
-            r"C:\Program Files\Python\python.exe",
-            "-m",
-            "workgate.main",
-            "--status-file",
-            r"C:\state dir\job's-status.json",
-        ],
-        "powershell.exe",
-    )
-
-    assert command == (
-        "& 'C:\\Program Files\\Python\\python.exe' '-m' "
-        "'workgate.main' '--status-file' "
-        "'C:\\state dir\\job''s-status.json'"
-    )
-
-
 def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     tmp_path, monkeypatch
 ):
@@ -221,9 +202,6 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     assert Path(argv[1]).name == "runner_bootstrap.py"
     assert Path(argv[1]).is_absolute()
     assert argv[2] == "--command-file"
-    assert job_lifecycle._runner_command(
-        ["echo", "hello world"], "cmd.exe"
-    ) == ('echo "hello world"')
 
     paths["log"].write_bytes(b"abcdef\n")
     assert (
@@ -662,20 +640,14 @@ def test_job_runner_persists_bounded_output_and_terminal_status(
 ):
     _configure_job_state(tmp_path, monkeypatch)
     paths = _attempt_paths_untyped("job_runner", 1)
-    command = (
-        "echo prefix-" + "x" * 100 + "-suffix"
-        if os.name == "nt"
-        else python_shell_command("print('prefix-' + 'x' * 100 + '-suffix')")
-    )
+    command = python_shell_command("print('prefix-' + 'x' * 100 + '-suffix')")
     paths["command"].write_text(command, encoding="utf-8")
     args = SimpleNamespace(
         command_file=str(paths["command"]),
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell=os.environ.get("COMSPEC", "cmd.exe")
-        if os.name == "nt"
-        else "/bin/bash",
+        shell="/bin/bash",
         max_log_bytes=32,
     )
 
@@ -709,9 +681,7 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell=os.environ.get("COMSPEC", "cmd.exe")
-        if os.name == "nt"
-        else "/bin/bash",
+        shell="/bin/bash",
         max_log_bytes=1024,
     )
 
@@ -724,23 +694,6 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
     assert status["exit_code"] == 7
     assert status["error"] is None
     assert [line.rstrip() for line in output_lines] == ["failed-output"]
-
-
-def test_job_runner_shell_args_cover_windows_shell_families():
-    assert job_runner._runner_shell_args("pwsh", "Write-Output ok") == [
-        "pwsh",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Write-Output ok",
-    ]
-    assert job_runner._runner_shell_args("cmd.exe", "echo ok") == [
-        "cmd.exe",
-        "/D",
-        "/S",
-        "/C",
-        "echo ok",
-    ]
 
 
 def test_job_runner_records_startup_error_before_process_spawn(tmp_path):
@@ -3087,9 +3040,7 @@ def test_job_runner_applies_configured_environment_filters(
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell=os.environ.get("COMSPEC", "cmd.exe")
-        if os.name == "nt"
-        else "/bin/bash",
+        shell="/bin/bash",
         max_log_bytes=1024,
         blocked_env_name=["EXACT_SECRET"],
         blocked_env_prefix=["PRIVATE_"],

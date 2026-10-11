@@ -114,7 +114,7 @@ Each active control-managed job acquires an owner-private liveness lease before 
 
 ## Raw terminal streaming
 
-Raw PTY/ConPTY access is equivalent to interactive shell control with the server
+Raw PTY access is equivalent to interactive shell control with the server
 or selected executor account. Browser terminal WebSockets therefore require both
 `shell:read` and `shell:execute`, plus `executor:use` when controlling a selected executor. Executor bridges
 use an opaque control-only capability and allowlisted executor RPCs rather than
@@ -126,20 +126,16 @@ fallback remains available. Terminal output is rendered as terminal data, never
 HTML or script. Plain-text reads remove terminal controls, while the WebUI's
 ANSI/image path uses pinned xterm assets, bounded Sixel/iTerm decoding, inert
 nodes/canvas output, and no navigable OSC 8 links. Closing a raw attachment
-releases only that bridge and deliberately leaves the persistent tmux/ConPTY
+releases only that bridge and deliberately leaves the persistent tmux
 shell alive. See [WebUI](guides/webui.md#terminals) for the
 protocol and resource limits.
 
 Persistent-shell admission is serialized per backend across server processes.
-Owner-bound tmux and ConPTY shells reserve globally unique durable ownership
-before backend creation. During tmux startup, reconciliation preserves the
-current in-flight reservation while the same admission lock is held;
-`new-session` and owner tagging remain one command sequence, and confirmed
-startup failure rolls back only that request's newly added reservation. ConPTY
-shells acquire a per-shell cross-process liveness lease before spawn and hold it
-through natural exit or explicit close, so peer processes share authoritative
-capacity/name state and process death releases the slot through the operating
-system.
+Owner-bound tmux shells reserve globally unique durable ownership before
+backend creation. During startup, reconciliation preserves the in-flight
+reservation under the same admission lock; `new-session` and owner tagging
+remain one command sequence. Confirmed startup failure rolls back only that
+request's new reservation; uncertain cleanup fails closed.
 
 Session admission, retry, foreground shell/Python execution, synchronous copy,
 and teardown share deterministic per-session lifecycle locks. Each lock combines
@@ -206,7 +202,7 @@ While a current-process managed job is active and lacks a durable completion rec
 
 Session pruning reads the durable job registry with the same primary-then-backup recovery rule used by the job runtime. A valid `jobs.json.bak` continues to protect active job sessions when the primary is missing or invalid; if neither copy can be trusted, pruning remains conservative rather than declaring the active-job set empty. Expiry and capacity candidates are only hints: before deletion the store acquires the candidate session transaction and job-store lock, reloads current metadata and active work, and rechecks both eligibility and current overflow. A concurrent touch, PTY registration, or job admission therefore prevents stale-candidate deletion.
 
-Session teardown and session/job-store pruning read the complete durable job set and treat `lost` shell jobs as unconfirmed until authoritative shell inventory either recovers the live job or proves the shell absent. Transient output-capture failure does not mark an authoritatively live shell job terminal, and unconfirmed `lost` rows remain protected from both job-history eviction and session retention/capacity pruning. Tagged persistent-shell discovery is also three-state: a successful query or a confirmed absent tmux server is authoritative, while backend resolution, permission, timeout, and other inventory failures preserve the session metadata and fail teardown closed. Durable PTY ids are retention hints only; teardown reconciles one session's stored ids against the backend owner tag and kills only shells whose current owner still matches, so an unrelated shell that reuses a stale name is not terminated. ConPTY UI registries remain process-local, but backend admission and reconciliation use per-shell cross-process liveness leases as the authoritative inventory. A live peer lease protects capacity, ownership, and teardown; an unlocked stale lease permits durable metadata cleanup; lock-file I/O uncertainty remains fail closed.
+Session teardown and session/job-store pruning read the complete durable job set and treat `lost` shell jobs as unconfirmed until authoritative shell inventory either recovers the live job or proves the shell absent. Transient output-capture failure does not mark an authoritatively live shell job terminal, and unconfirmed `lost` rows remain protected from both job-history eviction and session retention/capacity pruning. Tagged persistent-shell discovery is also three-state: a successful query or a confirmed absent tmux server is authoritative, while backend resolution, permission, timeout, and other inventory failures preserve the session metadata and fail teardown closed. Durable PTY ids are retention hints only; teardown reconciles one session's stored ids against the backend owner tag and kills only shells whose current owner still matches, so an unrelated shell that reuses a stale name is not terminated. Cross-process tmux admission and live owner tags prevent other processes from reclaiming active sessions; uncertain lock-file I/O remains fail closed.
 
 Stateful MCP initialization reserves capacity before entering the SDK. Reservation release runs as a single cancellation-shielded task: pending capacity is decremented under the creation lock before cancellation is propagated, and repeated cancellation cannot double-release or permanently consume a slot.
 
@@ -236,7 +232,7 @@ Structured browser automation is executor-owned and requires the separate `brows
 
 Snapshots, screenshots, and error buffers are bounded. Actions target snapshot refs rather than arbitrary selectors. Audit records the returned browser/action data as provided, subject only to documented size and retention limits; it may include page contents, entered values, full URLs, and backend diagnostics. Arbitrary Playwright scripts are not exposed.
 
-Native desktop automation is separately authorized by `gui:use` and additionally requires the bound executor to advertise `gui.v1`. GUI observations are executor-local, short-lived, single-use for actions, and owned by the explicit Workgate session. Screenshots and accessibility metadata are bounded; coordinate actions are window-relative and rejected when the observed window geometry changes. GUI tool Audit records may retain window metadata, element observations, action payloads, and screenshot-related data up to configured limits. The control plane never falls back to its own desktop or another executor. Linux and macOS native backends are supported; Windows native GUI automation is not.
+Native desktop automation is separately authorized by `gui:use` and additionally requires the bound executor to advertise `gui.v1`. GUI observations are executor-local, short-lived, single-use for actions, and owned by the explicit Workgate session. Screenshots and accessibility metadata are bounded; coordinate actions are window-relative and rejected when the observed window geometry changes. GUI tool Audit records may retain window metadata, element observations, action payloads, and screenshot-related data up to configured limits. The control plane never falls back to its own desktop or another executor. Linux and macOS native backends are supported.
 
 Logs from the executor process can contain tool diagnostics, filesystem paths, and application output. Treat them as sensitive and avoid forwarding them to systems that are not trusted for executor command output.
 

@@ -58,7 +58,7 @@ class ExecutorRuntime:
     agent_bridge: ExecutorAgentBridgeService
     """Executor-owned stdio Agent Bridge integration and credential boundary."""
     terminal_runtime: TerminalRuntime
-    """Executor-owned terminal bridge and ConPTY live state."""
+    """Executor-owned raw-terminal bridge lifecycle."""
     dispatcher: ExecutorDispatcher
     """Executor-local machine operation dispatcher."""
     shell: ShellService

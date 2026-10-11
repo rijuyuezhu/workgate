@@ -72,11 +72,6 @@ class _ProcPidCoalitionInfo(ctypes.Structure):
 
 def _shell_command_args(shell: str, command: str) -> list[str]:
     """Build native argv without importing the parent shell module."""
-    name = os.path.basename(shell).lower()
-    if name in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
-        return [shell, "-NoProfile", "-NonInteractive", "-Command", command]
-    if name in {"cmd", "cmd.exe"}:
-        return [shell, "/D", "/S", "/C", command]
     return [shell, "-lc", command]
 
 

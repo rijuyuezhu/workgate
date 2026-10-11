@@ -282,7 +282,7 @@ class Settings(BaseSettings):
 
     # Tool executables.
     shell_executable: str = "/bin/bash"
-    """Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows."""
+    """Shell executable for bounded and persistent POSIX sessions."""
     tmux_bin: str = "tmux"
     """tmux executable required for persistent shells on POSIX systems."""
     rg_bin: str = "rg"
@@ -290,7 +290,7 @@ class Settings(BaseSettings):
     git_bin: str = "git"
     """Git executable used for patch validation and application."""
     python_bin: str = "python3"
-    """Python executable; the POSIX default maps to the running interpreter on Windows."""
+    """Python executable for user commands."""
 
     @property
     def audit_log_path(self) -> Path:

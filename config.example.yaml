@@ -203,7 +203,7 @@ agent_mcp_probe_timeout_s: 5
 agent_mcp_call_timeout_s: 60
 
 # Tool executables.
-# Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows.
+# Shell executable for bounded and persistent POSIX sessions.
 shell_executable: "/bin/bash"
 # tmux executable required for persistent shells on POSIX systems.
 tmux_bin: "tmux"
@@ -211,5 +211,5 @@ tmux_bin: "tmux"
 rg_bin: "rg"
 # Git executable used for patch validation and application.
 git_bin: "git"
-# Python executable; the POSIX default maps to the running interpreter on Windows.
+# Python executable for user commands.
 python_bin: "python3"

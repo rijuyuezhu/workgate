@@ -1905,7 +1905,7 @@
           {
             "code": "/bin/bash"
           },
-          "Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows."
+          "Shell executable for bounded and persistent POSIX sessions."
         ],
         [
           {
@@ -1985,7 +1985,7 @@
           {
             "code": "python3"
           },
-          "Python executable; the POSIX default maps to the running interpreter on Windows."
+          "Python executable for user commands."
         ]
       ]
     }
@@ -3155,7 +3155,7 @@
       "cli": "--shell-executable",
       "default": "/bin/bash",
       "default_display": "/bin/bash",
-      "description": "Shell executable for bounded and persistent sessions; the POSIX default maps to COMSPEC on Windows.",
+      "description": "Shell executable for bounded and persistent POSIX sessions.",
       "env": "WORKGATE_SHELL_EXECUTABLE",
       "name": "shell_executable",
       "nullable": false,
@@ -3207,7 +3207,7 @@
       "cli": "--python-bin",
       "default": "python3",
       "default_display": "python3",
-      "description": "Python executable; the POSIX default maps to the running interpreter on Windows.",
+      "description": "Python executable for user commands.",
       "env": "WORKGATE_PYTHON_BIN",
       "name": "python_bin",
       "nullable": false,

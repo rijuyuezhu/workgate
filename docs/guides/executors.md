@@ -81,8 +81,7 @@ service as needed.
 Linux uses a systemd user service. It is enabled for future user-manager
 sessions; remaining active without a logged-in user depends on the host's
 systemd linger policy, which Workgate does not change. macOS uses a LaunchAgent
-and Windows uses a per-user scheduled task, so both start after that user logs
-in rather than before login. For a dedicated Linux VPS that must start at
+which starts after that user logs in, rather than before login. For a dedicated Linux VPS that must start at
 system boot without a user session, use the system service pattern in
 [VPS deployment](../getting-started/vps.md).
 

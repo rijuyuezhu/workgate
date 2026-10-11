@@ -27,7 +27,7 @@ def _config(tmp_path: Path, **updates) -> ExecutorConfig:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("Linux", "linux"), ("Darwin", "macos"), ("Windows", "windows")],
+    [("Linux", "linux"), ("Darwin", "macos")],
 )
 def test_normalized_os(value, expected):
     assert env_ops._normalized_os(value) == expected
@@ -44,15 +44,7 @@ def test_safe_tokens_and_versions_are_bounded_and_do_not_return_raw_text():
     assert env_ops._extract_version("no version here") is None
 
 
-def test_version_command_handles_cmd_powershell_and_tmux():
-    assert env_ops._version_command(("cmd.exe",), "shell")[-3:] == (
-        "/d",
-        "/c",
-        "ver",
-    )
-    assert "$PSVersionTable" in " ".join(
-        env_ops._version_command(("pwsh",), "shell")
-    )
+def test_version_command_uses_posix_tools():
     assert env_ops._version_command(("tmux",), "tmux") == ("tmux", "-V")
     assert env_ops._version_command(("git",), "git") == ("git", "--version")
 
@@ -188,7 +180,6 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
         tmux=tool,
     )
     monkeypatch.setattr(env_ops, "_collect_tools", lambda _config: tools)
-    monkeypatch.setattr(env_ops, "conpty_available", lambda: False)
     monkeypatch.setattr(env_ops, "browser_capability_available", lambda: False)
     monkeypatch.setattr(env_ops, "gui_capability_available", lambda: False)
 
@@ -202,7 +193,6 @@ def test_collect_executor_environment_is_executor_owned_and_allowlisted(
     assert environment.limits.max_search_results == 23
     assert set(payload["capabilities"]) == {
         "raw_pty",
-        "conpty",
         "browser",
         "gui",
     }

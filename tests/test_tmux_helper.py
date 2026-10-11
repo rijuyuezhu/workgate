@@ -110,9 +110,6 @@ async def test_list_persistent_shells_is_empty_when_default_tmux_is_unavailable(
         resolve_executor_config(Settings()), enable_control_connection=False
     )
     monkeypatch.setattr(
-        shell, "_use_conpty_persistent_shell_backend", lambda: False
-    )
-    monkeypatch.setattr(
         shell,
         "resolve_tmux",
         lambda _configured: tmux_helper.TmuxSelection(

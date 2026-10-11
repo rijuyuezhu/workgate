@@ -144,10 +144,9 @@ released. Runtime ownership is carried explicitly by the composed control graph.
 
 Terminal live state is similarly process-owned rather than module-owned.
 `ControlRuntime` and `ExecutorRuntime` each construct a fresh `TerminalRuntime`.
-Its bridge and ConPTY registries bind async work to the owning event loop and
-stop admission together during shutdown. Raw bridge operations are cancelled
-and bridge timers/process attachments are closed before ConPTY sessions are
-force-closed, because a bridge may hold a raw attachment to one of those shells.
+Its bridge registry binds async work to the owning event loop and stops
+admission during shutdown. Raw bridge operations are cancelled and bridge
+timers and tmux process attachments are closed before the runtime exits.
 Terminal registry access is execution-context scoped; runtime startup does not
 install process-global registry owners.
 
@@ -364,10 +363,10 @@ it must not depend on control delivery adapters, HTTP route adapters, or UI pres
 
 Rejected ownership alternatives:
 
-- top-level `conpty.py`, `terminal_bridge.py`, and `tmux_helper.py`: package-root
+- top-level `terminal_bridge.py` and `tmux_helper.py`: package-root
   placement exposed implementation details without identifying the interactive-
   terminal capability they serve.
-- `utils`: ConPTY and bridge registries own stateful process, capability, and
+- `utils`: terminal bridge registries own stateful process, capability, and
   stream lifecycles rather than reusable stateless helpers.
 - public tool registries: shell declarations select an operation but should not
   own backend implementations or terminal lifecycle state.

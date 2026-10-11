@@ -143,22 +143,6 @@ def resolve_app_paths(
             / f"{_APP_NAME}-{_uid_suffix(active_env)}-{_runtime_fallback_nonce()}",
         )
 
-    if active_platform.startswith("win"):
-        roaming = _absolute_env_path(active_env.get("APPDATA")) or (
-            user_home / "AppData" / "Roaming"
-        )
-        local = _absolute_env_path(active_env.get("LOCALAPPDATA")) or (
-            user_home / "AppData" / "Local"
-        )
-        return AppPaths(
-            config_dir=roaming / _APP_NAME / "config",
-            state_dir=local / _APP_NAME / "state",
-            data_dir=local / _APP_NAME / "data",
-            runtime_dir=temporary
-            / _APP_NAME
-            / f"runtime-{_runtime_fallback_nonce()}",
-        )
-
     config_base = _xdg_base(
         active_env, "XDG_CONFIG_HOME", user_home / ".config"
     )
@@ -195,16 +179,15 @@ def ensure_private_directory(path: Path) -> Path:
         raise OSError(
             f"private application directory is not a directory: {path}"
         )
-    if os.name != "nt":
-        geteuid = getattr(os, "geteuid", None)
-        if geteuid is not None and info.st_uid != geteuid():
-            raise PermissionError(
-                f"private application directory is not owned by the current user: {path}"
-            )
-        path.chmod(0o700)
-        verified = path.lstat()
-        if stat.S_IMODE(verified.st_mode) != 0o700:
-            raise PermissionError(
-                f"private application directory is not owner-only: {path}"
-            )
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and info.st_uid != geteuid():
+        raise PermissionError(
+            f"private application directory is not owned by the current user: {path}"
+        )
+    path.chmod(0o700)
+    verified = path.lstat()
+    if stat.S_IMODE(verified.st_mode) != 0o700:
+        raise PermissionError(
+            f"private application directory is not owner-only: {path}"
+        )
     return path

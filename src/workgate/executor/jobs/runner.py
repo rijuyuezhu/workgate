@@ -21,11 +21,6 @@ def _utc() -> float:
 
 def _runner_shell_args(shell: str, command: str) -> list[str]:
     """Build direct subprocess arguments for the configured user shell."""
-    name = Path(shell).name.lower()
-    if name in {"powershell.exe", "powershell", "pwsh.exe", "pwsh"}:
-        return [shell, "-NoProfile", "-NonInteractive", "-Command", command]
-    if name in {"cmd.exe", "cmd"}:
-        return [shell, "/D", "/S", "/C", command]
     return [shell, "-lc", command]
 
 

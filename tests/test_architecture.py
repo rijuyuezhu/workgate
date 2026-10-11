@@ -502,7 +502,7 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
 
         class BlockExecutorImports(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
-                if fullname == "winpty" or fullname.startswith("workgate.executor"):
+                if fullname.startswith("workgate.executor"):
                     raise ModuleNotFoundError(f"blocked PR7 executor dependency: {{fullname}}")
                 return None
 
@@ -819,7 +819,7 @@ def test_control_cli_imports_without_executor_dependencies() -> None:
 
         class BlockExecutorImports(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
-                if fullname == "winpty" or fullname.startswith("workgate.executor"):
+                if fullname.startswith("workgate.executor"):
                     raise ModuleNotFoundError(f"blocked executor dependency: {fullname}")
                 return None
 

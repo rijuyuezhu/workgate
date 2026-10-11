@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.server.mcpserver.exceptions import ToolError
 
-import workgate.executor.terminal.conpty as conpty
 from tests.helpers import (
     build_paired_http_app,
     build_paired_mcp,
@@ -22,11 +21,6 @@ from workgate.errors import (
     tool_error_payload,
 )
 from workgate.executor.path import resolve_path
-from workgate.executor.terminal.runtime import (
-    build_terminal_runtime,
-    use_terminal_runtime,
-)
-from workgate.persistence import get_state_store
 
 
 def _configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,7 +107,7 @@ def test_explicit_path_resolution_raises_typed_missing_path_error(
 
 def test_tool_error_payload_round_trips_typed_failures(tmp_path: Path) -> None:
     shell_error = ShellExecutableNotFoundError(
-        "missing-shell", "echo ok", tmp_path, "[WinError 2]"
+        "missing-shell", "echo ok", tmp_path, "No such file or directory"
     )
     encoded = tool_error_payload(shell_error)
 
@@ -139,38 +133,6 @@ def test_executor_termination_roundtrip_keeps_model_stop_instruction():
     assert isinstance(reconstructed, SessionTerminationRequestedError)
     assert reconstructed.session_id == session_id
     assert "Stop immediately" in str(reconstructed)
-
-
-@pytest.mark.asyncio
-async def test_conpty_reports_explicit_missing_shell_executable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _configure(tmp_path, monkeypatch)
-    executable = "missing-conpty-shell"
-    monkeypatch.setattr(conpty, "is_available", lambda: True)
-
-    def fail_spawn(*_args, **_kwargs):
-        raise FileNotFoundError(2, "missing", executable)
-
-    monkeypatch.setattr(conpty, "_spawn_pty", fail_spawn)
-    terminal_runtime = build_terminal_runtime(get_state_store())
-    await terminal_runtime.start()
-    try:
-        with (
-            use_terminal_runtime(terminal_runtime),
-            pytest.raises(ShellExecutableNotFoundError) as raised,
-        ):
-            await conpty.start_shell(
-                shell_id="missing-conpty",
-                cwd=tmp_path,
-                command=None,
-                shell_executable=executable,
-            )
-    finally:
-        await terminal_runtime.aclose()
-
-    assert raised.value.executable == executable
-    assert raised.value.command == executable
 
 
 def test_http_shell_error_is_not_misreported_as_workspace_path(

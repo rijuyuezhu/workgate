@@ -57,23 +57,6 @@ def _install_fake_launchd_coalitions(monkeypatch):
     )
 
 
-def test_shell_command_args_support_native_windows_shells():
-    assert bounded_runner._shell_command_args("pwsh.exe", "echo ok") == [
-        "pwsh.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "echo ok",
-    ]
-    assert bounded_runner._shell_command_args("cmd.exe", "echo ok") == [
-        "cmd.exe",
-        "/D",
-        "/S",
-        "/C",
-        "echo ok",
-    ]
-
-
 def test_handled_signals_omit_platform_missing_sighup(monkeypatch):
     monkeypatch.delattr(bounded_runner.signal, "SIGHUP", raising=False)
 

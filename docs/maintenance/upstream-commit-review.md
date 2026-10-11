@@ -1,5 +1,7 @@
 # Upstream Commit Implementation Review
 
+> Historical upstream-difference audit (as recorded at the time). Current Workgate supports Linux and macOS hosts only; Windows references below are superseded by #201 and do not describe the maintained tree.
+
 This file records the fork decision for every reviewed upstream commit. The
 review is functional: a commit may be implemented in different modules or
 through a different public API when the same outcome is fully available. Start

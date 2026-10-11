@@ -64,7 +64,7 @@ def test_bootstrap_routes_are_public_and_target_bound(
     assert checksum.status_code == 200
     assert checksum.text == f"{digest}\n"
 
-    missing = client.get(bootstrap._BOOTSTRAP_PATH + "/windows-x86_64/sha256")
+    missing = client.get(bootstrap._BOOTSTRAP_PATH + "/nonexistent/sha256")
     assert missing.status_code == 404
 
 

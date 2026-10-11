@@ -27,6 +27,8 @@ def _section(text: str, name: str) -> str:
 
 def main() -> int:
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
+    if "windows-latest" in ci or "windows-conpty" in ci:
+        raise SystemExit("Windows CI jobs are not supported")
     release = (ROOT / ".github/workflows/release.yml").read_text()
     with (ROOT / "pyproject.toml").open("rb") as stream:
         project_python = tomllib.load(stream)["project"][

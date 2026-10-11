@@ -51,8 +51,8 @@ Linux defaults are:
 | data | `${XDG_DATA_HOME:-~/.local/share}/workgate` | control-owned persistent payload/data |
 | runtime/temp | `$XDG_RUNTIME_DIR/workgate` when suitable, otherwise a private per-user temp root | disposable scratch files |
 
-Only absolute XDG base-directory values are honored. macOS and Windows use
-native per-user application locations.
+Only absolute XDG base-directory values are honored. macOS uses
+its native per-user application locations.
 
 `audit_log_path` and the private Agent Bridge credential directory are derived
 from each role's `state_dir`. The executor profile lives under

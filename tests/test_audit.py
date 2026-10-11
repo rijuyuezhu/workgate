@@ -968,7 +968,7 @@ def test_audit_payload_store_quota_drops_complete_lifecycle_units(
 
 def test_audit_payload_orphan_gc_and_symlink_replacement(tmp_path, monkeypatch):
     if os.name == "nt":
-        pytest.skip("symlink creation is not reliably available on Windows")
+        pytest.skip("symlink creation was not permitted")
     _configure_audit(
         tmp_path,
         monkeypatch,
@@ -1065,7 +1065,7 @@ def test_disabling_audit_payloads_falls_back_to_bounded_jsonl(
 
 def test_audit_payload_rejects_symlinked_store_root(tmp_path, monkeypatch):
     if os.name == "nt":
-        pytest.skip("symlink creation is not reliably available on Windows")
+        pytest.skip("symlink creation was not permitted")
     _configure_audit(
         tmp_path,
         monkeypatch,

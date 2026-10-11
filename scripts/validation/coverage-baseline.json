@@ -465,11 +465,6 @@
       "num_statements": 398,
       "percent_covered": 78.90625
     },
-    "src/workgate/executor/terminal/conpty.py": {
-      "num_branches": 184,
-      "num_statements": 625,
-      "percent_covered": 78.244747
-    },
     "src/workgate/executor/terminal/runtime.py": {
       "num_branches": 16,
       "num_statements": 81,

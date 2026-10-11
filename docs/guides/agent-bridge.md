@@ -14,7 +14,7 @@ ${XDG_CONFIG_HOME:-~/.config}/workgate/agent/
       SKILL.md
 ```
 
-macOS and Windows use their native Workgate config locations. Credentials managed by the CLI remain in private durable state rather than this directory. Legacy literal `env` and `headers` values are still accepted in manifests for compatibility, so treat the configuration directory as potentially sensitive and preserve restrictive file permissions. Use managed secret references for new credentials rather than placing tokens or passwords directly in `config.json`.
+macOS uses its native Workgate config location. Credentials managed by the CLI remain in private durable state rather than this directory. Legacy literal `env` and `headers` values are still accepted in manifests for compatibility, so treat the configuration directory as potentially sensitive and preserve restrictive file permissions. Use managed secret references for new credentials rather than placing tokens or passwords directly in `config.json`.
 
 The bridge also discovers project Skills from `<workdir>/.agents/skills` and user Skills from `$XDG_CONFIG_HOME/agents/skills` when `XDG_CONFIG_HOME` is an absolute path. If `XDG_CONFIG_HOME` is unset or invalid, the user Skill directory falls back to `~/.config/agents/skills`. A project Skill with the same directory name takes priority for that session.
 

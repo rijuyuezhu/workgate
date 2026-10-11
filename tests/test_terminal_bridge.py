@@ -60,7 +60,6 @@ def test_terminal_bridge_policy_is_bounded_at_composition():
     assert short.max_connections == 7
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 def test_terminal_bridge_retries_short_and_blocked_writes(monkeypatch):
     attach = object.__new__(bridge_module._UnixTmuxAttach)
     attach._closed = False
@@ -94,7 +93,6 @@ def test_terminal_bridge_retries_short_and_blocked_writes(monkeypatch):
     assert outcomes == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 @pytest.mark.asyncio
 async def test_terminal_bridge_registry_bounds_and_lifecycle(monkeypatch):
     instances = []
@@ -178,66 +176,6 @@ async def test_terminal_bridge_registry_bounds_and_lifecycle(monkeypatch):
         await read_terminal_bridge_execute(bridge_id)
 
 
-@pytest.mark.asyncio
-async def test_terminal_bridge_uses_conpty_backend_and_optional_resize(
-    monkeypatch,
-):
-    instances = []
-
-    class FakeConPtyAttachment:
-        backend = bridge_module.conpty.CONPTY_BACKEND
-
-        def __init__(self, shell_id):
-            self.shell_id = shell_id
-            self.closed = False
-            self.writes = []
-            instances.append(self)
-
-        def read_wait(self, max_bytes, wait_ms):
-            return b"windows-output", False
-
-        def write_all(self, data):
-            self.writes.append(bytes(data))
-
-        def resize(self, cols, rows):
-            return False
-
-        def close_sync(self):
-            self.closed = True
-
-    monkeypatch.setattr(bridge_module, "_use_conpty_bridge", lambda: True)
-    monkeypatch.setattr(bridge_module.conpty, "is_available", lambda: True)
-    monkeypatch.setattr(
-        bridge_module.conpty,
-        "open_raw_attachment",
-        lambda shell_id, attachment_id, cols, rows: FakeConPtyAttachment(
-            shell_id
-        ),
-    )
-
-    opened = await open_terminal_bridge_execute("windows-demo", 100, 30)
-    bridge_id = opened["bridge_id"]
-    assert opened["backend"] == "conpty"
-
-    read = await read_terminal_bridge_execute(bridge_id, 1024, 0)
-    assert base64.b64decode(read["data_b64"]) == b"windows-output"
-
-    written = await write_terminal_bridge_execute(
-        bridge_id,
-        base64.b64encode("你好".encode()).decode("ascii"),
-    )
-    assert written["written_bytes"] == len("你好".encode())
-    assert instances[0].writes == ["你好".encode()]
-
-    resized = await resize_terminal_bridge_execute(bridge_id, 120, 40)
-    assert resized["resized"] is False
-    assert resized["backend"] == "conpty"
-
-    await close_terminal_bridge_execute(bridge_id)
-    assert instances[0].closed is True
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 @pytest.mark.asyncio
 async def test_terminal_bridge_rejects_malformed_capabilities_and_chunks(
     monkeypatch,
@@ -366,7 +304,6 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         )
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY bridge")
 def test_unix_terminal_bridge_uses_resolved_tmux(monkeypatch):
     calls = []
     monkeypatch.setenv("TMUX", "/tmp/tmux-1000/default,123,0")

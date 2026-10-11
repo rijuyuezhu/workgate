@@ -8,7 +8,6 @@ import re
 import shlex
 import shutil
 import signal
-import subprocess
 import sys
 import time
 import uuid
@@ -49,7 +48,6 @@ from .path import (
     resolve_default_workdir,
     resolve_path,
 )
-from .terminal import conpty
 from .terminal.tmux import require_tmux, resolve_tmux, tmux_env_overrides
 from .tool_session.lifecycle import cross_process_lock
 from .tool_session.store import ToolSessionStore
@@ -216,7 +214,7 @@ async def _persistent_shell_admission_lock():
     if _PERSISTENT_SHELL_ADMISSION_OWNER.get() is task:
         yield
         return
-    backend = "conpty" if _use_conpty_persistent_shell_backend() else "tmux"
+    backend = "tmux"
     async with cross_process_lock("persistent-shell-admission", backend):
         token = _PERSISTENT_SHELL_ADMISSION_OWNER.set(task)
         try:
@@ -234,55 +232,25 @@ def _subprocess_env(config: ExecutorConfig) -> dict[str, str]:
     )
 
 
-def _conpty_subprocess_env(config: ExecutorConfig) -> dict[str, str]:
-    """Return filtered user environment plus allowed terminal defaults."""
-    env = _subprocess_env(config)
-    if not user_subprocess_env_name_blocked(
-        "TERM",
-        blocked_names=config.subprocess_env_blocklist,
-        blocked_prefixes=config.subprocess_env_blocked_prefixes,
-    ):
-        env.setdefault("TERM", "xterm-256color")
-    if not user_subprocess_env_name_blocked(
-        "COLORTERM",
-        blocked_names=config.subprocess_env_blocklist,
-        blocked_prefixes=config.subprocess_env_blocked_prefixes,
-    ):
-        env["COLORTERM"] = "truecolor"
-    return env
-
-
 def _effective_shell_executable(config: ExecutorConfig) -> str:
-    """Return a usable configured shell, adapting the POSIX default on Windows."""
-    configured = str(config.shell_executable).strip()
-    if os.name == "nt" and configured in {"", "/bin/bash"}:
-        return os.environ.get("COMSPEC") or "cmd.exe"
-    return configured or os.environ.get("SHELL") or "/bin/sh"
+    """Resolve the configured POSIX shell."""
+    return (
+        str(config.shell_executable).strip()
+        or os.environ.get("SHELL")
+        or "/bin/sh"
+    )
 
 
 def _shell_command_args(shell: str, command: str) -> list[str]:
-    """Build native argv for POSIX shells, PowerShell, or cmd.exe."""
-    name = os.path.basename(shell).lower()
-    if name in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
-        return [shell, "-NoProfile", "-NonInteractive", "-Command", command]
-    if name in {"cmd", "cmd.exe"}:
-        return [shell, "/D", "/S", "/C", command]
     return [shell, "-lc", command]
 
 
 def _shell_join_argv(argv: list[str]) -> str:
-    """Render argv for the native shell without losing Windows quoting."""
-    return (
-        subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-    )
+    return shlex.join(argv)
 
 
 def _effective_python_executable(config: ExecutorConfig) -> str:
-    """Return a usable Python executable, adapting the POSIX default on Windows."""
-    configured = str(config.python_bin).strip()
-    if os.name == "nt" and configured in {"", "python3"}:
-        return sys.executable or "python"
-    return configured or sys.executable
+    return str(config.python_bin).strip() or sys.executable
 
 
 def _validated_env_overrides(
@@ -314,18 +282,6 @@ def _command_with_env(
     overrides = _validated_env_overrides(config, env)
     if not overrides:
         return command
-    shell_name = os.path.basename(_effective_shell_executable(config)).lower()
-    if shell_name in {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
-        assignments = [
-            f"$env:{name}='{value.replace(chr(39), chr(39) * 2)}'"
-            for name, value in overrides.items()
-        ]
-        return f"{'; '.join(assignments)}; {command}"
-    if shell_name in {"cmd", "cmd.exe"}:
-        assignments = [
-            f'set "{name}={value}"' for name, value in overrides.items()
-        ]
-        return f"{' && '.join(assignments)} && {command}"
     assignments = [
         f"{name}={shlex.quote(value)}" for name, value in overrides.items()
     ]
@@ -371,19 +327,7 @@ async def _spawn_process(
             cwd,
             "configured shell executable was not found or is not executable",
         )
-    shell_name = os.path.basename(resolved_shell).lower()
     try:
-        if os.name == "nt" and shell_name in {"cmd", "cmd.exe"}:
-            return await asyncio.create_subprocess_shell(
-                command,
-                executable=resolved_shell,
-                **common,
-            )
-        if os.name == "nt":
-            return await asyncio.create_subprocess_exec(
-                *_shell_command_args(resolved_shell, command),
-                **common,
-            )
         return await asyncio.create_subprocess_exec(
             *_bounded_runner_argv(resolved_shell, command),
             **common,
@@ -794,11 +738,6 @@ def _persistent_shell_ids(output: Any) -> set[str]:
     return shell_ids
 
 
-def _use_conpty_persistent_shell_backend() -> bool:
-    """Return whether persistent shells should use the Windows ConPTY backend."""
-    return os.name == "nt"
-
-
 async def _cleanup_failed_tmux_start(
     config: ExecutorConfig, shell_id: str
 ) -> None:
@@ -863,24 +802,6 @@ async def _start_persistent_shell_locked(
             f"sessions; active shell ids: {active or '<unknown>'}. Use "
             "list_persistent_shells and kill_persistent_shell to release capacity."
         )
-    if _use_conpty_persistent_shell_backend():
-        if not conpty.is_available():
-            raise RuntimeError(
-                "pywinpty is required for persistent shells on Windows"
-            )
-        initial = conpty.initial_command(command, config.shell_executable)
-        try:
-            return await conpty.start_shell(
-                shell_id=shell_id,
-                cwd=resolved_cwd,
-                command=command,
-                owner_session_id=owner_session_id,
-                shell_executable=config.shell_executable,
-                env=_conpty_subprocess_env(config),
-            )
-        except conpty.ConPtyCleanupUncertainError as exc:
-            raise PersistentShellCleanupUncertainError(str(exc)) from exc
-
     configured_shell = _resolved_tmux_shell(config, str(resolved_cwd))
     if (
         shutil.which(configured_shell, path=_subprocess_env(config).get("PATH"))
@@ -1033,8 +954,6 @@ async def send_persistent_shell_input_execute(
     enter: bool = True,
 ) -> SendPersistentShellInputOutput:
     """Send input to a persistent shell, optionally appending Enter."""
-    if _use_conpty_persistent_shell_backend():
-        return await conpty.send_shell(shell_id, input_text, enter)
     if input_text:
         result = await tmux(
             config, ["send-keys", "-l", "-t", shell_id, input_text]
@@ -1084,8 +1003,6 @@ async def resize_persistent_shell_execute(
 ) -> ResizePersistentShellOutput:
     """Resize one persistent terminal when supported by its backend."""
     columns, lines = _validate_persistent_shell_size(cols, rows)
-    if _use_conpty_persistent_shell_backend():
-        return await conpty.resize_shell(shell_id, columns, lines)
     result = await tmux(
         config,
         [
@@ -1124,12 +1041,6 @@ async def read_persistent_shell_output_execute(
     preserve_ansi: bool = False,
 ) -> ReadPersistentShellOutput:
     """Read recent output from a persistent shell."""
-    if _use_conpty_persistent_shell_backend():
-        return await conpty.read_shell(
-            shell_id,
-            lines,
-            preserve_ansi=preserve_ansi,
-        )
     capture_args = ["capture-pane", "-p"]
     if preserve_ansi:
         capture_args.append("-e")
@@ -1158,11 +1069,6 @@ async def kill_persistent_shell_execute(
     shell_id: str,
 ) -> KillPersistentShellOutput:
     """Terminate a persistent shell by its normalized shell id."""
-    if _use_conpty_persistent_shell_backend():
-        result = await conpty.kill_shell(shell_id)
-        if result.killed:
-            store.release_persistent_shell(shell_id)
-        return result
     result = await tmux(config, ["kill-session", "-t", shell_id])
     audit(
         "kill_persistent_shell",
@@ -1187,30 +1093,6 @@ async def list_owned_persistent_shell_ids_execute(
     owner_session_id: str,
 ) -> list[str] | None:
     """Return owned shell ids, or None when discovery is non-authoritative."""
-    if _use_conpty_persistent_shell_backend():
-        try:
-            session = store.require_session(owner_session_id)
-            durable_ids = set(session.persistent_shell_ids)
-            if not durable_ids:
-                return []
-            local_ids = set(await conpty.list_owned_shell_ids(owner_session_id))
-            authoritative_ids = conpty.authoritative_shell_ids()
-        except Exception:
-            return None
-        if authoritative_ids is None:
-            return None
-        dead_durable_ids = durable_ids - authoritative_ids
-        for shell_id in sorted(dead_durable_ids):
-            try:
-                store.release_session_persistent_shell(
-                    owner_session_id, shell_id
-                )
-            except Exception:
-                return None
-        durable_ids -= dead_durable_ids
-        if not durable_ids.issubset(local_ids):
-            return None
-        return sorted(local_ids)
     selection = resolve_tmux(config.tmux_bin)
     if selection.path is None and selection.source == "unavailable":
         # A session that has never durably reserved a shell has nothing to
@@ -1247,9 +1129,6 @@ async def _persistent_shell_inventory_execute(
     preserve_shell_ids: set[str] | None = None,
 ) -> tuple[ListPersistentShellsOutput, bool]:
     """Return the shell inventory and whether an empty result is authoritative."""
-    if _use_conpty_persistent_shell_backend():
-        output = await conpty.list_shells()
-        return output, False
     selection = resolve_tmux(config.tmux_bin)
     if selection.path is None and selection.source == "unavailable":
         return ListPersistentShellsOutput(shells=[]), False
@@ -1293,17 +1172,6 @@ async def _authoritative_persistent_shell_ids_locked(
     preserve_shell_ids: set[str] | None = None,
 ) -> set[str] | None:
     """Return live shell ids while the backend admission lock is held."""
-    if _use_conpty_persistent_shell_backend():
-        try:
-            active = conpty.authoritative_shell_ids()
-            if active is None:
-                return None
-            store.reconcile_persistent_shells(
-                active | set(preserve_shell_ids or ())
-            )
-            return active
-        except Exception:
-            return None
     try:
         output, authoritative = await _persistent_shell_inventory_execute(
             config,

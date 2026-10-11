@@ -1,5 +1,4 @@
 import base64
-import ctypes
 import hashlib
 import io
 import os
@@ -7,8 +6,6 @@ import shutil
 import tarfile
 import time
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -102,132 +99,16 @@ def temp_dir():
     return _executor_temp_dir(_context().config.temp_dir)
 
 
-def test_transfer_handle_identity_uses_platform_native_ids(
-    tmp_path, monkeypatch
-):
+def test_transfer_handle_identity_uses_posix_ids(tmp_path):
     path = tmp_path / "identity.bin"
     path.write_bytes(b"data")
 
     with path.open("rb") as handle:
         file_stat = os.fstat(handle.fileno())
-        assert transfer_ops._transfer_handle_identity(
-            handle, platform="posix"
-        ) == (int(file_stat.st_dev), int(file_stat.st_ino))
-
-        seen_descriptors = []
-        monkeypatch.setattr(
-            transfer_ops,
-            "_windows_file_identity",
-            lambda descriptor: seen_descriptors.append(descriptor) or (7, 11),
+        assert transfer_ops._transfer_handle_identity(handle) == (
+            int(file_stat.st_dev),
+            int(file_stat.st_ino),
         )
-        assert transfer_ops._transfer_handle_identity(
-            handle, platform="nt"
-        ) == (7, 11)
-        assert seen_descriptors == [handle.fileno()]
-
-
-class _FakeWindowsFunction:
-    def __init__(self, callback) -> None:
-        self.callback = callback
-        self.argtypes: Any = None
-        self.restype: Any = None
-
-    def __call__(self, *args):
-        return self.callback(*args)
-
-
-def test_windows_transfer_opener_rejects_reparse_and_closes_failures(
-    tmp_path, monkeypatch
-):
-    path = tmp_path / "windows-open.bin"
-    path.write_bytes(b"data")
-    backing_fd = os.open(path, os.O_RDWR)
-    native_handle = 1234
-    attributes = 0
-    information_ok = True
-    create_result = native_handle
-    close_calls: list[int] = []
-    open_calls: list[int] = []
-
-    def create_file(*_args):
-        return create_result
-
-    def get_information(handle, pointer):
-        assert int(handle.value) == native_handle
-        if not information_ok:
-            return 0
-        information = ctypes.cast(
-            pointer,
-            ctypes.POINTER(transfer_ops._ByHandleFileInformation),
-        ).contents
-        information.dwFileAttributes = attributes
-        information.dwVolumeSerialNumber = 7
-        information.nFileIndexHigh = 0
-        information.nFileIndexLow = 11
-        return 1
-
-    def close_handle(handle):
-        close_calls.append(int(handle.value))
-        return 1
-
-    kernel32 = SimpleNamespace(
-        CreateFileW=_FakeWindowsFunction(create_file),
-        GetFileInformationByHandle=_FakeWindowsFunction(get_information),
-        CloseHandle=_FakeWindowsFunction(close_handle),
-    )
-    monkeypatch.setattr(
-        transfer_ops.ctypes,
-        "WinDLL",
-        lambda *_args, **_kwargs: kernel32,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        transfer_ops.ctypes, "get_last_error", lambda: 5, raising=False
-    )
-    real_import_module = transfer_ops.importlib.import_module
-
-    def import_module(name: str):
-        if name != "msvcrt":
-            return real_import_module(name)
-
-        def open_osfhandle(handle: int, _flags: int) -> int:
-            open_calls.append(handle)
-            return os.dup(backing_fd)
-
-        return SimpleNamespace(open_osfhandle=open_osfhandle)
-
-    monkeypatch.setattr(transfer_ops.importlib, "import_module", import_module)
-    try:
-        with transfer_ops._open_windows_transfer_file(
-            path, update=False
-        ) as source:
-            assert source.read() == b"data"
-        with transfer_ops._open_windows_transfer_file(
-            path, update=True
-        ) as destination:
-            destination.seek(0)
-            destination.write(b"DATA")
-        assert path.read_bytes() == b"DATA"
-        assert open_calls == [native_handle, native_handle]
-
-        attributes = 0x00000400
-        with pytest.raises(ValueError, match="reparse point"):
-            transfer_ops._open_windows_transfer_file(path, update=False)
-        assert close_calls == [native_handle]
-
-        attributes = 0
-        information_ok = False
-        with pytest.raises(OSError, match="GetFileInformationByHandle"):
-            transfer_ops._open_windows_transfer_file(path, update=False)
-        assert close_calls == [native_handle, native_handle]
-
-        information_ok = True
-        invalid_handle = transfer_ops.wintypes.HANDLE(-1).value
-        create_result = invalid_handle
-        with pytest.raises(OSError, match="CreateFileW"):
-            transfer_ops._open_windows_transfer_file(path, update=False)
-    finally:
-        os.close(backing_fd)
 
 
 def test_chunked_transfer_round_trip_and_checksum(tmp_path, monkeypatch):
