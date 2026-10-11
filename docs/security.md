@@ -34,7 +34,7 @@ The HTTP OAuth flow follows the security boundaries required by the [MCP authori
 
 - OAuth bootstrap routes, well-known metadata, health checks, self-hosted
   executor bootstrap routes, executor pairing endpoints, and tokenized
-  `/download/{token}` file links remain public; MCP and REST tool routes are
+  `/download/{token}` file links remain public; MCP and debug HTTP tool routes are
   protected by middleware unless `auth_mode=none` or the explicit localhost
   bypass applies.
 - The canonical resource defaults to the `/mcp` endpoint, not merely the origin, so a token for `https://example.com/mcp` is not accepted for every service on `https://example.com`.
@@ -88,11 +88,11 @@ Agent Bridge authentication is separate from the built-in OAuth server that prot
 
 ## Inbound HTTP request limits
 
-All HTTP-mode applications apply `max_http_request_bytes` before REST, MCP, OAuth, download, or executor transport route parsing. The default is 16,000,000 bytes; set it to `0` only when another trusted front end enforces an equivalent or stricter limit. The middleware rejects oversized requests with HTTP 413 and a stable JSON error before buffering more than the configured budget.
+All HTTP-mode applications apply `max_http_request_bytes` before debug HTTP, MCP, OAuth, download, or executor transport route parsing. The default is 16,000,000 bytes; set it to `0` only when another trusted front end enforces an equivalent or stricter limit. The middleware rejects oversized requests with HTTP 413 and a stable JSON error before buffering more than the configured budget.
 
 Both declared and observed sizes are enforced. A `Content-Length` above the limit is rejected without reading the body, while chunked requests, missing lengths, invalid lengths, and misleading smaller lengths are counted from actual ASGI body messages. Accepted bodies are replayed with identical bytes to downstream form, JSON, FastAPI, and MCP parsers. Once buffered request messages are consumed, receive calls continue to the live connection so streaming responses and MCP disconnect handling remain intact.
 
-When OAuth authentication is enabled, protected MCP and REST routes authenticate before the body limiter reads an unauthenticated request. Public OAuth bootstrap and executor pairing routes remain subject to the shared limit. Dynamic OAuth client registration also retains its stricter `oauth_registration_max_body_bytes` limit. Rejections are audited with method, path, declared/observed sizes, and the configured limit, but never with body contents; audit failure does not prevent the 413 response.
+When OAuth authentication is enabled, protected MCP and debug HTTP routes authenticate before the body limiter reads an unauthenticated request. Public OAuth bootstrap and executor pairing routes remain subject to the shared limit. Dynamic OAuth client registration also retains its stricter `oauth_registration_max_body_bytes` limit. Rejections are audited with method, path, declared/observed sizes, and the configured limit, but never with body contents; audit failure does not prevent the 413 response.
 
 ## Filesystem authority
 

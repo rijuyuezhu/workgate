@@ -112,3 +112,34 @@ def test_catalog_rejects_unknown_factory_override() -> None:
         build_tool_catalog(
             factory_overrides={"plugin": lambda _settings: ToolRegistry()}
         )
+
+
+@pytest.mark.asyncio
+async def test_internal_transfer_tools_fail_closed_when_not_composed() -> None:
+    """The internal transfer adapter must not silently run without executor services."""
+    from workgate.tools.registry.transfer import (
+        TransferToolRegistry,
+        transfer_stat,
+    )
+
+    assert "transfer_stat" not in {
+        tool.name for tool in await build_mcp().list_tools()
+    }
+    with pytest.raises(
+        RuntimeError, match="require composed executor services"
+    ):
+        await transfer_stat.func(path="unused")
+    assert TransferToolRegistry().name == "transfer"
+
+
+def test_base_tool_registry_registers_nothing() -> None:
+    """An empty registry is legal without defining a second tool surface."""
+    from mcp.server.mcpserver import MCPServer
+
+    empty = ToolRegistry()
+    mcp = MCPServer("empty-catalog")
+    from workgate.tools.contracts import McpToolContext
+
+    empty.register_mcp(
+        mcp, McpToolContext(settings=resolve_control_config(Settings()))
+    )

@@ -243,3 +243,39 @@ def test_direct_localhost_predicate_fails_closed_on_ambiguous_inputs(
     request = _auth_request(peer=peer, host=host, headers=headers)
 
     assert is_direct_localhost_request(request) is expected
+
+
+def test_non_tool_http_routes_keep_error_handlers() -> None:
+    """MCP errors stay in the tool result, but unrelated HTTP routes keep HTTP errors."""
+    from fastapi import FastAPI
+
+    from workgate.control.http.errors import install_error_handlers
+
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.get("/invalid")
+    def invalid() -> None:
+        raise ValueError("invalid non-tool input")
+
+    @app.get("/os-error")
+    def os_error() -> None:
+        raise FileNotFoundError("missing non-tool file")
+
+    @app.get("/internal")
+    def internal() -> None:
+        raise RuntimeError("unexpected non-tool error")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    invalid_response = client.get("/invalid")
+    assert invalid_response.status_code == 400
+    assert invalid_response.json()["error"] == "validation_error"
+    assert invalid_response.json()["message"] == "invalid non-tool input"
+
+    missing_response = client.get("/os-error")
+    assert missing_response.status_code == 400
+    assert missing_response.json()["error"] == "FileNotFoundError"
+
+    unexpected_response = client.get("/internal")
+    assert unexpected_response.status_code == 500
+    assert unexpected_response.json()["error"] == "internal_error"

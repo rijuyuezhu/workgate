@@ -207,14 +207,16 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         body={"action": "create"},
     )
     assert task["status"] == 200
-    task_id = task["payload"]["task_id"]
+    task_id = task["payload"]["structuredContent"]["result"]["task_id"]
     zero_session_task = harness.api(
         "POST",
         "/tools/task",
         body={"action": "create", "label": "zero-session-browser"},
     )
     assert zero_session_task["status"] == 200
-    zero_session_task_id = zero_session_task["payload"]["task_id"]
+    zero_session_task_id = zero_session_task["payload"]["structuredContent"][
+        "result"
+    ]["task_id"]
 
     unattached = harness.api(
         "POST",
@@ -222,7 +224,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         body={"workdir": ".", "label": "unattached-browser"},
     )
     assert unattached["status"] == 200
-    unattached_session_id = unattached["payload"]["session_id"]
+    unattached_session_id = unattached["payload"]["structuredContent"][
+        "session_id"
+    ]
 
     session = harness.api(
         "POST",
@@ -230,7 +234,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         body={"workdir": ".", "task_id": task_id},
     )
     assert session["status"] == 200
-    session_id = session["payload"]["session_id"]
+    session_id = session["payload"]["structuredContent"]["session_id"]
     session_shell = harness.api(
         "POST",
         "/tools/bash",
@@ -242,8 +246,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         },
     )
     assert session_shell["status"] == 200
-    assert session_shell["payload"]["mode"] == "pty"
-    shell_id = str(session_shell["payload"]["result"]["shell_id"])
+    assert session_shell["payload"]["structuredContent"]["mode"] == "pty"
+    shell_id = str(
+        session_shell["payload"]["structuredContent"]["result"]["shell_id"]
+    )
     harness.track_terminal(harness.executor_id, shell_id)
     harness.navigate("tasks")
     page.locator("#tasks-refresh").click()
@@ -496,7 +502,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     assert audited_write["status"] == 200
     audited_link = harness.api(
         "POST",
-        "/tools/file_link/create",
+        "/tools/create_file_link",
         body={
             "session_id": session_id,
             "path": "audit-scope.txt",
@@ -878,9 +884,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "/tools/read",
         body={"session_id": session_id, "path": "notes.txt"},
     )
-    assert blocked["status"] == 400
-    assert blocked["payload"]["error"] == "validation_error"
-    assert "is ended" in blocked["payload"]["message"]
+    assert blocked["status"] == 200
+    assert blocked["payload"]["isError"] is True
+    # The earlier invalid binary upload intentionally generates HTTP 400.
     harness.console_errors = [
         line
         for line in harness.console_errors

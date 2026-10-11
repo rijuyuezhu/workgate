@@ -81,7 +81,7 @@ def _install_public_routes(
 
 
 def _control_runtime_lifespan(runtime: ControlRuntime):
-    """Build the REST host lifespan for one control runtime owner."""
+    """Build the HTTP host lifespan for one control runtime owner."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
