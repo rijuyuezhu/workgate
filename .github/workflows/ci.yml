@@ -172,6 +172,33 @@ jobs:
           tests/test_conpty_windows_integration.py
           tests/test_terminal_bridge.py
 
+  standalone-binary-smoke:
+    name: Standalone binary (${{ matrix.artifact }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: linux-x86_64
+            runner: ubuntu-latest
+          - artifact: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - artifact: macos-x86_64
+            runner: macos-15-intel
+          - artifact: macos-aarch64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: bash scripts/release/build-binary.sh
+      - run: python scripts/release/smoke-binary.py dist/workgate
+
   package-smoke:
     name: Package smoke
     runs-on: ubuntu-latest

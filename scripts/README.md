@@ -16,6 +16,8 @@ their lifecycle can remain separate from checkout-only automation.
 
 | File | Responsibility | Why it belongs here |
 | --- | --- | --- |
+| `release/build-binary.sh` | Shared PyInstaller build command for native Linux/macOS CI and release jobs. | One source of truth for frozen build flags. |
+| `release/smoke-binary.py` | Bounded frozen executable CLI, HTTP health, and WebUI smoke. | Shared by pre-merge CI and release without duplicating the full behavioral suite. |
 | `release/pyinstaller-entry.py` | Minimal PyInstaller startup shim that forwards command-line arguments to the packaged application entrypoint. | It exists only as an input to standalone release artifact construction and is not a runtime library or development command. |
 
 ## `testing`
