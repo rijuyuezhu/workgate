@@ -151,4 +151,4 @@ Discovery keeps a bounded in-memory snapshot for up to 60 seconds; pass `refresh
 - An upstream server can use any secret or OAuth scope granted to it. Configure only trusted servers and use the narrowest credentials possible.
 - Keep the entire service state directory private and back it up only through a secure process.
 
-See [Configuration](../reference/configuration.md) for settings, [Tool reference](../reference/tools.md) for exact bridge tools, and [Development](../development.md) for implementation guidance.
+See [Configuration](../reference/configuration.md) for settings and [Tool reference](../reference/tools.md) for exact bridge tools.

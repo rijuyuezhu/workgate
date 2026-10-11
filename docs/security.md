@@ -88,5 +88,5 @@ relevant access, rotate affected credentials, review Audit history, and inspect
 any workspaces the affected executor could reach. Isolate compromised hosts
 before reconnecting them. Do not post credentials, raw Audit data, or exploit
 details in public issues. Report suspected vulnerabilities privately using the
-[Security policy](community/security-policy.md), including the affected
+[Security policy](https://github.com/rijuyuezhu/workgate/security/policy), including the affected
 version, deployment, impact, and a redacted reproduction.

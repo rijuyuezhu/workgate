@@ -111,5 +111,3 @@ Before reporting completion:
 2. run the relevant formatter, type checker, tests, or build;
 3. report what changed and what was not verified;
 4. leave unrelated files untouched.
-
-For contributor-specific validation and architecture rules, see [Development](../development.md).
