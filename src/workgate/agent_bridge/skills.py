@@ -201,7 +201,7 @@ def _resolved_skills_directory(
 def _open_regular_file(path: Path, max_bytes: int) -> tuple[str, int, Path]:
     """Open a bounded regular Skill file, following filesystem symlinks."""
     limit = _bounded(max_bytes, DEFAULT_MAX_ENTRY_BYTES)
-    flags = os.O_RDONLY | int(getattr(os, "O_BINARY", 0))
+    flags = os.O_RDONLY
 
     try:
         descriptor = os.open(path, flags)

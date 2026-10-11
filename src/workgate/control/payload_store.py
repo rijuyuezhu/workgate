@@ -119,7 +119,7 @@ class PayloadStore:
     ) -> tuple[BinaryIO, Path]:
         """Open one immutable payload and verify its stored size and digest."""
         path = self.path(payload_id, namespace=namespace)
-        flags = os.O_RDONLY | int(getattr(os, "O_BINARY", 0))
+        flags = os.O_RDONLY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         descriptor = os.open(path, flags)

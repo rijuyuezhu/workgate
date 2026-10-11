@@ -1037,14 +1037,12 @@ def _record_received_range(
 
 def _open_private_transfer_file(path: Path) -> BinaryIO:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= int(getattr(os, "O_BINARY", 0))
     descriptor = os.open(path, flags, 0o600)
     return os.fdopen(descriptor, "wb")
 
 
 def _open_transfer_source(path: Path) -> BinaryIO:
     flags = os.O_RDONLY
-    flags |= int(getattr(os, "O_BINARY", 0))
     flags |= int(getattr(os, "O_NOFOLLOW", 0))
     descriptor = os.open(path, flags)
     try:
@@ -1523,7 +1521,6 @@ def _open_transfer_for_update(path: Path) -> BinaryIO:
     if path.is_symlink():
         raise ValueError("transfer temporary path must not be a symlink")
     flags = os.O_RDWR
-    flags |= int(getattr(os, "O_BINARY", 0))
     flags |= int(getattr(os, "O_NOFOLLOW", 0))
     descriptor = os.open(path, flags)
     try:

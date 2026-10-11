@@ -124,11 +124,9 @@ def write_managed_deferred_update(
 
 def read_managed_deferred_record(path: Path) -> dict[str, Any]:
     """Read one bounded regular journal file without following POSIX symlinks."""
-    if path.is_symlink() or (
-        hasattr(path, "is_junction") and path.is_junction()
-    ):
+    if path.is_symlink():
         raise ValueError("deferred update must not be a link")
-    flags = os.O_RDONLY | int(getattr(os, "O_BINARY", 0))
+    flags = os.O_RDONLY
     flags |= int(getattr(os, "O_NOFOLLOW", 0))
     descriptor = os.open(path, flags)
     try:

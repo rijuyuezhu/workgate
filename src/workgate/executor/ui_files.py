@@ -312,7 +312,6 @@ class UiFilesService:
     @classmethod
     def _copy_regular_file(cls, source: Path, destination: Path) -> None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        flags |= getattr(os, "O_BINARY", 0)
         with source.open("rb") as input_handle:
             before = os.fstat(input_handle.fileno())
             fd = os.open(destination, flags, stat.S_IMODE(before.st_mode))
@@ -470,7 +469,7 @@ class UiFilesService:
         destination = self._destination_entry(path)
         with path_locks([destination]):
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            flags |= getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
             fd = os.open(destination, flags, 0o666)
             try:
                 with os.fdopen(fd, "wb") as output:
