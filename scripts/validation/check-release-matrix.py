@@ -103,7 +103,7 @@ def main() -> int:
                 )
     builder = (ROOT / "scripts/release/build-binary.sh").read_text()
     for fragment in (
-        "--clean --onefile --name workgate",
+        "--clean --noconfirm --onefile --name workgate",
         "--collect-all workgate",
         "scripts/release/pyinstaller-entry.py",
     ):

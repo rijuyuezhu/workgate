@@ -3,11 +3,10 @@
 set -euo pipefail
 
 uv run --extra gui --with pyinstaller --with typer pyinstaller \
-  --clean --onefile --name workgate \
+  --clean --noconfirm --onefile --name workgate --specpath build \
   --collect-all workgate \
   --collect-all mcp \
   --collect-all uvicorn \
   --collect-all fastapi \
   --collect-all starlette \
-  --exclude-module cryptography \
   scripts/release/pyinstaller-entry.py
