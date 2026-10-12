@@ -232,11 +232,6 @@ class StateLayout:
         return self.root / "downloads.lock"
 
     @property
-    def download_snapshots_dir(self) -> Path:
-        """Return the private immutable file-link snapshot directory."""
-        return self.root / "downloads"
-
-    @property
     def agent_auth_dir(self) -> Path:
         """Return the private Agent Bridge credential directory."""
         return self.root / "agent_auth"
