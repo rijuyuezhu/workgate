@@ -139,7 +139,9 @@ def test_runtime_rest_and_mcp_share_non_tool_routes(tmp_path) -> None:
         }
     )
     mcp_shared = _all_http_signatures(mcp_host.routes)
-    assert rest_shared == mcp_shared
+    assert len(rest_shared) == len(set(rest_shared))
+    assert len(mcp_shared) == len(set(mcp_shared))
+    assert set(rest_shared) == set(mcp_shared)
 
     paths = {path for path, _methods in mcp_shared}
     assert {
