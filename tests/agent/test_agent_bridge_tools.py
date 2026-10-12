@@ -10,6 +10,7 @@ from mcp.shared.auth import OAuthToken
 
 from tests.support.paired import build_paired_mcp
 from tests.support.responses import mcp_structured, mcp_text
+from workgate.agent_bridge.auth import literal_config_mapping, oauth_status
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.agent_bridge.mcp import AgentMcpClientManager, AgentMcpTool
 from workgate.agent_bridge.registry import build_agent_registry
@@ -25,6 +26,25 @@ from workgate.control import agent_bridge as control_agent_bridge_module
 from workgate.control.agent_bridge import ControlAgentBridgeService
 from workgate.control.mcp.app import build_mcp
 from workgate.tools.registry import agent as tools_module
+
+
+class _FakeRedactionContext:
+    """Minimal complete redaction contract for transport-only test doubles."""
+
+    def redaction_maps(self, _name, server, /):
+        return (
+            literal_config_mapping(server.env),
+            literal_config_mapping(server.headers),
+        )
+
+    def redaction_cursor(self, _name, _server, /):
+        return None
+
+    def redaction_maps_since(self, name, server, _cursor, /):
+        return self.redaction_maps(name, server)
+
+    def auth_status(self, name, server, /):
+        return oauth_status(None, name, server)
 
 
 def _payload(response: Any) -> dict[str, Any]:
@@ -174,7 +194,7 @@ async def test_agent_config_status_redacts_probe_error(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    class FakeMcpClientManager:
+    class FakeMcpClientManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             raise RuntimeError(
                 f"{REALISTIC_SECRET_ERROR} {CONFIGURED_VALUE_ERROR}"
@@ -263,7 +283,7 @@ async def test_agent_config_status_redacts_serialized_configured_values(
         encoding="utf-8",
     )
 
-    class FakeMcpClientManager:
+    class FakeMcpClientManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             raise RuntimeError(SERIALIZED_CONFIGURED_VALUE_ERROR)
 
@@ -660,7 +680,7 @@ async def test_agent_mcp_fixed_tools_route_and_reject_unavailable_servers(
         encoding="utf-8",
     )
 
-    class FakeMcpClientManager:
+    class FakeMcpClientManager(_FakeRedactionContext):
         def __init__(self):
             self.list_calls = []
             self.call_calls = []
@@ -783,7 +803,7 @@ async def test_call_agent_mcp_tool_redacts_unavailable_probe_error(
         encoding="utf-8",
     )
 
-    class FakeMcpClientManager:
+    class FakeMcpClientManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             raise RuntimeError(
                 "Authorization: Bearer super-secret --token super-secret "
@@ -844,7 +864,7 @@ async def test_call_agent_mcp_tool_redacts_call_error(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    class FakeMcpClientManager:
+    class FakeMcpClientManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             return [
                 AgentMcpTool(
@@ -903,7 +923,7 @@ async def test_call_agent_mcp_tool_redacts_serialized_configured_values(
         encoding="utf-8",
     )
 
-    class FakeMcpClientManager:
+    class FakeMcpClientManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             return [
                 AgentMcpTool(
@@ -955,7 +975,7 @@ async def test_call_agent_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    class ErrorPayloadMcpManager:
+    class ErrorPayloadMcpManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             return [
                 AgentMcpTool(
@@ -1038,7 +1058,7 @@ async def test_agent_mcp_public_metadata_redacts_configured_values(
         encoding="utf-8",
     )
 
-    class MetadataLeakMcpManager:
+    class MetadataLeakMcpManager(_FakeRedactionContext):
         def __init__(self):
             self.call_calls = []
 
@@ -1187,6 +1207,116 @@ async def test_agent_mcp_call_fails_closed_when_redaction_cursor_is_unavailable(
         "Agent MCP tool call failed: credential redaction history unavailable"
     )
     assert secret not in public_error
+
+
+def test_agent_mcp_probe_rejects_missing_redaction_maps_before_upstream_call(
+    tmp_path,
+) -> None:
+    secret = "privateCredentialDuringRedactionFailure"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs": {
+                        "integrationId": "docs",
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class UnavailableRedactionManager(_FakeRedactionContext):
+        async def list_tools(self, _name, _server):
+            pytest.fail("probe must not run without complete redaction context")
+
+        def redaction_maps(self, _name, _server):
+            raise RuntimeError(f"redaction storage error {secret}")
+
+    registry = build_agent_registry(
+        config_dir, UnavailableRedactionManager(), scan_skills=False
+    )
+    record = registry.mcp_servers["docs"]
+    assert record.available is False
+    assert record.error == "credential redaction context unavailable"
+    status = registry_config_status(registry)["mcp_servers"]["docs"]
+    assert status["error"] == "credential redaction context unavailable"
+    assert secret not in json.dumps(status)
+
+
+@pytest.mark.asyncio
+async def test_discovered_agent_tool_cannot_run_or_publish_when_redaction_fails(
+    tmp_path,
+) -> None:
+    secret = "secretRetiredAfterToolDiscovery"
+    config_dir = tmp_path / "agent"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "docs": {
+                        "integrationId": "docs",
+                        "type": "http",
+                        "url": "https://example.test/mcp",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FailingAfterDiscovery(_FakeRedactionContext):
+        redaction_available = True
+        calls = 0
+
+        def redaction_maps(self, name, server):
+            if not self.redaction_available:
+                raise RuntimeError(f"private token failure {secret}")
+            return ({"access_token": secret}, {})
+
+        async def list_tools(self, _name, _server):
+            return [
+                AgentMcpTool(
+                    name="echo",
+                    description=f"echo {secret}",
+                    input_schema={},
+                )
+            ]
+
+        async def call_tool(self, _name, _server, _tool, _args):
+            self.calls += 1
+            return {"structured_content": {"private": secret}}
+
+    manager = FailingAfterDiscovery()
+    registry = build_agent_registry(config_dir, manager, scan_skills=False)
+    assert registry.mcp_servers["docs"].available is True
+    assert secret not in json.dumps(
+        list_agent_mcp_tools_payload(registry).model_dump()
+    )
+    manager.redaction_available = False
+
+    from workgate.errors import RedactedAgentMcpError
+
+    with pytest.raises(
+        RedactedAgentMcpError, match="credential redaction context unavailable"
+    ) as call_error:
+        await call_agent_mcp_tool_payload(registry, "docs", "echo")
+    with pytest.raises(
+        RedactedAgentMcpError, match="credential redaction context unavailable"
+    ) as list_error:
+        list_agent_mcp_tools_payload(registry)
+
+    assert manager.calls == 0
+    assert call_error.value.__cause__ is None
+    assert secret not in str(call_error.value)
+    assert secret not in str(list_error.value)
 
 
 @pytest.mark.parametrize("probe_fails", [False, True])
@@ -2017,7 +2147,7 @@ async def test_fixed_mcp_tool_redacts_retired_probe_credentials(
         encoding="utf-8",
     )
 
-    class RetiredCredentialManager:
+    class RetiredCredentialManager(_FakeRedactionContext):
         def __init__(self) -> None:
             self.token = old_token
 
@@ -2092,7 +2222,7 @@ async def test_fixed_mcp_tool_redacts_retired_probe_credentials(
         assert new_token not in retained
 
 
-class FakeDynamicMcpManager:
+class FakeDynamicMcpManager(_FakeRedactionContext):
     async def list_tools(self, name, server):
         if name == "docs":
             return [
@@ -2197,7 +2327,7 @@ async def test_fixed_mcp_tool_redacts_configured_values_in_call_error(
         encoding="utf-8",
     )
 
-    class FailingDynamicMcpManager:
+    class FailingDynamicMcpManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             return [
                 AgentMcpTool(
@@ -2251,7 +2381,7 @@ async def test_fixed_mcp_tool_redacts_error_payload(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    class ErrorPayloadDynamicMcpManager:
+    class ErrorPayloadDynamicMcpManager(_FakeRedactionContext):
         async def list_tools(self, name, server):
             return [
                 AgentMcpTool(
@@ -2391,7 +2521,7 @@ async def test_agent_bridge_config_reload_via_fixed_tools(
         json.dumps({"version": 1}), encoding="utf-8"
     )
 
-    class ReloadingMcpManager:
+    class ReloadingMcpManager(_FakeRedactionContext):
         def __init__(self):
             self.call_calls = []
 

@@ -347,8 +347,9 @@ async def test_client_manager_list_tools_cleans_up_session_on_use_error(
     assert events == ["enter", ("list_tools", None), "exit"]
 
 
-class FakeMcpManager:
+class FakeMcpManager(AgentMcpClientManager):
     def __init__(self, tools_by_server=None, errors_by_server=None):
+        super().__init__(call_timeout_s=1)
         self.tools_by_server = tools_by_server or {}
         self.errors_by_server = errors_by_server or {}
 
@@ -540,12 +541,13 @@ async def test_build_agent_registry_works_inside_running_loop(tmp_path):
 
 
 def test_build_agent_registry_records_timeout_without_hanging(tmp_path):
-    class StubbornMcpManager:
+    class StubbornMcpManager(AgentMcpClientManager):
         async def list_tools(self, name, server):
             try:
                 await asyncio.sleep(60)
             except asyncio.CancelledError:
                 await asyncio.sleep(60)
+            return []
 
     (tmp_path / "config.json").write_text(
         json.dumps(
@@ -562,7 +564,9 @@ def test_build_agent_registry_records_timeout_without_hanging(tmp_path):
         try:
             result_queue.put(
                 build_agent_registry(
-                    tmp_path, StubbornMcpManager(), probe_timeout_s=0.05
+                    tmp_path,
+                    StubbornMcpManager(call_timeout_s=1),
+                    probe_timeout_s=0.05,
                 )
             )
         except BaseException as exc:

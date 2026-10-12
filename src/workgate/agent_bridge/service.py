@@ -250,6 +250,8 @@ def list_agent_mcp_tools_payload(
     records = _agent_mcp_records(registry, server)
     rows = []
     for server_name, record in records:
+        if not record.tools:
+            continue
         env, headers = manager_redaction_maps(
             registry.client_manager, server_name, record.config
         )
