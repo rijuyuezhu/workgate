@@ -129,7 +129,7 @@ terminal attachments use WebSockets.
 Instead of Caddy or nginx, a separately managed `cloudflared` service can
 publish `https://control.example.com` to `http://127.0.0.1:8765`. Keep
 its token in `cloudflared`'s private credential file, not in Workgate YAML.
-Use the [cloudflared systemd recipe](../../deploy/cloudflared/README.md).
+Use the [cloudflared systemd recipe](https://github.com/rijuyuezhu/workgate/blob/main/deploy/cloudflared/README.md).
 Ensure the public hostname allows MCP/OAuth, WebUI, executor long polling,
 downloads, and terminal WebSockets to reach the same control origin.
 This remains **self-hosted control**, not Cloudflare Workers hosted control
