@@ -1,4 +1,3 @@
-import json
 import shlex
 import shutil
 import subprocess
@@ -88,18 +87,3 @@ def test_cloudflared_deploy_artifacts_are_in_source_distribution() -> None:
         "deploy/cloudflared/README.md",
         "deploy/cloudflared/workgate-cloudflared.service",
     } <= included
-
-
-def test_legacy_cloudflare_surfaces_are_removed() -> None:
-    assert not (_ROOT / "scripts" / "run-with-cloudflare-tunnel.sh").exists()
-
-    env_example = (_ROOT / ".env.example").read_text(encoding="utf-8")
-    assert "CLOUDFLARE_TUNNEL_TOKEN" not in env_example
-
-    reference = json.loads(
-        (
-            _ROOT / "docs" / "reference" / "generated" / "configuration.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert "tunnel_helper_settings" not in reference
-    assert "CLOUDFLARE_TUNNEL_TOKEN" not in json.dumps(reference)

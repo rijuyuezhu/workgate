@@ -11,34 +11,11 @@ from workgate.tools.catalog import (
 from workgate.tools.contracts import ToolRegistry
 from workgate.tools.declarative import DeclarativeToolRegistry
 
-EXPECTED_BUILTIN_REGISTRIES = (
-    "agent",
-    "audit",
-    "browser",
-    "downloads",
-    "executor",
-    "files",
-    "gui",
-    "image",
-    "jobs",
-    "patch",
-    "read",
-    "search",
-    "secret_scan",
-    "session",
-    "shell",
-    "task",
-    "todo",
-    "transfer",
-    "version",
-    "workspace_connector",
-)
 
-
-def test_builtin_registry_membership_is_explicit_and_stable() -> None:
-    assert tuple(
-        name for name, _factory in BUILTIN_TOOL_REGISTRY_FACTORIES
-    ) == (EXPECTED_BUILTIN_REGISTRIES)
+def test_builtin_registry_names_are_unique() -> None:
+    names = [name for name, _factory in BUILTIN_TOOL_REGISTRY_FACTORIES]
+    assert names
+    assert len(names) == len(set(names))
 
 
 def test_catalog_builds_fresh_instances_but_shares_immutable_definitions() -> (

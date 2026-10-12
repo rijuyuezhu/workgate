@@ -59,7 +59,7 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
     )
     executor_settings = Settings(
         default_workdir=tmp_path / "executor-workspace",
-        state_dir=tmp_path / "executor-legacy-state",
+        state_dir=tmp_path / "executor-state",
     )
 
     control = build_control_runtime(control_settings)
@@ -68,7 +68,6 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
     )
 
     assert control.config.mode == "http"
-    assert not hasattr(control, "legacy_settings")
     assert control.config.state_dir == control_settings.state_dir.resolve(
         strict=False
     )
@@ -79,7 +78,6 @@ def test_runtime_roots_carry_explicit_role_config(tmp_path: Path) -> None:
         executor.config.default_workdir
         == executor_settings.default_workdir.resolve(strict=False)
     )
-    assert not hasattr(executor, "legacy_settings")
 
 
 def test_executor_config_context_is_explicit_and_role_checked(

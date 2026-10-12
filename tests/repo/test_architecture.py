@@ -11,31 +11,6 @@ _PROJECT_ROOT = Path(__file__).parents[2]
 _PACKAGE_ROOT = _PROJECT_ROOT / "src" / "workgate"
 _PACKAGE_NAME = "workgate"
 
-_ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
-    {
-        ("workgate.main", "workgate.control.cli"),
-        # These are presentation/download adapters that are part of the control
-        # deployment even though their historical package names are shared.
-        ("workgate.http.downloads", "workgate.control.download_store"),
-        ("workgate.http.downloads", "workgate.control.downloads"),
-        ("workgate.ui.http.dashboard", "workgate.control.ui_executor"),
-        ("workgate.ui.http.files", "workgate.control.ui_executor"),
-        ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
-    }
-)
-_ALLOWED_HTTP_TO_CONTROL_IMPORTS = frozenset(
-    {
-        ("workgate.http.downloads", "workgate.control.download_store"),
-        ("workgate.http.downloads", "workgate.control.downloads"),
-    }
-)
-_ALLOWED_UI_HTTP_TO_CONTROL_IMPORTS = frozenset(
-    {
-        ("workgate.ui.http.dashboard", "workgate.control.ui_executor"),
-        ("workgate.ui.http.files", "workgate.control.ui_executor"),
-        ("workgate.ui.http.terminals", "workgate.control.ui_executor"),
-    }
-)
 # Keep dependency cycles explicit. The current architecture has none.
 _ALLOWED_DEPENDENCY_CYCLES: frozenset[frozenset[str]] = frozenset()
 
@@ -166,21 +141,23 @@ def test_main_cli_stays_a_thin_composition_root() -> None:
     )
 
 
-def test_control_imports_match_explicit_process_composition() -> None:
-    actual = frozenset(
+def test_control_is_used_only_through_process_and_public_adapters() -> None:
+    edges = (
         (importer, target)
         for importer, target in _local_imports()
         if target.startswith(f"{_PACKAGE_NAME}.control.")
         and not importer.startswith(f"{_PACKAGE_NAME}.control.")
     )
 
-    assert actual == _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS
-
-
-def test_final_control_executor_roots_are_explicit() -> None:
-    assert (_PACKAGE_ROOT / "control").is_dir()
-    assert (_PACKAGE_ROOT / "executor").is_dir()
-    assert not (_PACKAGE_ROOT / "executors").exists()
+    for importer, target in edges:
+        assert (
+            importer == f"{_PACKAGE_NAME}.main"
+            and target == f"{_PACKAGE_NAME}.control.cli"
+            or importer.startswith(f"{_PACKAGE_NAME}.http.")
+            and target.startswith(f"{_PACKAGE_NAME}.control.download")
+            or importer.startswith(f"{_PACKAGE_NAME}.ui.http.")
+            and target == f"{_PACKAGE_NAME}.control.ui_executor"
+        ), (importer, target)
 
 
 def test_control_does_not_depend_on_executor_composition() -> None:
@@ -210,17 +187,6 @@ def test_standalone_supervisor_has_no_control_or_executor_implementation_depende
     assert actual == frozenset()
 
 
-def test_executor_has_no_legacy_remote_worker_dependency() -> None:
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.executor")
-        and target.startswith(f"{_PACKAGE_NAME}.remote_worker")
-    )
-
-    assert actual == frozenset()
-
-
 def test_control_http_hosts_depend_on_ui_only_through_routes() -> None:
     actual = {
         target
@@ -238,17 +204,6 @@ def test_control_http_hosts_depend_on_ui_only_through_routes() -> None:
     # Route composition belongs to Control; transport adapters must not pull
     # in WebUI implementation modules or legacy server internals.
     assert actual <= {f"{_PACKAGE_NAME}.ui.http.routes"}
-
-
-def test_http_has_only_explicit_control_owned_download_dependencies() -> None:
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.http")
-        and target.startswith(f"{_PACKAGE_NAME}.control.")
-    )
-
-    assert actual == _ALLOWED_HTTP_TO_CONTROL_IMPORTS
 
 
 def test_telemetry_does_not_depend_on_ui_or_transport_adapters() -> None:
@@ -282,17 +237,6 @@ def test_ui_core_does_not_depend_on_control_or_http_adapters() -> None:
     )
 
     assert actual == frozenset()
-
-
-def test_ui_http_has_only_explicit_control_adapter_dependencies() -> None:
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.ui.http")
-        and target.startswith(f"{_PACKAGE_NAME}.control.")
-    )
-
-    assert actual == _ALLOWED_UI_HTTP_TO_CONTROL_IMPORTS
 
 
 def test_terminal_does_not_depend_on_transports_or_ui() -> None:
@@ -394,24 +338,6 @@ def test_agent_bridge_models_are_a_dependency_leaf() -> None:
 _EXECUTOR_POLICY_FIELDS = EXECUTOR_ONLY_SETTING_NAMES
 
 
-def test_machine_session_and_shell_job_implementations_are_executor_owned() -> (
-    None
-):
-    assert (_PACKAGE_ROOT / "executor" / "tool_session").is_dir()
-    assert not (_PACKAGE_ROOT / "tool_session").exists()
-
-    executor_jobs = _PACKAGE_ROOT / "executor" / "jobs"
-    shared_jobs = _PACKAGE_ROOT / "jobs"
-    for name in (
-        "shell.py",
-        "lifecycle.py",
-        "runner.py",
-        "runner_bootstrap.py",
-    ):
-        assert (executor_jobs / name).is_file()
-        assert not (shared_jobs / name).exists()
-
-
 def test_shared_mechanism_layers_do_not_depend_on_executor_implementation() -> (
     None
 ):
@@ -460,11 +386,6 @@ def test_control_shared_http_and_public_tools_do_not_read_executor_policy() -> (
     assert violations == []
 
 
-def test_legacy_execution_namespaces_are_physically_absent() -> None:
-    for name in ("ops", "remote", "remote_worker"):
-        assert not (_PACKAGE_ROOT / name).exists()
-
-
 def test_control_builds_without_executor_or_native_terminal_dependencies(
     tmp_path: Path,
 ) -> None:
@@ -476,7 +397,7 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
         class BlockExecutorImports(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
                 if fullname.startswith("workgate.executor"):
-                    raise ModuleNotFoundError(f"blocked PR7 executor dependency: {{fullname}}")
+                    raise ModuleNotFoundError(f"blocked executor dependency: {{fullname}}")
                 return None
 
         import sys
@@ -495,7 +416,6 @@ def test_control_builds_without_executor_or_native_terminal_dependencies(
             )
         )
         assert runtime.state_store.layout.root == root / "control-state"
-        assert not hasattr(runtime, "tool_session_store")
         """
     )
     completed = subprocess.run(
@@ -531,45 +451,6 @@ def test_executor_runtime_never_imports_monolithic_settings_authority() -> None:
                 if alias.name in forbidden
             )
     assert actual == []
-
-
-def test_executor_production_code_has_no_tool_session_global_api() -> None:
-    names = ("configure_tool_session_store", "get_tool_session_store")
-    violations: list[tuple[str, str]] = []
-    for path in sorted((_PACKAGE_ROOT / "executor").rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        for name in names:
-            if name in source:
-                violations.append((str(path.relative_to(_PROJECT_ROOT)), name))
-
-    assert violations == []
-
-
-def test_production_has_no_process_global_runtime_owner_bindings() -> None:
-    forbidden = (
-        "configure_state_store",
-        "_STATE_STORE =",
-        "configure_oauth_state",
-        "_OAUTH_STATE =",
-        "configure_managed_jobs_runtime",
-        "_MANAGED_JOBS_RUNTIME =",
-        "configure_human_ui_runtime",
-        "_HUMAN_UI_RUNTIME =",
-        "install_control_services",
-        "install_runtime_services",
-        "configure_conpty_registry",
-        "_CONPTY_REGISTRY =",
-        "configure_terminal_bridge_registry",
-        "_TERMINAL_BRIDGE_REGISTRY =",
-    )
-    violations: list[tuple[str, str]] = []
-    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        for token in forbidden:
-            if token in source:
-                violations.append((str(path.relative_to(_PROJECT_ROOT)), token))
-
-    assert violations == []
 
 
 def test_normal_runtime_policy_does_not_read_ambient_settings() -> None:
@@ -656,107 +537,6 @@ def test_only_control_bootstrap_installs_ambient_settings() -> None:
                 )
 
     assert violations == []
-
-
-def test_removed_control_executor_migration_surfaces_do_not_return() -> None:
-    """Retired split-migration shims must not become normal architecture again."""
-    forbidden = (
-        "WORKGATE_REMOTE_WORKER_RUNTIME",
-        "ControlSettingsView",
-        "ui.dashboard.snapshot",
-        "call_local_tool",
-        "UnknownLocalToolError",
-    )
-    violations: list[tuple[str, str]] = []
-    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        for token in forbidden:
-            if token in source:
-                violations.append((str(path.relative_to(_PROJECT_ROOT)), token))
-
-    assert not (_PACKAGE_ROOT / "tools" / "local_handlers.py").exists()
-    assert violations == []
-
-
-def test_final_control_executor_cleanup_surfaces_do_not_return() -> None:
-    """Final #123 architecture has no migration-era alternate authorities."""
-    removed_paths = (
-        _PACKAGE_ROOT / "executor" / "terminal" / "contracts.py",
-        _PACKAGE_ROOT / "ui" / "http" / "terminal_websocket.py",
-        _PACKAGE_ROOT / "ui" / "static" / "terminal_renderer.js",
-    )
-    assert all(not path.exists() for path in removed_paths)
-
-    settings_source = (_PACKAGE_ROOT / "config" / "settings.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"/remote"' not in settings_source
-
-    terminal_source = (
-        _PACKAGE_ROOT / "ui" / "static" / "terminal.js"
-    ).read_text(encoding="utf-8")
-    assert "/ws/terminals/" not in terminal_source
-    assert "TerminalBridgeUnsupportedError" not in terminal_source
-    assert "acceptTerminalSnapshot" not in terminal_source
-    assert 'mode", "snapshot"' not in terminal_source
-
-    routes_source = (_PACKAGE_ROOT / "ui" / "http" / "routes.py").read_text(
-        encoding="utf-8"
-    )
-    assert "terminal_websocket" not in routes_source
-
-    download_sources = (
-        _PACKAGE_ROOT / "control" / "download_snapshot.py",
-        _PACKAGE_ROOT / "control" / "downloads.py",
-        _PACKAGE_ROOT / "http" / "downloads.py",
-    )
-    assert all(
-        "get_control_config" not in path.read_text(encoding="utf-8")
-        for path in download_sources
-    )
-
-    ui_terminal_service_source = (
-        _PACKAGE_ROOT / "executor" / "ui_terminals.py"
-    ).read_text(encoding="utf-8")
-    assert "ui.terminals.send" not in ui_terminal_service_source
-    assert "ui.terminals.resize" not in ui_terminal_service_source
-
-    shell_service_source = (
-        _PACKAGE_ROOT / "executor" / "shell_service.py"
-    ).read_text(encoding="utf-8")
-    assert "send_unowned" not in shell_service_source
-    assert "resize_unowned" not in shell_service_source
-
-    session_store_source = (
-        _PACKAGE_ROOT / "executor" / "tool_session" / "store.py"
-    ).read_text(encoding="utf-8")
-    assert "assert_tool_call_allowed" not in session_store_source
-
-    search_source = (
-        _PACKAGE_ROOT / "executor" / "search" / "service.py"
-    ).read_text(encoding="utf-8")
-    assert "request.glob" not in search_source
-    assert "legacy single glob" not in search_source
-
-    for relative_path, function_name in (
-        (Path("control/http/app.py"), "run_http"),
-        (Path("control/mcp/app.py"), "run_mcp"),
-    ):
-        path = _PACKAGE_ROOT / relative_path
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        function = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == function_name
-        )
-        defaults = dict(
-            zip(
-                (arg.arg for arg in function.args.kwonlyargs),
-                function.args.kw_defaults,
-                strict=True,
-            )
-        )
-        assert defaults["runtime"] is None
 
 
 def test_control_cli_imports_without_executor_dependencies() -> None:

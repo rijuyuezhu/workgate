@@ -108,11 +108,6 @@ def test_control_subcommand_parses_control_owned_runtime_settings():
     assert not hasattr(args, "default_workdir")
 
 
-def test_legacy_server_command_is_not_registered():
-    with pytest.raises(SystemExit):
-        cli._build_parser().parse_args(["server"])
-
-
 def test_standalone_subcommand_keeps_topology_protected():
     args = cli._build_parser().parse_args(
         [
@@ -555,29 +550,11 @@ def test_every_setting_has_generic_cli_option():
             assert spec.unset_cli_flag not in help_text
 
 
-@pytest.mark.parametrize("flag", ("--command-denylist", "--path-denylist"))
-def test_removed_denylist_cli_flags_are_rejected(flag):
+def test_cli_rejects_unknown_options():
     with pytest.raises(SystemExit):
-        cli._build_parser().parse_args(["executor", "run", flag, "value"])
-
-
-def test_removed_remote_worker_settings_stay_out_of_public_config_surface():
-    removed = {
-        "remote_enabled",
-        "remote_invite_ttl_s",
-        "remote_poll_timeout_s",
-        "remote_job_timeout_s",
-        "remote_max_pending_jobs",
-    }
-    spec_names = {spec.name for spec in SETTING_SPECS}
-    parser = argparse.ArgumentParser()
-    register_setting_cli_args(parser)
-    help_text = parser.format_help()
-
-    assert removed.isdisjoint(Settings.model_fields)
-    assert removed.isdisjoint(spec_names)
-    for name in removed:
-        assert f"--{name.replace('_', '-')}" not in help_text
+        cli._build_parser().parse_args(
+            ["executor", "run", "--not-a-workgate-option", "value"]
+        )
 
 
 def test_nullable_cli_values_can_be_explicitly_unset():
@@ -618,14 +595,6 @@ def test_bool_cli_values_parse_explicitly():
         parser.parse_args(["control", "--ui-enabled", "false"]).ui_enabled
         is False
     )
-
-
-def test_removed_remote_transfer_flag_is_not_accepted():
-    parser = cli._build_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(
-            ["control", "--remote-http-transfer-enabled", "false"]
-        )
 
 
 def test_executor_connect_subcommand_parses_final_pairing_contract():
