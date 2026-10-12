@@ -1578,6 +1578,29 @@ def test_frozen_subprocess_env_restores_loader_environment(
     assert "DYLD_INSERT_LIBRARIES" not in env
 
 
+@pytest.mark.asyncio
+async def test_frozen_bounded_runner_preserves_bundled_loader_path(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/bundled")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", "/tmp/bundled", raising=False)
+    seen = {}
+
+    async def fake_spawn(*argv, **kwargs):
+        seen["argv"] = argv
+        seen["env"] = kwargs["env"]
+        return object()
+
+    monkeypatch.setattr(shell_ops.asyncio, "create_subprocess_exec", fake_spawn)
+    await shell_ops._spawn_process(_executor_config(), "pwd", str(tmp_path))
+    assert seen["argv"][:2] == (sys.executable, "bounded-runner")
+    assert seen["env"]["LD_LIBRARY_PATH"] == "/tmp/bundled"
+    assert seen["env"]["LD_LIBRARY_PATH_ORIG"] == "/usr/lib"
+    assert _subprocess_env(_executor_config())["LD_LIBRARY_PATH"] == "/usr/lib"
+
+
 def test_non_frozen_subprocess_env_preserves_loader_environment(
     monkeypatch, tmp_path
 ):

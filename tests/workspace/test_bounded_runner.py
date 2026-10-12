@@ -1545,6 +1545,26 @@ def test_launchctl_operations_reserve_outer_cleanup_headroom(monkeypatch):
     )
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX Linux subprocess")
+def test_frozen_bounded_runner_restores_system_loader_for_shell(
+    monkeypatch, capfd
+):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/pyinstaller-bundle")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib")
+    monkeypatch.setattr(bounded_runner.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        bounded_runner.sys, "_MEIPASS", "/tmp/pyinstaller-bundle", raising=False
+    )
+
+    assert (
+        bounded_runner.run_bounded_command(
+            "/bin/sh", 'printf "%s" "$LD_LIBRARY_PATH"'
+        )
+        == 0
+    )
+    assert capfd.readouterr().out == "/usr/lib"
+
+
 def test_bounded_runner_argv_uses_frozen_cli_subcommand(monkeypatch):
     monkeypatch.setattr(bounded_runner.sys, "executable", "/app/workgate")
 

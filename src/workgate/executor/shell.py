@@ -223,12 +223,14 @@ async def _persistent_shell_admission_lock():
             _PERSISTENT_SHELL_ADMISSION_OWNER.reset(token)
 
 
-def _subprocess_env(config: ExecutorConfig) -> dict[str, str]:
-    """Return the environment exposed to user shell commands."""
+def _subprocess_env(
+    config: ExecutorConfig, *, internal_runner: bool = False
+) -> dict[str, str]:
+    """Sanitize user commands; retain bundled libraries for an internal runner."""
     return user_subprocess_env(
         blocked_names=config.subprocess_env_blocklist,
         blocked_prefixes=config.subprocess_env_blocked_prefixes,
-        frozen=_is_frozen_app(),
+        frozen=_is_frozen_app() and not internal_runner,
     )
 
 
@@ -301,7 +303,7 @@ async def _spawn_process(
 ) -> asyncio.subprocess.Process:
     """Start a bounded shell command in a descendant-reaping process group."""
     shell = _effective_shell_executable(config)
-    child_env = _subprocess_env(config)
+    child_env = _subprocess_env(config, internal_runner=True)
     child_env.update(_validated_env_overrides(config, env))
     process_group = new_process_group_kwargs()
     common: dict[str, Any] = {

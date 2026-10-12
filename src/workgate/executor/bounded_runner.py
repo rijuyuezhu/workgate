@@ -17,6 +17,8 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from workgate.utils.processes import user_subprocess_env
+
 PR_SET_CHILD_SUBREAPER = 36
 POLL_INTERVAL_S = 0.02
 TERMINATE_GRACE_S = 1.0
@@ -546,6 +548,7 @@ def _run_launchd_child(
                     time.sleep(POLL_INTERVAL_S)
             process = subprocess.Popen(
                 _shell_command_args(shell, command),
+                env=user_subprocess_env(),
                 stdout=stdout_fd,
                 stderr=stderr_fd,
                 start_new_session=True,
@@ -1026,7 +1029,9 @@ def _run_bounded_exec_gate(gate_fd: int, shell: str, command: str) -> int:
         )
         return 125
     try:
-        os.execvp(shell, _shell_command_args(shell, command))
+        os.execvpe(
+            shell, _shell_command_args(shell, command), user_subprocess_env()
+        )
     except OSError as exc:
         print(
             f"Unable to start configured shell {shell!r}: {exc}",
@@ -1220,6 +1225,7 @@ def run_bounded_command(shell: str, command: str) -> int:
         else:
             process = subprocess.Popen(
                 _shell_command_args(shell, command),
+                env=user_subprocess_env(),
                 start_new_session=process_group_available,
             )
     except FileNotFoundError as exc:
