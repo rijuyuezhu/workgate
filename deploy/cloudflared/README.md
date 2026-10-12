@@ -61,5 +61,6 @@ unavailable. Both services use their own restart policy and logs.
 The unit disables cloudflared self-updates. Update the cloudflared package or
 binary separately, then restart the service.
 
-For the complete Workgate-side configuration and verification flow, see
-`docs/getting-started/cloudflare-tunnel.md`.
+For Workgate's YAML settings, outbound executor pairing, file-link storage
+and verification, follow the [VPS deployment guide](../../docs/getting-started/vps.md).
+`cloudflared` only publishes that self-hosted control; it does not run Workgate.
