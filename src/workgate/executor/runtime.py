@@ -1,11 +1,14 @@
 """Executor composition owner for the long-lived machine process."""
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
-from contextlib import ExitStack, asynccontextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from websockets.exceptions import ConnectionClosedOK
 
 from ..config.executor import ExecutorConfig
 from ..config.role_config import use_role_config
@@ -34,6 +37,8 @@ from .terminal.runtime import (
 from .tool_composition import build_executor_tool_dispatcher
 from .ui_files import UiFilesService
 from .ui_terminals import UiTerminalsService
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..protocol.executor import (
@@ -307,7 +312,11 @@ class ExecutorRuntime:
             )
             task = asyncio.create_task(stream.run())
             self._terminal_stream_tasks.add(task)
-            task.add_done_callback(self._terminal_stream_done)
+            task.add_done_callback(
+                lambda done: self._terminal_stream_done(
+                    done, stream_id=stream.stream_id
+                )
+            )
             return {
                 "stream_id": stream.stream_id,
                 "shell_id": stream.shell_id,
@@ -410,12 +419,21 @@ class ExecutorRuntime:
             )
         return await self.dispatcher.execute(command.op, args)
 
-    def _terminal_stream_done(self, task: asyncio.Task[None]) -> None:
+    def _terminal_stream_done(
+        self, task: asyncio.Task[None], *, stream_id: str
+    ) -> None:
         self._terminal_stream_tasks.discard(task)
         if task.cancelled():
             return
-        with suppress(Exception):
-            task.exception()
+        error = task.exception()
+        if error is not None and not isinstance(error, ConnectionClosedOK):
+            # Exception messages and tracebacks can contain terminal data
+            # or credentials. Only report the validated id and error type.
+            logger.warning(
+                "Terminal stream %s failed (%s)",
+                stream_id,
+                type(error).__name__,
+            )
 
     async def aclose(self) -> None:
         """Close executor-owned live resources; failed cleanup remains retryable."""
