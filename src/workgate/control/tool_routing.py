@@ -286,10 +286,6 @@ def route_control_registry(
     """Replace only machine/session handlers while preserving public metadata."""
     if not isinstance(registry, DeclarativeToolRegistry):
         return registry
-    if registry.name == "transfer":
-        # These are executor-internal RPC primitives used by session_copy.  The
-        # source registry intentionally keeps them off public HTTP/MCP surfaces.
-        return registry
     route_names = (
         _MACHINE_TOOL_NAMES
         | _EXECUTOR_CONTROL_TOOLS

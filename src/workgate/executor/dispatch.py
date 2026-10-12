@@ -9,8 +9,23 @@ from ..tools.machine import (
     MACHINE_TOOL_NAMES,
 )
 
+# Private transport/receipt RPCs are executor commands, not public MCP tools.
 EXECUTOR_INTERNAL_OPERATION_NAMES = frozenset(
-    {"transfer_abandon_import", "transfer_release_receipts"}
+    {
+        "transfer_abandon_import",
+        "transfer_abort_write",
+        "transfer_alloc_temp_path",
+        "transfer_begin_write",
+        "transfer_copy_file",
+        "transfer_delete_temp_path",
+        "transfer_finish_write",
+        "transfer_pack_dir",
+        "transfer_read_chunk",
+        "transfer_release_receipts",
+        "transfer_stat",
+        "transfer_unpack_archive",
+        "transfer_write_chunk",
+    }
 )
 EXECUTOR_OPERATION_NAMES = (
     MACHINE_TOOL_NAMES
