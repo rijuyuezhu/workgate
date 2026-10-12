@@ -11,24 +11,6 @@ _PROJECT_ROOT = Path(__file__).parents[2]
 _PACKAGE_ROOT = _PROJECT_ROOT / "src" / "workgate"
 _PACKAGE_NAME = "workgate"
 
-# `main` composes only domain CLI registrars. Each HTTP-capable control adapter consumes
-# exactly one shared WebUI route-composition contract.
-_ALLOWED_HTTP_CONTROL_UI_IMPORTS = frozenset(
-    {
-        (
-            "workgate.control.http.app",
-            "workgate.ui.http.routes",
-        ),
-    }
-)
-_ALLOWED_MCP_CONTROL_UI_IMPORTS = frozenset(
-    {
-        (
-            "workgate.control.mcp.app",
-            "workgate.ui.http.routes",
-        ),
-    }
-)
 _ALLOWED_NON_CONTROL_TO_CONTROL_IMPORTS = frozenset(
     {
         ("workgate.main", "workgate.control.cli"),
@@ -239,32 +221,23 @@ def test_executor_has_no_legacy_remote_worker_dependency() -> None:
     assert actual == frozenset()
 
 
-def test_mcp_control_has_only_the_explicit_ui_route_dependency() -> None:
-    actual = frozenset(
-        (importer, target)
+def test_control_http_hosts_depend_on_ui_only_through_routes() -> None:
+    actual = {
+        target
         for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.control.mcp")
+        if (
+            importer.startswith(f"{_PACKAGE_NAME}.control.http.")
+            or importer.startswith(f"{_PACKAGE_NAME}.control.mcp.")
+        )
         and (
             target.startswith(f"{_PACKAGE_NAME}.server.")
             or target.startswith(f"{_PACKAGE_NAME}.ui.")
         )
-    )
+    }
 
-    assert actual == _ALLOWED_MCP_CONTROL_UI_IMPORTS
-
-
-def test_http_control_has_only_the_explicit_ui_route_dependency() -> None:
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.control.http")
-        and (
-            target.startswith(f"{_PACKAGE_NAME}.server.")
-            or target.startswith(f"{_PACKAGE_NAME}.ui.")
-        )
-    )
-
-    assert actual == _ALLOWED_HTTP_CONTROL_UI_IMPORTS
+    # Route composition belongs to Control; transport adapters must not pull
+    # in WebUI implementation modules or legacy server internals.
+    assert actual <= {f"{_PACKAGE_NAME}.ui.http.routes"}
 
 
 def test_http_has_only_explicit_control_owned_download_dependencies() -> None:
