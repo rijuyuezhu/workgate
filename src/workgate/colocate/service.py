@@ -13,12 +13,13 @@ from ..config.settings import load_settings
 from ..executor.profile import ExecutorProfileStore
 from ..persistence import FileStateStore
 from ..utils.private_files import atomic_write_private_text
+from ..utils.systemd import systemd_quote, systemd_user_unit_path
 
 _SERVICE_NAME = "workgate-colocate.service"
 _MANAGED_HEADER = "# Managed by workgate colocate install-service"
 
 
-def _systemctl(*arguments: str) -> None:
+def _systemctl(*arguments: str) -> subprocess.CompletedProcess[str]:
     command = ["systemctl", "--user", *arguments]
     result = subprocess.run(
         command, capture_output=True, text=True, check=False, timeout=15
@@ -28,17 +29,7 @@ def _systemctl(*arguments: str) -> None:
             f"{' '.join(command)} failed: "
             f"{(result.stderr or result.stdout).strip() or result.returncode}"
         )
-
-
-def _quoted(argument: str) -> str:
-    """Quote one literal systemd ExecStart argument (without a shell)."""
-    escaped = (
-        argument.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("%", "%%")
-        .replace("$", "$$")
-    )
-    return f'"{escaped}"'
+    return result
 
 
 def _config_file(value: str | None) -> Path | None:
@@ -48,13 +39,6 @@ def _config_file(value: str | None) -> Path | None:
     if not path.is_file():
         raise FileNotFoundError(path)
     return path
-
-
-def _unit_path() -> Path:
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME", ""))
-    if not config_home.is_absolute():
-        config_home = Path.home() / ".config"
-    return config_home / "systemd" / "user" / _SERVICE_NAME
 
 
 def install_colocate_service(args: argparse.Namespace) -> None:
@@ -70,9 +54,13 @@ def install_colocate_service(args: argparse.Namespace) -> None:
         )
     _systemctl("show-environment")
 
+    paths = app_paths()
     control_config = _config_file(args.control_config)
     executor_config = _config_file(args.executor_config)
-    paths = app_paths()
+    if control_config is None and paths.config_file.is_file():
+        control_config = paths.config_file
+    if executor_config is None and paths.executor_config_file.is_file():
+        executor_config = paths.executor_config_file
     settings = load_settings(
         executor_config,
         setting_names=EXECUTOR_SETTING_NAMES,
@@ -98,7 +86,13 @@ def install_colocate_service(args: argparse.Namespace) -> None:
     if executor_config is not None:
         command.extend(["--executor-config", str(executor_config)])
 
-    unit = _unit_path()
+    try:
+        unit = systemd_user_unit_path(
+            _systemctl("show", "--property=UnitPath", "--value").stdout,
+            _SERVICE_NAME,
+        )
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
     if unit.is_symlink() or (
         unit.exists() and not unit.read_text().startswith(_MANAGED_HEADER)
     ):
@@ -114,9 +108,10 @@ def install_colocate_service(args: argparse.Namespace) -> None:
             "[Service]",
             "Type=simple",
             "UMask=0077",
-            "ExecStart=" + " ".join(_quoted(part) for part in command),
-            "Restart=on-failure",
+            "ExecStart=" + " ".join(systemd_quote(part) for part in command),
+            "Restart=always",
             "RestartSec=5",
+            'Environment="PYTHONUNBUFFERED=1"',
             "",
             "[Install]",
             "WantedBy=default.target",

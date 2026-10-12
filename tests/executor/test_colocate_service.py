@@ -37,10 +37,21 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     control_config.write_text("mode: mcp\n")
 
     commands: list[list[str]] = []
+    unit_dir = tmp_path / "manager-config" / "systemd" / "user"
+    unit_path = unit_dir / "workgate-colocate.service"
 
     def fake_run(command, **_kwargs):
         commands.append(command)
-        return subprocess.CompletedProcess(command, 0, "", "")
+        stdout = ""
+        if command == [
+            "systemctl",
+            "--user",
+            "show",
+            "--property=UnitPath",
+            "--value",
+        ]:
+            stdout = f'"{unit_dir}" /etc/systemd/user\n'
+        return subprocess.CompletedProcess(command, 0, stdout, "")
 
     monkeypatch.setattr(service.subprocess, "run", fake_run)
 
@@ -57,26 +68,27 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         control_config=str(control_config),
         executor_config=str(executor_config),
     )
-    return args, commands, pair
+    return args, commands, pair, unit_path
 
 
 def test_install_service_requires_pairing(installer):
-    args, commands, _pair = installer
+    args, commands, _pair, unit_path = installer
     with pytest.raises(RuntimeError, match="pair the executor"):
         service.install_colocate_service(args)
     assert commands == [["systemctl", "--user", "show-environment"]]
-    assert not service._unit_path().exists()
+    assert not unit_path.exists()
 
 
 def test_install_service_creates_unit_and_is_idempotent(installer, monkeypatch):
-    args, commands, pair = installer
+    args, commands, pair, unit_path = installer
     pair()
     service.install_colocate_service(args)
-    unit = service._unit_path()
+    unit = unit_path
     content = unit.read_text()
     assert content.startswith("# Managed by workgate colocate install-service")
     assert "Description=Workgate colocated control and executor" in content
-    assert "Restart=on-failure" in content
+    assert "Restart=always" in content
+    assert 'Environment="PYTHONUNBUFFERED=1"' in content
     assert "WantedBy=default.target" in content
     assert "control.yaml" in content
     assert "executor.yaml" in content
@@ -85,51 +97,51 @@ def test_install_service_creates_unit_and_is_idempotent(installer, monkeypatch):
     assert unit.stat().st_mode & 0o777 == 0o600
     assert commands == [
         ["systemctl", "--user", "show-environment"],
+        ["systemctl", "--user", "show", "--property=UnitPath", "--value"],
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "workgate-colocate.service"],
         ["systemctl", "--user", "restart", "workgate-colocate.service"],
     ]
 
     service.install_colocate_service(args)
-    assert len(commands) == 8
+    assert len(commands) == 10
     assert unit.read_text() == content
 
 
 def test_install_service_does_not_overwrite_unmanaged_unit(installer):
-    args, commands, pair = installer
+    args, commands, pair, unit = installer
     pair()
-    unit = service._unit_path()
     unit.parent.mkdir(parents=True)
     unit.write_text("[Service]\nExecStart=/bin/true\n")
     with pytest.raises(RuntimeError, match="refusing to overwrite unmanaged"):
         service.install_colocate_service(args)
     assert unit.read_text() == "[Service]\nExecStart=/bin/true\n"
-    assert len(commands) == 1
+    assert len(commands) == 2
 
 
 def test_install_service_quotes_literal_paths(installer):
-    args, _commands, pair = installer
+    args, _commands, pair, unit = installer
     pair()
     args.control_config = str(
         Path(args.control_config).with_name("my $% config.yaml")
     )
     Path(args.control_config).write_text("mode: mcp\n")
     service.install_colocate_service(args)
-    assert "my $$%% config.yaml" in service._unit_path().read_text()
+    assert "my $$%% config.yaml" in unit.read_text()
 
 
 def test_install_service_handles_frozen_executable(installer, monkeypatch):
-    args, _commands, pair = installer
+    args, _commands, pair, unit = installer
     pair()
     monkeypatch.setattr(service.sys, "frozen", True, raising=False)
     service.install_colocate_service(args)
-    content = service._unit_path().read_text()
+    content = unit.read_text()
     assert ' "colocate" ' in content
     assert "workgate.main" not in content
 
 
 def test_install_service_refuses_transient_env_config(installer, monkeypatch):
-    args, commands, pair = installer
+    args, commands, pair, _unit = installer
     pair()
     monkeypatch.setenv("WORKGATE_PORT", "1234")
     with pytest.raises(RuntimeError, match="durable YAML"):
@@ -138,7 +150,7 @@ def test_install_service_refuses_transient_env_config(installer, monkeypatch):
 
 
 def test_install_service_checks_systemd_availability(installer, monkeypatch):
-    args, commands, pair = installer
+    args, commands, pair, _unit = installer
     pair()
     monkeypatch.setattr(service.shutil, "which", lambda _name: None)
     with pytest.raises(RuntimeError, match="requires Linux systemd"):
@@ -147,7 +159,7 @@ def test_install_service_checks_systemd_availability(installer, monkeypatch):
 
 
 def test_install_service_reports_systemctl_error(installer, monkeypatch):
-    args, commands, pair = installer
+    args, commands, pair, unit = installer
     pair()
 
     def fake_failure(command, **_kwargs):
@@ -158,13 +170,51 @@ def test_install_service_reports_systemctl_error(installer, monkeypatch):
     monkeypatch.setattr(service.subprocess, "run", fake_failure)
     with pytest.raises(RuntimeError, match="manager unavailable"):
         service.install_colocate_service(args)
-    assert not service._unit_path().exists()
+    assert not unit.exists()
 
 
 def test_install_service_requires_real_config_file(installer):
-    args, commands, pair = installer
+    args, commands, pair, _unit = installer
     pair()
     args.executor_config = "/missing/executor.yaml"
     with pytest.raises(FileNotFoundError):
         service.install_colocate_service(args)
     assert commands == [["systemctl", "--user", "show-environment"]]
+
+
+def test_install_service_pins_existing_default_yaml(installer):
+    args, _commands, pair, unit = installer
+    pair()
+    default_dir = Path(os.environ["XDG_CONFIG_HOME"]) / "workgate"
+    (default_dir / "executor").mkdir(parents=True)
+    control_default = default_dir / "config.yaml"
+    executor_default = default_dir / "executor" / "config.yaml"
+    control_default.write_text(Path(args.control_config).read_text())
+    executor_default.write_text(Path(args.executor_config).read_text())
+    args.control_config = None
+    args.executor_config = None
+
+    service.install_colocate_service(args)
+    content = unit.read_text()
+    assert str(control_default) in content
+    assert str(executor_default) in content
+
+
+def test_install_service_rejects_invalid_systemd_unit_path(
+    installer, monkeypatch
+):
+    args, _commands, pair, unit = installer
+    pair()
+    original_run = service.subprocess.run
+
+    def fake_run(command, **kwargs):
+        if command[-3:] == ["show", "--property=UnitPath", "--value"]:
+            return subprocess.CompletedProcess(
+                command, 0, "/tmp/random-dir\n", ""
+            )
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="persistent user unit path"):
+        service.install_colocate_service(args)
+    assert not unit.exists()

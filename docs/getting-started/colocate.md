@@ -53,10 +53,11 @@ workgate colocate install-service
 
 For nondefault configuration files, use
 `workgate colocate install-service --control-config /absolute/control.yaml --executor-config /absolute/executor.yaml`.
-The installer records absolute configuration paths in the systemd unit, so
-later changes to those files take effect after restarting the service. It
-refuses to overwrite an unrelated unit with the same name. Use durable YAML
-configuration rather than temporary `WORKGATE_*` environment overrides.
+The installer records absolute paths for the selected configuration files,
+including existing default YAML files, so the service reads the same files even
+if its environment differs from the install shell. File edits take effect after
+restarting the service. Installation refuses to overwrite an unrelated unit.
+Use durable YAML rather than temporary `WORKGATE_*` environment overrides.
 
 The service is named `workgate-colocate.service`. Operate it using systemd:
 
