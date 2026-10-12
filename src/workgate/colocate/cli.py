@@ -10,7 +10,9 @@ from typing import Any
 
 
 def register_colocate_cli(subparsers: Any) -> argparse.ArgumentParser:
-    """Register the optional same-host process launcher."""
+    """Register the same-host launcher and optional systemd installation."""
+    from .service import install_colocate_service
+
     parser = subparsers.add_parser(
         "colocate",
         help="Run the regular control and executor processes together",
@@ -18,6 +20,17 @@ def register_colocate_cli(subparsers: Any) -> argparse.ArgumentParser:
     parser.add_argument("--control-config", metavar="PATH")
     parser.add_argument("--executor-config", metavar="PATH")
     parser.set_defaults(handler=run_colocate)
+    actions = parser.add_subparsers(dest="colocate_command")
+    install = actions.add_parser(
+        "install-service", help="Install and start a systemd user service"
+    )
+    install.add_argument(
+        "--control-config", metavar="PATH", default=argparse.SUPPRESS
+    )
+    install.add_argument(
+        "--executor-config", metavar="PATH", default=argparse.SUPPRESS
+    )
+    install.set_defaults(handler=install_colocate_service)
     return parser
 
 

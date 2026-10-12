@@ -11,7 +11,6 @@ import os
 import platform
 import plistlib
 import posixpath
-import shlex
 import shutil
 import subprocess
 import sys
@@ -28,6 +27,7 @@ from ..utils.private_files import (
     atomic_write_private_bytes,
     atomic_write_private_text,
 )
+from ..utils.systemd import systemd_quote, systemd_user_unit_path
 from ..version import __version__
 from .profile import ExecutorProfileStore
 from .runtime_update import (
@@ -128,13 +128,6 @@ def _settings_payload_digest(payload: dict[str, Any]) -> str:
 
 def _executor_service_settings_digest(config: ExecutorConfig) -> str:
     return _settings_payload_digest(_executor_service_settings(config))
-
-
-def _systemd_quote(value: str, *, escape_dollar: bool = True) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
-    if escape_dollar:
-        escaped = escaped.replace("$", "$$")
-    return f'"{escaped}"'
 
 
 class ExecutorServiceManager:
@@ -433,7 +426,7 @@ class ExecutorServiceManager:
             f"PATH={self._managed_posix_path(_POSIX_DEFAULT_PATH_DIRS)}",
         ]
         return [
-            f"Environment={_systemd_quote(value, escape_dollar=False)}"
+            f"Environment={systemd_quote(value, escape_dollar=False)}"
             for value in values
         ]
 
@@ -454,22 +447,11 @@ class ExecutorServiceManager:
                 f"failed to query systemd user unit path: {detail or result.returncode}"
             )
         try:
-            unit_paths = shlex.split(result.stdout.strip())
+            return systemd_user_unit_path(
+                result.stdout, f"{_SERVICE_NAME}.service"
+            )
         except ValueError as exc:
-            raise RuntimeError(
-                "systemd returned an invalid user unit path"
-            ) from exc
-        for raw_path in unit_paths:
-            path = Path(raw_path)
-            if (
-                path.is_absolute()
-                and path.name == "user"
-                and path.parent.name == "systemd"
-            ):
-                return path / f"{_SERVICE_NAME}.service"
-        raise RuntimeError(
-            "systemd user manager did not expose a persistent user unit path"
-        )
+            raise RuntimeError(str(exc)) from exc
 
     def _write_systemd_unit(
         self, command: list[str], *, path: Path | None = None
@@ -485,7 +467,7 @@ class ExecutorServiceManager:
                 "[Service]",
                 "Type=simple",
                 "ExecStart="
-                + " ".join(_systemd_quote(item) for item in command),
+                + " ".join(systemd_quote(item) for item in command),
                 "Restart=always",
                 "RestartSec=5",
                 *self._systemd_environment_lines(),

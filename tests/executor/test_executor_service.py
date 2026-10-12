@@ -22,6 +22,7 @@ from workgate.executor.service import (
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.executor import ExecutorRuntimeOwnership
 from workgate.protocol.ids import new_executor_id
+from workgate.utils.systemd import systemd_quote
 
 
 @pytest.fixture(autouse=True)
@@ -357,7 +358,7 @@ def test_systemd_install_is_private_idempotent_and_preserves_identity(
     unit = manager.systemd_unit_path.read_text(encoding="utf-8")
     assert "Restart=always" in unit
     assert "WantedBy=default.target" in unit
-    assert service._systemd_quote(str(manager.launcher_path.resolve())) in unit
+    assert systemd_quote(str(manager.launcher_path.resolve())) in unit
     encoded_custom_path = "/custom$bin%%dir"
     assert encoded_custom_path in unit
     assert "custom$$bin" not in unit

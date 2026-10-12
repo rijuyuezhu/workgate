@@ -27,7 +27,9 @@ workgate colocate [--control-config PATH] [--executor-config PATH]
 
 Each role keeps its normal config and state directory. Pair the executor
 through `workgate executor connect` and Control approval before the first
-colocated start. See [Colocated local mode](../getting-started/colocate.md).
+colocated start. On Linux, `workgate colocate install-service` installs and
+starts a systemd user service for the same launcher. See
+[Colocated local mode](../getting-started/colocate.md).
 
 ## Control modes
 
