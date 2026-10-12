@@ -989,7 +989,7 @@ def test_bounded_exec_gate_requires_release_byte(monkeypatch, capsys):
     )
     monkeypatch.setattr(
         bounded_runner.os,
-        "execvp",
+        "execvpe",
         lambda *_args: pytest.fail("shell must not execute"),
     )
 
@@ -1006,16 +1006,18 @@ def test_bounded_exec_gate_releases_shell_with_path_lookup(monkeypatch):
     monkeypatch.setattr(bounded_runner.os, "read", lambda _fd, _size: b"\x01")
     monkeypatch.setattr(bounded_runner.os, "close", lambda _fd: None)
 
-    def fake_execvp(shell, args):
-        calls.append((shell, args))
+    def fake_execvpe(shell, args, env):
+        calls.append((shell, args, env))
         raise ExecCalled
 
-    monkeypatch.setattr(bounded_runner.os, "execvp", fake_execvp)
+    monkeypatch.setattr(bounded_runner.os, "execvpe", fake_execvpe)
 
     with pytest.raises(ExecCalled):
         bounded_runner._run_bounded_exec_gate(9, "sh", "echo ok")
 
-    assert calls == [("sh", ["sh", "-lc", "echo ok"])]
+    assert len(calls) == 1
+    assert calls[0][:2] == ("sh", ["sh", "-lc", "echo ok"])
+    assert "PYTHONPATH" not in calls[0][2]
 
 
 def test_bounded_exec_gate_reports_read_and_exec_errors(monkeypatch, capsys):
@@ -1032,7 +1034,7 @@ def test_bounded_exec_gate_reports_read_and_exec_errors(monkeypatch, capsys):
     def fail_exec(*_args):
         raise OSError("exec failed")
 
-    monkeypatch.setattr(bounded_runner.os, "execvp", fail_exec)
+    monkeypatch.setattr(bounded_runner.os, "execvpe", fail_exec)
     assert bounded_runner._run_bounded_exec_gate(9, "sh", "true") == 127
     assert "exec failed" in capsys.readouterr().err
 
@@ -1543,6 +1545,26 @@ def test_launchctl_operations_reserve_outer_cleanup_headroom(monkeypatch):
         )
         < 5.0
     )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX Linux subprocess")
+def test_frozen_bounded_runner_restores_system_loader_for_shell(
+    monkeypatch, capfd
+):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/pyinstaller-bundle")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib")
+    monkeypatch.setattr(bounded_runner.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        bounded_runner.sys, "_MEIPASS", "/tmp/pyinstaller-bundle", raising=False
+    )
+
+    assert (
+        bounded_runner.run_bounded_command(
+            "/bin/sh", 'printf "%s" "$LD_LIBRARY_PATH"'
+        )
+        == 0
+    )
+    assert capfd.readouterr().out == "/usr/lib"
 
 
 def test_bounded_runner_argv_uses_frozen_cli_subcommand(monkeypatch):
