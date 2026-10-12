@@ -123,6 +123,27 @@ def test_colocate_subcommand_forwards_only_normal_role_configs():
     assert args.executor_config == "executor.yaml"
 
 
+def test_colocate_install_service_parses_role_config_paths():
+    args = cli._build_parser().parse_args(
+        [
+            "colocate",
+            "install-service",
+            "--control-config",
+            "control.yaml",
+            "--executor-config",
+            "executor.yaml",
+        ]
+    )
+    assert args.handler.__name__ == "install_colocate_service"
+    assert args.control_config == "control.yaml"
+    assert args.executor_config == "executor.yaml"
+
+    args = cli._build_parser().parse_args(
+        ["colocate", "--control-config", "control.yaml", "install-service"]
+    )
+    assert args.control_config == "control.yaml"
+
+
 @pytest.mark.parametrize(
     ("flag", "value"),
     [

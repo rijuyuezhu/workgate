@@ -42,6 +42,36 @@ The normal Control URL is `http://127.0.0.1:8765`, and the MCP URL is
 stops both when interrupted or when either child exits; it does not restart
 them or repair failed pairing.
 
+## Linux systemd user service
+
+After pairing, install and start the ordinary colocate launcher as a persistent
+user service:
+
+```bash
+workgate colocate install-service
+```
+
+For nondefault configuration files, use
+`workgate colocate install-service --control-config /absolute/control.yaml --executor-config /absolute/executor.yaml`.
+The installer records absolute configuration paths in the systemd unit, so
+later changes to those files take effect after restarting the service. It
+refuses to overwrite an unrelated unit with the same name. Use durable YAML
+configuration rather than temporary `WORKGATE_*` environment overrides.
+
+The service is named `workgate-colocate.service`. Operate it using systemd:
+
+```bash
+systemctl --user status workgate-colocate.service
+journalctl --user -u workgate-colocate.service -f
+systemctl --user restart workgate-colocate.service
+systemctl --user disable --now workgate-colocate.service
+```
+
+The installer does not pair executors, install cloudflared, configure system
+boot, or create runtime state. The `systemd --user` manager must be available;
+on hosts that must run without an interactive login, configure systemd linger
+separately. In WSL, ensure the WSL instance itself starts after Windows boot.
+
 ## State and recovery
 
 Control uses its ordinary `state_dir` (on Linux, normally
