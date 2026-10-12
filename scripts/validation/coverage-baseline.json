@@ -865,11 +865,6 @@
       "num_statements": 4,
       "percent_covered": 100.0
     },
-    "src/workgate/schemas/input_models/transfer.py": {
-      "num_branches": 0,
-      "num_statements": 16,
-      "percent_covered": 100.0
-    },
     "src/workgate/schemas/result_models/__init__.py": {
       "num_branches": 0,
       "num_statements": 0,
@@ -1064,11 +1059,6 @@
       "num_branches": 0,
       "num_statements": 16,
       "percent_covered": 75.0
-    },
-    "src/workgate/tools/registry/transfer.py": {
-      "num_branches": 0,
-      "num_statements": 50,
-      "percent_covered": 76.0
     },
     "src/workgate/tools/registry/version.py": {
       "num_branches": 0,

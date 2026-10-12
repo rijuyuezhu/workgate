@@ -22,7 +22,6 @@ from .registry.session import SessionToolRegistry
 from .registry.shell import ShellToolRegistry
 from .registry.task import TaskToolRegistry
 from .registry.todo import TodoToolRegistry
-from .registry.transfer import TransferToolRegistry
 from .registry.version import VersionToolRegistry
 from .registry.workspace_connector import WorkspaceConnectorToolRegistry
 
@@ -47,7 +46,6 @@ BUILTIN_TOOL_REGISTRY_FACTORIES: tuple[tuple[str, ToolRegistryFactory], ...] = (
     ("shell", ShellToolRegistry),
     ("task", TaskToolRegistry),
     ("todo", TodoToolRegistry),
-    ("transfer", TransferToolRegistry),
     ("version", VersionToolRegistry),
     ("workspace_connector", WorkspaceConnectorToolRegistry),
 )

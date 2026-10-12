@@ -92,21 +92,44 @@ def test_catalog_rejects_unknown_factory_override() -> None:
 
 
 @pytest.mark.asyncio
-async def test_internal_transfer_tools_fail_closed_when_not_composed() -> None:
-    """The internal transfer adapter must not silently run without executor services."""
-    from workgate.tools.registry.transfer import (
-        TransferToolRegistry,
-        transfer_stat,
-    )
+async def test_executor_transfer_operations_are_not_public_tools(
+    tmp_path, monkeypatch
+) -> None:
+    """Internal executor operations stay callable only through its dispatcher."""
+    from fastapi.testclient import TestClient
 
-    assert "transfer_stat" not in {
-        tool.name for tool in await build_mcp().list_tools()
+    from workgate.config.settings import clear_settings_cache
+    from workgate.control.http.app import build_http_app
+    from workgate.executor.dispatch import EXECUTOR_INTERNAL_OPERATION_NAMES
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+
+    internal_ops = {
+        name
+        for name in EXECUTOR_INTERNAL_OPERATION_NAMES
+        if name.startswith("transfer_")
     }
-    with pytest.raises(
-        RuntimeError, match="require composed executor services"
-    ):
-        await transfer_stat.func(path="unused")
-    assert TransferToolRegistry().name == "transfer"
+    assert {"transfer_stat", "transfer_begin_write"} <= internal_ops
+
+    mcp_names = {tool.name for tool in await build_mcp().list_tools()}
+    assert internal_ops.isdisjoint(mcp_names)
+
+    with TestClient(
+        build_http_app(tool_catalog=build_tool_catalog())
+    ) as client:
+        public_names = {
+            tool["name"] for tool in client.get("/tools").json()["tools"]
+        }
+        assert "read" in public_names
+        assert internal_ops.isdisjoint(public_names)
+
+        response = client.post("/tools/transfer_stat", json={"path": "."})
+        assert response.status_code == 200
+        assert response.json()["isError"] is True
+        assert "Unknown tool" in response.json()["content"][0]["text"]
 
 
 def test_base_tool_registry_registers_nothing() -> None:
