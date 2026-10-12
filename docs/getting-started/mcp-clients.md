@@ -46,7 +46,7 @@ through `uvx`. The generic JSON shape is:
       "command": "uvx",
       "args": [
         "--python", "3.14",
-        "--from", "git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a2",
+        "--from", "git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a3",
         "workgate", "control", "--mode", "stdio", "--auth-mode", "none"
       ]
     }
