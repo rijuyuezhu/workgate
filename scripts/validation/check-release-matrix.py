@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check universal Python distribution and standalone binary release contracts."""
+"""Check universal Python distribution and self-contained binary release contracts."""
 
 import ast
 import re
@@ -56,14 +56,14 @@ def main() -> int:
     binary = _section(release, "build-binary")
     publish = _section(release, "github-release")
     smoke = _section(ci, "package-smoke")
-    binary_smoke = _section(ci, "standalone-binary-smoke")
+    binary_smoke = _section(ci, "binary-smoke")
     expected = EXPECTED_BINARY_ARTIFACTS
     actual = set(
         re.findall(r"^          - artifact: ([\w-]+)$", binary, re.MULTILINE)
     )
     if actual != expected:
         raise SystemExit(
-            f"standalone release artifact matrix mismatch: {sorted(actual)}"
+            f"binary release artifact matrix mismatch: {sorted(actual)}"
         )
     ci_artifacts = set(
         re.findall(
@@ -72,10 +72,10 @@ def main() -> int:
     )
     if ci_artifacts != expected:
         raise SystemExit(
-            f"standalone CI artifact matrix mismatch: {sorted(ci_artifacts)}"
+            f"binary CI artifact matrix mismatch: {sorted(ci_artifacts)}"
         )
     if "windows-" in binary or "windows-" in binary_smoke:
-        raise SystemExit("standalone binary jobs must not include Windows")
+        raise SystemExit("self-contained binary jobs must not include Windows")
     for job, section in (("release", binary), ("CI", binary_smoke)):
         fields = set(
             re.findall(r"^          - ([a-z_]+):", section, re.MULTILINE)
@@ -86,7 +86,7 @@ def main() -> int:
         references = set(re.findall(r"matrix\.([a-z_]+)", section))
         if undefined := references - fields:
             raise SystemExit(
-                f"undefined standalone {job} matrix fields: {sorted(undefined)}"
+                f"undefined binary {job} matrix fields: {sorted(undefined)}"
             )
     if (
         "cp dist/workgate release/workgate-${{ matrix.artifact }}/"
@@ -155,7 +155,7 @@ def main() -> int:
                 f"missing shared PyInstaller build contract: {fragment}"
             )
     print(
-        "Release matrix: universal Python wheel + sdist and four standalone binaries"
+        "Release matrix: universal Python wheel + sdist and four self-contained binaries"
     )
     return 0
 

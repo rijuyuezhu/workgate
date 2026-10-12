@@ -18,7 +18,7 @@ their lifecycle can remain separate from checkout-only automation.
 | --- | --- | --- |
 | `release/build-binary.sh` | Shared PyInstaller build command for native Linux/macOS CI and release jobs. | One source of truth for frozen build flags. |
 | `release/smoke-binary.py` | Bounded frozen executable CLI, HTTP health, and WebUI smoke. | Shared by pre-merge CI and release without duplicating the full behavioral suite. |
-| `release/pyinstaller-entry.py` | Minimal PyInstaller startup shim that forwards command-line arguments to the packaged application entrypoint. | It exists only as an input to standalone release artifact construction and is not a runtime library or development command. |
+| `release/pyinstaller-entry.py` | Minimal PyInstaller startup shim that forwards command-line arguments to the packaged application entrypoint. | It exists only as an input to self-contained release artifact construction and is not a runtime library or development command. |
 
 ## `testing`
 
@@ -36,7 +36,7 @@ their lifecycle can remain separate from checkout-only automation.
 | `validation/check-no-future-annotations.py` | Rejects postponed-annotation future imports in first-party Python while ignoring generated dependency environments. | Workgate targets Python 3.14, so this keeps the repository annotation convention explicit and prevents generators or new modules from silently reintroducing the obsolete import. |
 | `validation/check-python-dist.py` | Checks that one pure universal wheel and one source distribution include browser terminal assets and no native UI payload. | Reused by package smoke and release publishing without an installed project. |
 | `validation/check-release-provenance.py` | Verifies release SHA, Git tag, current default branch, and successful main-push CI through GitHub REST before build and publish. | Keeps release authorization as a small zero-install check, separate from packaging. |
-| `validation/check-release-matrix.py` | Checks the project/release Python baseline, universal package smoke, and standalone binary artifact matrix. | It validates repository workflow completeness before installation and therefore belongs beside other zero-install validation gates rather than release builders. |
+| `validation/check-release-matrix.py` | Checks the project/release Python baseline, universal package smoke, and self-contained binary artifact matrix. | It validates repository workflow completeness before installation and therefore belongs beside other zero-install validation gates rather than release builders. |
 
 ## `generation`
 

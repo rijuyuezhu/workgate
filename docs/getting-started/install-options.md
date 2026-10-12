@@ -55,7 +55,7 @@ pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.
 python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a1'  # existing environment
 ```
 
-Release standalone executables already bundle the corresponding Python GUI bindings.
+Release self-contained executables already bundle the corresponding Python GUI bindings.
 macOS requires Accessibility permission for native control. Window screenshots
 also require Screen Recording permission; without it, use `gui_state` with
 `screenshot=false`. Linux requires a graphical desktop session plus the system

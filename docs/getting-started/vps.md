@@ -190,7 +190,7 @@ executor machine/terminal logs.
 For an upgrade, stop control, install the new version, start it again, and check
 `/readyz`. **Control and executor runtime versions must match** for commands
 to run. Update externally installed executors with their own package/source
-tooling; supported control-managed standalone executors use the verified update
+tooling; supported control-managed self-contained executors use the verified update
 flow described in [Executors](../guides/executors.md). Executors reconnect
 with existing credentials. In-flight operations may be interrupted.
 

@@ -78,7 +78,7 @@ Every routed MCP or REST debug tool call should produce a `tool_call_start` and 
 
 ## Release binary lacks system tools
 
-The standalone binary includes the Python server and default OAuth
+The self-contained binary includes the Python server and default OAuth
 dependencies. On POSIX systems, persistent shells require a host tmux executable;
 the default is `tmux` from `PATH`, and the `tmux_bin` setting may point to a
 different executable. Git, shells, compilers, LibreOffice, and other host tools

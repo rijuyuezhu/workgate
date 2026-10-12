@@ -16,6 +16,19 @@ workgate control --help
 workgate executor --help
 ```
 
+## Colocated control and executor
+
+`workgate colocate` launches `workgate control` and
+`workgate executor run` as two ordinary child processes:
+
+```bash
+workgate colocate [--control-config PATH] [--executor-config PATH]
+```
+
+Each role keeps its normal config and state directory. Pair the executor
+through `workgate executor connect` and Control approval before the first
+colocated start. See [Colocated local mode](../getting-started/colocate.md).
+
 ## Control modes
 
 | Mode | Purpose |
@@ -97,4 +110,4 @@ workgate executor uninstall-service
 
 `run` uses only the saved executor profile. Normal network or control outages reconnect with the same long-lived credential; they do not require a fresh owner approval. Revocation or credential replacement requires owner action before that profile can authenticate again.
 
-`install-service` is local-only host administration. It requires an existing paired profile, snapshots the current executor runtime settings into private Workgate state, installs the native per-user service for Linux or macOS, and starts it immediately. Reinstalling refreshes the service definition without changing executor identity. Persistent bootstrap installs are control-managed and may replace their verified standalone runtime to match control; package-manager, Python-package, and source installs are never self-mutated. `status` reports runtime ownership, local update state, and stale runtime/definition mismatches when detectable; `logs` returns a bounded, redacted recent view. These lifecycle commands are not MCP tools.
+`install-service` is local-only host administration. It requires an existing paired profile, snapshots the current executor runtime settings into private Workgate state, installs the native per-user service for Linux or macOS, and starts it immediately. Reinstalling refreshes the service definition without changing executor identity. Persistent bootstrap installs are control-managed and may replace their verified self-contained runtime to match control; package-manager, Python-package, and source installs are never self-mutated. `status` reports runtime ownership, local update state, and stale runtime/definition mismatches when detectable; `logs` returns a bounded, redacted recent view. These lifecycle commands are not MCP tools.

@@ -171,20 +171,17 @@ def test_control_does_not_depend_on_executor_composition() -> None:
     assert actual == frozenset()
 
 
-def test_standalone_supervisor_has_no_control_or_executor_implementation_dependency() -> (
+def test_colocate_launcher_has_no_control_or_executor_implementation_dependency() -> (
     None
 ):
-    actual = frozenset(
-        (importer, target)
-        for importer, target in _local_imports()
-        if importer.startswith(f"{_PACKAGE_NAME}.standalone")
-        and (
-            target.startswith(f"{_PACKAGE_NAME}.control")
-            or target.startswith(f"{_PACKAGE_NAME}.executor")
+    imports = _local_imports()
+    assert not any(
+        importer == f"{_PACKAGE_NAME}.colocate.cli"
+        and target.startswith(
+            (f"{_PACKAGE_NAME}.control", f"{_PACKAGE_NAME}.executor")
         )
+        for importer, target in imports
     )
-
-    assert actual == frozenset()
 
 
 def test_control_http_hosts_depend_on_ui_only_through_routes() -> None:

@@ -12,9 +12,8 @@ from .surface import cli_overrides_from_args, register_setting_cli_args
 def register_config_and_setting_args(
     parser: argparse.ArgumentParser,
     *,
-    setting_names: Collection[str] | None = None,
+    setting_names: Collection[str],
     cli_setting_names: Collection[str] | None = None,
-    exclude_setting_names: Collection[str] = (),
     default_config_path: str | Path | None = None,
     setting_defaults: Mapping[str, Any] | None = None,
 ) -> None:
@@ -33,14 +32,12 @@ def register_config_and_setting_args(
         include_names=cli_setting_names
         if cli_setting_names is not None
         else setting_names,
-        exclude_names=exclude_setting_names,
     )
     parser.set_defaults(
         _workgate_default_config_path=default_config_path,
         _workgate_setting_defaults=dict(setting_defaults or {}),
+        _workgate_setting_names=frozenset(setting_names),
     )
-    if setting_names is not None:
-        parser.set_defaults(_workgate_setting_names=frozenset(setting_names))
 
 
 def settings_from_args(args: argparse.Namespace) -> Settings:

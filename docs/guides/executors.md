@@ -64,7 +64,7 @@ The same CLI provides `start`, `stop`, `restart`, `logs`, and
 `uninstall-service`. Reinstalling refreshes the service without changing the
 paired executor identity.
 
-A service installed by the persistent bootstrap owns its standalone Workgate
+A service installed by the persistent bootstrap owns its self-contained Workgate
 runtime. When control requires a different Workgate version, that executor
 stops accepting new work, finishes already-offered commands, downloads and
 validates the matching control release, then atomically replaces the stable

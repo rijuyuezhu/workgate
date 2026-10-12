@@ -11,8 +11,8 @@ child process. Install and configure Workgate first using the
 
 ## Connect to a running control (recommended)
 
-Start Workgate with the normal [standalone](standalone.md) or
-[control + executor](deployment.md) deployment. For a local standalone server,
+Start Workgate with the normal [colocate](colocate.md) or
+[control + executor](deployment.md) deployment. For a local colocated server,
 enter this **Streamable HTTP** URL in your client's MCP server settings:
 
 ```text
@@ -26,13 +26,13 @@ owner approval. Never disable OAuth on a publicly reachable server. The
 `base_url` configuration is the origin *without* `/mcp`.
 
 A control needs at least one connected **executor** for filesystem and shell
-operations. Standalone starts one automatically; separate deployments require
-pairing an executor. See [Executors](../guides/executors.md).
+operations. Pair the executor once via the normal device-code flow, including for
+colocated deployments. See [Executors](../guides/executors.md).
 
 ## Let a local client start stdio
 
 A stdio-only Workgate control has **no HTTP executor connection or pairing
-endpoint**. Unlike standalone HTTP, it cannot attach an executor for shell,
+endpoint**. Unlike colocated HTTP, it cannot attach an executor for shell,
 filesystem, or session operations. Use HTTP above for ordinary workspace tasks.
 
 If your local client needs the control-only MCP interface, install Workgate from

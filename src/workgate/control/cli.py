@@ -15,10 +15,6 @@ from .http.app import run_http
 from .mcp.app import run_mcp
 from .runtime import build_control_runtime
 from .server import configure_runtime_logging
-from .standalone_bootstrap import (
-    maybe_write_standalone_bootstrap,
-    prepare_standalone_control_settings,
-)
 
 
 def register_control_cli(subparsers: Any) -> argparse.ArgumentParser:
@@ -77,10 +73,8 @@ def run_control_from_args(args: argparse.Namespace) -> None:
     ensure_private_directory(settings.audit_log_path.parent)
     try:
         with control_run_lock(settings.state_dir):
-            settings = prepare_standalone_control_settings(settings)
             configure_settings(settings)
             configure_runtime_logging(settings.log_level)
-            maybe_write_standalone_bootstrap(settings)
             _dispatch_control(settings)
     except ControlAlreadyRunningError as exc:
         raise SystemExit(str(exc)) from exc
