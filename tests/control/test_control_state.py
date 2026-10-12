@@ -38,11 +38,15 @@ def _trust_record(*, executor_id: str | None = None) -> ExecutorTrustRecord:
 
 
 def _session_record(
-    executor_id: str, *, session_id: str | None = None
+    executor_id: str,
+    *,
+    session_id: str | None = None,
+    task_id: str | None = None,
 ) -> ControlSessionRecord:
     return ControlSessionRecord(
         session_id=session_id or new_session_id(),
         executor_id=executor_id,
+        task_id=task_id,
         workdir="/home/user/src/workgate",
         label="workgate",
         status="creating",
@@ -445,15 +449,14 @@ def test_control_session_task_binding_survives_primary_recovery(
     state.start()
     trust = _trust_record()
     state.put_executor(trust)
-    session = _session_record(trust.executor_id)
-    state.put_session(session)
     task_id = new_task_id()
-    bound = state.attach_session_task(session.session_id, task_id)
+    session = _session_record(trust.executor_id, task_id=task_id)
+    state.put_session(session)
     path = store.layout.control_sessions_path
     path.write_text("truncated", encoding="utf-8")
     restored = ControlState(store)
     restored.start()
-    assert restored.snapshot_sessions()[session.session_id] == bound
+    assert restored.snapshot_sessions()[session.session_id] == session
     assert restored.snapshot_sessions()[session.session_id].task_id == task_id
 
 
@@ -467,12 +470,12 @@ def test_control_session_task_binding_cannot_rollback_through_stale_backup(
     state.start()
     trust = _trust_record()
     state.put_executor(trust)
-    session = _session_record(trust.executor_id)
-    state.put_session(session)
+    state.put_session(_session_record(trust.executor_id))
     path = store.layout.control_sessions_path
-    unbound = _registry_json(store, path)
-    state.attach_session_task(session.session_id, new_task_id())
-    store.write_json(path.with_name(path.name + ".bak"), unbound)
+    before_binding = _registry_json(store, path)
+    session = _session_record(trust.executor_id, task_id=new_task_id())
+    state.put_session(session)
+    store.write_json(path.with_name(path.name + ".bak"), before_binding)
     path.write_text("damaged", encoding="utf-8")
     restored = ControlState(store)
     with pytest.raises(RuntimeError, match="Unrecoverable control registry"):
