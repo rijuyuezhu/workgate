@@ -1,8 +1,9 @@
 # VPS deployment
 
-Run one Workgate **control** on a Linux VPS and let executors connect outbound
-to it. This guide uses systemd plus Caddy or nginx; no external database or
-message broker is required.
+Run only Workgate **control** on a Linux VPS; pair executors on the machines
+that should own files, shells, and jobs. The VPS needs no local executor.
+Use systemd with Caddy, nginx, or an independent Cloudflare Tunnel; no
+database or message broker is required.
 
 ## 1. Prepare control
 
@@ -20,17 +21,25 @@ sudo install -d -o workgate -g workgate -m 700 \
 Install Workgate somewhere the service account can execute it. The examples
 below use `/opt/workgate/bin/workgate`.
 
-Create `/var/lib/workgate/.config/workgate/config.yaml` with owner
-`workgate:workgate` and mode `0600`:
+Create `/var/lib/workgate/.config/workgate/config.yaml` (the service
+account's `~/.config/workgate/config.yaml`) with owner `workgate:workgate`
+and mode `0600`:
 
 ```yaml
+mode: mcp
+host: 127.0.0.1
+port: 8765
 base_url: https://control.example.com
 auth_mode: oauth
 oauth_admin_pin: replace-with-a-long-random-secret
+file_download_max_file_bytes: 67108864  # 64 MiB snapshot limit
 ```
 
-Control binds `127.0.0.1:8765` by default. Keep it on loopback and let the
-reverse proxy own public TLS.
+Replace the sample admin PIN with a long random secret before starting control.
+The host/port settings are also the defaults. Keep control on loopback and
+let the proxy own public TLS. `base_url` must be the public HTTPS origin,
+without `/mcp`; do not put tunnel credentials in Workgate's YAML.
+The file-link size limit is recommended for a small VPS (default: unlimited).
 
 ## 2. Run control with systemd
 
@@ -115,7 +124,18 @@ server {
 Avoid short proxy read timeouts: executor delivery uses long polling and
 terminal attachments use WebSockets.
 
-After TLS is live:
+### Cloudflare Tunnel
+
+Instead of Caddy or nginx, a separately managed `cloudflared` service can
+publish `https://control.example.com` to `http://127.0.0.1:8765`. Keep
+its token in `cloudflared`'s private credential file, not in Workgate YAML.
+Use the [cloudflared systemd recipe](https://github.com/rijuyuezhu/workgate/blob/main/deploy/cloudflared/README.md).
+Ensure the public hostname allows MCP/OAuth, WebUI, executor long polling,
+downloads, and terminal WebSockets to reach the same control origin.
+This remains **self-hosted control**, not Cloudflare Workers hosted control
+(the deferred #252 proposal).
+
+After public HTTPS is live:
 
 ```bash
 curl --fail https://control.example.com/healthz
@@ -124,69 +144,55 @@ curl --fail https://control.example.com/healthz
 The MCP endpoint is `https://control.example.com/mcp`; the WebUI is
 `https://control.example.com/ui`.
 
-## 4. Pair an executor
+## 4. Pair an outbound executor
 
-Run the executor as the OS user that should own its files and processes. For user `alice`,
-create `~/.config/workgate/executor/config.yaml`:
+On **each executor machine** (for example, your workstation or a GPU host),
+install the matching Workgate version and create its own
+`~/.config/workgate/executor/config.yaml`:
 
 ```yaml
-default_workdir: /srv/workspaces/alice
+default_workdir: /home/alice/projects
 ```
 
-Prepare the workspace and config directory:
+Use an existing absolute work directory and keep the config file private.
+Run as the OS user who should own machine operations:
 
 ```bash
-sudo install -d -o alice -g alice -m 700 \
-  /srv/workspaces/alice \
-  /home/alice/.config/workgate/executor
-sudo chown alice:alice /home/alice/.config/workgate/executor/config.yaml
-sudo chmod 600 /home/alice/.config/workgate/executor/config.yaml
+workgate executor connect https://control.example.com --name workstation
+workgate executor run
 ```
 
-Pair once and approve the request in the owner UI:
+Approve the device-code pairing request in the public WebUI. `run` remains
+in the foreground; for a persistent user service, use
+`workgate executor install-service` instead (see
+[Executors](../guides/executors.md)). Executors connect outbound and reconnect
+after ordinary network or control outages without pairing again.
 
-```bash
-sudo -u alice HOME=/home/alice \
-  /opt/workgate/bin/workgate executor connect \
-  https://control.example.com \
-  --name alice-vps-executor
-```
+## 5. Control storage and diagnostics
 
-Then run it under systemd:
+`create_file_link` fetches a regular file from its session's executor and
+persists an **immutable snapshot on control**. Its bearer download URL
+continues working while the executor is offline, until expiry or revocation.
+The sample `file_download_max_file_bytes` limits each snapshot to 64 MiB;
+allow enough private space under control's `data_dir` and use short link TTLs.
+Cross-executor `session_copy` may also use control storage for its durable
+relay; budget VPS disk and bandwidth accordingly. An optional S3 route can
+avoid routing those bytes through control for large transfers.
 
-```ini
-[Unit]
-Description=Workgate Executor (alice)
-After=network.target
+Read control logs with `journalctl -u workgate-control`, and tunnel logs with
+`journalctl -u workgate-cloudflared` if applicable. Executor failures are
+logged **on the executor machine**, via foreground output or
+`workgate executor logs` for managed services. A control-only VPS has no
+executor machine/terminal logs.
 
-[Service]
-Type=simple
-User=alice
-Group=alice
-Environment=HOME=/home/alice
-WorkingDirectory=/
-UMask=0077
-ExecStart=/opt/workgate/bin/workgate executor run
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-```
-
-The executor discovers `~/.config/workgate/executor/config.yaml` and uses its
-private default state root under `~/.local/state/workgate/executor-runtime`.
-`default_workdir` is the fallback anchor for relative session workdirs and
-sessionless executor paths. Filesystem access is governed by the executor OS account.
-
-Temporary network or control outages reconnect with the saved executor profile;
-ordinary downtime does not require pairing again.
-
-## 5. Upgrade and back up
+## 6. Upgrade and back up
 
 For an upgrade, stop control, install the new version, start it again, and check
-`/readyz`. Executors reconnect with their existing credentials. An in-flight
-ordinary call may be interrupted.
+`/readyz`. **Control and executor runtime versions must match** for commands
+to run. Update externally installed executors with their own package/source
+tooling; supported control-managed standalone executors use the verified update
+flow described in [Executors](../guides/executors.md). Executors reconnect
+with existing credentials. In-flight operations may be interrupted.
 
 For the default service account layout, back up:
 
