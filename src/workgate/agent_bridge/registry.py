@@ -190,9 +190,18 @@ def build_agent_registry(
                     name=name, config=server, available=True
                 )
                 continue
-            before_env, before_headers = manager_redaction_maps(
-                client_manager, name, server
-            )
+            try:
+                before_env, before_headers = manager_redaction_maps(
+                    client_manager, name, server
+                )
+            except Exception:
+                mcp_servers[name] = AgentMcpServerRecord(
+                    name=name,
+                    config=server,
+                    available=False,
+                    error="credential redaction context unavailable",
+                )
+                continue
             try:
                 tools = _run_async_blocking(
                     asyncio.wait_for(

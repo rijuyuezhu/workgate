@@ -2,13 +2,14 @@
 
 import time
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any
 
 import httpx2
 from mcp.client.auth import AuthorizationCodeResult
 from mcp.client.auth.oauth2 import OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
 
+from ..errors import RedactedAgentMcpError
 from .auth_store import AgentAuthStore, AgentOAuthTokenStorage
 from .models import (
     SENSITIVE_KEY_RE,
@@ -237,47 +238,32 @@ def manager_redaction_maps(
     server_name: str,
     server: AgentMcpServerConfig,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Read transport values for redaction, with compatibility for test managers."""
-    method = getattr(manager, "redaction_maps", None)
-    if callable(method):
-        try:
-            return cast(
-                tuple[dict[str, str], dict[str, str]],
-                method(server_name, server),
-            )
-        except Exception:
-            pass
-    return literal_config_mapping(server.env), literal_config_mapping(
-        server.headers
-    )
+    """Require the manager's complete redaction context before publishing data."""
+    try:
+        return manager.redaction_maps(server_name, server)
+    except Exception:
+        raise RedactedAgentMcpError(
+            "credential redaction context unavailable"
+        ) from None
 
 
 def manager_redaction_cursor(
     manager: Any,
     server_name: str,
     server: AgentMcpServerConfig,
-) -> Any:
-    """Start operation-local credential observation when the manager supports it."""
-    method = getattr(manager, "redaction_cursor", None)
-    if callable(method):
-        return method(server_name, server)
-    return None
+) -> int | None:
+    """Require the manager's operation-local credential history boundary."""
+    return manager.redaction_cursor(server_name, server)
 
 
 def manager_redaction_maps_since(
     manager: Any,
     server_name: str,
     server: AgentMcpServerConfig,
-    cursor: Any,
+    cursor: int | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Read all values observed during one operation, or fall back to current maps."""
-    method = getattr(manager, "redaction_maps_since", None)
-    if callable(method):
-        return cast(
-            tuple[dict[str, str], dict[str, str]],
-            method(server_name, server, cursor),
-        )
-    return manager_redaction_maps(manager, server_name, server)
+    """Require retained credentials, including values rotated during a call."""
+    return manager.redaction_maps_since(server_name, server, cursor)
 
 
 def manager_auth_status(
@@ -285,17 +271,14 @@ def manager_auth_status(
     server_name: str,
     server: AgentMcpServerConfig,
 ) -> dict[str, Any]:
-    """Read public auth status, including compatibility for injected test managers."""
-    method = getattr(manager, "auth_status", None)
-    if callable(method):
-        try:
-            return cast(dict[str, Any], method(server_name, server))
-        except Exception as exc:
-            return {
-                "mode": server.auth.mode,
-                "authorized": False,
-                "status": "error",
-                "expires_at": None,
-                "error": type(exc).__name__,
-            }
-    return oauth_status(None, server_name, server)
+    """Read non-secret authorization status without surfacing manager errors."""
+    try:
+        return manager.auth_status(server_name, server)
+    except Exception as exc:
+        return {
+            "mode": server.auth.mode,
+            "authorized": False,
+            "status": "error",
+            "expires_at": None,
+            "error": type(exc).__name__,
+        }

@@ -7,6 +7,22 @@ from .models import AgentCapabilityRegistry
 from .redaction import _redact_text, redact_configured_values
 
 
+def _safe_registry_error(
+    registry: AgentCapabilityRegistry, name: str
+) -> str | None:
+    """Hide upstream error text when its credential redaction context is lost."""
+    record = registry.mcp_servers[name]
+    if not record.error:
+        return None
+    try:
+        env, headers = manager_redaction_maps(
+            registry.client_manager, name, record.config
+        )
+    except Exception:
+        return "credential redaction context unavailable"
+    return _redact_text(redact_configured_values(record.error, env, headers))
+
+
 def registry_config_status(
     registry: AgentCapabilityRegistry,
 ) -> dict[str, Any]:
@@ -29,20 +45,7 @@ def registry_config_status(
                 "enabled": record.config.enabled,
                 "available": record.available,
                 "tool_count": len(record.tools),
-                "error": (
-                    _redact_text(
-                        redact_configured_values(
-                            record.error,
-                            *manager_redaction_maps(
-                                registry.client_manager,
-                                name,
-                                record.config,
-                            ),
-                        )
-                    )
-                    if record.error
-                    else None
-                ),
+                "error": _safe_registry_error(registry, name),
                 "env": {str(key): "<redacted>" for key in record.config.env},
                 "headers": {
                     str(key): "<redacted>" for key in record.config.headers

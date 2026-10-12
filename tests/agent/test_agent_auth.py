@@ -1193,7 +1193,7 @@ def test_auth_status_covers_none_missing_refreshable_expired_and_authorized(
     assert oauth_status(store, "docs", oauth_server)["status"] == "authorized"
 
 
-def test_auth_manager_compatibility_fallbacks_hide_failures():
+def test_auth_manager_redaction_failure_is_safe_and_auth_status_is_bounded():
     from workgate.agent_bridge.auth import (
         manager_auth_status,
         manager_redaction_maps,
@@ -1214,10 +1214,14 @@ def test_auth_manager_compatibility_fallbacks_hide_failures():
         def auth_status(self, _name, _server):
             raise LookupError("private-value")
 
-    assert manager_redaction_maps(BrokenManager(), "docs", server) == (
-        {},
-        {"X-Literal": "visible"},
-    )
+    from workgate.errors import RedactedAgentMcpError
+
+    with pytest.raises(
+        RedactedAgentMcpError, match="credential redaction context unavailable"
+    ) as exc_info:
+        manager_redaction_maps(BrokenManager(), "docs", server)
+    assert "private-value" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
     status = manager_auth_status(BrokenManager(), "docs", server)
     assert status["status"] == "error"
     assert status["error"] == "LookupError"
