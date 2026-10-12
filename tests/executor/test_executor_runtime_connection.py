@@ -1,8 +1,12 @@
 import asyncio
+import logging
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
 from pydantic import JsonValue
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 from workgate import __version__
 from workgate.config.executor import resolve_executor_config
@@ -405,6 +409,127 @@ async def test_executor_runtime_terminal_attach_owns_stream_task(
     await asyncio.wait_for(started.wait(), timeout=0.5)
     await runtime.aclose()
     await asyncio.wait_for(cancelled.wait(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_terminal_attach_reports_failed_stream_without_raw_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from workgate.executor.terminal import stream as stream_module
+
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                default_workdir=tmp_path / "workspace",
+                state_dir=tmp_path / "state",
+            )
+        )
+    )
+    assert runtime.profile_store is not None
+    runtime.profile_store.save(
+        ExecutorProfile(
+            control_url="https://control.example",
+            executor_id=new_executor_id(),
+            credential=new_executor_credential(),
+        )
+    )
+
+    class FailingStream:
+        stream_id = "stream_abcdefghijklmnopqrstuvwxyz"
+        shell_id = "shell-1"
+        backend = "pty"
+
+        async def run(self) -> None:
+            raise RuntimeError("sensitive terminal output and bearer token")
+
+    async def connect_stream(*args: object, **kwargs: object) -> FailingStream:
+        return FailingStream()
+
+    monkeypatch.setattr(
+        stream_module, "connect_executor_terminal_stream", connect_stream
+    )
+
+    with caplog.at_level("WARNING", logger="workgate.executor.runtime"):
+        result = await runtime._execute_protocol_command(
+            ExecutorCommand(
+                id=new_command_id(),
+                op="terminal.attach",
+                args={
+                    "stream_id": FailingStream.stream_id,
+                    "shell_id": FailingStream.shell_id,
+                },
+            )
+        )
+        assert isinstance(result, dict)
+        assert result["connected"] is True
+        task = next(iter(runtime._terminal_stream_tasks))
+        with pytest.raises(RuntimeError, match="sensitive terminal output"):
+            await task
+        # asyncio invokes done callbacks on the next loop iteration.
+        await asyncio.sleep(0)
+
+    assert runtime._terminal_stream_tasks == set()
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Terminal stream {FailingStream.stream_id} failed (RuntimeError)"
+    ]
+    assert "sensitive" not in caplog.text
+    await runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_terminal_stream_task_completion_logs_only_unexpected_error_type(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                default_workdir=tmp_path / "workspace",
+                state_dir=tmp_path / "state",
+            )
+        )
+    )
+    stream_id = "stream_abcdefghijklmnopqrstuvwxyz"
+    private_data = "bearer-secret-and-raw-terminal-contents"
+
+    async def completed() -> None:
+        return None
+
+    async def normally_closed() -> None:
+        raise ConnectionClosedOK(Close(1000, ""), Close(1000, ""), True)
+
+    async def failed() -> None:
+        raise RuntimeError(private_data)
+
+    async def cancelled() -> None:
+        await asyncio.Event().wait()
+
+    with caplog.at_level("WARNING", logger="workgate.executor.runtime"):
+        for run in (completed, normally_closed, failed):
+            task = asyncio.create_task(run())
+            runtime._terminal_stream_tasks.add(task)
+            with suppress(RuntimeError, ConnectionClosedOK):
+                await task
+            runtime._terminal_stream_done(task, stream_id=stream_id)
+            assert task not in runtime._terminal_stream_tasks
+
+        task = asyncio.create_task(cancelled())
+        runtime._terminal_stream_tasks.add(task)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        runtime._terminal_stream_done(task, stream_id=stream_id)
+        assert task not in runtime._terminal_stream_tasks
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == (
+        f"Terminal stream {stream_id} failed (RuntimeError)"
+    )
+    assert record.exc_info is None
+    assert private_data not in caplog.text
 
 
 @pytest.mark.asyncio
