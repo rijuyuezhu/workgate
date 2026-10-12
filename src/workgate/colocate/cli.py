@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from typing import Any
 
 
@@ -57,10 +58,12 @@ def run_colocate(args: argparse.Namespace) -> None:
         signal.signal(signal.SIGTERM, previous_sigterm)
         for child in children:
             if child.poll() is None:
-                child.terminate()
+                with suppress(ProcessLookupError):
+                    child.terminate()
         for child in children:
             try:
                 child.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                child.kill()
+                with suppress(ProcessLookupError):
+                    child.kill()
                 child.wait()

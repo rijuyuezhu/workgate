@@ -16,7 +16,12 @@ def main() -> None:
     if not binary.is_file():
         raise SystemExit(f"missing self-contained executable: {binary}")
 
-    for args in (("--version",), ("version",), ("--help",)):
+    for args in (
+        ("--version",),
+        ("version",),
+        ("--help",),
+        ("colocate", "--help"),
+    ):
         subprocess.run(
             [str(binary), *args],
             check=True,

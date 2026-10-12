@@ -31,6 +31,12 @@ without changing the other role:
 workgate colocate --control-config ./control.yaml --executor-config ./executor.yaml
 ```
 
+When using `--executor-config FILE`, pair using that same configuration:
+`workgate executor connect CONTROL_URL --config FILE`. The URL must match
+the Control configuration. Both children inherit environment overrides,
+so avoid setting a shared `WORKGATE_CONFIG` or `WORKGATE_STATE_DIR` when
+the roles need separate configuration or state paths.
+
 The normal Control URL is `http://127.0.0.1:8765`, and the MCP URL is
 `http://127.0.0.1:8765/mcp`. The launcher owns the child processes and
 stops both when interrupted or when either child exits; it does not restart

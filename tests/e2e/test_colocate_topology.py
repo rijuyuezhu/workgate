@@ -1,6 +1,5 @@
 """Colocate runs ordinary, pre-paired Control and Executor children."""
 
-import asyncio
 import subprocess
 import sys
 from pathlib import Path
@@ -96,7 +95,10 @@ async def test_colocate_reuses_normal_role_state_and_authenticated_executor(
             )
         finally:
             stop_process(launcher)
-            await asyncio.sleep(0.1)
+
+    async with httpx.AsyncClient(timeout=2, trust_env=False) as client:
+        with pytest.raises(httpx.ConnectError):
+            await client.get(f"{control_url}/healthz")
 
     from workgate.persistence import FileStateStore
 

@@ -154,3 +154,52 @@ def test_colocate_forwards_sigterm_cleanup(monkeypatch):
 
     assert result.value.code == 143
     assert all(child.terminated for child in children)
+
+
+def test_colocate_reaps_both_when_child_exits_during_termination(monkeypatch):
+    class ExitedChild(FakeChild):
+        def terminate(self) -> None:
+            self.status = 0
+            raise ProcessLookupError
+
+    children = [ExitedChild(None), FakeChild(None)]
+    spawned = []
+
+    def spawn(_argv):
+        child = children[len(spawned)]
+        spawned.append(child)
+        return child
+
+    monkeypatch.setattr(colocate.subprocess, "Popen", spawn)
+    monkeypatch.setattr(
+        colocate.time,
+        "sleep",
+        lambda _delay: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+    with pytest.raises(SystemExit) as result:
+        colocate.run_colocate(
+            argparse.Namespace(control_config=None, executor_config=None)
+        )
+
+    assert result.value.code == 130
+    assert children[1].terminated
+
+
+def test_colocate_cleans_up_control_if_executor_cannot_start(monkeypatch):
+    control = FakeChild(None)
+    calls = 0
+
+    def spawn(_argv):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("failed to spawn executor")
+        return control
+
+    monkeypatch.setattr(colocate.subprocess, "Popen", spawn)
+    with pytest.raises(OSError, match="failed to spawn executor"):
+        colocate.run_colocate(
+            argparse.Namespace(control_config=None, executor_config=None)
+        )
+
+    assert control.terminated

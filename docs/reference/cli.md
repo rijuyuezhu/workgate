@@ -16,6 +16,19 @@ workgate control --help
 workgate executor --help
 ```
 
+## Colocated control and executor
+
+`workgate colocate` launches `workgate control` and
+`workgate executor run` as two ordinary child processes:
+
+```bash
+workgate colocate [--control-config PATH] [--executor-config PATH]
+```
+
+Each role keeps its normal config and state directory. Pair the executor
+through `workgate executor connect` and Control approval before the first
+colocated start. See [Colocated local mode](../getting-started/colocate.md).
+
 ## Control modes
 
 | Mode | Purpose |
