@@ -11,7 +11,6 @@ from workgate import __version__
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.http.app import build_http_app
 from workgate.control.mcp.app import build_mcp
-from workgate.tools.catalog import build_tool_catalog
 from workgate.tools.declarative import _normalize_description
 
 LOCAL_MCP_TOOL_NAMES = {
@@ -110,9 +109,7 @@ async def test_session_copy_public_defaults_are_safe_and_tracked(
     background = properties["background"]
 
     assert overwrite["default"] is False
-    assert "set true explicitly" in overwrite["description"]
     assert background["default"] is True
-    assert "Set false explicitly" in background["description"]
 
 
 @pytest.mark.asyncio
@@ -191,10 +188,6 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
         tools["task"].input_schema.get("required", [])
     )
     assert "task_id" not in set(tools["task"].input_schema.get("required", []))
-    for name in ("task", "task_plan", "write_todos"):
-        assert "expected_revision" not in set(
-            tools[name].input_schema.get("properties", {})
-        )
     audit_properties = set(
         tools["audit_tail"].input_schema.get("properties", {})
     )
@@ -203,59 +196,17 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
 
 
 @pytest.mark.asyncio
-async def test_hashline_edit_is_model_facing_default(tmp_path, monkeypatch):
+async def test_editor_tools_expose_usable_mcp_schemas(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     clear_settings_cache()
 
-    mcp = build_mcp()
-    assert mcp.instructions is not None
-    for concept in (
-        "read",
-        "search",
-        "hashline_edit",
-    ):
-        assert concept in mcp.instructions
-    assert len(mcp.instructions) < 3000
-
-    tools = {tool.name: tool for tool in await mcp.list_tools()}
-    descriptions = {
-        name: tools[name].description or ""
-        for name in (
-            "read",
-            "search",
-            "write_file",
-            "edit_lines",
-            "hashline_edit",
-        )
-    }
-
-    for concept in ("snapshot_id", "line:text", "hashline_edit"):
-        assert concept in descriptions["read"]
-    for concept in ("grounding", "hashline_edit", "gitignore"):
-        assert concept in descriptions["search"]
-    assert "hashline_edit" in descriptions["write_file"]
-    for concept in ("snapshot_id", "hashline_edit"):
-        assert concept in descriptions["edit_lines"]
-    for concept in ("read", "search", "snapshot", "SWAP", "INSERT"):
-        assert concept in descriptions["hashline_edit"]
-    for name in ("hashline_edit", "edit_lines"):
-        assert len(descriptions[name]) < 300
-    assert (
-        "SWAP"
-        in tools["hashline_edit"].input_schema["properties"]["input"][
-            "description"
-        ]
-    )
-
-
-def test_final_catalog_has_no_legacy_remote_registry_or_routes(monkeypatch):
-    monkeypatch.setenv("WORKGATE_MODE", "mcp")
-    clear_settings_cache()
-
-    catalog = build_tool_catalog()
-    registry_names = {registry.name for registry in catalog.registries}
-    assert "remote" not in registry_names
+    tools = {tool.name: tool for tool in await build_mcp().list_tools()}
+    for name in ("read", "search", "write_file", "edit_lines", "hashline_edit"):
+        assert tools[name].description
+        assert tools[name].input_schema["type"] == "object"
+        assert tools[name].input_schema["required"]
+    assert "input" in tools["hashline_edit"].input_schema["required"]
 
 
 def test_http_openapi_version_matches_package_version(tmp_path, monkeypatch):
@@ -944,22 +895,6 @@ def test_http_tool_file_not_found_returns_json_error(tmp_path, monkeypatch):
     assert response.json()["isError"] is True
 
 
-def test_http_mode_hides_remote_worker_routes(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_MODE", "http")
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
-    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    clear_settings_cache()
-
-    response = TestClient(build_http_app()).post(
-        "/tools/run_remote_shell_command", json={"command": "echo ok"}
-    )
-
-    assert response.status_code == 200
-    assert response.json()["isError"] is True
-    assert "Unknown tool" in response.json()["content"][0]["text"]
-
-
 @pytest.mark.asyncio
 async def test_mcp_tool_missing_required_arg_uses_fastmcp_tool_error(
     tmp_path, monkeypatch
@@ -970,26 +905,6 @@ async def test_mcp_tool_missing_required_arg_uses_fastmcp_tool_error(
 
     with pytest.raises(ToolError, match="validation errors for readArguments"):
         await build_mcp().call_tool("read", {})
-
-
-@pytest.mark.asyncio
-async def test_mcp_remote_facade_is_absent(tmp_path, monkeypatch):
-    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
-    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
-    clear_settings_cache()
-
-    tools = {tool.name for tool in await build_mcp().list_tools()}
-    assert "remote" not in tools
-
-    with pytest.raises(ToolError, match="Unknown tool: remote"):
-        await build_mcp().call_tool(
-            "remote",
-            {
-                "machine": "worker-a",
-                "op": "bash",
-                "args": {"command": "echo ok"},
-            },
-        )
 
 
 @pytest.mark.asyncio

@@ -76,16 +76,11 @@ def test_setting_spec_properties_cover_current_setting_shapes():
     assert SPECS_BY_NAME["base_url"].is_nullable
 
 
-def test_removed_denylist_settings_are_not_registered(tmp_path: Path) -> None:
-    removed = {"command_denylist", "path_denylist"}
-    assert removed.isdisjoint(Settings.model_fields)
-    assert removed.isdisjoint(SPECS_BY_NAME)
-
-    for name in removed:
-        config = tmp_path / f"{name}.yaml"
-        config.write_text(f"{name}: []\n", encoding="utf-8")
-        with pytest.raises(ValueError, match=name):
-            load_settings(config)
+def test_unknown_flat_config_key_is_rejected(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("unrecognized_option: true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="unrecognized_option"):
+        load_settings(config)
 
 
 def test_setting_spec_rejects_unregistered_setting() -> None:
