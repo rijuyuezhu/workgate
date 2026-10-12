@@ -26,8 +26,8 @@ On Linux the defaults are:
 ```
 
 Control accepts control/shared settings; executor accepts executor/shared
-settings. `workgate standalone` may read one user-facing file, then resolves
-separate child configuration before launching control and executor. A role's
+settings. `workgate colocate` simply runs both regular child processes, using each role-specific
+config and state directory. A role's
 `--help` is authoritative for its CLI overrides.
 
 YAML uses flat setting names such as `auth_mode` and `default_workdir`.

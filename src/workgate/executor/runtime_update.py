@@ -91,7 +91,7 @@ class ExecutorRuntimeStateStore:
             executable = _normalized_executable(current_frozen_executable())
             if executable is None:
                 raise RuntimeError(
-                    "control-managed runtime ownership requires a standalone executable"
+                    "control-managed runtime ownership requires a self-contained executable"
                 )
         return ExecutorRuntimeState(ownership=selected, executable=executable)
 
@@ -184,7 +184,7 @@ def detect_runtime_ownership() -> ExecutorRuntimeOwnership:
 
 
 def current_frozen_executable() -> Path | None:
-    """Return this process executable only for standalone frozen runtimes."""
+    """Return this process executable only for self-contained frozen runtimes."""
     if not bool(getattr(sys, "frozen", False)):
         return None
     return Path(sys.executable).expanduser().absolute()
@@ -350,7 +350,7 @@ async def apply_control_managed_update(
     target_version: str,
     store: ExecutorRuntimeStateStore,
 ) -> Path:
-    """Replace the explicit control-managed standalone executable transactionally."""
+    """Replace the explicit control-managed self-contained executable transactionally."""
     state = store._require_state()
     if (
         state.ownership is not ExecutorRuntimeOwnership.CONTROL_MANAGED

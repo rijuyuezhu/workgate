@@ -150,8 +150,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  standalone-binary-smoke:
-    name: Standalone binary (${{ matrix.artifact }})
+  binary-smoke:
+    name: Self-contained binary (${{ matrix.artifact }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     strategy:
@@ -265,7 +265,7 @@ jobs:
       - topology
       - coverage
       - browser-e2e
-      - standalone-binary-smoke
+      - binary-smoke
       - package-smoke
       - release-matrix
     if: always()

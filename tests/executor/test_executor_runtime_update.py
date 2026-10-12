@@ -102,7 +102,9 @@ def test_non_frozen_runtime_cannot_claim_control_managed_authority(
     monkeypatch.delattr(runtime_update.sys, "frozen", raising=False)
     store = _store(tmp_path)
 
-    with pytest.raises(RuntimeError, match="requires a standalone executable"):
+    with pytest.raises(
+        RuntimeError, match="requires a self-contained executable"
+    ):
         store.record_install(ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED)
 
 

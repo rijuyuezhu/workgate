@@ -14,7 +14,7 @@ from pathlib import Path
 def main() -> None:
     binary = Path(sys.argv[1]).resolve()
     if not binary.is_file():
-        raise SystemExit(f"missing standalone executable: {binary}")
+        raise SystemExit(f"missing self-contained executable: {binary}")
 
     for args in (("--version",), ("version",), ("--help",)):
         subprocess.run(
@@ -92,7 +92,9 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
-    print("Standalone executable CLI, control health, and WebUI smoke passed")
+    print(
+        "Self-contained executable CLI, control health, and WebUI smoke passed"
+    )
 
 
 if __name__ == "__main__":

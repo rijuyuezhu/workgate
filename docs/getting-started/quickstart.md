@@ -1,12 +1,8 @@
 # Quickstart
 
-This gets Workgate running locally with the smallest supported topology:
-**standalone mode**. Standalone starts separate control and executor processes,
-uses the real executor protocol over loopback, and does not require Internet
-access after installation.
-
-For a public endpoint or a multi-machine deployment, first finish this local
-smoke test, then choose a deployment from [Choose a deployment](deployment.md).
+Workgate runs a **Control** process serving MCP, OAuth and the WebUI and an
+**Executor** process owning files, shells and sessions. They use the same
+protocol whether on one host or two.
 
 ## 1. Install
 
@@ -16,69 +12,49 @@ cd workgate
 uv sync
 ```
 
-You also need the machine tools you intend the executor to use, such as Git,
-`ripgrep`, compilers, package managers, or `tmux`.
+Install the host tools you intend to use (such as Git, `ripgrep`, compilers
+and `tmux`).
 
-## 2. Create the YAML config
+## 2. Configure and pair once
 
-Create the normal Workgate config directory:
-
-```bash
-mkdir -p ~/.config/workgate
-```
-
-Then create `~/.config/workgate/config.yaml`:
-
-```yaml
-default_workdir: /absolute/path/to/your/project
-```
-
-Use an absolute default working directory.
-
-The generated [Configuration reference](../reference/configuration.md) lists all
-settings. Environment variables and CLI flags remain available as overrides,
-but YAML is the normal durable setup.
-
-## 3. Start Workgate
-
-```bash
-uv run workgate standalone
-```
-
-The local control endpoint is `http://127.0.0.1:8765`; the MCP endpoint is:
+Use the normal role-specific files on Linux:
 
 ```text
-http://127.0.0.1:8765/mcp
+~/.config/workgate/config.yaml           # Control
+~/.config/workgate/executor/config.yaml  # Executor
 ```
 
-In another terminal, check the service:
+Set a strong `oauth_admin_pin` in the Control configuration for approval.
+Set `default_workdir: /absolute/path/to/project` in the Executor
+configuration for your preferred working directory.
+
+Start `uv run workgate control`, then in another terminal:
 
 ```bash
-curl --fail http://127.0.0.1:8765/healthz
-curl --fail http://127.0.0.1:8765/readyz
+uv run workgate executor connect http://127.0.0.1:8765 --name local
 ```
 
-Standalone keeps OAuth enabled. On first launch it also establishes the local
-executor identity and, when needed, creates a private OAuth approval PIN. The
-command prints the path to that PIN rather than the secret itself.
+Approve the device pairing in the [WebUI](http://127.0.0.1:8765/ui)
+using your Control admin PIN. Stop the Control process.
 
-## 4. Try a first task
+## 3. Run locally
 
-Connect a local MCP client to the endpoint above, then try:
-
-```text
-Start a session in my configured default workdir, inspect the repository and its
-instruction files, then summarize the environment and Git status. Do not change
-files yet.
+```bash
+uv run workgate colocate
 ```
 
-For the browser interface, open `/ui` on the same control origin.
+This is a small launcher for the **ordinary** Control and Executor child
+processes, using their normal configuration and state directories. It does
+not perform automatic pairing or introduce a special local state layout.
 
-## 5. Go beyond one machine
+MCP: `http://127.0.0.1:8765/mcp`
+WebUI: `http://127.0.0.1:8765/ui`
 
-- Need a stable public control on a Linux server? Use [VPS deployment](vps.md).
-- Connecting another MCP client? See [Other MCP clients](mcp-clients.md) for HTTP and stdio.
-- Connecting ChatGPT? After you have a public MCP URL, follow [ChatGPT connector](chatgpt-connector.md).
+Connect a local MCP client and try:
 
-For standalone trust, state ownership, restart behavior, and recovery details,
-see [Standalone local mode](standalone.md).
+> Start a session in my configured default workdir, inspect Git status,
+> and do not change any files.
+
+For how the two processes share a host, see
+[Colocated local mode](colocate.md). For other hosts or public endpoints,
+see [Choose a deployment](deployment.md) and [VPS deployment](vps.md).

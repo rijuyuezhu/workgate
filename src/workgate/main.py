@@ -3,10 +3,10 @@
 import argparse
 
 from .agent_bridge.cli import register_mcp_cli
+from .colocate.cli import register_colocate_cli
 from .control.cli import register_control_cli
 from .executor.cli import register_executor_cli
 from .executor.jobs.cli import register_job_runner_cli
-from .standalone.cli import register_standalone_cli
 from .version import format_version_info, register_version_cli
 
 
@@ -15,7 +15,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="workgate",
         description=(
-            "Run standalone Workgate, a control process, executor, "
+            "Run colocated Workgate, a control process, executor, "
             "or Agent Bridge command."
         ),
     )
@@ -29,7 +29,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="COMMAND",
     )
-    register_standalone_cli(subparsers)
+    register_colocate_cli(subparsers)
     register_control_cli(subparsers)
     register_mcp_cli(subparsers)
     register_executor_cli(subparsers)

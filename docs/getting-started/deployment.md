@@ -9,7 +9,7 @@ Choose where those roles run. The protocol and trust model stay the same.
 
 | Deployment | Use it when | Start here |
 | --- | --- | --- |
-| Standalone local | one machine, offline/local use, simplest setup | [Quickstart](quickstart.md) |
+| Colocated local | one machine, two ordinary processes managed together | [Quickstart](quickstart.md) |
 | Separate local processes | you want to run and debug each role yourself | [Run the roles separately](#run-the-roles-separately) |
 | VPS control + executors | you want one stable public control endpoint | [VPS deployment](vps.md) |
 
@@ -29,7 +29,7 @@ and role ownership.
 
 ## Run the roles separately
 
-For a same-host setup without the standalone supervisor, start control first:
+For a same-host setup without the colocate launcher, start control first:
 
 ```bash
 workgate control
@@ -42,5 +42,5 @@ workgate executor connect http://127.0.0.1:8765 --name local-executor
 workgate executor run
 ```
 
-Use [Standalone local mode](standalone.md) when you want one command to manage
+Use [Colocated local mode](colocate.md) when you want one command to manage
 both processes. For another machine, follow [Executors](../guides/executors.md).

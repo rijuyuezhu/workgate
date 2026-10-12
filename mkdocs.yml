@@ -60,7 +60,7 @@ nav:
   - Getting started:
       - Quickstart: getting-started/quickstart.md
       - Choose a deployment: getting-started/deployment.md
-      - Standalone local mode: getting-started/standalone.md
+      - Colocated local mode: getting-started/colocate.md
       - VPS deployment: getting-started/vps.md
       - Other MCP clients: getting-started/mcp-clients.md
       - ChatGPT connector: getting-started/chatgpt-connector.md

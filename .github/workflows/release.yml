@@ -246,7 +246,7 @@ jobs:
           macos-aarch64
           \`\`\`
 
-          Start the standalone executable:
+          Run the self-contained executable:
 
           \`\`\`bash
           ./workgate control --mode mcp

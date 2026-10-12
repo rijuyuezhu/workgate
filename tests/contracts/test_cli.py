@@ -6,12 +6,12 @@ import pytest
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 import workgate.agent_bridge.cli as agent_cli
+import workgate.colocate.cli as colocate_cli
 import workgate.config.settings as settings_module
 import workgate.control.cli as server_cli
 import workgate.executor.cli as executor_cli
 import workgate.executor.jobs.cli as jobs_cli
 import workgate.main as cli
-import workgate.standalone.cli as standalone_cli
 from workgate import __version__
 from workgate.agent_bridge.auth_store import AgentAuthStore
 from workgate.app_paths import AppPaths, app_paths
@@ -108,78 +108,19 @@ def test_control_subcommand_parses_control_owned_runtime_settings():
     assert not hasattr(args, "default_workdir")
 
 
-def test_standalone_subcommand_keeps_topology_protected():
+def test_colocate_subcommand_forwards_only_normal_role_configs():
     args = cli._build_parser().parse_args(
         [
-            "standalone",
-            "--default-workdir",
-            "/tmp/workspace",
-            "--port",
-            "9999",
+            "colocate",
+            "--control-config",
+            "control.yaml",
+            "--executor-config",
+            "executor.yaml",
         ]
     )
-
-    assert args.handler is standalone_cli.run_standalone_from_args
-    assert args.default_workdir == "/tmp/workspace"
-    assert args.port == 9999
-    for name in (
-        "mode",
-        "host",
-        "base_url",
-        "auth_mode",
-        "auth_bypass_localhost",
-        "oauth_issuer",
-        "oauth_resource",
-    ):
-        assert not hasattr(args, name)
-
-
-@pytest.mark.parametrize(
-    ("flag", "value"),
-    [
-        ("--mode", "stdio"),
-        ("--host", "0.0.0.0"),
-        ("--base-url", "https://example.com"),
-        ("--auth-mode", "none"),
-        ("--auth-bypass-localhost", "true"),
-        ("--oauth-issuer", "https://example.com"),
-        ("--oauth-resource", "https://example.com/mcp"),
-    ],
-)
-def test_standalone_rejects_topology_and_auth_overrides(flag, value):
-    with pytest.raises(SystemExit):
-        cli._build_parser().parse_args(["standalone", flag, value])
-
-
-def test_run_standalone_from_args_dispatches_resolved_settings(monkeypatch):
-    args = argparse.Namespace()
-    settings = object()
-    seen = []
-
-    monkeypatch.setattr(
-        standalone_cli, "settings_from_args", lambda actual: settings
-    )
-    monkeypatch.setattr(standalone_cli, "run_standalone", seen.append)
-
-    standalone_cli.run_standalone_from_args(args)
-
-    assert seen == [settings]
-
-
-def test_run_standalone_from_args_maps_lock_contention(monkeypatch):
-    args = argparse.Namespace()
-    settings = object()
-    monkeypatch.setattr(
-        standalone_cli, "settings_from_args", lambda actual: settings
-    )
-
-    def busy(_settings):
-        raise standalone_cli.StandaloneAlreadyRunningError("already active")
-
-    monkeypatch.setattr(standalone_cli, "run_standalone", busy)
-
-    with pytest.raises(SystemExit, match="already active"):
-        standalone_cli.run_standalone_from_args(args)
+    assert args.handler is colocate_cli.run_colocate
+    assert args.control_config == "control.yaml"
+    assert args.executor_config == "executor.yaml"
 
 
 @pytest.mark.parametrize(
@@ -211,7 +152,7 @@ def test_root_help_lists_registered_commands():
     )
 
     for command in (
-        "standalone",
+        "colocate",
         "control",
         "mcp",
         "executor",
@@ -282,7 +223,7 @@ def test_resolved_control_config_matches_explicit_role_surface():
     ) == CONTROL_SETTING_NAMES
 
 
-def test_standalone_executor_child_settings_match_executor_config():
+def test_executor_child_settings_match_executor_config():
     derived_executor_fields = {
         "agent_auth_dir",
         "agent_config_dir",
@@ -735,13 +676,6 @@ def test_control_handler_rejects_a_second_writer(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         server_cli, "configure_settings", lambda _settings: None
-    )
-    monkeypatch.setattr(
-        server_cli,
-        "prepare_standalone_control_settings",
-        lambda _settings: pytest.fail(
-            "duplicate control touched standalone control secrets"
-        ),
     )
     monkeypatch.setattr(
         server_cli,
