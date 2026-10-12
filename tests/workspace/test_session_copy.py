@@ -771,7 +771,6 @@ async def test_retention_abandonment_keeps_tombstone_until_executor_reconciles(
     retained = service._checkpoints.load(checkpoint.transfer_id)
     assert retained is not None
     assert retained.abandoning is True
-    assert retained.payload_retained is False
     assert not payload_path.exists()
     assert transport.calls == ["transfer_abandon_import"]
     op, args, session_id, timeout_s = transport.call_details[-1]
@@ -854,7 +853,6 @@ async def test_abandonment_keeps_tombstone_until_executor_confirms_safe_cleanup(
     retained = service._checkpoints.load(checkpoint.transfer_id)
     assert retained is not None
     assert retained.abandoning is True
-    assert retained.payload_retained is False
 
     transport.abandon_safe_to_forget = True
     await service.reconcile_abandonments(

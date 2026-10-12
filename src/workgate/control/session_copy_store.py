@@ -18,7 +18,7 @@ from ..persistence import StateStore
 from ..protocol.ids import ExecutorId, PayloadId, SessionId
 from .payload_store import PayloadStore
 
-CHECKPOINT_STORE_VERSION = 1
+CHECKPOINT_STORE_VERSION = 2
 UNMANAGED_CHECKPOINT_STALE_S = 24 * 60 * 60
 _CopyTransferId = Annotated[
     str,
@@ -63,7 +63,6 @@ class SessionCopyCheckpoint(BaseModel):
     cleanup_errors: list[str] = Field(default_factory=list)
     receipts_released: bool = False
     abandoning: bool = False
-    payload_retained: bool = True
     last_known_step: Literal["exported", "importing", "imported"] = "exported"
     created_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
     updated_at: Annotated[float, Field(ge=0, allow_inf_nan=False)]
@@ -72,10 +71,6 @@ class SessionCopyCheckpoint(BaseModel):
     def validate_step(self) -> SessionCopyCheckpoint:
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
-        if self.abandoning != (not self.payload_retained):
-            raise ValueError(
-                "abandoning checkpoint must release its control payload"
-            )
         if self.last_known_step in {"importing", "imported"} and (
             self.import_path is None or self.import_resource_id is None
         ):
@@ -119,7 +114,7 @@ class TransferPayloadCapacityError(RuntimeError):
 class _CheckpointRegistry(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    version: Literal[1]
+    version: Literal[2]
     transfers: dict[_CopyTransferId, SessionCopyCheckpoint]
     reservations: dict[_CopyTransferId, SessionCopyPayloadReservation] = Field(
         default_factory=dict
@@ -282,7 +277,7 @@ class SessionCopyCheckpointStore:
             retained = sum(
                 checkpoint.payload_size
                 for checkpoint in registry.transfers.values()
-                if checkpoint.payload_retained
+                if not checkpoint.abandoning
             )
             reserved = sum(
                 reservation.payload_size
@@ -393,12 +388,11 @@ class SessionCopyCheckpointStore:
                 if registry.reservations.pop(transfer_id, None) is not None:
                     self._save_registry_unlocked(registry)
                 return None
-            if not checkpoint.abandoning or checkpoint.payload_retained:
+            if not checkpoint.abandoning:
                 checkpoint = SessionCopyCheckpoint.model_validate(
                     checkpoint.model_copy(
                         update={
                             "abandoning": True,
-                            "payload_retained": False,
                             "updated_at": time.time(),
                         }
                     ).model_dump()
@@ -408,7 +402,7 @@ class SessionCopyCheckpointStore:
             referenced = {
                 str(item.payload_id)
                 for item in registry.transfers.values()
-                if item.payload_retained
+                if not item.abandoning
             }
             self._payloads.prune_unreferenced_payloads("transfer", referenced)
             return checkpoint
@@ -459,12 +453,11 @@ class SessionCopyCheckpointStore:
                     should_abandon = status is None or status == "succeeded"
                 if not should_abandon:
                     continue
-                if not checkpoint.abandoning or checkpoint.payload_retained:
+                if not checkpoint.abandoning:
                     checkpoint = SessionCopyCheckpoint.model_validate(
                         checkpoint.model_copy(
                             update={
                                 "abandoning": True,
-                                "payload_retained": False,
                                 "updated_at": now,
                             }
                         ).model_dump()
@@ -481,7 +474,7 @@ class SessionCopyCheckpointStore:
             referenced = {
                 str(checkpoint.payload_id)
                 for checkpoint in transfers.values()
-                if checkpoint.payload_retained
+                if not checkpoint.abandoning
             }
             # Keep payload GC under the same feature lock as checkpoint mutation.
             # Persisting abandoning=true first means a crash cannot delete the

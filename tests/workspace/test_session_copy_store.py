@@ -142,6 +142,40 @@ def test_transfer_payload_commit_converts_reservation_without_double_counting(
     )
 
 
+def test_abandonment_tombstone_is_durable_and_releases_payload_capacity(
+    tmp_path,
+):
+    state, payloads, checkpoints, checkpoint = _commit_checkpoint(
+        tmp_path, data=b"payload"
+    )
+    payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
+
+    tombstone = checkpoints.prepare_abandonment(checkpoint.transfer_id)
+    assert tombstone is not None
+    assert tombstone.abandoning is True
+    assert not payload_path.exists()
+
+    persisted = state.read_json(checkpoints.path)
+    assert isinstance(persisted, dict)
+    assert persisted["version"] == 2
+    assert persisted["transfers"][checkpoint.transfer_id]["abandoning"] is True
+
+    # Crash/restart while awaiting executor cleanup preserves the tombstone
+    # without continuing to count the already-deleted payload against quota.
+    restarted = SessionCopyCheckpointStore(state, payloads)
+    restored = restarted.load(checkpoint.transfer_id)
+    assert restored is not None and restored.abandoning is True
+    assert restarted.prepare_abandonment(checkpoint.transfer_id) == restored
+    restarted.reserve_export(
+        transfer_id="copy_" + "z" * 22,
+        owner_job_id=None,
+        payload_size=7,
+        max_payload_bytes=7,
+        max_store_bytes=7,
+    )
+    assert restarted.load(checkpoint.transfer_id) is not None
+
+
 def test_prepare_abandonment_releases_uncommitted_reservation(tmp_path):
     _state, _payloads, checkpoints = _stores(tmp_path)
     transfer_id = "copy_" + "x" * 22
@@ -192,7 +226,7 @@ def test_corrupt_checkpoint_store_fails_closed_without_payload_cleanup(
     state.write_json(
         checkpoints.path,
         {
-            "version": 1,
+            "version": 2,
             "transfers": {
                 checkpoint.transfer_id: {"transfer_id": checkpoint.transfer_id}
             },
@@ -205,6 +239,21 @@ def test_corrupt_checkpoint_store_fails_closed_without_payload_cleanup(
         checkpoints.prepare_abandonments()
 
     assert payload_path.read_bytes() == b"payload"
+
+
+def test_unsupported_checkpoint_schema_preserves_recovery_payload(tmp_path):
+    state, payloads, checkpoints, checkpoint = _commit_checkpoint(tmp_path)
+    payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
+    old_schema = state.read_json(checkpoints.path)
+    assert isinstance(old_schema, dict)
+    old_schema["version"] = 1
+    state.write_json(checkpoints.path, old_schema)
+
+    with pytest.raises(RuntimeError, match="checkpoint store is invalid"):
+        checkpoints.prepare_abandonments()
+
+    assert payload_path.read_bytes() == b"payload"
+    assert state.read_json(checkpoints.path) == old_schema
 
 
 def test_checkpoint_remove_persists_metadata_before_payload_delete(
@@ -319,7 +368,6 @@ def test_authoritative_missing_owner_prunes_unreachable_managed_checkpoint(
     retained = checkpoints.load(checkpoint.transfer_id)
     assert retained is not None
     assert retained.abandoning is True
-    assert retained.payload_retained is False
     assert not payload_path.exists()
 
 
@@ -344,5 +392,4 @@ def test_confirmed_succeeded_owner_prunes_managed_checkpoint(tmp_path):
     retained = checkpoints.load(checkpoint.transfer_id)
     assert retained is not None
     assert retained.abandoning is True
-    assert retained.payload_retained is False
     assert not payload_path.exists()
