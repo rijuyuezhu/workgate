@@ -12,24 +12,18 @@ from ... import __version__
 from ...audit import audit
 from ...config.control import ControlConfig, resolve_control_config
 from ...config.settings import get_settings
-from ...http.public_routes import public_http_routes
 from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
-from ...oauth.http.routes import oauth_public_routes
 from ...persistence import FileStateStore
 from ...protocol.executor import EXECUTOR_TRANSFER_PREFIX
 from ...tools.catalog import ToolCatalog
 from ...tools.contracts import McpToolContext
-from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..execution_context import (
     ControlExecutionContextMiddleware,
     control_execution_context,
 )
-from ..executor_bootstrap import executor_bootstrap_routes
-from ..http.executor_admin import executor_admin_routes
-from ..http.executor_routes import executor_routes
-from ..http.stream_routes import terminal_stream_routes
+from ..http.shared_routes import control_http_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from ..server import run_uvicorn
 from ..tool_timeouts import tool_timeout_s
@@ -142,42 +136,10 @@ def _add_public_routes_to_mcp_http_app(
         ):
             yield
 
-    public_routes: list[BaseRoute] = [
-        *public_http_routes(active_settings),
-        *(
-            [
-                *executor_routes(
-                    runtime.executor_transport,
-                    runtime.executor_pairing,
-                ),
-                *executor_bootstrap_routes(active_settings.resolved_base_url),
-                *runtime.transfer_gateway.routes(),
-                *terminal_stream_routes(
-                    runtime.executor_transport, runtime.stream_hub
-                ),
-            ]
-            if runtime is not None
-            else ()
-        ),
-        *oauth_public_routes(),
-    ]
-    ui_routes, ui_public_routes = human_ui_routes(active_settings)
-    executor_admin = (
-        executor_admin_routes(
-            runtime.executor_fleet,
-            runtime.executor_pairing,
-            api_prefix=UI_API_PREFIX,
-        )
-        if runtime is not None
-        else ()
+    core_routes, ui_routes, public_routes = control_http_routes(
+        active_settings, runtime
     )
-    routes = [
-        *public_routes,
-        *ui_routes,
-        *executor_admin,
-        Mount("/", app=mcp_app),
-    ]
-    public_routes.extend(ui_public_routes)
+    routes = [*core_routes, *ui_routes, Mount("/", app=mcp_app)]
     app = Starlette(routes=routes, lifespan=lifespan)
     app.state.control_runtime = runtime
     return app, public_routes
