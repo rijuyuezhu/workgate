@@ -91,6 +91,7 @@ async def test_control_audit_is_task_wide_with_session_attribution(tmp_path):
         operation="files",
         payload={"token": "private-token-value", "body": "visible"},
     )
+    await harness.control.session_coordinator.end_session(session_id)
 
     result = await harness.control.audit_service.execute(
         task_id=task_id,
@@ -183,47 +184,6 @@ async def test_cross_task_tool_call_is_visible_from_both_tasks_and_sessions(
         assert any(
             item.get("tool") == "session_copy" for item in result.entries
         )
-
-
-@pytest.mark.asyncio
-async def test_migrated_legacy_audit_entry_remains_readable_by_task(tmp_path):
-    _mcp, harness = build_paired_mcp(get_settings())
-    started = await harness.control.session_coordinator.start_session(
-        workdir=str(tmp_path), executor_id=harness.executor_id
-    )
-    assert isinstance(started, dict)
-    session_id = str(started["session_id"])
-
-    audit("legacy-before-task-identity", session_id=session_id)
-    legacy = harness.control.state_store.layout.control_task_state_path(
-        session_id
-    )
-    harness.control.state_store.write_json(
-        legacy,
-        {
-            "updated_at": 1.0,
-            "todos": [],
-        },
-    )
-    assert await harness.control.task_service.migrate_legacy_sessions() == 1
-    record = harness.control.control_state.snapshot_sessions()[session_id]
-    assert record.task_id is not None
-    task_id = str(record.task_id)
-
-    listing = await harness.control.audit_service.execute(
-        task_id=task_id,
-        event="legacy-before-task-identity",
-    )
-    assert listing.count == 1
-    assert listing.entries[0].get("task") is None
-    assert listing.entries[0]["session"] == session_id
-
-    detail = await harness.control.audit_service.execute(
-        task_id=task_id,
-        entry_id=str(listing.entries[0]["id"]),
-    )
-    assert detail.count == 1
-    assert detail.entries[0]["event"] == "legacy-before-task-identity"
 
 
 @pytest.mark.asyncio

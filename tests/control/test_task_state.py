@@ -161,38 +161,14 @@ async def test_one_task_can_span_distinct_executors_and_workdirs(
 
 
 @pytest.mark.asyncio
-async def test_session_attachment_cannot_be_rebound(tmp_path, monkeypatch):
-    _settings, harness, task_id, session_id = await _task_with_session(
-        monkeypatch, tmp_path
-    )
-    other = await harness.control.task_service.create_task(label="other")
-
-    with pytest.raises(ValueError, match="attachment cannot change"):
-        harness.control.control_state.attach_session_task(
-            session_id, other.task_id
-        )
-
-    assert (
-        str(
-            harness.control.control_state.snapshot_sessions()[
-                session_id
-            ].task_id
-        )
-        == task_id
-    )
-
-
-@pytest.mark.asyncio
-async def test_control_session_task_attachment_is_idempotent_and_not_lifecycle_mutable(
+async def test_control_session_task_binding_cannot_change_via_lifecycle_update(
     tmp_path, monkeypatch
 ):
-    _settings, harness, task_id, session_id = await _task_with_session(
+    _settings, harness, _task_id, session_id = await _task_with_session(
         monkeypatch, tmp_path
     )
     state = harness.control.control_state
     current = state.snapshot_sessions()[session_id]
-
-    assert state.attach_session_task(session_id, task_id) == current
 
     other = await harness.control.task_service.create_task(label="other")
     rebound = current.model_copy(update={"task_id": other.task_id})
@@ -663,104 +639,6 @@ async def test_task_delete_storage_failure_never_leaves_dangling_session_referen
     monkeypatch.setattr(store, "remove", real_remove)
     deleted = await service.delete_task(task_id)
     assert deleted.deleted is True
-
-
-@pytest.mark.asyncio
-async def test_legacy_session_task_migrates_to_deterministic_task_id(
-    tmp_path, monkeypatch
-):
-    settings, harness = _harness(monkeypatch, tmp_path)
-    started = await harness.control.session_coordinator.start_session(
-        workdir="project-a",
-        label="legacy task",
-        executor_id=harness.executor_id,
-    )
-    assert isinstance(started, dict)
-    session_id = str(started["session_id"])
-    legacy_path = harness.control.state_store.layout.control_task_state_path(
-        session_id
-    )
-    harness.control.state_store.write_json(
-        legacy_path,
-        {
-            "revision": 4,
-            "updated_at": 123.0,
-            "todos": [
-                {
-                    "id": "legacy",
-                    "content": "Existing todo",
-                    "status": "in_progress",
-                    "priority": "high",
-                }
-            ],
-        },
-    )
-
-    migrated = await harness.control.task_service.migrate_legacy_sessions()
-    assert migrated == 1
-    record = harness.control.control_state.snapshot_sessions()[session_id]
-    assert record.task_id is not None
-    task_id = str(record.task_id)
-    assert task_id == harness.control.task_service._legacy_task_id(session_id)
-    assert not legacy_path.exists()
-
-    task = await harness.control.task_service.read_task(task_id)
-    assert "revision" not in task.model_dump()
-    assert task.label == "legacy task"
-    assert task.plan.steps[0].id == "legacy"
-    assert task.session_ids == [session_id]
-
-    harness.control.control_state.close()
-    restarted = build_control_runtime(settings)
-    restarted.control_state.start()
-    restored = await restarted.task_service.read_task(task_id)
-    assert restored.plan.steps[0].status == "in_progress"
-
-
-@pytest.mark.asyncio
-async def test_legacy_migration_cleans_residual_source_after_interrupted_cleanup(
-    tmp_path, monkeypatch
-):
-    _settings, harness = _harness(monkeypatch, tmp_path)
-    started = await harness.control.session_coordinator.start_session(
-        workdir="project-a",
-        label="legacy interrupted",
-        executor_id=harness.executor_id,
-    )
-    assert isinstance(started, dict)
-    session_id = str(started["session_id"])
-    store = harness.control.state_store
-    legacy_path = store.layout.control_task_state_path(session_id)
-    store.write_json(legacy_path, {"revision": 0, "todos": []})
-    real_remove = store.remove
-    failed = False
-
-    def fail_legacy_remove(path, *args, **kwargs):
-        nonlocal failed
-        if path == legacy_path and not failed:
-            failed = True
-            raise OSError("simulated migration cleanup interruption")
-        return real_remove(path, *args, **kwargs)
-
-    monkeypatch.setattr(store, "remove", fail_legacy_remove)
-    with pytest.raises(OSError, match="cleanup interruption"):
-        await harness.control.task_service.migrate_legacy_sessions()
-
-    record = harness.control.control_state.snapshot_sessions()[session_id]
-    assert record.task_id is not None
-    task_id = str(record.task_id)
-    assert legacy_path.exists()
-    await harness.control.task_service.read_task(task_id)
-
-    monkeypatch.setattr(store, "remove", real_remove)
-    assert await harness.control.task_service.migrate_legacy_sessions() == 0
-    assert not legacy_path.exists()
-
-    await harness.control.task_service.cancel_task(task_id)
-    await harness.control.task_service.delete_task(task_id)
-    assert await harness.control.task_service.migrate_legacy_sessions() == 0
-    with pytest.raises(ValueError, match="unknown task_id"):
-        await harness.control.task_service.read_task(task_id)
 
 
 @pytest.mark.asyncio

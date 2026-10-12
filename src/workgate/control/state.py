@@ -222,27 +222,6 @@ class ControlState:
             self._sessions = candidate
             return updated
 
-    def attach_session_task(
-        self, session_id: str, task_id: str
-    ) -> ControlSessionRecord:
-        """Durably attach one execution session to one task."""
-        with self._lock:
-            self._require_started()
-            current = self._sessions.get(session_id)
-            if current is None:
-                raise KeyError(session_id)
-            if current.task_id is not None and current.task_id != task_id:
-                raise ValueError("session task attachment cannot change")
-            if current.task_id == task_id:
-                return current
-            updated = ControlSessionRecord.model_validate(
-                current.model_copy(update={"task_id": task_id}).model_dump()
-            )
-            candidate = {**self._sessions, session_id: updated}
-            self._write_sessions(candidate)
-            self._sessions = candidate
-            return updated
-
     def detach_task(self, task_id: str) -> None:
         """Clear a deleted task from retained sessions."""
         with self._lock:

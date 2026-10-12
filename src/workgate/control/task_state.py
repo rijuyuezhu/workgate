@@ -1,8 +1,6 @@
 """Durable control-owned task state with Todo compatibility."""
 
 import asyncio
-import base64
-import hashlib
 import json
 import logging
 import secrets
@@ -22,9 +20,7 @@ from ..schemas.result_models.task import (
     TaskDeleteOutput,
     TaskDocument,
     TaskOutput,
-    TaskPlan,
     TaskPlanStep,
-    TaskProgress,
 )
 from ..schemas.result_models.todo import (
     ReadTodosOutput,
@@ -105,15 +101,6 @@ class ControlTaskService:
         return (
             self._settings.max_todo_bytes + _CONTINUATION_STORAGE_OVERHEAD_BYTES
         )
-
-    def _legacy_path(self, session_id: str):
-        return self._store.layout.control_task_state_path(session_id)
-
-    @staticmethod
-    def _legacy_task_id(session_id: str) -> str:
-        digest = hashlib.sha256(session_id.encode("utf-8")).digest()[:16]
-        token = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-        return f"task_{token}"
 
     @staticmethod
     def _bounded_text(
@@ -235,52 +222,6 @@ class ControlTaskService:
             step["id"] = str(item.get("id") or index + 1)
             steps.append(step)
         return self._normalize_steps(steps)
-
-    @staticmethod
-    def _legacy_document(
-        value: dict[str, Any],
-        *,
-        created_at: float,
-        label: str | None,
-    ) -> TaskDocument:
-        updated_at = float(value.get("updated_at") or created_at)
-        if "todos" in value and "plan" not in value:
-            legacy = ReadTodosOutput.model_validate(value)
-            plan = TaskPlan(
-                steps=[
-                    TaskPlanStep(
-                        id=item.id,
-                        content=item.content,
-                        status=item.status,
-                        priority=item.priority,
-                    )
-                    for item in legacy.todos
-                ]
-            )
-            updated_at = float(legacy.updated_at or created_at)
-            objective = None
-            status = "active"
-            progress = TaskProgress()
-        else:
-            objective = (
-                str(value["objective"])
-                if value.get("objective") is not None
-                else None
-            )
-            status = str(value.get("status") or "active")
-            progress = TaskProgress.model_validate(value.get("progress") or {})
-            plan = TaskPlan.model_validate(value.get("plan") or {})
-        return TaskDocument.model_validate(
-            {
-                "created_at": created_at,
-                "updated_at": updated_at,
-                "label": label,
-                "objective": objective,
-                "status": status,
-                "progress": progress,
-                "plan": plan,
-            }
-        )
 
     def _read_stored_unlocked(self, task_id: str) -> _StoredTask:
         value = self._store.read_json(
@@ -1117,68 +1058,3 @@ class ControlTaskService:
     ) -> tuple[WriteTodosOutput, TaskOutput]:
         task = await self._write_task_output(task_id, todos)
         return self._todo_output(task, write=True), task  # type: ignore[return-value]
-
-    def _migrate_legacy_sync(self) -> int:
-        migrated = 0
-        for record in sorted(
-            self._state.snapshot_sessions().values(),
-            key=lambda item: (item.created_at, str(item.session_id)),
-        ):
-            session_id = str(record.session_id)
-            legacy_path = self._legacy_path(session_id)
-            task_id = self._legacy_task_id(session_id)
-            task_path = self._path(task_id)
-            if record.task_id is not None:
-                if str(record.task_id) == task_id:
-                    with self._store.transaction(task_path):
-                        stored_value = self._store.read_json(
-                            task_path, max_bytes=self._stored_task_max_bytes
-                        )
-                        if stored_value is not None:
-                            _StoredTask.model_validate(stored_value)
-                            self._store.remove(legacy_path)
-                continue
-            value = self._store.read_json(
-                legacy_path, max_bytes=self._settings.max_todo_bytes
-            )
-            if value is None:
-                continue
-            if not isinstance(value, dict):
-                raise RuntimeError(
-                    f"invalid legacy task state for session {session_id}"
-                )
-            with self._store.transaction(task_path):
-                stored_value = self._store.read_json(
-                    task_path, max_bytes=self._stored_task_max_bytes
-                )
-                if stored_value is None:
-                    document = self._legacy_document(
-                        value,
-                        created_at=float(record.created_at),
-                        label=record.label,
-                    )
-                    stored = _StoredTask(
-                        task_id=task_id,
-                        subject="local-user",
-                        document=document,
-                    )
-                    self._persist_stored(task_path, stored)
-                else:
-                    _StoredTask.model_validate(stored_value)
-                self._state.attach_session_task(session_id, task_id)
-                self._store.remove(legacy_path)
-            try:
-                audit(
-                    "task_migrated",
-                    task=task_id,
-                    session=session_id,
-                    session_ids=[session_id],
-                )
-            except Exception:
-                logger.exception("Failed to append task migration audit event")
-            migrated += 1
-        return migrated
-
-    async def migrate_legacy_sessions(self) -> int:
-        """Migrate legacy session-keyed task files."""
-        return await asyncio.to_thread(self._migrate_legacy_sync)

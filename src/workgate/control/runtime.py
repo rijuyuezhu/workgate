@@ -85,7 +85,6 @@ class ControlRuntime:
         executor_transport_started = False
         try:
             self.control_state.start()
-            await self.task_service.migrate_legacy_sessions()
             self.executor_transport.start()
             executor_transport_started = True
             await self.session_copy_service.reconcile_object_store_orphans()

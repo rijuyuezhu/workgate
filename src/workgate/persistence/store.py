@@ -173,14 +173,6 @@ class StateLayout:
             f"{self._component(task_id, field='task_id')}.json"
         )
 
-    def control_task_state_path(self, session_id: str) -> Path:
-        """Return the legacy session-keyed task path used only for migration."""
-        return (
-            self.control_dir
-            / "todos"
-            / f"{self._component(session_id, field='session_id')}.json"
-        )
-
     @property
     def executor_dir(self) -> Path:
         """Return the directory containing final executor-owned durable state."""
