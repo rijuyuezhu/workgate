@@ -25,12 +25,10 @@ from ..utils.private_files import atomic_write_private_text, private_file_lock
 from .payload_store import PayloadStore
 
 STORE_VERSION = 3
-LEGACY_STORE_VERSIONS = frozenset({1, 2})
 STORE_FILE_NAME = "downloads.json"
 BACKUP_FILE_NAME = "downloads.json.bak"
 LOCK_FILE_NAME = "downloads.lock"
 STORE_LOCK = threading.RLock()
-_LEGACY_SNAPSHOT_SUFFIX = ".bin"
 _Sha256 = Annotated[
     str,
     StringConstraints(pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64),
@@ -109,12 +107,6 @@ class ClaimedDownload:
     """Whether response completion should delete the payload bytes."""
 
 
-@dataclass(frozen=True)
-class _LoadedStore:
-    store: dict[str, Any]
-    migrated: bool = False
-
-
 def store_path() -> Path:
     """Return the primary download-link metadata path."""
     return get_state_store().layout.downloads_store_path
@@ -158,31 +150,11 @@ def _serialize_current_store(store: dict[str, Any]) -> str:
     return json.dumps(validated, ensure_ascii=False, indent=2, sort_keys=True)
 
 
-def _load_file(path: Path, *, audit_legacy: bool = True) -> _LoadedStore:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"unsupported or invalid download store: {path}")
-    version = data.get("version")
-    if type(version) is not int or version not in {
-        STORE_VERSION,
-        *LEGACY_STORE_VERSIONS,
-    }:
-        raise ValueError(f"unsupported or invalid download store: {path}")
-    links = data.get("links")
-    if not isinstance(links, dict):
-        raise ValueError(f"download store links field is invalid: {path}")
-    if version in LEGACY_STORE_VERSIONS:
-        if audit_legacy:
-            audit(
-                "download_store_migrated",
-                path=str(path),
-                from_version=version,
-                to_version=STORE_VERSION,
-                migrated_links=0,
-                dropped_links=len(links),
-            )
-        return _LoadedStore(empty_store(), migrated=True)
-    return _LoadedStore(_validate_current_store(data, path))
+def _load_file(path: Path) -> dict[str, Any]:
+    """Accept only current-version download metadata."""
+    return _validate_current_store(
+        json.loads(path.read_text(encoding="utf-8")), path
+    )
 
 
 def save_locked(store: dict[str, Any]) -> None:
@@ -227,19 +199,19 @@ def _remove_stale_backup() -> None:
 
 
 def _backup_matches_current_store(store: dict[str, Any]) -> bool:
-    """Return whether an existing recovery copy is a validated exact v3 copy."""
+    """Return whether the backup is an exact validated current-version copy."""
     backup = backup_path()
     if not backup.exists():
         return True
     try:
-        loaded = _load_file(backup, audit_legacy=False)
+        loaded = _load_file(backup)
     except OSError, ValueError, json.JSONDecodeError:
         return False
-    return not loaded.migrated and loaded.store == store
+    return loaded == store
 
 
 def _refresh_unsafe_backup(store: dict[str, Any]) -> None:
-    """Scrub one stale/invalid backup and best-effort replace it from healthy v3 state."""
+    """Replace stale or invalid backup from healthy current state."""
     payload = _serialize_current_store(store)
     try:
         _remove_stale_backup()
@@ -262,25 +234,6 @@ def _refresh_unsafe_backup(store: dict[str, Any]) -> None:
         )
 
 
-def _prune_legacy_snapshot_directory() -> None:
-    """Remove v2 snapshot artifacts after no durable store can reference them."""
-    directory = get_state_store().layout.download_snapshots_dir
-    if not directory.exists():
-        return
-    for pattern in (f"*{_LEGACY_SNAPSHOT_SUFFIX}", ".*.tmp"):
-        for path in directory.glob(pattern):
-            with contextlib.suppress(OSError):
-                path.unlink(missing_ok=True)
-
-
-def _finish_migration(loaded: _LoadedStore) -> dict[str, Any]:
-    if not loaded.migrated:
-        return loaded.store
-    save_locked(loaded.store)
-    _prune_legacy_snapshot_directory()
-    return loaded.store
-
-
 def load_locked() -> dict[str, Any]:
     """Load primary state or recover from backup without silent reset."""
     primary = store_path()
@@ -291,22 +244,17 @@ def load_locked() -> dict[str, Any]:
     primary_error: Exception | None = None
     if primary.exists():
         try:
-            loaded = _load_file(primary)
+            current = _load_file(primary)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             primary_error = exc
             audit(
                 "download_store_unreadable", path=str(primary), error=repr(exc)
             )
         else:
-            current = _finish_migration(loaded)
-            if not loaded.migrated and not _backup_matches_current_store(
-                current
-            ):
-                # A healthy current primary must never coexist with an unsafe
-                # recovery copy.  Legacy, malformed, unsupported, or merely
-                # stale-but-valid v3 backups are scrubbed before continuing.
+            if not _backup_matches_current_store(current):
+                # A valid primary takes precedence over any stale, invalid,
+                # or unsupported recovery copy. Never restore stale metadata.
                 _refresh_unsafe_backup(current)
-                _prune_legacy_snapshot_directory()
             return current
 
     if backup.exists():
@@ -324,10 +272,8 @@ def load_locked() -> dict[str, Any]:
                 path=str(primary),
                 backup_path=str(backup),
             )
-            if loaded.migrated:
-                return _finish_migration(loaded)
-            _restore_primary_from_backup(loaded.store)
-            return loaded.store
+            _restore_primary_from_backup(loaded)
+            return loaded
 
     raise RuntimeError(
         "Download store is unreadable and no valid backup is available; refusing to reset it"

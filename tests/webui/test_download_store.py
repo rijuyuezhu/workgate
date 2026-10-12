@@ -281,73 +281,55 @@ def test_structural_validation_does_not_echo_corrupt_secret_to_audit(
     )
 
 
-def test_legacy_live_path_links_are_dropped_on_migration(tmp_path, monkeypatch):
+def test_unsupported_metadata_never_silently_resets_or_deletes_payloads(
+    tmp_path, monkeypatch
+):
     _configure(tmp_path, monkeypatch)
-    state_dir = get_settings().state_dir
-    state_dir.mkdir(parents=True, exist_ok=True)
-    legacy = {
-        "version": 1,
-        "links": {
-            "legacy-token": {
-                "path": str(tmp_path / "live-secret.txt"),
-                "display_path": "live-secret.txt",
-                "filename": "live-secret.txt",
-                "expires_at": 9_999_999_999,
-                "downloads": 0,
-                "max_downloads": 0,
-            }
-        },
-    }
-    store_path().write_text(json.dumps(legacy), encoding="utf-8")
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    current = json.loads(store_path().read_text(encoding="utf-8"))
+    payload_id = current["links"][created.link_id]["payload_id"]
+    payload_path = _payloads().path(payload_id, namespace="download")
 
-    assert _list_file_links_owned(settings=_control_config()).links == []
-    assert json.loads(store_path().read_text(encoding="utf-8")) == {
-        "links": {},
-        "version": 3,
-    }
-    assert json.loads(backup_path().read_text(encoding="utf-8")) == {
-        "links": {},
-        "version": 3,
-    }
+    private_marker = "secret-must-not-appear-in-audit"
+    unknown = json.dumps(
+        {"version": 999, "links": {"unknown": {"secret": private_marker}}}
+    )
+    store_path().write_text(unknown, encoding="utf-8")
+    backup_path().write_text(unknown, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="no valid backup"):
+        _list_file_links_owned(settings=_control_config())
+
+    assert store_path().read_text(encoding="utf-8") == unknown
+    assert backup_path().read_text(encoding="utf-8") == unknown
+    assert payload_path.read_bytes() == b"payload"
+    assert private_marker not in get_settings().audit_log_path.read_text(
+        encoding="utf-8"
+    )
 
 
-def test_v2_snapshot_links_are_invalidated_and_scrubbed(tmp_path, monkeypatch):
+def test_unsupported_primary_recovers_only_from_valid_current_backup(
+    tmp_path, monkeypatch
+):
     _configure(tmp_path, monkeypatch)
-    state_dir = get_settings().state_dir
-    legacy_dir = state_dir / "downloads"
-    legacy_dir.mkdir(parents=True, exist_ok=True)
-    legacy_snapshot = legacy_dir / "legacy.bin"
-    payload = b"legacy payload"
-    legacy_snapshot.write_bytes(payload)
-    token = "legacy-sensitive-bearer"
-    legacy = {
-        "version": 2,
-        "links": {
-            token: {
-                "snapshot_name": legacy_snapshot.name,
-                "display_path": "legacy.txt",
-                "filename": "legacy.txt",
-                "expires_at": 9_999_999_999.0,
-                "downloads": 0,
-                "max_downloads": 0,
-            }
-        },
-    }
-    store_path().parent.mkdir(parents=True, exist_ok=True)
-    store_path().write_text(json.dumps(legacy), encoding="utf-8")
-    backup_path().write_text(json.dumps(legacy), encoding="utf-8")
+    source = tmp_path / "artifact.txt"
+    source.write_text("payload", encoding="utf-8")
+    created = _create_file_link(str(source))
+    saved_backup = backup_path().read_bytes()
 
-    assert _list_file_links_owned(settings=_control_config()).links == []
-    persisted = store_path().read_text(encoding="utf-8")
-    persisted_backup = backup_path().read_text(encoding="utf-8")
-    assert token not in persisted
-    assert token not in persisted_backup
-    assert json.loads(persisted) == {"links": {}, "version": 3}
-    assert json.loads(persisted_backup) == {"links": {}, "version": 3}
-    assert not legacy_snapshot.exists()
+    store_path().write_text(
+        json.dumps({"version": 999, "links": {"unknown": {}}}),
+        encoding="utf-8",
+    )
+
+    links = _list_file_links_owned(settings=_control_config()).links
+    assert [link.link_id for link in links] == [created.link_id]
+    assert store_path().read_bytes() == saved_backup
 
 
-def test_v3_primary_scrubs_stale_legacy_backup(tmp_path, monkeypatch):
+def test_v3_primary_replaces_unsupported_backup(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
     source = tmp_path / "artifact.txt"
     source.write_text("payload", encoding="utf-8")
@@ -355,7 +337,7 @@ def test_v3_primary_scrubs_stale_legacy_backup(tmp_path, monkeypatch):
 
     stale_token = "stale-plaintext-bearer"
     backup_path().write_text(
-        json.dumps({"version": 2, "links": {stale_token: {}}}),
+        json.dumps({"version": 999, "links": {stale_token: {}}}),
         encoding="utf-8",
     )
 
@@ -367,7 +349,7 @@ def test_v3_primary_scrubs_stale_legacy_backup(tmp_path, monkeypatch):
     assert json.loads(refreshed)["version"] == 3
 
 
-def test_v3_primary_scrubs_malformed_backup_that_contains_legacy_bearer(
+def test_v3_primary_scrubs_malformed_backup_containing_private_data(
     tmp_path, monkeypatch
 ):
     _configure(tmp_path, monkeypatch)
@@ -376,7 +358,7 @@ def test_v3_primary_scrubs_malformed_backup_that_contains_legacy_bearer(
     created = _create_file_link(str(source))
     stale_token = "stale-plaintext-bearer"
     malformed_backup = (
-        json.dumps({"version": 2, "links": {stale_token: {}}})
+        json.dumps({"version": 999, "links": {stale_token: {}}})
         + " trailing-junk"
     )
     backup_path().write_text(malformed_backup, encoding="utf-8")
@@ -441,7 +423,7 @@ def test_revoke_persists_metadata_before_payload_cleanup(tmp_path, monkeypatch):
     assert created.link_id in persisted["links"]
 
 
-def test_legacy_bearer_backup_scrub_failure_fails_closed(tmp_path, monkeypatch):
+def test_unsupported_backup_scrub_failure_fails_closed(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
     source = tmp_path / "artifact.txt"
     source.write_text("payload", encoding="utf-8")
@@ -449,7 +431,7 @@ def test_legacy_bearer_backup_scrub_failure_fails_closed(tmp_path, monkeypatch):
 
     stale_token = "stale-plaintext-bearer"
     backup_path().write_text(
-        json.dumps({"version": 2, "links": {stale_token: {}}}),
+        json.dumps({"version": 999, "links": {stale_token: {}}}),
         encoding="utf-8",
     )
     monkeypatch.setattr(
