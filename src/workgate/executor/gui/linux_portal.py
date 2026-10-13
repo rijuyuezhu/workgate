@@ -83,13 +83,14 @@ async def _portal_proxy(bus: Any, path: str, *interfaces: str) -> Any:
 
 async def portal_available_devices(env: dict[str, str]) -> int:
     """Report supported Wayland input devices without opening a portal session."""
-    MessageBus, _Variant = _portal_modules()
-    from dbus_next.constants import MessageType
-    from dbus_next.message import Message
-
-    address = env.get("DBUS_SESSION_BUS_ADDRESS")
-    bus = MessageBus(bus_address=address) if address else MessageBus()
+    bus = None
     try:
+        MessageBus, _Variant = _portal_modules()
+        from dbus_next.constants import MessageType
+        from dbus_next.message import Message
+
+        address = env.get("DBUS_SESSION_BUS_ADDRESS")
+        bus = MessageBus(bus_address=address) if address else MessageBus()
         await _portal_lifecycle_wait(bus.connect(), "connecting to D-Bus")
         reply = await _portal_lifecycle_wait(
             bus.call(
@@ -113,8 +114,9 @@ async def portal_available_devices(env: dict[str, str]) -> int:
     except Exception:
         return 0
     finally:
-        with contextlib.suppress(Exception):
-            bus.disconnect()
+        if bus is not None:
+            with contextlib.suppress(Exception):
+                bus.disconnect()
 
 
 _KEYSYMS = {

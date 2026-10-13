@@ -156,3 +156,16 @@ async def test_portal_no_remote_devices_fails_before_creating_session(
     monkeypatch.setattr(portal, "_connect", should_not_connect)
     with pytest.raises(GuiUnavailableError, match="no input devices"):
         await portal.ensure_session()
+
+
+@pytest.mark.asyncio
+async def test_missing_optional_dbus_next_keeps_gui_inventory_available(
+    monkeypatch,
+):
+    def missing_modules():
+        raise GuiUnavailableError(
+            "Wayland GUI control requires the dbus-next package"
+        )
+
+    monkeypatch.setattr(linux_portal, "_portal_modules", missing_modules)
+    assert await linux_portal.portal_available_devices(dict(ENV)) == 0
