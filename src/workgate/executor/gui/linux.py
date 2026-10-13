@@ -213,6 +213,14 @@ def _niri_wtype_chord(keys: Any) -> list[str]:
     ]
 
 
+def _niri_keyboard_available(env: dict[str, str]) -> bool:
+    return (
+        bool(env.get("WAYLAND_DISPLAY"))
+        and bool(env.get("NIRI_SOCKET"))
+        and shutil.which("wtype") is not None
+    )
+
+
 async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
     binary = shutil.which("wtype")
     if binary is None:
@@ -1165,11 +1173,7 @@ class LinuxGuiBackend:
     async def _niri_input_devices(self, env: dict[str, str]) -> int:
         # Pointer remains Portal-owned; keyboard requires explicit local trust.
         pointer = (await portal_available_devices(env)) & 2
-        keyboard = int(
-            bool(env.get("WAYLAND_DISPLAY"))
-            and bool(env.get("NIRI_SOCKET"))
-            and shutil.which("wtype") is not None
-        )
+        keyboard = int(_niri_keyboard_available(env))
         return pointer | keyboard
 
     async def _perform_niri_input(
@@ -1182,7 +1186,7 @@ class LinuxGuiBackend:
         kind = action["type"]
         if kind not in {"type", "key"}:
             return await self._perform_wayland(window, locator, action, env)
-        if not (await self._niri_input_devices(env)) & 1:
+        if not _niri_keyboard_available(env):
             raise GuiUnavailableError(
                 "Niri native keyboard requires wtype and a connected Wayland session"
             )
