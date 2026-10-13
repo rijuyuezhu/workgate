@@ -2349,6 +2349,10 @@ input[type=checkbox] { accent-color: #6759e7; }
 :is(.file-location-row, .terminal-location-row):not(:disabled):not([aria-current="true"]):hover {
   color: #584ac7; background: #faf9ff;
 }
+/* Terminal hover is neutral so it cannot look like a second selection. */
+.terminal-location-row:not(:disabled):not([aria-current="true"]):hover {
+  color: #39435a; background: #eef1f6;
+}
 :is(.file-location-row, .terminal-location-row)[aria-current="true"] {
   color: #584ac7; background: #eeecff;
 }
