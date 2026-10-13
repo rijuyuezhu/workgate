@@ -157,7 +157,7 @@ def run_terminal_switch_races(harness: BrowserHarness) -> None:
         expect(
             page.locator('#terminal-executor-locations [aria-current="true"]')
         ).to_have_count(1)
-        page.wait_for_function("window.__terminalHeldLists.length === 3")
+        page.wait_for_function("() => window.__terminalHeldLists.length === 3")
         page.evaluate("""() => {
           window.__terminalHeldLists[1]();
           window.__terminalHeldLists[0]();
@@ -214,7 +214,12 @@ def run_terminal_switch_races(harness: BrowserHarness) -> None:
         page.locator(
             '#terminal-list .terminal-session[title*="local-browser-shell"]'
         ).click()
-        page.wait_for_function("window.__terminalHeldAttach.length === 1")
+        for _ in range(100):
+            if page.evaluate("() => window.__terminalHeldAttach.length") == 1:
+                break
+            page.wait_for_timeout(100)
+        else:
+            raise AssertionError("terminal attach grant was not intercepted")
         remote_button.click()
         expect(page.locator("#terminal-executor")).to_have_value(remote_id)
         page.evaluate("window.__terminalHeldAttach[0]()")
