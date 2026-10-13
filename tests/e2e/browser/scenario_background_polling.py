@@ -8,12 +8,26 @@ from tests.e2e.browser.harness import BrowserHarness
 
 
 def run_background_polling(harness: BrowserHarness) -> None:
-    page = harness.page
+    original_page = harness.page
+    page = harness.context.new_page()
+    harness.page = page
+    harness._attach_diagnostics()
 
-    # Advance the actual app timers without rewriting its served JavaScript.
-    page.clock.install()
+    # Speed up only the app's polling interval in this isolated page, while
+    # continuing to run the real controller and authenticated HTTP responses.
+    page.add_init_script("""(() => {
+      const original = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) => {
+        if (delay === 30000) {
+          window.__workgateTestPollInstalled = true;
+          return original(callback, 800, ...args);
+        }
+        return original(callback, delay, ...args);
+      };
+    })();""")
     page.goto(f"{harness.base_url}/ui#audit", wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
+    assert page.evaluate("window.__workgateTestPollInstalled === true")
 
     def advance_poll(scope: str) -> None:
         with page.expect_response(
@@ -23,8 +37,8 @@ def run_background_polling(harness: BrowserHarness) -> None:
             ),
             timeout=10_000,
         ):
-            page.clock.fast_forward(30_000)
-        page.wait_for_timeout(150)  # Let the resolved response update the DOM.
+            page.wait_for_timeout(850)
+        page.wait_for_timeout(120)  # Let the resolved response update the DOM.
 
     def check_two_cycles(scope, detail_selector, list_selector):
         detail = page.locator(detail_selector)
@@ -90,6 +104,7 @@ def run_background_polling(harness: BrowserHarness) -> None:
                 route.fulfill(response=response, json=payload)
 
             page.route("**/api/ui/audit?*", newer_record)
+            advance_poll("global")
             expect(records).to_have_count(before + 1, timeout=10_000)
             expect(detail).to_have_attribute("data-audit-entry-id", identity)
             page.unroute("**/api/ui/audit?*", newer_record)
@@ -159,6 +174,5 @@ def run_background_polling(harness: BrowserHarness) -> None:
     expect(page.locator("#file-executor")).to_have_value(file_executor)
     expect(page.locator("#terminal-executor")).to_have_value(terminal_executor)
 
-    page.clock.resume()
-    page.goto(f"{harness.base_url}/ui#overview", wait_until="domcontentloaded")
-    expect(page.locator("#connection-state")).to_have_text("Connected")
+    page.close()
+    harness.page = original_page
