@@ -29,11 +29,10 @@ After connecting an MCP client, start an execution session and ask it to:
 See [Common workflows](guides/common-workflows.md) for examples and the
 generated [Tool reference](reference/tools.md) for exact tool contracts.
 
-The browser interface is available at `/ui`; an optional terminal client
-provides the same main management areas. See
-[WebUI](guides/webui.md).
+The browser interface is available at `/ui`. See [WebUI](guides/webui.md).
 
 !!! warning
     An executor can access any filesystem location permitted to its OS account.
-    Run it as a suitably restricted user, and keep OAuth enabled for public
-    deployments.
+    `default_workdir` sets its starting directory; it is not a filesystem
+    access boundary or sandbox. Run executors as suitably restricted users,
+    and keep OAuth enabled for public deployments.
