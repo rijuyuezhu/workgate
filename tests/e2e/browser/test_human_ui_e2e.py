@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -38,6 +40,10 @@ def test_live_workspace_remount_real_chromium(
 
 
 @pytest.mark.timeout(150)
+@pytest.mark.skipif(
+    os.environ.get("WORKGATE_BROWSER_E2E") != "1",
+    reason="Real Chromium E2E requires the dedicated browser launcher",
+)
 def test_remote_executor_terminal_real_chromium(tmp_path):
     """Browser -> Control -> StreamHub -> executor B and A, no fallback."""
     artifacts = tmp_path / "remote-browser-artifacts"
