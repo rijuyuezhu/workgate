@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from PIL import Image
 
@@ -109,6 +109,13 @@ def _niri_window_id(window: dict[str, Any], env: dict[str, str]) -> int:
             "Cannot uniquely match the observed window in Niri; refresh gui_state"
         )
     return int(matches[0]["id"])
+
+
+def _is_niri(env: dict[str, str]) -> bool:
+    return (
+        _session_type(env) == "wayland"
+        and env.get("XDG_CURRENT_DESKTOP", "").lower() == "niri"
+    )
 
 
 def _helper_path() -> Path:
@@ -479,12 +486,7 @@ def _crop_desktop_capture(
         cropped.save(path, format="PNG")
 
 
-def _validate_capture_image_header(path: Path) -> None:
-    try:
-        with Image.open(path) as image:
-            width, height = image.size
-    except Exception as exc:
-        raise GuiUnavailableError("Captured Wayland image is invalid") from exc
+def _validate_capture_dimensions(width: int, height: int) -> None:
     if (
         width <= 0
         or height <= 0
@@ -495,6 +497,83 @@ def _validate_capture_image_header(path: Path) -> None:
         raise GuiUnavailableError(
             "Captured Wayland image exceeds GUI screenshot safety limits"
         )
+
+
+def _validate_capture_image_header(path: Path) -> None:
+    try:
+        with Image.open(path) as image:
+            _validate_capture_dimensions(*image.size)
+    except (OSError, ValueError) as exc:
+        raise GuiUnavailableError("Captured Wayland image is invalid") from exc
+
+
+def _finish_niri_screenshot(path: Path) -> None:
+    """Accept a complete PNG and remove Niri's transparent window shadow."""
+    with Image.open(path) as image:
+        _validate_capture_dimensions(*image.size)
+        image.verify()  # Wait for the PNG end marker, not just a nonempty file.
+    with Image.open(path) as image:
+        image.load()
+        if "A" not in image.getbands():
+            return
+        # Half the peak opacity separates the surface from the faint shadow,
+        # including for translucent windows.
+        alpha = image.getchannel("A")
+        peak = cast(tuple[int, int], alpha.getextrema())[1]
+        threshold = max(1, (peak + 1) // 2)
+        bounds = alpha.point(
+            [0] * threshold + [255] * (256 - threshold)
+        ).getbbox()
+        if bounds is not None and bounds != (0, 0, *image.size):
+            image.crop(bounds).save(path, format="PNG")
+
+
+async def _capture_niri_window(
+    path: Path, record: dict[str, Any], env: dict[str, str]
+) -> str:
+    """Capture exactly the observed Niri window (also updates clipboard)."""
+    window_id = await asyncio.to_thread(_niri_window_id, record, env)
+    try:
+        await asyncio.to_thread(
+            subprocess.run,
+            [
+                "niri",
+                "msg",
+                "action",
+                "screenshot-window",
+                "--id",
+                str(window_id),
+                "--path",
+                str(path),
+                "--write-to-disk",
+                "true",
+                "--show-pointer",
+                "false",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GuiUnavailableError(
+            "Niri could not capture the selected window"
+        ) from exc
+    # Niri acknowledges IPC before the PNG (including its end marker) exists.
+    for _ in range(50):
+        try:
+            await asyncio.to_thread(_finish_niri_screenshot, path)
+            break
+        except OSError, ValueError, EOFError:
+            await asyncio.sleep(0.05)
+    else:
+        raise GuiUnavailableError("Niri did not write a complete screenshot")
+    if await asyncio.to_thread(_niri_window_id, record, env) != window_id:
+        raise GuiStaleStateError(
+            "Niri window changed during screenshot capture"
+        )
+    return "niri-ipc"
 
 
 async def _capture_wayland(
@@ -912,14 +991,20 @@ class LinuxGuiBackend:
             "capabilities": {
                 "accessibility": "AT-SPI",
                 # Wayland capture depends on a successful portal permission grant.
-                "window_capture": session_type == "x11",
-                "coordinate_input": bool(devices & 1),
-                "keyboard_input": bool(devices & 2),
+                "window_capture": session_type == "x11"
+                or (
+                    _is_niri(env)
+                    and bool(env.get("NIRI_SOCKET"))
+                    and shutil.which("niri") is not None
+                ),
+                "coordinate_input": bool(devices & 2),
+                "keyboard_input": bool(devices & 1),
                 "semantic_actions": True,
                 "wayland_input": "xdg-desktop-portal"
                 if session_type == "wayland" and devices
                 else None,
-                "capture_requires_focus": session_type == "wayland",
+                "capture_requires_focus": session_type == "wayland"
+                and not _is_niri(env),
             },
         }
 
@@ -977,7 +1062,8 @@ class LinuxGuiBackend:
             list_data = await asyncio.to_thread(self._list_data, env)
             monitors = list_data.get("monitors", [])
             if session_type == "wayland":
-                await self._focus_window(record, env)
+                if not _is_niri(env):
+                    await self._focus_window(record, env)
                 refreshed = await asyncio.to_thread(
                     self._helper,
                     {
@@ -997,12 +1083,14 @@ class LinuxGuiBackend:
                         "Target window moved or resized while preparing the Wayland capture; "
                         "call gui_state again"
                     )
-                capture_backend = await _capture_wayland(
-                    screenshot_path,
-                    record["bounds"],
-                    monitors,
-                    env,
-                )
+                if _is_niri(env):
+                    capture_backend = await _capture_niri_window(
+                        screenshot_path, record, env
+                    )
+                else:
+                    capture_backend = await _capture_wayland(
+                        screenshot_path, record["bounds"], monitors, env
+                    )
                 post_capture = await asyncio.to_thread(
                     self._helper,
                     {
@@ -1068,7 +1156,7 @@ class LinuxGuiBackend:
                 "capture_backend": capture_backend,
                 "coordinate_space": "window-relative",
                 "coordinate_input": bool(
-                    (await portal_available_devices(env)) & 1
+                    (await portal_available_devices(env)) & 2
                 )
                 if session_type == "wayland"
                 else True,
@@ -1158,7 +1246,7 @@ class LinuxGuiBackend:
     async def focus_window(self, window: dict[str, Any]) -> None:
         env = await self._ensure_env()
         if _session_type(env) == "wayland" and not (
-            (await portal_available_devices(env)) & 1
+            (await portal_available_devices(env)) & 2
         ):
             raise GuiUnavailableError(
                 "Wayland RemoteDesktop portal does not provide pointer input"
@@ -1250,7 +1338,7 @@ class LinuxGuiBackend:
 
         if kind in {"type", "key"}:
             if _session_type(env) == "wayland" and not (
-                (await portal_available_devices(env)) & 2
+                (await portal_available_devices(env)) & 1
             ):
                 raise GuiUnavailableError(
                     "Wayland RemoteDesktop portal does not provide keyboard input"

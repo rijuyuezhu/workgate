@@ -24,7 +24,12 @@ GuiStateIdArg = Annotated[
 ]
 GuiScreenshotArg = Annotated[
     bool,
-    Field(description="Include a native screenshot in the gui_state result."),
+    Field(
+        description=(
+            "Include a native screenshot in the gui_state result. "
+            "On Niri, window capture also replaces the desktop clipboard."
+        )
+    ),
 ]
 GuiIncludeElementsArg = Annotated[
     bool,

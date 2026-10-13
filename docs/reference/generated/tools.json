@@ -1068,7 +1068,7 @@
                 "note": "(integer, optional)"
               },
               {
-                "description": "Include a native screenshot in the gui_state result.",
+                "description": "Include a native screenshot in the gui_state result. On Niri, window capture also replaces the desktop clipboard.",
                 "head": {
                   "code": "screenshot"
                 },
@@ -6244,7 +6244,7 @@
           },
           "screenshot": {
             "default": true,
-            "description": "Include a native screenshot in the gui_state result.",
+            "description": "Include a native screenshot in the gui_state result. On Niri, window capture also replaces the desktop clipboard.",
             "title": "Screenshot",
             "type": "boolean"
           },

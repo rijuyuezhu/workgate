@@ -169,3 +169,292 @@ async def test_missing_optional_dbus_next_keeps_gui_inventory_available(
 
     monkeypatch.setattr(linux_portal, "_portal_modules", missing_modules)
     assert await linux_portal.portal_available_devices(dict(ENV)) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("devices", "pointer", "keyboard"),
+    [(0, False, False), (1, False, True), (2, True, False), (3, True, True)],
+)
+async def test_wayland_remote_desktop_device_bits(
+    monkeypatch, devices, pointer, keyboard
+):
+    backend = linux.LinuxGuiBackend()
+    backend._env = {
+        "XDG_SESSION_TYPE": "wayland",
+        "XDG_CURRENT_DESKTOP": "other",
+    }
+    monkeypatch.setattr(
+        backend, "_list_data", lambda _env: {"windows": [WINDOW]}
+    )
+
+    async def provide(_env):
+        return devices
+
+    monkeypatch.setattr(linux, "portal_available_devices", provide)
+    report = await backend.list_windows()
+    assert report["capabilities"]["coordinate_input"] == pointer
+    assert report["capabilities"]["keyboard_input"] == keyboard
+
+
+@pytest.mark.asyncio
+async def test_niri_native_capture_is_bound_to_single_window(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        if argv[-1] == "windows":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"id": 88, "pid": 47, "title": "Test dialog"}]
+                )
+            )
+        if "screenshot-window" in argv:
+            dest = argv[argv.index("--path") + 1]
+            Image.new("RGB", (100, 50), "white").save(dest)
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    capture = tmp_path / "capture.png"
+    result = await linux._capture_niri_window(capture, WINDOW, dict(ENV))
+    assert result == "niri-ipc"
+    assert capture.is_file()
+    cmd = next(item for item in calls if "screenshot-window" in item)
+    assert cmd[cmd.index("--id") + 1] == "88"
+    assert cmd[cmd.index("--path") + 1] == str(capture)
+    assert cmd[cmd.index("--show-pointer") + 1] == "false"
+
+
+@pytest.mark.asyncio
+async def test_niri_capture_waits_for_deferred_file_write(
+    tmp_path, monkeypatch
+):
+    from threading import Timer
+
+    from PIL import Image
+
+    timer = None
+
+    def run(argv, **_kwargs):
+        nonlocal timer
+        if argv[-1] == "windows":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"id": 88, "pid": 47, "title": "Test dialog"}]
+                )
+            )
+        if "screenshot-window" in argv:
+            path = argv[argv.index("--path") + 1]
+            timer = Timer(
+                0.1,
+                lambda: Image.new("RGB", (100, 50), "white").save(path),
+            )
+            timer.start()
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    path = tmp_path / "late.png"
+    try:
+        result = await linux._capture_niri_window(path, WINDOW, dict(ENV))
+        assert result == "niri-ipc"
+        assert path.is_file() and path.stat().st_size > 0
+    finally:
+        if timer is not None:
+            timer.join(timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_niri_native_capture_rejects_retargeted_window(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    list_count = 0
+
+    def run(argv, **_kwargs):
+        nonlocal list_count
+        if argv[-1] == "windows":
+            list_count += 1
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [
+                        {
+                            "id": 88 if list_count == 1 else 89,
+                            "pid": 47,
+                            "title": "Test dialog",
+                        }
+                    ]
+                )
+            )
+        if "screenshot-window" in argv:
+            Image.new("RGB", (100, 50), "white").save(
+                argv[argv.index("--path") + 1]
+            )
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    with pytest.raises(GuiStaleStateError, match="changed during"):
+        await linux._capture_niri_window(
+            tmp_path / "capture.png", WINDOW, dict(ENV)
+        )
+
+
+@pytest.mark.asyncio
+async def test_niri_snapshot_avoids_focus_before_window_capture(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    backend = linux.LinuxGuiBackend()
+    backend._env = {**ENV, "NIRI_SOCKET": "/run/user/1000/niri-test.sock"}
+    capture = tmp_path / "capture.png"
+
+    def helper(_payload, _env):
+        return {"window": dict(WINDOW), "elements": [], "locators": {}}
+
+    async def native_capture(path, _record, _env):
+        Image.new("RGB", (100, 50), "white").save(path)
+        return "niri-ipc"
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(backend, "_list_data", lambda _env: {"monitors": []})
+    monkeypatch.setattr(
+        backend,
+        "_focus_window",
+        lambda *_args: pytest.fail("Niri screenshot must not focus"),
+    )
+    monkeypatch.setattr(linux, "_capture_niri_window", native_capture)
+
+    async def no_devices(_env):
+        return 0
+
+    monkeypatch.setattr(linux, "portal_available_devices", no_devices)
+    result = await backend.snapshot(
+        WINDOW["id"],
+        screenshot_path=capture,
+        include_elements=False,
+        max_elements=10,
+        max_depth=2,
+    )
+    assert result.capabilities["window_capture"] is True
+    assert result.capabilities["capture_backend"] == "niri-ipc"
+
+
+@pytest.mark.asyncio
+async def test_niri_capture_waits_for_complete_png_not_just_header(
+    tmp_path, monkeypatch
+):
+    import io
+    import time
+    from threading import Thread
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (100, 50), "white").save(buffer, format="PNG")
+    png = buffer.getvalue()
+    writer = None
+
+    def run(argv, **_kwargs):
+        nonlocal writer
+        if argv[-1] == "windows":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"id": 88, "pid": 47, "title": "Test dialog"}]
+                )
+            )
+        if "screenshot-window" in argv:
+            path = argv[argv.index("--path") + 1]
+
+            def write_in_parts():
+                with open(path, "wb") as output:
+                    output.write(png[:64])
+                    output.flush()
+                    time.sleep(0.2)
+                    output.write(png[64:])
+                    output.flush()
+
+            writer = Thread(target=write_in_parts)
+            writer.start()
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    path = tmp_path / "partial.png"
+    try:
+        assert (
+            await linux._capture_niri_window(path, WINDOW, dict(ENV))
+            == "niri-ipc"
+        )
+        with Image.open(path) as image:
+            image.load()
+            assert image.size == (100, 50)
+    finally:
+        if writer is not None:
+            writer.join(timeout=2)
+
+
+@pytest.mark.parametrize("scale", [1, 2])
+def test_niri_capture_crops_alpha_shadow_before_coordinate_normalization(
+    tmp_path, scale
+):
+    from PIL import Image
+
+    from workgate.executor.gui.base import _normalize_screenshot_coordinates
+
+    # Surface has no fixed border size: tests 1x and 2x rendering.
+    padding = 13 * scale
+    width, height = 100 * scale, 60 * scale
+    image = Image.new(
+        "RGBA", (width + 2 * padding, height + 2 * padding), (0, 0, 0, 0)
+    )
+    image.paste(
+        Image.new("RGBA", (width, height), (20, 80, 160, 255)),
+        (padding, padding),
+    )
+    # Faint shadow outside the surface must not be included in content bounds.
+    image.putpixel((padding - 1, padding + 10), (0, 0, 0, 38))
+    path = tmp_path / f"scale-{scale}.png"
+    image.save(path)
+    linux._finish_niri_screenshot(path)
+    with Image.open(path) as cropped:
+        cropped.load()
+        assert cropped.size == (width, height)
+        assert cropped.getpixel((0, 0)) == (20, 80, 160, 255)
+    _normalize_screenshot_coordinates(
+        path, {"bounds": {"width": 100, "height": 60}}
+    )
+    with Image.open(path) as normalized:
+        normalized.load()
+        assert normalized.size == (100, 60)
+        assert normalized.getpixel((0, 0)) == (20, 80, 160, 255)
+
+
+def test_niri_shadow_crop_preserves_translucent_window_geometry(tmp_path):
+    from PIL import Image
+
+    path = tmp_path / "translucent.png"
+    image = Image.new("RGBA", (140, 90), (0, 0, 0, 0))
+    image.paste(Image.new("RGBA", (100, 50), (40, 60, 80, 96)), (20, 20))
+    image.putpixel((19, 30), (0, 0, 0, 20))
+    image.save(path)
+    linux._finish_niri_screenshot(path)
+    with Image.open(path) as cropped:
+        cropped.load()
+        assert cropped.size == (100, 50)
+        assert cropped.getpixel((0, 0)) == (40, 60, 80, 96)
+
+
+def test_niri_capture_keeps_opaque_and_fully_transparent_pngs(tmp_path):
+    from PIL import Image
+
+    for mode, fill in [("RGB", "white"), ("RGBA", (0, 0, 0, 0))]:
+        path = tmp_path / f"{mode}.png"
+        Image.new(mode, (100, 60), fill).save(path)
+        linux._finish_niri_screenshot(path)
+        with Image.open(path) as image:
+            image.load()
+            assert image.size == (100, 60)
