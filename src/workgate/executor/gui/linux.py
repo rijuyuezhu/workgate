@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from PIL import Image
 
@@ -516,9 +516,14 @@ def _finish_niri_screenshot(path: Path) -> None:
         image.load()
         if "A" not in image.getbands():
             return
-        # Half-opacity separates the window surface from antialiased shadows.
+        # Half the peak opacity separates the surface from the faint shadow,
+        # including for translucent windows.
         alpha = image.getchannel("A")
-        bounds = alpha.point([0] * 128 + [255] * 128).getbbox()
+        peak = cast(tuple[int, int], alpha.getextrema())[1]
+        threshold = max(1, (peak + 1) // 2)
+        bounds = alpha.point(
+            [0] * threshold + [255] * (256 - threshold)
+        ).getbbox()
         if bounds is not None and bounds != (0, 0, *image.size):
             image.crop(bounds).save(path, format="PNG")
 

@@ -433,6 +433,21 @@ def test_niri_capture_crops_alpha_shadow_before_coordinate_normalization(
         assert normalized.getpixel((0, 0)) == (20, 80, 160, 255)
 
 
+def test_niri_shadow_crop_preserves_translucent_window_geometry(tmp_path):
+    from PIL import Image
+
+    path = tmp_path / "translucent.png"
+    image = Image.new("RGBA", (140, 90), (0, 0, 0, 0))
+    image.paste(Image.new("RGBA", (100, 50), (40, 60, 80, 96)), (20, 20))
+    image.putpixel((19, 30), (0, 0, 0, 20))
+    image.save(path)
+    linux._finish_niri_screenshot(path)
+    with Image.open(path) as cropped:
+        cropped.load()
+        assert cropped.size == (100, 50)
+        assert cropped.getpixel((0, 0)) == (40, 60, 80, 96)
+
+
 def test_niri_capture_keeps_opaque_and_fully_transparent_pngs(tmp_path):
     from PIL import Image
 
