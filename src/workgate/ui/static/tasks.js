@@ -446,7 +446,9 @@ export function createTasksController({
     if (signature === controllerState.inventorySignature) return;
     controllerState.inventorySignature = signature;
     const listScroll = [elements.taskList.scrollTop, elements.sessionList.scrollTop];
-    const focused = document.activeElement?.closest(".session-entry");
+    const focused = (elements.taskList.contains(document.activeElement) || elements.sessionList.contains(document.activeElement))
+      ? document.activeElement.closest(".session-entry")
+      : null;
     const focusedTask = focused?.dataset.taskId;
     const focusedSession = focused?.dataset.sessionId;
     controllerState.tasks = Array.isArray(payload && payload.tasks)
@@ -505,7 +507,8 @@ export function createTasksController({
     renderSessions(controllerState.sessions);
     [elements.taskList.scrollTop, elements.sessionList.scrollTop] = listScroll;
     if (focused) {
-      const list = focusedTask ? elements.taskList : elements.sessionList;
+      const list = focusedTask || focused.classList.contains("unattached-session-entry")
+        ? elements.taskList : elements.sessionList;
       Array.from(list.querySelectorAll(".session-entry"))
         .find((item) => (focusedTask ? item.dataset.taskId === focusedTask : item.dataset.sessionId === focusedSession))
         ?.focus({ preventScroll: true });
@@ -945,7 +948,9 @@ export function createTasksController({
     if (signature === controllerState.sessionAuditListSignature) return;
     controllerState.sessionAuditListSignature = signature;
     const scroll = elements.sessionAuditList.scrollTop;
-    const focusedId = document.activeElement?.closest(".audit-entry")?.dataset.auditId;
+    const focusedId = elements.sessionAuditList.contains(document.activeElement)
+      ? document.activeElement.closest(".audit-entry")?.dataset.auditId
+      : "";
     elements.sessionAuditList.replaceChildren();
     if (!controllerState.sessionAuditEntries.length) {
       const empty = document.createElement("div");

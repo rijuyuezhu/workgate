@@ -74,7 +74,9 @@ export function createAuditController({
     const signature = JSON.stringify([controllerState.auditEntries, controllerState.auditSelectedId]);
     if (signature === controllerState.listSignature) return;
     const scroll = elements.auditList.scrollTop;
-    const focusedId = document.activeElement?.closest(".audit-entry")?.dataset.auditId;
+    const focusedId = elements.auditList.contains(document.activeElement)
+      ? document.activeElement.closest(".audit-entry")?.dataset.auditId
+      : "";
     controllerState.listSignature = signature;
     elements.auditList.replaceChildren();
     if (!controllerState.auditEntries.length) {
