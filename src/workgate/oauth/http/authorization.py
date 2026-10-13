@@ -66,7 +66,7 @@ def _authorize_form(
         )
     settings = get_control_config()
     error_html = (
-        f'<p style="color:#b00020">{html_lib.escape(error)}</p>'
+        f'<p class="error" role="alert">{html_lib.escape(error)}</p>'
         if error
         else ""
     )

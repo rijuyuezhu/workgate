@@ -5,76 +5,141 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authorize Workgate</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: #f5f6fa;
+      font-synthesis: none;
+    }
     * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 32px 20px;
-      line-height: 1.5;
+    body { margin: 0; line-height: 1.5; }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 70px;
+      padding: 11px 24px;
+      color: #fff;
+      background: #111827;
+      border-bottom: 1px solid #303b50;
     }
-    main {
-      max-width: 720px;
-      margin: 0 auto;
-      border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-      border-radius: 14px;
-      padding: 24px;
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      background: #5f55cd;
+      font-size: 11px;
+      font-weight: 800;
     }
-    h1 { margin-top: 0; }
+    .brand-name { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+    main { max-width: 760px; margin: 48px auto; padding: 0 20px; }
+    .panel {
+      padding: 28px;
+      border: 1px solid #e7e9ef;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(16,24,40,.035), 0 8px 28px rgba(16,24,40,.045);
+    }
+    .eyebrow {
+      margin: 0 0 6px;
+      color: #929aaa;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; color: #182033; font-size: 24px; line-height: 1.2; letter-spacing: -.035em; }
+    .description { margin: 12px 0 22px; color: #6c768a; font-size: 13px; }
+    .warning {
+      margin: 0 0 22px;
+      padding: 12px 14px;
+      border: 1px solid #f6d7dc;
+      border-radius: 8px;
+      color: #9f3945;
+      background: #fff3f4;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    dl { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; margin: 0 0 24px; }
+    dt { color: #7a8496; font-size: 12px; font-weight: 650; }
+    dd { min-width: 0; margin: 0; color: #30384a; font-size: 13px; }
     code {
-      display: inline-block;
-      max-width: 100%;
+      font: 12px/1.5 "JetBrains Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
-    label {
+    form { padding-top: 22px; border-top: 1px solid #e7e9ef; }
+    label { display: block; margin-bottom: 7px; color: #596274; font-size: 12px; font-weight: 650; }
+    input[type="password"] {
       display: block;
-      margin-top: 18px;
-      font-weight: 600;
-    }
-    input {
       width: 100%;
       max-width: 360px;
-      margin-top: 6px;
+      min-height: 40px;
       padding: 10px 12px;
+      border: 1px solid #dfe3eb;
+      border-radius: 8px;
+      color: #172033;
+      background: #fff;
       font: inherit;
     }
+    input[type="password"]:focus-visible, button:focus-visible {
+      outline: 2px solid #7668dc;
+      outline-offset: 2px;
+    }
+    .muted { margin: 8px 0 18px; color: #7a8496; font-size: 12px; }
+    .error { color: #9f3945; font-size: 13px; font-weight: 650; }
     button {
-      margin-top: 18px;
-      padding: 10px 16px;
+      min-height: 40px;
+      padding: 10px 18px;
+      border: 1px solid #5746c9;
+      border-radius: 8px;
+      color: #fff;
+      background: #6658e8;
       font: inherit;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 650;
       cursor: pointer;
     }
-    .warning {
-      color: #b00020;
-      font-weight: 700;
-    }
-    .muted {
-      color: color-mix(in srgb, currentColor 65%, transparent);
+    button:hover { background: #5746c9; }
+    @media (max-width: 600px) {
+      header { min-height: 62px; padding: 10px 16px; }
+      main { margin: 20px auto; padding: 0 12px; }
+      .panel { padding: 20px 16px; }
+      dl { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+      dd { margin-bottom: 10px; }
+      input[type="password"] { max-width: none; }
     }
   </style>
 </head>
 <body>
+  <header>
+    <span class="brand-mark" aria-hidden="true">WG</span>
+    <span class="brand-name">Workgate</span>
+  </header>
   <main>
-    <h1>Authorize Workgate</h1>
-    <p class="warning">Only approve this request if you initiated this connection.</p>
-    <p>This grants ChatGPT access to tools that can execute commands and access files on paired executor machines, subject to the requested scopes.</p>
-    <p><strong>Client:</strong><br><code>{{CLIENT_NAME}}</code></p>
-    <p><strong>Client ID:</strong><br><code>{{CLIENT_ID}}</code></p>
-    <p><strong>Redirect URI:</strong><br><code>{{REDIRECT_URI}}</code></p>
-    <p><strong>Resource:</strong><br><code>{{RESOURCE}}</code></p>
-    <p><strong>Scopes:</strong><br><code>{{SCOPE}}</code></p>
-    {{ERROR_HTML}}
-    <form method="post" action="/oauth/authorize">
-      {{HIDDEN_INPUTS}}
-      <label>
-        Admin PIN<br>
-        <input type="password" name="pin" autocomplete="one-time-code" autofocus>
-      </label>
-      <p class="muted">{{PIN_HINT}}</p>
-      <button type="submit">Approve</button>
-    </form>
+    <section class="panel" aria-labelledby="authorization-heading">
+      <p class="eyebrow">Connection approval</p>
+      <h1 id="authorization-heading">Authorize Workgate</h1>
+      <p class="description">This grants ChatGPT access to tools that can execute commands and access files on paired executor machines, subject to the requested scopes.</p>
+      <p class="warning">Only approve this request if you initiated this connection.</p>
+      <dl>
+        <dt>Client:</dt><dd><code>{{CLIENT_NAME}}</code></dd>
+        <dt>Client ID:</dt><dd><code>{{CLIENT_ID}}</code></dd>
+        <dt>Redirect URI:</dt><dd><code>{{REDIRECT_URI}}</code></dd>
+        <dt>Resource:</dt><dd><code>{{RESOURCE}}</code></dd>
+        <dt>Scopes:</dt><dd><code>{{SCOPE}}</code></dd>
+      </dl>
+      {{ERROR_HTML}}
+      <form method="post" action="/oauth/authorize">
+        {{HIDDEN_INPUTS}}
+        <label for="pin">Admin PIN</label>
+        <input id="pin" type="password" name="pin" autocomplete="one-time-code" autofocus>
+        <p class="muted">{{PIN_HINT}}</p>
+        <button type="submit">Approve</button>
+      </form>
+    </section>
   </main>
 </body>
 </html>
