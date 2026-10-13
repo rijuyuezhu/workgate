@@ -29,7 +29,6 @@ export function createTerminalController({
     terminalListGeneration: 0,
     terminalLoading: false,
     terminalExecutorStates: new Map(),
-    terminalExecutorInventorySignature: "",
     terminalCommandHistory: [],
     terminalHistoryIndex: 0,
     terminalHistoryDraft: "",
@@ -316,14 +315,6 @@ export function createTerminalController({
 
   function renderTerminalExecutors(targets) {
     const available = Array.isArray(targets) ? targets : [];
-    const signature = JSON.stringify(available.map((executor) => [
-      text(executor.executor_id, ""),
-      text(executor.name, executor.executor_id),
-      text(executor.status, "offline"),
-    ]));
-    if (signature === controllerState.terminalExecutorInventorySignature &&
-        elements.terminalExecutor.value === controllerState.terminalExecutorId) return;
-    controllerState.terminalExecutorInventorySignature = signature;
     const wasOnline = terminalExecutorOnline();
     controllerState.terminalExecutorStates = new Map();
     elements.terminalExecutor.replaceChildren();
