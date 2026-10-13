@@ -105,8 +105,8 @@ prompt, and can send keyboard input to the actual desktop. Enable it only
 for a trusted executor account/session. Workgate checks the exact Niri window
 before and after input; external focus changes during typing cannot be
 prevented completely. Niri native text entry is limited to 512 characters
-per action and uses a briefly visible `wtype` process command line. Never
-assume a session workdir isolates desktop access.
+per action and is passed to `wtype` through stdin, not process arguments.
+Never assume a session workdir isolates desktop access.
 
 Mouse/pointer input remains Portal-only; this option does **not** enable
 virtual pointer injection or use `/dev/uinput`. Other desktop environments

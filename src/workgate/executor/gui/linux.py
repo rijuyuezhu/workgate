@@ -149,6 +149,7 @@ async def _assert_niri_window_focused(
 
 
 _NIRI_WTYPE_TIMEOUT_S = 15.0
+_NIRI_WTYPE_REAP_TIMEOUT_S = 3.0
 _NIRI_MODIFIERS = {
     "CTRL": "ctrl",
     "CONTROL": "ctrl",
@@ -222,7 +223,9 @@ def _niri_keyboard_available(env: dict[str, str]) -> bool:
     )
 
 
-async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
+async def _run_niri_wtype(
+    args: list[str], env: dict[str, str], *, text: str | None = None
+) -> None:
     binary = shutil.which("wtype")
     if binary is None:
         raise GuiUnavailableError("Niri native keyboard requires wtype")
@@ -230,6 +233,11 @@ async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
         process = await asyncio.create_subprocess_exec(
             binary,
             *args,
+            stdin=(
+                asyncio.subprocess.PIPE
+                if text is not None
+                else asyncio.subprocess.DEVNULL
+            ),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
             env=env,
@@ -239,14 +247,21 @@ async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
             "Cannot start Niri virtual keyboard client"
         ) from exc
     try:
-        await asyncio.wait_for(process.wait(), timeout=_NIRI_WTYPE_TIMEOUT_S)
-    except (asyncio.CancelledError, TimeoutError) as exc:
-        # Disconnecting this virtual keyboard releases held keys/modifiers.
+        await asyncio.wait_for(
+            process.communicate(
+                text.encode("utf-8") if text is not None else None
+            ),
+            timeout=_NIRI_WTYPE_TIMEOUT_S,
+        )
+    except BaseException as exc:
+        # Disconnecting the virtual keyboard releases held keys/modifiers.
         if process.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 process.kill()
         with contextlib.suppress(Exception):
-            await asyncio.shield(process.wait())
+            await asyncio.wait_for(
+                process.wait(), timeout=_NIRI_WTYPE_REAP_TIMEOUT_S
+            )
         if isinstance(exc, TimeoutError):
             raise GuiUnavailableError(
                 "Niri virtual keyboard timed out"
@@ -1073,7 +1088,7 @@ class _DesktopOperations:
         Awaitable[dict[str, Any]],
     ]
     input_devices: Callable[[dict[str, str]], Awaitable[int]]
-    input_transport: str | None
+    input_transports: tuple[str | None, str | None]  # keyboard, pointer
     capture_available: bool
     capture_requires_focus: bool
 
@@ -1201,10 +1216,9 @@ class LinuxGuiBackend:
                 raise ValueError(
                     "Niri native keyboard text is limited to 512 characters per action"
                 )
-            argv = ["-d", "18", "--", text]
+            await _run_niri_wtype(["-d", "18", "-"], env, text=text)
         else:
-            argv = _niri_wtype_chord(action.get("keys"))
-        await _run_niri_wtype(argv, env)
+            await _run_niri_wtype(_niri_wtype_chord(action.get("keys")), env)
         if kind == "type":
             # Allow the focused application to consume queued key releases.
             await asyncio.sleep(0.12)
@@ -1223,7 +1237,7 @@ class LinuxGuiBackend:
                 self._activate_atspi,
                 self._perform_x11,
                 input_devices=_x11_input_devices,
-                input_transport=None,
+                input_transports=(None, None),
                 capture_available=True,
                 capture_requires_focus=False,
             )
@@ -1239,9 +1253,12 @@ class LinuxGuiBackend:
                     input_devices=self._niri_input_devices
                     if native_keyboard
                     else portal_available_devices,
-                    input_transport="niri-virtual-keyboard"
-                    if native_keyboard
-                    else "xdg-desktop-portal",
+                    input_transports=(
+                        "niri-virtual-keyboard"
+                        if native_keyboard
+                        else "xdg-desktop-portal",
+                        "xdg-desktop-portal",
+                    ),
                     capture_available=bool(env.get("NIRI_SOCKET"))
                     and shutil.which("niri") is not None,
                     capture_requires_focus=False,
@@ -1251,7 +1268,7 @@ class LinuxGuiBackend:
                 self._activate_atspi,
                 self._perform_wayland,
                 input_devices=portal_available_devices,
-                input_transport="xdg-desktop-portal",
+                input_transports=("xdg-desktop-portal", "xdg-desktop-portal"),
                 capture_available=False,
                 capture_requires_focus=True,
             )
@@ -1269,6 +1286,13 @@ class LinuxGuiBackend:
         desktop = self._desktop_operations(env)
         data = await asyncio.to_thread(self._list_data, env)
         devices = await desktop.input_devices(env)
+        input_transports = dict.fromkeys(
+            transport
+            for bit, transport in zip(
+                (1, 2), desktop.input_transports, strict=True
+            )
+            if (devices & bit) and transport
+        )
         return {
             "backend": self.name,
             "platform": "linux",
@@ -1281,8 +1305,8 @@ class LinuxGuiBackend:
                 "coordinate_input": bool(devices & 2),
                 "keyboard_input": bool(devices & 1),
                 "semantic_actions": True,
-                "wayland_input": desktop.input_transport
-                if session_type == "wayland" and devices
+                "wayland_input": "+".join(input_transports)
+                if session_type == "wayland" and input_transports
                 else None,
                 "capture_requires_focus": desktop.capture_requires_focus,
             },

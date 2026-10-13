@@ -93,8 +93,10 @@ def test_desktop_operations_are_composed_independently(
         if env["XDG_SESSION_TYPE"] == "x11"
         else linux.portal_available_devices
     )
-    assert ops.input_transport == (
-        None if env["XDG_SESSION_TYPE"] == "x11" else "xdg-desktop-portal"
+    assert ops.input_transports == (
+        (None, None)
+        if env["XDG_SESSION_TYPE"] == "x11"
+        else ("xdg-desktop-portal", "xdg-desktop-portal")
     )
 
 

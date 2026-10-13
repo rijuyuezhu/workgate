@@ -147,9 +147,9 @@ async def test_native_keyboard_types_only_into_verified_focused_window(
         assert window is WINDOW
         calls.append("focused")
 
-    async def keyboard(args, env):
+    async def keyboard(args, env, *, text=None):
         assert env is backend._env
-        calls.append(tuple(args))
+        calls.append((tuple(args), text))
 
     monkeypatch.setattr(linux, "portal_available_devices", no_portal_devices)
     monkeypatch.setattr(
@@ -163,12 +163,12 @@ async def test_native_keyboard_types_only_into_verified_focused_window(
         WINDOW, None, {"type": "type", "text": "hello"}, backend._env
     )
     assert result == {"characters": 5, "method": "niri-virtual-keyboard"}
-    assert calls == ["focused", ("-d", "18", "--", "hello"), "focused"]
+    assert calls == ["focused", (("-d", "18", "-"), "hello"), "focused"]
     result = await backend._perform_niri_input(
         WINDOW, None, {"type": "key", "keys": "Return"}, backend._env
     )
     assert result["method"] == "niri-virtual-keyboard"
-    assert calls[-3:] == ["focused", ("-k", "Return"), "focused"]
+    assert calls[-3:] == ["focused", (("-k", "Return"), None), "focused"]
 
 
 @pytest.mark.asyncio
@@ -207,6 +207,9 @@ async def test_native_keyboard_wtype_cancel_kills_process(monkeypatch):
             if self.killed:
                 return self.returncode
             await asyncio.sleep(3600)
+
+        async def communicate(self, data=None):
+            return await self.wait()
 
         def kill(self):
             self.killed = True
@@ -257,6 +260,9 @@ async def test_native_keyboard_timeout_kills_virtual_keyboard_process(
             if self.killed:
                 return -9
             await asyncio.sleep(3600)
+
+        async def communicate(self, data=None):
+            return await self.wait()
 
         def kill(self):
             self.killed = True
@@ -329,3 +335,92 @@ async def test_native_keyboard_rejects_long_text_before_running_client(
         await backend._perform_niri_input(
             WINDOW, None, {"type": "type", "text": "a" * 513}, backend._env
         )
+
+
+@pytest.mark.asyncio
+async def test_native_keyboard_sends_utf8_text_only_via_stdin(monkeypatch):
+    received = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, data=None):
+            received.append(data)
+            return (b"", b"")
+
+    async def spawn(*args, **kwargs):
+        assert "password-中文" not in args
+        assert args[1:] == ("-d", "18", "-")
+        assert kwargs["stdin"] == asyncio.subprocess.PIPE
+        return Process()
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wtype")
+    monkeypatch.setattr(linux.asyncio, "create_subprocess_exec", spawn)
+    await linux._run_niri_wtype(
+        ["-d", "18", "-"], dict(ENV), text="password-中文"
+    )
+    assert received == ["password-中文".encode()]
+
+
+@pytest.mark.asyncio
+async def test_native_keyboard_reap_stall_is_bounded(monkeypatch):
+    class Stalled:
+        returncode = None
+        killed = False
+
+        async def communicate(self, data=None):
+            await asyncio.sleep(3600)
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            await asyncio.sleep(3600)
+
+    process = Stalled()
+
+    async def spawn(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wtype")
+    monkeypatch.setattr(linux.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(linux, "_NIRI_WTYPE_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(linux, "_NIRI_WTYPE_REAP_TIMEOUT_S", 0.02)
+    with pytest.raises(GuiUnavailableError, match="timed out"):
+        await asyncio.wait_for(
+            linux._run_niri_wtype(["-k", "a"], dict(ENV)), timeout=1
+        )
+    assert process.killed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("portal", "wtype", "keyboard", "pointer", "source"),
+    [
+        (0, True, True, False, "niri-virtual-keyboard"),
+        (2, True, True, True, "niri-virtual-keyboard+xdg-desktop-portal"),
+        (2, False, False, True, "xdg-desktop-portal"),
+        (0, False, False, False, None),
+    ],
+)
+async def test_niri_mixed_input_provider_reports_only_available_transports(
+    monkeypatch, portal, wtype, keyboard, pointer, source
+):
+    async def portal_devices(_env):
+        return portal
+
+    backend = linux.LinuxGuiBackend(niri_native_keyboard_enabled=True)
+    backend._env = dict(ENV)
+    monkeypatch.setattr(linux, "portal_available_devices", portal_devices)
+    monkeypatch.setattr(
+        linux.shutil,
+        "which",
+        lambda binary: (
+            "/usr/bin/wtype" if wtype and binary == "wtype" else None
+        ),
+    )
+    monkeypatch.setattr(backend, "_list_data", lambda _env: {"windows": []})
+    result = (await backend.list_windows())["capabilities"]
+    assert result["keyboard_input"] is keyboard
+    assert result["coordinate_input"] is pointer
+    assert result["wayland_input"] == source
