@@ -110,3 +110,137 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
         "cat remote-marker.txt",
         "running-on-remote-executor",
     )
+
+
+def run_terminal_switch_races(harness: BrowserHarness) -> None:
+    """Last click wins even when terminal lists and attach grants arrive late."""
+    remote_id = harness.remote_executor_id
+    assert remote_id is not None
+    local_id = harness.executor_id
+    page = harness.page
+    harness.navigate("terminals")
+    remote_button = page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{remote_id}"]'
+    )
+    local_button = page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{local_id}"]'
+    )
+    expect(remote_button).to_have_attribute("aria-current", "true")
+
+    # Delay all three GET responses and complete them out of order. Fast
+    # location clicks must not be ignored just because a list is loading.
+    page.evaluate("""() => {
+      const original = window.fetch;
+      window.__terminalFetch = original;
+      window.__terminalHeldLists = [];
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (String(args[0]).includes('/api/ui/terminals?')) {
+          return new Promise(resolve => {
+            window.__terminalHeldLists.push(() => resolve(response));
+          });
+        }
+        return response;
+      };
+    }""")
+    try:
+        page.evaluate(
+            """([a, b]) => {
+          const row = id => document.querySelector(
+            `#terminal-executor-locations [data-executor-id="${id}"]`
+          );
+          row(a).click(); row(b).click(); row(a).click();
+        }""",
+            [local_id, remote_id],
+        )
+        expect(page.locator("#terminal-executor")).to_have_value(local_id)
+        expect(
+            page.locator('#terminal-executor-locations [aria-current="true"]')
+        ).to_have_count(1)
+        page.wait_for_function("window.__terminalHeldLists.length === 3")
+        page.evaluate("""() => {
+          window.__terminalHeldLists[1]();
+          window.__terminalHeldLists[0]();
+          window.__terminalHeldLists[2]();
+        }""")
+        expect(page.locator("#terminal-list")).to_contain_text(
+            "local-browser-shell"
+        )
+        expect(page.locator("#terminal-list")).not_to_contain_text(
+            "remote-browser-shell"
+        )
+        expect(local_button).to_have_attribute("aria-current", "true")
+        expect(remote_button).to_have_attribute("aria-current", "false")
+        local_button.hover()
+        expect(local_button).to_have_css(
+            "background-color", "rgb(238, 236, 255)"
+        )
+        remote_button.hover()
+        expect(remote_button).to_have_css(
+            "background-color", "rgb(238, 241, 246)"
+        )
+        remote_button.focus()
+        expect(remote_button).to_have_css("outline-style", "solid")
+        expect(
+            page.locator('#terminal-executor-locations [aria-current="true"]')
+        ).to_have_count(1)
+    finally:
+        page.evaluate("""() => {
+          window.fetch = window.__terminalFetch;
+          delete window.__terminalFetch;
+          delete window.__terminalHeldLists;
+        }""")
+
+    # A stale attach grant arriving after switching executor must not activate
+    # a socket for the previous shell. A fresh attach must still work.
+    page.evaluate("""() => {
+      const original = window.fetch;
+      window.__terminalFetch = original;
+      window.__terminalHeldAttach = [];
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (String(args[0]).includes('/api/ui/terminals/attach')) {
+          return new Promise(resolve => {
+            window.__terminalHeldAttach.push(() => resolve(response));
+          });
+        }
+        return response;
+      };
+    }""")
+    try:
+        page.locator(
+            '#terminal-list .terminal-session[title*="local-browser-shell"]'
+        ).click()
+        page.wait_for_function("window.__terminalHeldAttach.length === 1")
+        remote_button.click()
+        expect(page.locator("#terminal-executor")).to_have_value(remote_id)
+        page.evaluate("window.__terminalHeldAttach[0]()")
+        expect(remote_button).to_have_attribute("aria-current", "true")
+        expect(
+            page.locator(
+                '#terminal-list .terminal-session[title*="remote-browser-shell"]'
+            )
+        ).to_be_visible()
+    finally:
+        page.evaluate("""() => {
+          window.fetch = window.__terminalFetch;
+          delete window.__terminalFetch;
+          delete window.__terminalHeldAttach;
+        }""")
+
+    remote_entry = page.locator(
+        '#terminal-list .terminal-session[title*="remote-browser-shell"]'
+    )
+    remote_entry.click()
+    expect(page.locator("#terminal-state")).to_contain_text("Connected")
+    # Reattach the same tmux client immediately; #316 allows concurrent tmux
+    # clients and retiring the old WebSocket must not cause a busy state.
+    page.locator("#terminal-reconnect").click()
+    expect(page.locator("#terminal-state")).to_contain_text("Connected")
+    _send_terminal(
+        harness,
+        remote_id,
+        "remote-browser-shell",
+        "cat remote-marker.txt",
+        "running-on-remote-executor",
+    )

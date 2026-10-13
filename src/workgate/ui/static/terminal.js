@@ -29,6 +29,7 @@ export function createTerminalController({
     terminalListGeneration: 0,
     terminalLoading: false,
     terminalExecutorStates: new Map(),
+    terminalExecutorInventorySignature: "",
     terminalCommandHistory: [],
     terminalHistoryIndex: 0,
     terminalHistoryDraft: "",
@@ -266,7 +267,6 @@ export function createTerminalController({
       controllerState.terminalSocketExecutorId === controllerState.terminalExecutorId &&
       controllerState.terminalReady &&
       controllerState.terminalSocket?.readyState === WebSocket.OPEN;
-    elements.terminalExecutor.disabled = controllerState.terminalLoading;
     elements.terminalStartForm.querySelector("button").disabled = controllerState.terminalLoading || !online;
     elements.terminalName.disabled = controllerState.terminalLoading || !online;
     elements.terminalInput.disabled = !connected;
@@ -300,6 +300,7 @@ export function createTerminalController({
     closeTerminalSocket();
     controllerState.terminalExecutorId = executorId;
     controllerState.terminalListGeneration += 1;
+    controllerState.terminalLoading = false;
     controllerState.terminalSessions = [];
     controllerState.selectedShellId = "";
     controllerState.terminalCommandHistory = [];
@@ -315,6 +316,14 @@ export function createTerminalController({
 
   function renderTerminalExecutors(targets) {
     const available = Array.isArray(targets) ? targets : [];
+    const signature = JSON.stringify(available.map((executor) => [
+      text(executor.executor_id, ""),
+      text(executor.name, executor.executor_id),
+      text(executor.status, "offline"),
+    ]));
+    if (signature === controllerState.terminalExecutorInventorySignature &&
+        elements.terminalExecutor.value === controllerState.terminalExecutorId) return;
+    controllerState.terminalExecutorInventorySignature = signature;
     const wasOnline = terminalExecutorOnline();
     controllerState.terminalExecutorStates = new Map();
     elements.terminalExecutor.replaceChildren();
@@ -346,7 +355,7 @@ export function createTerminalController({
       title.textContent = label;
       location.append(dot, title);
       location.addEventListener("click", () => {
-        if (controllerState.terminalLoading || executorId === controllerState.terminalExecutorId) return;
+        if (executorId === controllerState.terminalExecutorId) return;
         elements.terminalExecutor.value = executorId;
         elements.terminalExecutor.dispatchEvent(new Event("change", { bubbles: true }));
       });
@@ -752,7 +761,7 @@ export function createTerminalController({
   });
 
   elements.terminalExecutor.addEventListener("change", () => {
-    if (controllerState.terminalLoading) return;
+    if (elements.terminalExecutor.value === controllerState.terminalExecutorId) return;
     controllerState.terminalExecutorPinned = false;
     controllerState.terminalSessionId = "";
     controllerState.terminalAutoConnectShellId = "";
