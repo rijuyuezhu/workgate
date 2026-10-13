@@ -230,6 +230,44 @@ async def test_niri_native_capture_is_bound_to_single_window(
 
 
 @pytest.mark.asyncio
+async def test_niri_capture_waits_for_deferred_file_write(
+    tmp_path, monkeypatch
+):
+    from threading import Timer
+
+    from PIL import Image
+
+    timer = None
+
+    def run(argv, **_kwargs):
+        nonlocal timer
+        if argv[-1] == "windows":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"id": 88, "pid": 47, "title": "Test dialog"}]
+                )
+            )
+        if "screenshot-window" in argv:
+            path = argv[argv.index("--path") + 1]
+            timer = Timer(
+                0.1,
+                lambda: Image.new("RGB", (100, 50), "white").save(path),
+            )
+            timer.start()
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    path = tmp_path / "late.png"
+    try:
+        result = await linux._capture_niri_window(path, WINDOW, dict(ENV))
+        assert result == "niri-ipc"
+        assert path.is_file() and path.stat().st_size > 0
+    finally:
+        if timer is not None:
+            timer.join(timeout=2)
+
+
+@pytest.mark.asyncio
 async def test_niri_native_capture_rejects_retargeted_window(
     tmp_path, monkeypatch
 ):
