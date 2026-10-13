@@ -169,3 +169,138 @@ async def test_missing_optional_dbus_next_keeps_gui_inventory_available(
 
     monkeypatch.setattr(linux_portal, "_portal_modules", missing_modules)
     assert await linux_portal.portal_available_devices(dict(ENV)) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("devices", "pointer", "keyboard"),
+    [(0, False, False), (1, False, True), (2, True, False), (3, True, True)],
+)
+async def test_wayland_remote_desktop_device_bits(
+    monkeypatch, devices, pointer, keyboard
+):
+    backend = linux.LinuxGuiBackend()
+    backend._env = {
+        "XDG_SESSION_TYPE": "wayland",
+        "XDG_CURRENT_DESKTOP": "other",
+    }
+    monkeypatch.setattr(
+        backend, "_list_data", lambda _env: {"windows": [WINDOW]}
+    )
+
+    async def provide(_env):
+        return devices
+
+    monkeypatch.setattr(linux, "portal_available_devices", provide)
+    report = await backend.list_windows()
+    assert report["capabilities"]["coordinate_input"] == pointer
+    assert report["capabilities"]["keyboard_input"] == keyboard
+
+
+@pytest.mark.asyncio
+async def test_niri_native_capture_is_bound_to_single_window(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        if argv[-1] == "windows":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"id": 88, "pid": 47, "title": "Test dialog"}]
+                )
+            )
+        if "screenshot-window" in argv:
+            dest = argv[argv.index("--path") + 1]
+            Image.new("RGB", (100, 50), "white").save(dest)
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    capture = tmp_path / "capture.png"
+    result = await linux._capture_niri_window(capture, WINDOW, dict(ENV))
+    assert result == "niri-ipc"
+    assert capture.is_file()
+    cmd = next(item for item in calls if "screenshot-window" in item)
+    assert cmd[cmd.index("--id") + 1] == "88"
+    assert cmd[cmd.index("--path") + 1] == str(capture)
+    assert cmd[cmd.index("--show-pointer") + 1] == "false"
+
+
+@pytest.mark.asyncio
+async def test_niri_native_capture_rejects_retargeted_window(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    list_count = 0
+
+    def run(argv, **_kwargs):
+        nonlocal list_count
+        if argv[-1] == "windows":
+            list_count += 1
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [
+                        {
+                            "id": 88 if list_count == 1 else 89,
+                            "pid": 47,
+                            "title": "Test dialog",
+                        }
+                    ]
+                )
+            )
+        if "screenshot-window" in argv:
+            Image.new("RGB", (100, 50), "white").save(
+                argv[argv.index("--path") + 1]
+            )
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    with pytest.raises(GuiStaleStateError, match="changed during"):
+        await linux._capture_niri_window(
+            tmp_path / "capture.png", WINDOW, dict(ENV)
+        )
+
+
+@pytest.mark.asyncio
+async def test_niri_snapshot_avoids_focus_before_window_capture(
+    tmp_path, monkeypatch
+):
+    from PIL import Image
+
+    backend = linux.LinuxGuiBackend()
+    backend._env = {**ENV, "NIRI_SOCKET": "/run/user/1000/niri-test.sock"}
+    capture = tmp_path / "capture.png"
+
+    def helper(_payload, _env):
+        return {"window": dict(WINDOW), "elements": [], "locators": {}}
+
+    async def native_capture(path, _record, _env):
+        Image.new("RGB", (100, 50), "white").save(path)
+        return "niri-ipc"
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(backend, "_list_data", lambda _env: {"monitors": []})
+    monkeypatch.setattr(
+        backend,
+        "_focus_window",
+        lambda *_args: pytest.fail("Niri screenshot must not focus"),
+    )
+    monkeypatch.setattr(linux, "_capture_niri_window", native_capture)
+
+    async def no_devices(_env):
+        return 0
+
+    monkeypatch.setattr(linux, "portal_available_devices", no_devices)
+    result = await backend.snapshot(
+        WINDOW["id"],
+        screenshot_path=capture,
+        include_elements=False,
+        max_elements=10,
+        max_depth=2,
+    )
+    assert result.capabilities["window_capture"] is True
+    assert result.capabilities["capture_backend"] == "niri-ipc"
