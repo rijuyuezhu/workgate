@@ -853,7 +853,7 @@ void (async () => {
     setConnection("Connected", "online");
   }
 
-  async function load({ background = false } = {}) {
+  async function load() {
     setConnection("Connecting", "idle");
     try {
       render(await request("/bootstrap"));
@@ -884,7 +884,7 @@ void (async () => {
         elements.todoState.textContent = "Plan unavailable";
         elements.sessionAuditState.textContent = "Session Audit unavailable";
       }
-      await audit.refresh({ background });
+      await audit.refresh();
     } catch (error) {
       if (error.authenticationRequired) {
         terminal.reset("");

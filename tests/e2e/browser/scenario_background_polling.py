@@ -104,8 +104,17 @@ def run_background_polling(harness: BrowserHarness) -> None:
             expect(records).to_have_count(before + 1, timeout=10_000)
             expect(detail).to_have_attribute("data-audit-entry-id", identity)
             page.unroute("**/api/ui/audit?*", newer_record)
-        if records.count() > 1:
-            records.nth(1).click()
+        different = next(
+            (
+                record
+                for record in records.all()
+                if record.get_attribute("data-audit-id")
+                not in (identity, "new-background-audit-entry")
+            ),
+            None,
+        )
+        if different is not None:
+            different.click()
             expect(detail).not_to_have_attribute(
                 "data-audit-entry-id", identity
             )
