@@ -306,8 +306,7 @@ class TerminalBridgeRegistry:
         )
         self.max_connections = max(1, min(int(max_connections), 128))
         self.bridges: dict[str, _Bridge] = {}
-        self.shell_bridges: dict[str, str] = {}
-        self.pending_shells: set[str] = set()
+        self.pending_bridges: set[str] = set()
         self.lock = threading.Lock()
         self._operations: dict[asyncio.Task[Any], int] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -381,8 +380,7 @@ class TerminalBridgeRegistry:
         with self.lock:
             bridges = list(self.bridges.values())
             self.bridges.clear()
-            self.shell_bridges.clear()
-            self.pending_shells.clear()
+            self.pending_bridges.clear()
             for bridge in bridges:
                 if bridge.timer is not None:
                     bridge.timer.cancel()
@@ -462,8 +460,6 @@ def _expire_bridge(registry: TerminalBridgeRegistry, bridge_id: str) -> None:
             _schedule_expiry_locked(registry, bridge, remaining)
             return
         registry.bridges.pop(bridge_id, None)
-        if registry.shell_bridges.get(bridge.shell_id) == bridge_id:
-            registry.shell_bridges.pop(bridge.shell_id, None)
         process = bridge.process
         bridge.timer = None
     if process is not None:
@@ -494,8 +490,6 @@ def _detach_bridge(
         bridge = registry.bridges.pop(normalized, None)
         if bridge is None:
             return None
-        if registry.shell_bridges.get(bridge.shell_id) == normalized:
-            registry.shell_bridges.pop(bridge.shell_id, None)
         if bridge.timer is not None:
             bridge.timer.cancel()
             bridge.timer = None
@@ -507,29 +501,22 @@ async def open_terminal_bridge_execute(
     cols: int = 120,
     rows: int = 36,
 ) -> dict[str, Any]:
-    """Open one exclusive raw PTY attachment to a persistent shell."""
+    """Open one raw PTY attachment to a persistent tmux shell."""
     registry = _bridge_registry()
     operation = registry.begin_operation()
     try:
         normalized_shell = _shell_id(shell_id)
         columns, lines = _terminal_size(cols, rows)
 
+        bridge_id = secrets.token_urlsafe(32)
         maximum = registry.max_connections
         with registry.lock:
-            if (
-                normalized_shell in registry.shell_bridges
-                or normalized_shell in registry.pending_shells
-            ):
-                raise TerminalBridgeBusyError(
-                    f"Persistent shell {normalized_shell} already has a raw terminal client"
-                )
-            if len(registry.bridges) + len(registry.pending_shells) >= maximum:
+            if len(registry.bridges) + len(registry.pending_bridges) >= maximum:
                 raise TerminalBridgeBusyError(
                     "Too many active raw terminal bridges"
                 )
-            registry.pending_shells.add(normalized_shell)
+            registry.pending_bridges.add(bridge_id)
 
-        bridge_id = secrets.token_urlsafe(32)
         process: _TerminalProcess | None = None
         try:
 
@@ -565,14 +552,9 @@ async def open_terminal_bridge_execute(
                 idle_timeout_s=registry.idle_timeout_s,
             )
             with registry.lock:
-                registry.pending_shells.discard(normalized_shell)
+                registry.pending_bridges.discard(bridge_id)
                 registry.require_open()
-                if normalized_shell in registry.shell_bridges:
-                    raise TerminalBridgeBusyError(
-                        f"Persistent shell {normalized_shell} already has a raw terminal client"
-                    )
                 registry.bridges[bridge_id] = bridge
-                registry.shell_bridges[normalized_shell] = bridge_id
                 _schedule_expiry_locked(registry, bridge)
             process = None
             return {
@@ -584,7 +566,7 @@ async def open_terminal_bridge_execute(
             }
         finally:
             with registry.lock:
-                registry.pending_shells.discard(normalized_shell)
+                registry.pending_bridges.discard(bridge_id)
             if process is not None:
                 await asyncio.to_thread(process.close_sync)
     finally:
