@@ -630,6 +630,7 @@ export function createTasksController({
         await refreshTodos({ force: !background, background });
       }
 
+      if (revision !== controllerState.selectionRevision) return null;
       if (controllerState.sessionId) {
         await refreshSessionAudit({ background });
       } else if (!background) {
@@ -839,9 +840,9 @@ export function createTasksController({
     return "/todos?" + new URLSearchParams({ task_id: selectedTaskId() }).toString();
   }
 
-  function applyTodoPayload(payload, requestedTask) {
+  function applyTodoPayload(payload, requestedTask, { background = false } = {}) {
     const signature = JSON.stringify([payload.task, payload.todos, payload.limits]);
-    if (signature === controllerState.todoSignature) return;
+    if (background && signature === controllerState.todoSignature) return;
     controllerState.todoSignature = signature;
     controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : null;
     controllerState.todoItems = Array.isArray(payload.todos)
@@ -872,7 +873,7 @@ export function createTasksController({
     try {
       const payload = await request(todoQuery());
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId() || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
-      applyTodoPayload(payload, requestedTask);
+      applyTodoPayload(payload, requestedTask, { background });
       return payload;
     } catch (error) {
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return null;
