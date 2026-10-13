@@ -75,9 +75,10 @@ def run_background_polling(harness: BrowserHarness) -> None:
         expect(result.get_by_role("button", name="Tree")).to_have_attribute(
             "aria-pressed", "true"
         )
-        expect(request.get_by_role("button", name="Raw")).to_have_attribute(
-            "aria-pressed", "true"
-        )
+        # Collapsed panel controls are still present, but not in the ARIA tree.
+        expect(
+            request.locator(".audit-value-toolbar button").nth(1)
+        ).to_have_attribute("aria-pressed", "true")
         if tree.count() > 1:
             expect(tree.nth(1)).to_have_attribute("open", "")
         expect(body).to_be_focused()
