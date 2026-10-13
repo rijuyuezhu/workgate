@@ -10,29 +10,21 @@ from tests.e2e.browser.harness import BrowserHarness
 def run_background_polling(harness: BrowserHarness) -> None:
     page = harness.page
 
-    # Accelerate only the 30-second application timer for this scenario. The
-    # real controllers, authenticated backend and all fetches remain unchanged.
-    def speed_up_poll(route):
-        response = route.fetch()
-        source = response.text()
-        assert source.count("  }, 30000);") == 1
-        route.fulfill(
-            response=response, body=source.replace("  }, 30000);", "  }, 800);")
-        )
-
-    page.route("**/ui/assets/web.js*", speed_up_poll)
-    seen = {"global": 0, "session": 0}
-
-    def on_request(request):
-        if "/api/ui/audit?" not in request.url:
-            return
-        for scope in seen:
-            if f"scope={scope}" in request.url:
-                seen[scope] += 1
-
-    page.on("request", on_request)
+    # Advance the actual app timers without rewriting its served JavaScript.
+    page.clock.install()
     page.goto(f"{harness.base_url}/ui#audit", wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
+
+    def advance_poll(scope: str) -> None:
+        with page.expect_response(
+            lambda response: (
+                "/api/ui/audit?" in response.url
+                and f"scope={scope}" in response.url
+            ),
+            timeout=10_000,
+        ):
+            page.clock.fast_forward(30_000)
+        page.wait_for_timeout(150)  # Let the resolved response update the DOM.
 
     def check_two_cycles(scope, detail_selector, list_selector):
         detail = page.locator(detail_selector)
@@ -58,11 +50,8 @@ def run_background_polling(harness: BrowserHarness) -> None:
             "selector => {window.__pollDetail = document.querySelector(selector).firstElementChild; return document.querySelector(selector).dataset.auditEntryId}",
             detail_selector,
         )
-        start = seen[scope]
-        deadline = time.monotonic() + 10
-        while seen[scope] < start + 2 and time.monotonic() < deadline:
-            page.wait_for_timeout(120)
-        assert seen[scope] >= start + 2, f"{scope} did not poll twice"
+        advance_poll(scope)
+        advance_poll(scope)
         assert page.evaluate(
             "selector => document.querySelector(selector).firstElementChild === window.__pollDetail",
             detail_selector,
@@ -161,7 +150,8 @@ def run_background_polling(harness: BrowserHarness) -> None:
     page.locator("#file-editor").fill("unsaved draft through background polls")
     file_executor = page.locator("#file-executor").input_value()
     terminal_executor = page.locator("#terminal-executor").input_value()
-    page.wait_for_timeout(4500)  # Includes several app and one executor poll.
+    advance_poll("global")
+    advance_poll("global")
     expect(page.locator("#file-editor")).to_have_value(
         "unsaved draft through background polls"
     )
@@ -169,7 +159,6 @@ def run_background_polling(harness: BrowserHarness) -> None:
     expect(page.locator("#file-executor")).to_have_value(file_executor)
     expect(page.locator("#terminal-executor")).to_have_value(terminal_executor)
 
-    page.remove_listener("request", on_request)
-    page.unroute("**/ui/assets/web.js*", speed_up_poll)
+    page.clock.resume()
     page.goto(f"{harness.base_url}/ui#overview", wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
