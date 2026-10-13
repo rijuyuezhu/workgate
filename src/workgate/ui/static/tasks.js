@@ -612,6 +612,7 @@ export function createTasksController({
       elements.tasksState.textContent = "Loading tasks";
     }
     const previousTask = selectedTaskId();
+    const previousSession = controllerState.sessionId;
     try {
       const payload = await request("/tasks");
       if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
@@ -636,7 +637,7 @@ export function createTasksController({
       if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
       if (controllerState.sessionId) {
         await refreshSessionAudit({ background });
-      } else if (!background) {
+      } else if (!background || previousSession) {
         resetSessionAuditWorkspace("No execution session selected");
       }
       return payload;
