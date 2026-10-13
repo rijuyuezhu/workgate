@@ -20,12 +20,17 @@ export function createTasksController({
     sessions: [],
     executorStates: new Map(),
     workspaceLoading: false,
+    workspaceRefreshing: false,
+    workspaceGeneration: 0,
+    selectionRevision: 0,
+    inventorySignature: "",
     sessionTerminating: false,
     task: null,
     todoItems: [],
     todoGeneration: 0,
     todoMutationBusy: false,
     todoDirty: false,
+    todoSignature: "",
     todoSequence: 0,
     todoLimits: {
       todos: 1000,
@@ -39,6 +44,8 @@ export function createTasksController({
     sessionAuditGeneration: 0,
     sessionAuditDetailGeneration: 0,
     sessionAuditLoading: false,
+    sessionAuditRefreshing: false,
+    sessionAuditListSignature: "",
   };
   let activeTab = initialSessionId ? "sessions" : "progress";
 
@@ -195,6 +202,7 @@ export function createTasksController({
   }
 
   function clearTaskResources(message = "Select a task") {
+    controllerState.todoSignature = "";
     controllerState.task = null;
     controllerState.todoItems = [];
     controllerState.todoDirty = false;
@@ -206,6 +214,11 @@ export function createTasksController({
   }
 
   function resetWorkspace() {
+    controllerState.selectionRevision += 1;
+    controllerState.workspaceGeneration += 1;
+    controllerState.inventorySignature = "";
+    controllerState.todoSignature = "";
+    controllerState.workspaceRefreshing = false;
     controllerState.taskId = "";
     controllerState.sessionId = "";
     controllerState.tasks = [];
@@ -429,6 +442,15 @@ export function createTasksController({
   }
 
   function applyInventory(payload) {
+    const signature = JSON.stringify([payload?.tasks, payload?.unattached_sessions]);
+    if (signature === controllerState.inventorySignature) return;
+    controllerState.inventorySignature = signature;
+    const listScroll = [elements.taskList.scrollTop, elements.sessionList.scrollTop];
+    const focused = (elements.taskList.contains(document.activeElement) || elements.sessionList.contains(document.activeElement))
+      ? document.activeElement.closest(".session-entry")
+      : null;
+    const focusedTask = focused?.dataset.taskId;
+    const focusedSession = focused?.dataset.sessionId;
     controllerState.tasks = Array.isArray(payload && payload.tasks)
       ? payload.tasks
       : [];
@@ -483,6 +505,14 @@ export function createTasksController({
 
     renderTaskList();
     renderSessions(controllerState.sessions);
+    [elements.taskList.scrollTop, elements.sessionList.scrollTop] = listScroll;
+    if (focused) {
+      const list = focusedTask || focused.classList.contains("unattached-session-entry")
+        ? elements.taskList : elements.sessionList;
+      Array.from(list.querySelectorAll(".session-entry"))
+        .find((item) => (focusedTask ? item.dataset.taskId === focusedTask : item.dataset.sessionId === focusedSession))
+        ?.focus({ preventScroll: true });
+    }
     if (controllerState.sessionId) showTab("sessions");
     updateTaskTabs();
     syncDeepLink();
@@ -503,6 +533,7 @@ export function createTasksController({
       !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
     ) return;
 
+    controllerState.selectionRevision += 1;
     controllerState.taskId = next;
     showTab("progress");
     const task = selectedTaskSummary();
@@ -536,6 +567,7 @@ export function createTasksController({
       !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)
     ) return;
 
+    controllerState.selectionRevision += 1;
     controllerState.taskId = "";
     controllerState.sessionId = next;
     showTab("sessions");
@@ -557,6 +589,7 @@ export function createTasksController({
       next === controllerState.sessionId ||
       controllerState.workspaceLoading
     ) return;
+    controllerState.selectionRevision += 1;
     controllerState.sessionId = next;
     showTab("sessions");
     controllerState.sessionAuditSelectedId = "";
@@ -568,17 +601,25 @@ export function createTasksController({
     await refreshSessionAudit();
   }
 
-  async function refreshWorkspace() {
-    controllerState.workspaceLoading = true;
-    syncControls();
-    elements.tasksState.textContent = "Loading tasks";
+  async function refreshWorkspace({ background = false } = {}) {
+    if (controllerState.workspaceLoading || (background && controllerState.workspaceRefreshing)) return null;
+    const revision = controllerState.selectionRevision;
+    const generation = ++controllerState.workspaceGeneration;
+    controllerState.workspaceRefreshing = true;
+    if (!background) {
+      controllerState.workspaceLoading = true;
+      syncControls();
+      elements.tasksState.textContent = "Loading tasks";
+    }
     const previousTask = selectedTaskId();
+    const previousSession = controllerState.sessionId;
     try {
       const payload = await request("/tasks");
+      if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
       applyInventory(payload);
       elements.tasksState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
-      if (!selectedTaskId()) {
+      if (!selectedTaskId() && (!background || previousTask)) {
         clearTaskResources(
           previousTask
             ? "Selected task is no longer retained"
@@ -590,23 +631,26 @@ export function createTasksController({
         !controllerState.todoDirty &&
         !controllerState.todoMutationBusy
       ) {
-        await refreshTodos({ force: true });
+        await refreshTodos({ force: !background, background });
       }
 
+      if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
       if (controllerState.sessionId) {
-        await refreshSessionAudit();
-      } else {
+        await refreshSessionAudit({ background });
+      } else if (!background || previousSession) {
         resetSessionAuditWorkspace("No execution session selected");
       }
       return payload;
     } catch (error) {
-      elements.tasksState.textContent =
-        error instanceof Error ? error.message : String(error);
+      if (!background) elements.tasksState.textContent = error instanceof Error ? error.message : String(error);
       if (error?.authenticationRequired) throw error;
       return null;
     } finally {
-      controllerState.workspaceLoading = false;
-      syncControls();
+      if (generation === controllerState.workspaceGeneration) {
+        controllerState.workspaceRefreshing = false;
+        controllerState.workspaceLoading = false;
+        syncControls();
+      }
     }
   }
 
@@ -800,7 +844,10 @@ export function createTasksController({
     return "/todos?" + new URLSearchParams({ task_id: selectedTaskId() }).toString();
   }
 
-  function applyTodoPayload(payload, requestedTask) {
+  function applyTodoPayload(payload, requestedTask, { background = false } = {}) {
+    const signature = JSON.stringify([payload.task, payload.todos, payload.limits]);
+    if (background && signature === controllerState.todoSignature) return;
+    controllerState.todoSignature = signature;
     controllerState.task = payload.task && typeof payload.task === "object" ? payload.task : null;
     controllerState.todoItems = Array.isArray(payload.todos)
       ? payload.todos.map((item) => ({
@@ -819,20 +866,22 @@ export function createTasksController({
     elements.todoState.textContent = "";
   }
 
-  async function refreshTodos({ force = false } = {}) {
+  async function refreshTodos({ force = false, background = false } = {}) {
     const requestedTask = selectedTaskId();
     if (!requestedTask || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
     const generation = ++controllerState.todoGeneration;
-    elements.todoState.textContent = "Loading…";
-    syncControls();
+    if (!background) {
+      elements.todoState.textContent = "Loading…";
+      syncControls();
+    }
     try {
       const payload = await request(todoQuery());
-      if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return null;
-      applyTodoPayload(payload, requestedTask);
+      if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId() || (!force && (controllerState.todoDirty || controllerState.todoMutationBusy))) return null;
+      applyTodoPayload(payload, requestedTask, { background });
       return payload;
     } catch (error) {
       if (generation !== controllerState.todoGeneration || requestedTask !== selectedTaskId()) return null;
-      elements.todoState.textContent = error instanceof Error ? error.message : String(error);
+      if (!background) elements.todoState.textContent = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
       if (generation === controllerState.todoGeneration) syncControls();
@@ -878,6 +927,8 @@ export function createTasksController({
   }
 
   function resetSessionAuditWorkspace(message = "Select a session") {
+    controllerState.sessionAuditListSignature = "";
+    controllerState.sessionAuditRefreshing = false;
     controllerState.sessionAuditEntries = [];
     controllerState.sessionAuditSelectedId = "";
     controllerState.sessionAuditLoading = false;
@@ -894,6 +945,13 @@ export function createTasksController({
   }
 
   function renderSessionAuditList() {
+    const signature = JSON.stringify([controllerState.sessionAuditEntries, controllerState.sessionAuditSelectedId]);
+    if (signature === controllerState.sessionAuditListSignature) return;
+    controllerState.sessionAuditListSignature = signature;
+    const scroll = elements.sessionAuditList.scrollTop;
+    const focusedId = elements.sessionAuditList.contains(document.activeElement)
+      ? document.activeElement.closest(".audit-entry")?.dataset.auditId
+      : "";
     elements.sessionAuditList.replaceChildren();
     if (!controllerState.sessionAuditEntries.length) {
       const empty = document.createElement("div");
@@ -915,6 +973,11 @@ export function createTasksController({
         }),
       );
     }
+    elements.sessionAuditList.scrollTop = scroll;
+    if (focusedId) {
+      Array.from(elements.sessionAuditList.querySelectorAll(".audit-entry"))
+        .find((button) => button.dataset.auditId === focusedId)?.focus({ preventScroll: true });
+    }
   }
 
   function renderSessionAuditDetailEntry(entry) {
@@ -923,14 +986,15 @@ export function createTasksController({
     renderAuditDetailInto(entry, elements.sessionAuditDetailBody);
   }
 
-  function applySessionAuditPayload(payload, requestedSession, previousSelection) {
-    controllerState.sessionAuditDetailGeneration += 1;
+  function applySessionAuditPayload(payload, background) {
     controllerState.sessionAuditEntries = Array.isArray(payload.entries)
       ? payload.entries.map((entry) => ({ ...entry }))
       : [];
-    controllerState.sessionAuditSelectedId = controllerState.sessionAuditEntries.some((entry) => entry.id === previousSelection)
-      ? previousSelection
+    const selectedId = controllerState.sessionAuditSelectedId;
+    controllerState.sessionAuditSelectedId = controllerState.sessionAuditEntries.some((entry) => entry.id === selectedId)
+      ? selectedId
       : text(controllerState.sessionAuditEntries[0] && controllerState.sessionAuditEntries[0].id, "");
+    if (selectedId !== controllerState.sessionAuditSelectedId) controllerState.sessionAuditDetailGeneration += 1;
     const total = Number.isInteger(payload.total_matched) ? payload.total_matched : controllerState.sessionAuditEntries.length;
     const shown = controllerState.sessionAuditEntries.length;
     elements.sessionAuditSummary.textContent = total > shown ? `${shown} of ${total} records` : `${shown} records`;
@@ -939,10 +1003,10 @@ export function createTasksController({
     const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
     if (selected && selected.id === controllerState.sessionAuditSelectedId) {
       renderSessionAuditDetailEntry(selected);
-    } else if (payload && payload.entry_error) {
+    } else if (payload && payload.entry_error && !background) {
       elements.sessionAuditDetailMeta.textContent = "Details unavailable";
       renderAuditDetailMessage(elements.sessionAuditDetailBody, text(payload.entry_error));
-    } else if (controllerState.sessionAuditSelectedId) {
+    } else if (controllerState.sessionAuditSelectedId && (!background || selectedId !== controllerState.sessionAuditSelectedId)) {
       void loadSessionAuditDetail(controllerState.sessionAuditSelectedId);
     }
   }
@@ -1004,34 +1068,39 @@ export function createTasksController({
     }
   }
 
-  async function refreshSessionAudit() {
-    if (controllerState.sessionAuditLoading || !controllerState.sessionId) return null;
+  async function refreshSessionAudit({ background = false } = {}) {
+    if (controllerState.sessionAuditLoading || !controllerState.sessionId || (background && controllerState.sessionAuditRefreshing)) return null;
     const generation = ++controllerState.sessionAuditGeneration;
     const requestedSession = controllerState.sessionId;
-    const previousSelection = controllerState.sessionAuditSelectedId;
-    controllerState.sessionAuditLoading = true;
-    syncControls();
-    elements.sessionAuditState.textContent = "Loading…";
+    controllerState.sessionAuditRefreshing = true;
+    if (!background) {
+      controllerState.sessionAuditLoading = true;
+      syncControls();
+      elements.sessionAuditState.textContent = "Loading…";
+    }
     try {
       const payload = await request(sessionAuditQueryPath());
       if (
         generation !== controllerState.sessionAuditGeneration ||
         requestedSession !== controllerState.sessionId
       ) return null;
-      applySessionAuditPayload(payload, requestedSession, previousSelection);
+      applySessionAuditPayload(payload, background);
       return payload;
     } catch (error) {
       if (
         generation !== controllerState.sessionAuditGeneration ||
         requestedSession !== controllerState.sessionId
       ) return null;
-      controllerState.sessionAuditEntries = [];
-      controllerState.sessionAuditSelectedId = "";
-      renderSessionAuditList();
+      if (!background) {
+        controllerState.sessionAuditEntries = [];
+        controllerState.sessionAuditSelectedId = "";
+        renderSessionAuditList();
+      }
       elements.sessionAuditState.textContent = error instanceof Error ? error.message : String(error);
       return null;
     } finally {
       if (generation === controllerState.sessionAuditGeneration) {
+        controllerState.sessionAuditRefreshing = false;
         controllerState.sessionAuditLoading = false;
         syncControls();
       }
@@ -1039,6 +1108,11 @@ export function createTasksController({
   }
 
   function invalidate() {
+    controllerState.selectionRevision += 1;
+    controllerState.workspaceGeneration += 1;
+    controllerState.sessionAuditGeneration += 1;
+    controllerState.sessionAuditRefreshing = false;
+    controllerState.workspaceRefreshing = false;
     controllerState.todoGeneration += 1;
     controllerState.todoDirty = false;
   }

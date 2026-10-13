@@ -683,8 +683,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     session_request = page.locator(
         "#session-audit-detail-body .audit-call-panel"
     ).first
-    expect(session_request.locator(".audit-tree-branch").first).to_be_visible()
-    session_request.get_by_role("button", name="Raw").click()
+    # Refresh of the same Audit record now preserves the chosen Raw mode.
+    expect(session_request.get_by_role("button", name="Raw")).to_have_attribute(
+        "aria-pressed", "true"
+    )
     expect(session_request.locator(".audit-detail-json")).to_be_visible()
     session_request.get_by_role("button", name="Tree").click()
     expect(session_request.locator(".audit-tree-branch").first).to_be_visible()

@@ -831,7 +831,11 @@ void (async () => {
     return `${size.toFixed(size >= 10 ? 1 : 2)} ${unit}`;
   }
 
+  let executorTargetsSignature = "";
   function renderExecutorTargets(targets) {
+    const signature = JSON.stringify(targets);
+    if (signature === executorTargetsSignature) return;
+    executorTargetsSignature = signature;
     elements.executorTargetTotal.textContent = String(targets.length);
     elements.executorTargetOnline.textContent = String(targets.filter((row) => row.status === "online").length);
     dashboard.renderExecutors(targets);
@@ -841,6 +845,7 @@ void (async () => {
   }
 
   function render(data) {
+    executorTargetsSignature = "";
     elements.version.textContent = text(data.version && data.version.version);
     elements.authMode.textContent = text(data.ui && data.ui.auth_mode, config.authMode);
     renderExecutorTargets(Array.isArray(data.executor_targets) ? data.executor_targets : []);
@@ -848,7 +853,7 @@ void (async () => {
     setConnection("Connected", "online");
   }
 
-  async function load({ background = false } = {}) {
+  async function load() {
     setConnection("Connecting", "idle");
     try {
       render(await request("/bootstrap"));
@@ -879,7 +884,7 @@ void (async () => {
         elements.todoState.textContent = "Plan unavailable";
         elements.sessionAuditState.textContent = "Session Audit unavailable";
       }
-      await audit.refresh({ background });
+      await audit.refresh();
     } catch (error) {
       if (error.authenticationRequired) {
         terminal.reset("");
@@ -1042,6 +1047,11 @@ void (async () => {
   void boot();
   window.setInterval(() => {
     terminal.ping();
-    if (config.authMode !== "oauth" || authenticated) void load({ background: true });
+    if (config.authMode !== "oauth" || authenticated) {
+      void tasks.refresh({ background: true }).catch((error) => {
+        if (error.authenticationRequired) void load();
+      });
+      void audit.refresh({ background: true });
+    }
   }, 30000);
 })();

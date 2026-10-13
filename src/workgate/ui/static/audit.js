@@ -16,8 +16,10 @@ export function createAuditController({
     auditGeneration: 0,
     auditDetailGeneration: 0,
     auditLoading: false,
+    auditRefreshing: false,
     auditSessionId: text(initialSessionId, ""),
     paused: false,
+    listSignature: "",
   };
 
   function auditScopeLabel() {
@@ -45,8 +47,10 @@ export function createAuditController({
 
   function resetAuditWorkspace() {
     controllerState.auditLoading = false;
+    controllerState.auditRefreshing = false;
     controllerState.auditEntries = [];
     controllerState.auditSelectedId = "";
+    controllerState.listSignature = "";
     controllerState.auditGeneration += 1;
     elements.auditList.replaceChildren();
     const empty = document.createElement("div");
@@ -67,6 +71,13 @@ export function createAuditController({
   }
 
   function renderAuditList() {
+    const signature = JSON.stringify([controllerState.auditEntries, controllerState.auditSelectedId]);
+    if (signature === controllerState.listSignature) return;
+    const scroll = elements.auditList.scrollTop;
+    const focusedId = elements.auditList.contains(document.activeElement)
+      ? document.activeElement.closest(".audit-entry")?.dataset.auditId
+      : "";
+    controllerState.listSignature = signature;
     elements.auditList.replaceChildren();
     if (!controllerState.auditEntries.length) {
       const empty = document.createElement("div");
@@ -86,6 +97,11 @@ export function createAuditController({
           onNavigate("detail");
         }),
       );
+    }
+    elements.auditList.scrollTop = scroll;
+    if (focusedId) {
+      Array.from(elements.auditList.querySelectorAll(".audit-entry"))
+        .find((button) => button.dataset.auditId === focusedId)?.focus({ preventScroll: true });
     }
   }
 
@@ -154,22 +170,25 @@ export function createAuditController({
   }
 
   async function refreshAudit({ background = false } = {}) {
-    if (controllerState.auditLoading || (background && controllerState.paused)) return null;
+    if (controllerState.auditLoading || (background && (controllerState.paused || controllerState.auditRefreshing))) return null;
     const generation = ++controllerState.auditGeneration;
-    const previousSelection = controllerState.auditSelectedId;
-    controllerState.auditLoading = true;
-    setAuditControls();
-    elements.auditState.textContent = `Loading ${auditScopeLabel()} Audit`;
+    controllerState.auditRefreshing = true;
+    if (!background) {
+      controllerState.auditLoading = true;
+      setAuditControls();
+      elements.auditState.textContent = `Loading ${auditScopeLabel()} Audit`;
+    }
     try {
       const payload = await request(auditQueryPath());
       if (generation !== controllerState.auditGeneration) return null;
-      controllerState.auditDetailGeneration += 1;
       controllerState.auditEntries = Array.isArray(payload.entries)
         ? payload.entries.map((entry) => ({ ...entry }))
         : [];
-      controllerState.auditSelectedId = controllerState.auditEntries.some((entry) => entry.id === previousSelection)
-        ? previousSelection
+      const selectedId = controllerState.auditSelectedId;
+      controllerState.auditSelectedId = controllerState.auditEntries.some((entry) => entry.id === selectedId)
+        ? selectedId
         : text(controllerState.auditEntries[0] && controllerState.auditEntries[0].id, "");
+      if (selectedId !== controllerState.auditSelectedId) controllerState.auditDetailGeneration += 1;
       const total = Number.isInteger(payload.total_matched)
         ? payload.total_matched
         : controllerState.auditEntries.length;
@@ -181,22 +200,25 @@ export function createAuditController({
         elements.auditDetailTitle.textContent = auditEntryTitle(selected);
         elements.auditDetailMeta.textContent = `${auditScopeLabel()} · ${auditTimestamp(selected.ts)}`;
         renderAuditDetailInto(selected, elements.auditDetailBody);
-      } else if (payload && payload.entry_error) {
+      } else if (payload && payload.entry_error && !background) {
         elements.auditDetailMeta.textContent = "Details unavailable";
         renderAuditDetailMessage(elements.auditDetailBody, text(payload.entry_error));
-      } else if (controllerState.auditSelectedId) {
+      } else if (controllerState.auditSelectedId && (!background || selectedId !== controllerState.auditSelectedId)) {
         void loadAuditDetail(controllerState.auditSelectedId);
       }
       return payload;
     } catch (error) {
       if (generation !== controllerState.auditGeneration) return null;
-      controllerState.auditEntries = [];
-      controllerState.auditSelectedId = "";
-      renderAuditList();
+      if (!background) {
+        controllerState.auditEntries = [];
+        controllerState.auditSelectedId = "";
+        renderAuditList();
+      }
       elements.auditState.textContent = error instanceof Error ? error.message : String(error);
       return null;
     } finally {
       if (generation === controllerState.auditGeneration) {
+        controllerState.auditRefreshing = false;
         controllerState.auditLoading = false;
         setAuditControls();
       }
@@ -206,6 +228,7 @@ export function createAuditController({
   function invalidate() {
     controllerState.auditGeneration += 1;
     controllerState.auditDetailGeneration += 1;
+    controllerState.auditRefreshing = false;
   }
 
   function bind() {
