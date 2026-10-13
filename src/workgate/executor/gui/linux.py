@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -912,6 +914,52 @@ async def _capture_x11(
     return "x11-composite"
 
 
+# The Linux accessibility model is shared (AT-SPI). Only native desktop
+# capture, window activation and raw input vary with the session/compositor.
+@dataclass(frozen=True)
+class _DesktopOperations:
+    capture: Callable[
+        [Path, dict[str, Any], list[dict[str, Any]], dict[str, str]],
+        Awaitable[str],
+    ]
+    activate: Callable[
+        [dict[str, Any], dict[str, str], Any | None], Awaitable[None]
+    ]
+    input: Callable[
+        [dict[str, Any], Any | None, dict[str, Any], dict[str, str]],
+        Awaitable[dict[str, Any]],
+    ]
+    capture_available: bool
+    capture_requires_focus: bool
+
+
+async def _capture_x11_desktop(
+    path: Path,
+    record: dict[str, Any],
+    _monitors: list[dict[str, Any]],
+    env: dict[str, str],
+) -> str:
+    return await _capture_x11(path, record, env)
+
+
+async def _capture_niri_desktop(
+    path: Path,
+    record: dict[str, Any],
+    _monitors: list[dict[str, Any]],
+    env: dict[str, str],
+) -> str:
+    return await _capture_niri_window(path, record, env)
+
+
+async def _capture_portal_desktop(
+    path: Path,
+    record: dict[str, Any],
+    monitors: list[dict[str, Any]],
+    env: dict[str, str],
+) -> str:
+    return await _capture_wayland(path, record["bounds"], monitors, env)
+
+
 class LinuxGuiBackend:
     name = "linux-atspi"
     _ENV_REFRESH_S = 30.0
@@ -969,6 +1017,38 @@ class LinuxGuiBackend:
         if portal is not None:
             await portal.close()
 
+    def _desktop_operations(self, env: dict[str, str]) -> _DesktopOperations:
+        """Compose desktop-specific operations without changing shared AT-SPI behavior."""
+        session = _session_type(env)
+        if session == "x11":
+            return _DesktopOperations(
+                _capture_x11_desktop,
+                self._activate_atspi,
+                self._perform_x11,
+                capture_available=True,
+                capture_requires_focus=False,
+            )
+        if session == "wayland":
+            if _is_niri(env):
+                return _DesktopOperations(
+                    _capture_niri_desktop,
+                    self._activate_niri,
+                    self._perform_wayland,
+                    capture_available=bool(env.get("NIRI_SOCKET"))
+                    and shutil.which("niri") is not None,
+                    capture_requires_focus=False,
+                )
+            return _DesktopOperations(
+                _capture_portal_desktop,
+                self._activate_atspi,
+                self._perform_wayland,
+                capture_available=False,
+                capture_requires_focus=True,
+            )
+        raise GuiUnavailableError(
+            "No graphical Linux session was found; DISPLAY/WAYLAND_DISPLAY are unavailable"
+        )
+
     async def list_windows(self) -> dict[str, Any]:
         env = await self._ensure_env()
         session_type = _session_type(env)
@@ -976,6 +1056,7 @@ class LinuxGuiBackend:
             raise GuiUnavailableError(
                 "No graphical Linux session was found; DISPLAY/WAYLAND_DISPLAY are unavailable"
             )
+        desktop = self._desktop_operations(env)
         data = await asyncio.to_thread(self._list_data, env)
         devices = (
             await portal_available_devices(env)
@@ -990,21 +1071,14 @@ class LinuxGuiBackend:
             "monitors": data.get("monitors", []),
             "capabilities": {
                 "accessibility": "AT-SPI",
-                # Wayland capture depends on a successful portal permission grant.
-                "window_capture": session_type == "x11"
-                or (
-                    _is_niri(env)
-                    and bool(env.get("NIRI_SOCKET"))
-                    and shutil.which("niri") is not None
-                ),
+                "window_capture": desktop.capture_available,
                 "coordinate_input": bool(devices & 2),
                 "keyboard_input": bool(devices & 1),
                 "semantic_actions": True,
                 "wayland_input": "xdg-desktop-portal"
                 if session_type == "wayland" and devices
                 else None,
-                "capture_requires_focus": session_type == "wayland"
-                and not _is_niri(env),
+                "capture_requires_focus": desktop.capture_requires_focus,
             },
         }
 
@@ -1059,10 +1133,11 @@ class LinuxGuiBackend:
         capture_backend = None
         session_type = _session_type(env)
         if screenshot_path is not None:
+            desktop = self._desktop_operations(env)
             list_data = await asyncio.to_thread(self._list_data, env)
             monitors = list_data.get("monitors", [])
             if session_type == "wayland":
-                if not _is_niri(env):
+                if desktop.capture_requires_focus:
                     await self._focus_window(record, env)
                 refreshed = await asyncio.to_thread(
                     self._helper,
@@ -1083,14 +1158,9 @@ class LinuxGuiBackend:
                         "Target window moved or resized while preparing the Wayland capture; "
                         "call gui_state again"
                     )
-                if _is_niri(env):
-                    capture_backend = await _capture_niri_window(
-                        screenshot_path, record, env
-                    )
-                else:
-                    capture_backend = await _capture_wayland(
-                        screenshot_path, record["bounds"], monitors, env
-                    )
+                capture_backend = await desktop.capture(
+                    screenshot_path, record, monitors, env
+                )
                 post_capture = await asyncio.to_thread(
                     self._helper,
                     {
@@ -1111,10 +1181,8 @@ class LinuxGuiBackend:
                         "call gui_state again"
                     )
             elif session_type == "x11":
-                capture_backend = await _capture_x11(
-                    screenshot_path,
-                    record,
-                    env,
+                capture_backend = await desktop.capture(
+                    screenshot_path, record, monitors, env
                 )
                 post_capture = await asyncio.to_thread(
                     self._helper,
@@ -1172,63 +1240,67 @@ class LinuxGuiBackend:
         *,
         deadline: Any | None = None,
     ) -> None:
-        if (
-            _session_type(env) == "wayland"
-            and env.get("XDG_CURRENT_DESKTOP", "").lower() == "niri"
+        await self._desktop_operations(env).activate(window, env, deadline)
+
+    async def _activate_niri(
+        self, window: dict[str, Any], env: dict[str, str], deadline: Any | None
+    ) -> None:
+        if deadline is not None:
+            _assert_action_fresh({"_observation_deadline": deadline})
+        niri_id = await asyncio.to_thread(_niri_window_id, window, env)
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                [
+                    "niri",
+                    "msg",
+                    "action",
+                    "focus-window",
+                    "--id",
+                    str(niri_id),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+                env=env,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GuiUnavailableError(
+                "Niri could not activate the selected window"
+            ) from exc
+        try:
+            focused = await asyncio.to_thread(
+                subprocess.run,
+                ["niri", "msg", "-j", "focused-window"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+                env=env,
+            )
+            active = json.loads(focused.stdout)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise GuiUnavailableError(
+                "Cannot verify Niri window activation"
+            ) from exc
+        if not isinstance(active, dict) or any(
+            (
+                active.get(key) != value
+                for key, value in (
+                    ("id", niri_id),
+                    ("pid", window.get("pid")),
+                    ("title", window.get("title")),
+                )
+            )
         ):
-            if deadline is not None:
-                _assert_action_fresh({"_observation_deadline": deadline})
-            niri_id = await asyncio.to_thread(_niri_window_id, window, env)
-            try:
-                await asyncio.to_thread(
-                    subprocess.run,
-                    [
-                        "niri",
-                        "msg",
-                        "action",
-                        "focus-window",
-                        "--id",
-                        str(niri_id),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=True,
-                    env=env,
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise GuiUnavailableError(
-                    "Niri could not activate the selected window"
-                ) from exc
-            try:
-                focused = await asyncio.to_thread(
-                    subprocess.run,
-                    ["niri", "msg", "-j", "focused-window"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=True,
-                    env=env,
-                )
-                active = json.loads(focused.stdout)
-            except (OSError, subprocess.SubprocessError, ValueError) as exc:
-                raise GuiUnavailableError(
-                    "Cannot verify Niri window activation"
-                ) from exc
-            if not isinstance(active, dict) or any(
-                (
-                    active.get(key) != value
-                    for key, value in (
-                        ("id", niri_id),
-                        ("pid", window.get("pid")),
-                        ("title", window.get("title")),
-                    )
-                )
-            ):
-                raise GuiStaleStateError(
-                    "Niri focused a different window; refresh gui_state"
-                )
-            return
+            raise GuiStaleStateError(
+                "Niri focused a different window; refresh gui_state"
+            )
+
+    async def _activate_atspi(
+        self, window: dict[str, Any], env: dict[str, str], deadline: Any | None
+    ) -> None:
         focus_action: dict[str, Any] = {"type": "focus"}
         if deadline is not None:
             focus_action["_observation_deadline"] = deadline
@@ -1371,13 +1443,8 @@ class LinuxGuiBackend:
             await self._focus_window(window, env, deadline=deadline)
 
         _assert_action_fresh(action)
-        session_type = _session_type(env)
-        if session_type == "wayland":
-            return await self._perform_wayland(window, locator, action, env)
-        if session_type == "x11":
-            return await self._perform_x11(window, locator, action, env)
-        raise GuiUnavailableError(
-            "No active X11 or Wayland desktop session is available"
+        return await self._desktop_operations(env).input(
+            window, locator, action, env
         )
 
     def _screen_point(
