@@ -432,7 +432,12 @@ def _macos_process_is_zombie(pid: int) -> bool:
     size = ctypes.sizeof(info)
     returned = int(
         library.proc_pidinfo(
-            pid, PROC_PIDT_SHORTBSDINFO, 0, ctypes.byref(info), size
+            # XNU requires a nonzero arg to include zombie processes.
+            pid,
+            PROC_PIDT_SHORTBSDINFO,
+            1,
+            ctypes.byref(info),
+            size,
         )
     )
     return (

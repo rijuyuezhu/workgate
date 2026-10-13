@@ -1602,7 +1602,7 @@ def test_macos_process_is_zombie_requires_full_matching_native_info(
     monkeypatch.setattr(bounded_runner, "_macos_libproc", FakeLibproc)
 
     assert bounded_runner._macos_process_is_zombie(11) is expected
-    assert calls == [(11, bounded_runner.PROC_PIDT_SHORTBSDINFO, 0, 64)]
+    assert calls == [(11, bounded_runner.PROC_PIDT_SHORTBSDINFO, 1, 64)]
 
 
 def test_macos_process_is_zombie_fails_closed_without_libproc(monkeypatch):
