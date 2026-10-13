@@ -1262,25 +1262,42 @@ def test_macos_launchd_reaps_setsid_escape(tmp_path):
         pytest.fail("setsid descendant escaped launchd cleanup")
 
 
-@pytest.mark.skipif(
-    sys.platform != "darwin", reason="requires macOS launchd containment"
-)
-def test_macos_launchd_ignores_unrelated_zombie():
+@contextlib.contextmanager
+def _unrelated_zombie():
+    """Keep a zombie alive until the test finishes, then reap it."""
     holder_code = (
-        "import subprocess,sys,time; "
+        "import subprocess,sys; "
         "child=subprocess.Popen([sys.executable,'-c','pass']); "
         "print(child.pid, flush=True); "
-        "time.sleep(30)"
+        "sys.stdin.readline(); child.wait()"
     )
     holder = subprocess.Popen(
         [sys.executable, "-c", holder_code],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     try:
         assert holder.stdout is not None
-        zombie_pid = int(holder.stdout.readline())
+        yield int(holder.stdout.readline())
+    finally:
+        assert holder.stdin is not None
+        with contextlib.suppress(BrokenPipeError, OSError):
+            holder.stdin.write("\n")
+            holder.stdin.flush()
+        try:
+            holder.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.communicate(timeout=2)
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires macOS launchd containment"
+)
+def test_macos_launchd_ignores_unrelated_zombie():
+    with _unrelated_zombie() as zombie_pid:
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             if bounded_runner._macos_zombie_states({zombie_pid}) == {
@@ -1308,13 +1325,37 @@ def test_macos_launchd_ignores_unrelated_zombie():
         )
 
         assert result.returncode == 0, result.stderr
-    finally:
-        holder.terminate()
-        try:
-            holder.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            holder.kill()
-            holder.wait(timeout=2)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux procfs")
+def test_linux_bounded_command_ignores_unrelated_zombie():
+    with _unrelated_zombie() as zombie_pid:
+        status_path = bounded_runner.PROCFS_ROOT / str(zombie_pid) / "status"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if "State:\tZ" in status_path.read_text(encoding="ascii"):
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("helper process did not leave a zombie child")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "workgate.executor.bounded_runner",
+                "--shell",
+                "/bin/sh",
+                "--command",
+                "true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
 
 
 def test_bounded_runner_argparse_handler_exits_with_result(monkeypatch):
