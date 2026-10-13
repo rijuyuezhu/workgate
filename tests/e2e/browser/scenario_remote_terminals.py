@@ -6,7 +6,7 @@ from tests.e2e.browser.harness import BrowserHarness
 from tests.e2e.browser.scenario_terminals import (
     _send_terminal,
     _start_terminal,
-    _wait_terminal_output,
+    _wait_terminal_stream_marker,
 )
 
 
@@ -98,12 +98,8 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
         second_page.locator("#terminal-input-form").get_by_role(
             "button", name="Send"
         ).click()
-        _wait_terminal_output(
-            harness,
-            remote_id,
-            remote_shell,
-            "dual-client",
-            websocket_event_start=received_start,
+        _wait_terminal_stream_marker(
+            harness, "dual-client", websocket_event_start=received_start
         )
     finally:
         second_page.close()

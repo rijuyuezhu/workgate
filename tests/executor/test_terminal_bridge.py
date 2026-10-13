@@ -374,9 +374,11 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         await read_until(ready_marker, second_id)
         await write_terminal_bridge_execute(
             second_id,
-            base64.b64encode(b"printf 'MULTI_CLIENT_OK\\n'\r").decode("ascii"),
+            base64.b64encode(b"printf 'MULTI-%s\\n' CLIENT_OK\r").decode(
+                "ascii"
+            ),
         )
-        await read_until(b"MULTI_CLIENT_OK", second_id)
+        await read_until(b"MULTI-CLIENT_OK", second_id)
         await close_terminal_bridge_execute(second_id)
         second_id = ""
         assert (
