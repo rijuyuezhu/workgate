@@ -1,4 +1,5 @@
 export function createAuditView({ text, formatFileBytes }) {
+  const renderedDetails = new WeakMap();
   function auditTimestamp(value) {
     const date = new Date(Number(value || 0) * 1000);
     return Number.isNaN(date.getTime()) ? "Unknown time" : date.toLocaleString();
@@ -189,7 +190,7 @@ export function createAuditView({ text, formatFileBytes }) {
     return { source: JSON.stringify(cleaned, null, 2), language: "json" };
   }
 
-  function renderAuditTree(value, depth = 0) {
+  function renderAuditTree(value, depth = 0, path = []) {
     const nested = value !== null && typeof value === "object";
     if (!nested) {
       const literal = document.createElement("span");
@@ -200,6 +201,7 @@ export function createAuditView({ text, formatFileBytes }) {
     const entries = Object.entries(value);
     const branch = document.createElement("details");
     branch.className = "audit-tree-branch";
+    branch.dataset.path = JSON.stringify(path);
     branch.open = depth === 0;
     const summary = document.createElement("summary");
     summary.textContent = Array.isArray(value) ? `Array (${entries.length})` : `Object (${entries.length})`;
@@ -212,14 +214,14 @@ export function createAuditView({ text, formatFileBytes }) {
       const label = document.createElement("span");
       label.className = "audit-tree-key";
       label.textContent = `${key}:`;
-      row.append(label, renderAuditTree(child, depth + 1));
+      row.append(label, renderAuditTree(child, depth + 1, [...path, key]));
       children.append(row);
     }
     branch.append(children);
     return branch;
   }
 
-  function renderAuditValue(target, value, emptyLabel, heading) {
+  function renderAuditValue(target, value, emptyLabel, heading, previous = null) {
     const { source, language } = auditValueSource(value, emptyLabel);
     const toolbar = document.createElement("div");
     toolbar.className = "audit-value-toolbar";
@@ -241,8 +243,19 @@ export function createAuditView({ text, formatFileBytes }) {
     if (typeof value === "string") parsed = parseAuditJsonString(value);
     parsed = cleanAuditValue(unwrapAuditToolEnvelope(parsed));
     const tree = parsed !== null && typeof parsed === "object";
+    const treeNode = tree ? renderAuditTree(parsed) : null;
+    if (treeNode && previous) {
+      const opened = new Map(
+        Array.from(previous.treeNode?.querySelectorAll("details.audit-tree-branch") || [],
+          (node) => [node.dataset.path, node.open]),
+      );
+      for (const node of treeNode.querySelectorAll("details.audit-tree-branch")) {
+        if (opened.has(node.dataset.path)) node.open = opened.get(node.dataset.path);
+      }
+      if (opened.has("[]")) treeNode.open = opened.get("[]");
+    }
     function show(mode) {
-      display.replaceChildren(mode === "tree" ? renderAuditTree(parsed) : pre);
+      display.replaceChildren(mode === "tree" && treeNode ? treeNode : pre);
       treeButton.setAttribute("aria-pressed", String(mode === "tree"));
       rawButton.setAttribute("aria-pressed", String(mode === "raw"));
     }
@@ -259,10 +272,17 @@ export function createAuditView({ text, formatFileBytes }) {
     });
     toolbar.setAttribute("aria-label", `${heading} view controls`);
     target.append(toolbar, display);
-    show(tree ? "tree" : "raw");
+    show(previous?.mode === "raw" || !tree ? "raw" : "tree");
+    return {
+      treeNode,
+      get mode() { return treeButton.getAttribute("aria-pressed") === "true" ? "tree" : "raw"; },
+    };
   }
 
   function renderAuditDetailMessage(target, message) {
+    renderedDetails.delete(target);
+    delete target.dataset.auditEntryId;
+    delete target.dataset.expandedPane;
     const empty = document.createElement("div");
     empty.className = "empty-state audit-detail-message";
     empty.textContent = message;
@@ -287,11 +307,24 @@ export function createAuditView({ text, formatFileBytes }) {
 
   function renderAuditDetailInto(entry, target) {
     const entryId = text(entry.id, "");
+    const signature = JSON.stringify([auditInput(entry), auditOutput(entry), entry.image_preview, entry.image_preview_error]);
+    const previous = renderedDetails.get(target);
+    if (previous?.id === entryId && previous.signature === signature) return;
+    const sameEntry = previous?.id === entryId;
+    const previousPanels = sameEntry ? previous.panels : null;
+    const previousScroll = previousPanels?.map(({ body }) => [body.scrollTop, body.scrollLeft]);
+    const active = document.activeElement;
+    const activePanel = previousPanels?.findIndex(({ panel }) => panel.contains(active));
+    const activeControl = activePanel >= 0 ? (
+      active.classList.contains("audit-call-panel-heading") ? "heading" :
+      active.classList.contains("audit-call-panel-body") ? "body" :
+      active.textContent === "Tree" ? "tree" : active.textContent === "Raw" ? "raw" : ""
+    ) : "";
     const expandedPane = target.dataset.auditEntryId === entryId
       ? target.dataset.expandedPane
       : "split";
     const requestPanel = auditCallPanel("Call request");
-    renderAuditValue(requestPanel.body, auditInput(entry), "No input recorded", "Call request");
+    const requestView = renderAuditValue(requestPanel.body, auditInput(entry), "No input recorded", "Call request", previousPanels?.[0].view);
 
     const resultPanel = auditCallPanel("Call result");
     const preview = isAuditRecord(entry.image_preview) ? entry.image_preview : null;
@@ -311,7 +344,7 @@ export function createAuditView({ text, formatFileBytes }) {
       warning.textContent = `Image preview unavailable: ${entry.image_preview_error}`;
       resultPanel.body.append(warning);
     }
-    renderAuditValue(resultPanel.body, auditOutput(entry), "No output recorded", "Call result");
+    const resultView = renderAuditValue(resultPanel.body, auditOutput(entry), "No output recorded", "Call result", previousPanels?.[1].view);
     target.replaceChildren(requestPanel.panel, resultPanel.panel);
     target.dataset.auditEntryId = entryId;
 
@@ -335,6 +368,21 @@ export function createAuditView({ text, formatFileBytes }) {
       });
     }
     setExpandedPane(expandedPane === "request" || expandedPane === "result" ? expandedPane : "split");
+    const panels = [{ ...requestPanel, view: requestView }, { ...resultPanel, view: resultView }];
+    renderedDetails.set(target, { id: entryId, signature, panels });
+    if (previousScroll) {
+      panels.forEach(({ body }, index) => {
+        [body.scrollTop, body.scrollLeft] = previousScroll[index];
+      });
+      if (activePanel >= 0) {
+        const { body, heading } = panels[activePanel];
+        const control = activeControl === "heading" ? heading :
+          activeControl === "body" ? body :
+          Array.from(body.querySelectorAll(".audit-value-toolbar button"))
+            .find((button) => button.textContent === (activeControl === "tree" ? "Tree" : "Raw"));
+        control?.focus({ preventScroll: true });
+      }
+    }
   }
 
 
