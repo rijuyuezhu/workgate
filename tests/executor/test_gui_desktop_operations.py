@@ -159,3 +159,66 @@ async def test_raw_input_delegates_to_chosen_implementation(
     result = await backend.perform_action(WINDOW, None, action)
     assert result == {"path": "native"}
     assert calls == [(WINDOW, None, action, env)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("session", "expected_method", "focus_count"),
+    [
+        ("x11", "x11-composite", 0),
+        ("portal", "xdg-desktop-portal", 1),
+        ("niri", "niri-ipc", 0),
+    ],
+)
+async def test_snapshot_preserves_focus_and_capture_semantics(
+    monkeypatch,
+    tmp_path,
+    session,
+    expected_method,
+    focus_count,
+):
+    env = {"XDG_SESSION_TYPE": "x11" if session == "x11" else "wayland"}
+    if session == "niri":
+        env["XDG_CURRENT_DESKTOP"] = "niri"
+
+    backend = linux.LinuxGuiBackend()
+    backend._env = env
+    focuses = []
+    captures = []
+
+    def helper(_payload, _env):
+        return {"window": dict(WINDOW), "elements": [], "locators": {}}
+
+    async def focus(*_args, **_kwargs):
+        focuses.append(True)
+
+    async def capture(*args):
+        captures.append(args)
+        return expected_method
+
+    async def device_types(_env):
+        return 0
+
+    capture_fn = {
+        "x11": "_capture_x11",
+        "portal": "_capture_wayland",
+        "niri": "_capture_niri_window",
+    }[session]
+    monkeypatch.setattr(linux, capture_fn, capture)
+    monkeypatch.setattr(linux, "portal_available_devices", device_types)
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(backend, "_list_data", lambda _env: {"monitors": []})
+    monkeypatch.setattr(backend, "_focus_window", focus)
+    snapshot = await backend.snapshot(
+        WINDOW["id"],
+        screenshot_path=tmp_path / "image.png",
+        include_elements=False,
+        max_elements=1,
+        max_depth=1,
+    )
+    assert snapshot.capabilities["capture_backend"] == expected_method
+    assert len(focuses) == focus_count
+    assert len(captures) == 1
+    assert captures[0][1] == (
+        WINDOW["bounds"] if session == "portal" else WINDOW
+    )
