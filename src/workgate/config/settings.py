@@ -272,6 +272,10 @@ class Settings(BaseSettings):
     executor_pairing_ttl_s: int = Field(default=600, ge=60, le=24 * 3600)
     """Lifetime in seconds for one process-local executor pairing attempt."""
 
+    # Native desktop automation.
+    gui_niri_native_keyboard_enabled: bool = False
+    """Allow trusted local Niri Wayland-socket keyboard input using optional wtype (no Portal prompt)."""
+
     # Agent capability bridge.
     agent_bridge_enabled: bool = True
     """Enable agent capability bridge tools."""

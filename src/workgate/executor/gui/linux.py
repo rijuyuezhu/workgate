@@ -28,6 +28,7 @@ from .base import (
 )
 from .linux_portal import (
     PortalDesktop,
+    _key_parts,
     portal_available_devices,
     portal_screenshot,
 )
@@ -111,6 +112,141 @@ def _niri_window_id(window: dict[str, Any], env: dict[str, str]) -> int:
             "Cannot uniquely match the observed window in Niri; refresh gui_state"
         )
     return int(matches[0]["id"])
+
+
+async def _assert_niri_window_focused(
+    window: dict[str, Any], env: dict[str, str], niri_id: int | None = None
+) -> None:
+    target_id = (
+        niri_id
+        if niri_id is not None
+        else await asyncio.to_thread(_niri_window_id, window, env)
+    )
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["niri", "msg", "-j", "focused-window"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+            env=env,
+        )
+        active = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise GuiUnavailableError("Cannot verify Niri focused window") from exc
+    if not isinstance(active, dict) or any(
+        active.get(key) != expected
+        for key, expected in (
+            ("id", target_id),
+            ("pid", window.get("pid")),
+            ("title", window.get("title")),
+        )
+    ):
+        raise GuiStaleStateError(
+            "Niri focused a different window; refresh gui_state"
+        )
+
+
+_NIRI_MODIFIERS = {
+    "CTRL": "ctrl",
+    "CONTROL": "ctrl",
+    "SHIFT": "shift",
+    "ALT": "alt",
+    "OPTION": "alt",
+    "SUPER": "logo",
+    "META": "logo",
+    "WIN": "logo",
+    "CMD": "logo",
+    "COMMAND": "logo",
+}
+_NIRI_KEYS = {
+    "ENTER": "Return",
+    "RETURN": "Return",
+    "TAB": "Tab",
+    "ESC": "Escape",
+    "ESCAPE": "Escape",
+    "BACKSPACE": "BackSpace",
+    "DELETE": "Delete",
+    "SPACE": "space",
+    "HOME": "Home",
+    "END": "End",
+    "LEFT": "Left",
+    "RIGHT": "Right",
+    "UP": "Up",
+    "DOWN": "Down",
+    "PAGEUP": "Page_Up",
+    "PAGEDOWN": "Page_Down",
+}
+
+
+def _niri_wtype_chord(keys: Any) -> list[str]:
+    parts = _key_parts(keys)
+    modifiers: list[str] = []
+    ordinary: list[str] = []
+    for part in parts:
+        modifier = _NIRI_MODIFIERS.get(part.upper())
+        if modifier is not None:
+            if modifier in modifiers:
+                raise ValueError("Duplicate keyboard modifier")
+            modifiers.append(modifier)
+        else:
+            key = _NIRI_KEYS.get(
+                part.upper(), part.lower() if len(part) == 1 else ""
+            )
+            if not key:
+                raise ValueError(f"Unsupported Niri keyboard key: {part}")
+            ordinary.append(key)
+    if len(ordinary) != 1:
+        raise ValueError(
+            "Niri key action requires exactly one non-modifier key"
+        )
+    return [
+        *(part for modifier in modifiers for part in ("-M", modifier)),
+        "-k",
+        ordinary[0],
+        *(
+            part
+            for modifier in reversed(modifiers)
+            for part in ("-m", modifier)
+        ),
+    ]
+
+
+async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
+    binary = shutil.which("wtype")
+    if binary is None:
+        raise GuiUnavailableError("Niri native keyboard requires wtype")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except OSError as exc:
+        raise GuiUnavailableError(
+            "Cannot start Niri virtual keyboard client"
+        ) from exc
+    try:
+        _stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=15
+        )
+    except BaseException as exc:
+        # Closing the process closes its Wayland virtual-keyboard resource,
+        # releasing any held modifiers even on timeout/cancellation.
+        if process.returncode is None:
+            process.kill()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(asyncio.shield(process.wait()), timeout=3)
+        if isinstance(exc, TimeoutError):
+            raise GuiUnavailableError(
+                "Niri virtual keyboard timed out"
+            ) from exc
+        raise
+    if process.returncode != 0:
+        raise GuiUnavailableError("Niri virtual keyboard input failed")
 
 
 def _is_niri(env: dict[str, str]) -> bool:
@@ -972,7 +1108,8 @@ class LinuxGuiBackend:
     name = "linux-atspi"
     _ENV_REFRESH_S = 30.0
 
-    def __init__(self) -> None:
+    def __init__(self, *, niri_native_keyboard_enabled: bool = False) -> None:
+        self._niri_native_keyboard_enabled = niri_native_keyboard_enabled
         self._env: dict[str, str] | None = None
         self._env_refreshed_at = 0.0
         self._portal: PortalDesktop | None = None
@@ -1025,6 +1162,55 @@ class LinuxGuiBackend:
         if portal is not None:
             await portal.close()
 
+    async def _niri_input_devices(self, env: dict[str, str]) -> int:
+        # Pointer remains Portal-owned; keyboard requires explicit local trust.
+        pointer = (await portal_available_devices(env)) & 2
+        keyboard = int(
+            bool(env.get("WAYLAND_DISPLAY"))
+            and bool(env.get("NIRI_SOCKET"))
+            and shutil.which("wtype") is not None
+        )
+        return pointer | keyboard
+
+    async def _perform_niri_input(
+        self,
+        window: dict[str, Any],
+        locator: Any | None,
+        action: dict[str, Any],
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        kind = action["type"]
+        if kind not in {"type", "key"}:
+            return await self._perform_wayland(window, locator, action, env)
+        if not (await self._niri_input_devices(env)) & 1:
+            raise GuiUnavailableError(
+                "Niri native keyboard requires wtype and a connected Wayland session"
+            )
+        if env != self._env:
+            raise GuiStaleStateError(
+                "Linux desktop session changed; refresh gui_state"
+            )
+        _assert_action_fresh(action)
+        await _assert_niri_window_focused(window, env)
+        text = str(action.get("text", ""))
+        if kind == "type":
+            if len(text) > 512:
+                raise ValueError(
+                    "Niri native keyboard text is limited to 512 characters per action"
+                )
+            argv = ["-d", "18", "--", text]
+        else:
+            argv = _niri_wtype_chord(action.get("keys"))
+        await _run_niri_wtype(argv, env)
+        if kind == "type":
+            # Allow the focused application to consume queued key releases.
+            await asyncio.sleep(0.12)
+        _assert_action_fresh(action)
+        await _assert_niri_window_focused(window, env)
+        if kind == "type":
+            return {"characters": len(text), "method": "niri-virtual-keyboard"}
+        return {"keys": action.get("keys"), "method": "niri-virtual-keyboard"}
+
     def _desktop_operations(self, env: dict[str, str]) -> _DesktopOperations:
         """Compose desktop-specific operations without changing shared AT-SPI behavior."""
         session = _session_type(env)
@@ -1040,12 +1226,19 @@ class LinuxGuiBackend:
             )
         if session == "wayland":
             if _is_niri(env):
+                native_keyboard = self._niri_native_keyboard_enabled
                 return _DesktopOperations(
                     _capture_niri_desktop,
                     self._activate_niri,
-                    self._perform_wayland,
-                    input_devices=portal_available_devices,
-                    input_transport="xdg-desktop-portal",
+                    self._perform_niri_input
+                    if native_keyboard
+                    else self._perform_wayland,
+                    input_devices=self._niri_input_devices
+                    if native_keyboard
+                    else portal_available_devices,
+                    input_transport="niri-virtual-keyboard"
+                    if native_keyboard
+                    else "xdg-desktop-portal",
                     capture_available=bool(env.get("NIRI_SOCKET"))
                     and shutil.which("niri") is not None,
                     capture_requires_focus=False,
@@ -1277,34 +1470,7 @@ class LinuxGuiBackend:
             raise GuiUnavailableError(
                 "Niri could not activate the selected window"
             ) from exc
-        try:
-            focused = await asyncio.to_thread(
-                subprocess.run,
-                ["niri", "msg", "-j", "focused-window"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=True,
-                env=env,
-            )
-            active = json.loads(focused.stdout)
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            raise GuiUnavailableError(
-                "Cannot verify Niri window activation"
-            ) from exc
-        if not isinstance(active, dict) or any(
-            (
-                active.get(key) != value
-                for key, value in (
-                    ("id", niri_id),
-                    ("pid", window.get("pid")),
-                    ("title", window.get("title")),
-                )
-            )
-        ):
-            raise GuiStaleStateError(
-                "Niri focused a different window; refresh gui_state"
-            )
+        await _assert_niri_window_focused(window, env, niri_id)
 
     async def _activate_atspi(
         self, window: dict[str, Any], env: dict[str, str], deadline: Any | None
@@ -1420,6 +1586,10 @@ class LinuxGuiBackend:
             if _session_type(env) == "wayland" and not (
                 (await self._desktop_operations(env).input_devices(env)) & 1
             ):
+                if _is_niri(env) and self._niri_native_keyboard_enabled:
+                    raise GuiUnavailableError(
+                        "Niri native keyboard requires wtype and a connected Wayland session"
+                    )
                 raise GuiUnavailableError(
                     "Wayland RemoteDesktop portal does not provide keyboard input"
                 )

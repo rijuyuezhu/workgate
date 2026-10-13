@@ -14,7 +14,9 @@ from ..tool_session.store import ToolSessionStore
 from .base import GuiBackend, GuiService
 
 
-def _backend_for_platform() -> GuiBackend:
+def _backend_for_platform(
+    *, niri_native_keyboard_enabled: bool = False
+) -> GuiBackend:
     system = platform.system()
     if system == "Darwin":
         from .macos import MacOSGuiBackend
@@ -23,7 +25,9 @@ def _backend_for_platform() -> GuiBackend:
     if system == "Linux":
         from .linux import LinuxGuiBackend
 
-        return LinuxGuiBackend()
+        return LinuxGuiBackend(
+            niri_native_keyboard_enabled=niri_native_keyboard_enabled
+        )
     from ...errors import GuiUnavailableError
 
     raise GuiUnavailableError(
@@ -41,7 +45,9 @@ def build_gui_service(
         config,
         store,
         backend,
-        backend_factory=_backend_for_platform,
+        backend_factory=lambda: _backend_for_platform(
+            niri_native_keyboard_enabled=config.gui_niri_native_keyboard_enabled
+        ),
     )
 
 
