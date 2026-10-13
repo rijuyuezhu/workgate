@@ -611,7 +611,7 @@ export function createTasksController({
     const previousTask = selectedTaskId();
     try {
       const payload = await request("/tasks");
-      if (revision !== controllerState.selectionRevision) return null;
+      if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
       applyInventory(payload);
       elements.tasksState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
@@ -630,7 +630,7 @@ export function createTasksController({
         await refreshTodos({ force: !background, background });
       }
 
-      if (revision !== controllerState.selectionRevision) return null;
+      if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
       if (controllerState.sessionId) {
         await refreshSessionAudit({ background });
       } else if (!background) {

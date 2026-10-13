@@ -134,9 +134,40 @@ def run_background_polling(harness: BrowserHarness) -> None:
     page.locator("#session-audit-operation").select_option("files")
     page.locator("#session-audit-search").fill("write_file")
     page.locator("#session-audit-refresh").click()
+    selected_task = page.locator(
+        '#task-list .task-entry[aria-current="true"]'
+    ).get_attribute("data-task-id")
+    selected_session = page.locator(
+        '#session-list .session-entry[aria-current="true"]'
+    ).get_attribute("data-session-id")
     check_two_cycles(
         "session", "#session-audit-detail-body", "#session-audit-list"
     )
+    expect(
+        page.locator(f'#task-list .task-entry[data-task-id="{selected_task}"]')
+    ).to_have_attribute("aria-current", "true")
+    expect(
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{selected_session}"]'
+        )
+    ).to_have_attribute("aria-current", "true")
+
+    # Inventory polls and the 30s app timer must not discard an editor draft.
+    harness.navigate("files")
+    expect(page.locator('.file-entry[title="notes.txt"]')).to_be_visible()
+    page.locator('.file-entry[title="notes.txt"]').click()
+    page.locator("#file-edit").click()
+    expect(page.locator("#file-editor-form")).to_be_visible()
+    page.locator("#file-editor").fill("unsaved draft through background polls")
+    file_executor = page.locator("#file-executor").input_value()
+    terminal_executor = page.locator("#terminal-executor").input_value()
+    page.wait_for_timeout(4500)  # Includes several app and one executor poll.
+    expect(page.locator("#file-editor")).to_have_value(
+        "unsaved draft through background polls"
+    )
+    expect(page.locator("#file-editor-form")).to_be_visible()
+    expect(page.locator("#file-executor")).to_have_value(file_executor)
+    expect(page.locator("#terminal-executor")).to_have_value(terminal_executor)
 
     page.remove_listener("request", on_request)
     page.unroute("**/ui/assets/web.js*", speed_up_poll)
