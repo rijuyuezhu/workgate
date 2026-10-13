@@ -15,7 +15,9 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
     )
     harness.navigate("terminals")
 
-    page.locator("#terminal-executor").select_option(remote_id)
+    page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{remote_id}"]'
+    ).click()
     expect(page.locator("#terminal-executor")).to_have_value(remote_id)
     remote_shell = _start_terminal(harness, "remote-browser-shell")
     _send_terminal(
@@ -27,7 +29,9 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
     )
 
     # A new shell on the colocated executor must remain on A, not B.
-    page.locator("#terminal-executor").select_option(harness.executor_id)
+    page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{harness.executor_id}"]'
+    ).click()
     expect(page.locator("#terminal-executor")).to_have_value(
         harness.executor_id
     )
@@ -41,7 +45,9 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
     )
 
     # Re-enter remote B and reattach its existing tmux session.
-    page.locator("#terminal-executor").select_option(remote_id)
+    page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{remote_id}"]'
+    ).click()
     expect(page.locator("#terminal-executor")).to_have_value(remote_id)
     remote_entry = page.locator(
         f'#terminal-list .terminal-session[title*="{remote_shell}"]'

@@ -235,17 +235,26 @@ async def connect_executor_terminal_stream(
     bridge_id = str(bridge["bridge_id"])
     websocket: ClientConnection | None = None
     try:
-        websocket = await _NoRedirectConnect(
-            _stream_url(profile.control_url, stream_id),
-            additional_headers={
-                "Authorization": f"Bearer {profile.credential}",
-            },
-            compression=None,
-            max_size=TERMINAL_STREAM_MAX_FRAME_BYTES,
-            max_queue=1,
-            write_limit=TERMINAL_STREAM_MAX_FRAME_BYTES,
-            proxy=True if profile.control_url.startswith("https://") else None,
-        )
+        try:
+            websocket = await _NoRedirectConnect(
+                _stream_url(profile.control_url, stream_id),
+                additional_headers={
+                    "Authorization": f"Bearer {profile.credential}",
+                },
+                compression=None,
+                max_size=TERMINAL_STREAM_MAX_FRAME_BYTES,
+                max_queue=1,
+                write_limit=TERMINAL_STREAM_MAX_FRAME_BYTES,
+                proxy=True
+                if profile.control_url.startswith("https://")
+                else None,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Executor terminal WebSocket could not connect to Control; "
+                "check the Control WSS route, TLS trust, and the executor "
+                "service's HTTPS_PROXY/NO_PROXY settings"
+            ) from exc
         accepted = await asyncio.wait_for(
             websocket.recv(), timeout=_STREAM_HANDSHAKE_TIMEOUT_S
         )
