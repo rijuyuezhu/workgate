@@ -341,6 +341,9 @@ def run_terminal_action_races(harness: BrowserHarness) -> None:
     local_button.click()
     expect(page.locator("#terminal-title")).to_have_text("No terminal selected")
     _release_terminal_action(page)
+    # Give an erroneously resumed old Start handler time to issue its next
+    # list request; the title must stay unchanged after that async turn.
+    page.wait_for_timeout(350)
     expect(page.locator("#terminal-title")).to_have_text("No terminal selected")
     expect(page.locator("#terminal-executor")).to_have_value(local_id)
     expect(page.locator("#terminal-list")).to_contain_text("stale-start-shell")
