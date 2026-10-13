@@ -536,7 +536,12 @@ async def _capture_niri_window(
         raise GuiUnavailableError(
             "Niri could not capture the selected window"
         ) from exc
-    if not path.is_file() or path.stat().st_size == 0:
+    # Niri acknowledges the IPC action before its screenshot file is written.
+    for _ in range(50):
+        if path.is_file() and path.stat().st_size:
+            break
+        await asyncio.sleep(0.05)
+    else:
         raise GuiUnavailableError("Niri did not write a screenshot")
     _validate_capture_image_header(path)
     if await asyncio.to_thread(_niri_window_id, record, env) != window_id:
