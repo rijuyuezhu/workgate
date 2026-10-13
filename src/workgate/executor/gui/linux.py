@@ -486,12 +486,7 @@ def _crop_desktop_capture(
         cropped.save(path, format="PNG")
 
 
-def _validate_capture_image_header(path: Path) -> None:
-    try:
-        with Image.open(path) as image:
-            width, height = image.size
-    except Exception as exc:
-        raise GuiUnavailableError("Captured Wayland image is invalid") from exc
+def _validate_capture_dimensions(width: int, height: int) -> None:
     if (
         width <= 0
         or height <= 0
@@ -502,6 +497,30 @@ def _validate_capture_image_header(path: Path) -> None:
         raise GuiUnavailableError(
             "Captured Wayland image exceeds GUI screenshot safety limits"
         )
+
+
+def _validate_capture_image_header(path: Path) -> None:
+    try:
+        with Image.open(path) as image:
+            _validate_capture_dimensions(*image.size)
+    except (OSError, ValueError) as exc:
+        raise GuiUnavailableError("Captured Wayland image is invalid") from exc
+
+
+def _finish_niri_screenshot(path: Path) -> None:
+    """Accept a complete PNG and remove Niri's transparent window shadow."""
+    with Image.open(path) as image:
+        _validate_capture_dimensions(*image.size)
+        image.verify()  # Wait for the PNG end marker, not just a nonempty file.
+    with Image.open(path) as image:
+        image.load()
+        if "A" not in image.getbands():
+            return
+        # Half-opacity separates the window surface from antialiased shadows.
+        alpha = image.getchannel("A")
+        bounds = alpha.point([0] * 128 + [255] * 128).getbbox()
+        if bounds is not None and bounds != (0, 0, *image.size):
+            image.crop(bounds).save(path, format="PNG")
 
 
 async def _capture_niri_window(
@@ -536,14 +555,19 @@ async def _capture_niri_window(
         raise GuiUnavailableError(
             "Niri could not capture the selected window"
         ) from exc
-    # Niri acknowledges the IPC action before its screenshot file is written.
+    # Niri acknowledges IPC before the PNG (including its end marker) exists.
     for _ in range(50):
-        if path.is_file() and path.stat().st_size:
+        try:
+            await asyncio.to_thread(_finish_niri_screenshot, path)
             break
-        await asyncio.sleep(0.05)
+        except OSError, ValueError, EOFError:
+            await asyncio.sleep(0.05)
+        except GuiUnavailableError as exc:
+            if "is invalid" not in str(exc):
+                raise
+            await asyncio.sleep(0.05)
     else:
-        raise GuiUnavailableError("Niri did not write a screenshot")
-    _validate_capture_image_header(path)
+        raise GuiUnavailableError("Niri did not write a complete screenshot")
     if await asyncio.to_thread(_niri_window_id, record, env) != window_id:
         raise GuiStaleStateError(
             "Niri window changed during screenshot capture"

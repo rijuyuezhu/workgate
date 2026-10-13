@@ -342,3 +342,104 @@ async def test_niri_snapshot_avoids_focus_before_window_capture(
     )
     assert result.capabilities["window_capture"] is True
     assert result.capabilities["capture_backend"] == "niri-ipc"
+
+
+@pytest.mark.asyncio
+async def test_niri_capture_waits_for_complete_png_not_just_header(
+    tmp_path, monkeypatch
+):
+    import io
+    import time
+    from threading import Thread
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (100, 50), "white").save(buffer, format="PNG")
+    png = buffer.getvalue()
+    writer = None
+
+    def run(argv, **_kwargs):
+        nonlocal writer
+        if argv[-1] == "windows":
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"id": 88, "pid": 47, "title": "Test dialog"}]
+                )
+            )
+        if "screenshot-window" in argv:
+            path = argv[argv.index("--path") + 1]
+
+            def write_in_parts():
+                with open(path, "wb") as output:
+                    output.write(png[:64])
+                    output.flush()
+                    time.sleep(0.2)
+                    output.write(png[64:])
+                    output.flush()
+
+            writer = Thread(target=write_in_parts)
+            writer.start()
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(linux.subprocess, "run", run)
+    path = tmp_path / "partial.png"
+    try:
+        assert (
+            await linux._capture_niri_window(path, WINDOW, dict(ENV))
+            == "niri-ipc"
+        )
+        with Image.open(path) as image:
+            image.load()
+            assert image.size == (100, 50)
+    finally:
+        if writer is not None:
+            writer.join(timeout=2)
+
+
+@pytest.mark.parametrize("scale", [1, 2])
+def test_niri_capture_crops_alpha_shadow_before_coordinate_normalization(
+    tmp_path, scale
+):
+    from PIL import Image
+
+    from workgate.executor.gui.base import _normalize_screenshot_coordinates
+
+    # Surface has no fixed border size: tests 1x and 2x rendering.
+    padding = 13 * scale
+    width, height = 100 * scale, 60 * scale
+    image = Image.new(
+        "RGBA", (width + 2 * padding, height + 2 * padding), (0, 0, 0, 0)
+    )
+    image.paste(
+        Image.new("RGBA", (width, height), (20, 80, 160, 255)),
+        (padding, padding),
+    )
+    # Faint shadow outside the surface must not be included in content bounds.
+    image.putpixel((padding - 1, padding + 10), (0, 0, 0, 38))
+    path = tmp_path / f"scale-{scale}.png"
+    image.save(path)
+    linux._finish_niri_screenshot(path)
+    with Image.open(path) as cropped:
+        cropped.load()
+        assert cropped.size == (width, height)
+        assert cropped.getpixel((0, 0)) == (20, 80, 160, 255)
+    _normalize_screenshot_coordinates(
+        path, {"bounds": {"width": 100, "height": 60}}
+    )
+    with Image.open(path) as normalized:
+        normalized.load()
+        assert normalized.size == (100, 60)
+        assert normalized.getpixel((0, 0)) == (20, 80, 160, 255)
+
+
+def test_niri_capture_keeps_opaque_and_fully_transparent_pngs(tmp_path):
+    from PIL import Image
+
+    for mode, fill in [("RGB", "white"), ("RGBA", (0, 0, 0, 0))]:
+        path = tmp_path / f"{mode}.png"
+        Image.new(mode, (100, 60), fill).save(path)
+        linux._finish_niri_screenshot(path)
+        with Image.open(path) as image:
+            image.load()
+            assert image.size == (100, 60)
