@@ -1262,6 +1262,100 @@ def test_macos_launchd_reaps_setsid_escape(tmp_path):
         pytest.fail("setsid descendant escaped launchd cleanup")
 
 
+@contextlib.contextmanager
+def _unrelated_zombie():
+    """Keep a zombie alive until the test finishes, then reap it."""
+    holder_code = (
+        "import subprocess,sys; "
+        "child=subprocess.Popen([sys.executable,'-c','pass']); "
+        "print(child.pid, flush=True); "
+        "sys.stdin.readline(); child.wait()"
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", holder_code],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        yield int(holder.stdout.readline())
+    finally:
+        assert holder.stdin is not None
+        with contextlib.suppress(BrokenPipeError, OSError):
+            holder.stdin.write("\n")
+            holder.stdin.flush()
+        try:
+            holder.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.communicate(timeout=2)
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="requires macOS launchd containment"
+)
+def test_macos_launchd_ignores_unrelated_zombie():
+    with _unrelated_zombie() as zombie_pid:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if bounded_runner._macos_process_is_zombie(zombie_pid):
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("helper process did not leave a zombie child")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "workgate.executor.bounded_runner",
+                "--shell",
+                "/bin/sh",
+                "--command",
+                "true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux procfs")
+def test_linux_bounded_command_ignores_unrelated_zombie():
+    with _unrelated_zombie() as zombie_pid:
+        status_path = bounded_runner.PROCFS_ROOT / str(zombie_pid) / "status"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if "State:\tZ" in status_path.read_text(encoding="ascii"):
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("helper process did not leave a zombie child")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "workgate.executor.bounded_runner",
+                "--shell",
+                "/bin/sh",
+                "--command",
+                "true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+
+
 def test_bounded_runner_argparse_handler_exits_with_result(monkeypatch):
     monkeypatch.setattr(
         bounded_runner, "run_bounded_command", lambda shell, command: 7
@@ -1472,6 +1566,114 @@ def test_macos_libproc_enumerates_uid_and_reads_coalition(monkeypatch):
 
     assert bounded_runner._macos_uid_pids() == [111, 222]
     assert bounded_runner._macos_process_coalition_ids(111) == (1111, 2111)
+
+
+def test_macos_shortbsdinfo_matches_xnu_layout():
+    assert bounded_runner.ctypes.sizeof(bounded_runner._ProcBsdShortInfo) == 64
+    assert bounded_runner._ProcBsdShortInfo.pbsi_status.offset == 12
+
+
+@pytest.mark.parametrize(
+    ("status", "reported_pid", "returned_size", "expected"),
+    [
+        (bounded_runner.MACOS_SZOMB, 11, 64, True),
+        (2, 11, 64, False),
+        (bounded_runner.MACOS_SZOMB, 12, 64, False),
+        (bounded_runner.MACOS_SZOMB, 11, 0, False),
+        (bounded_runner.MACOS_SZOMB, 11, 60, False),
+    ],
+)
+def test_macos_process_is_zombie_requires_full_matching_native_info(
+    monkeypatch, status, reported_pid, returned_size, expected
+):
+    calls = []
+
+    class FakeLibproc:
+        def proc_pidinfo(self, pid, flavor, arg, buffer, size):
+            calls.append((pid, flavor, arg, size))
+            info = bounded_runner.ctypes.cast(
+                buffer,
+                bounded_runner.ctypes.POINTER(bounded_runner._ProcBsdShortInfo),
+            ).contents
+            info.pbsi_pid = reported_pid
+            info.pbsi_status = status
+            return returned_size
+
+    monkeypatch.setattr(bounded_runner, "_macos_libproc", FakeLibproc)
+
+    assert bounded_runner._macos_process_is_zombie(11) is expected
+    assert calls == [(11, bounded_runner.PROC_PIDT_SHORTBSDINFO, 1, 64)]
+
+
+def test_macos_process_is_zombie_fails_closed_without_libproc(monkeypatch):
+    monkeypatch.setattr(bounded_runner, "_macos_libproc", lambda: None)
+
+    assert bounded_runner._macos_process_is_zombie(11) is False
+
+
+def test_macos_matching_coalition_ignores_zombie_processes(monkeypatch):
+    current = os.getpid()
+    monkeypatch.setattr(
+        bounded_runner, "_macos_uid_pids", lambda: [current, 11, 12]
+    )
+    monkeypatch.setattr(
+        bounded_runner,
+        "_macos_process_coalition_ids",
+        lambda pid: {11: (77, 1), 12: None}[pid],
+    )
+    monkeypatch.setattr(
+        bounded_runner,
+        "_macos_process_is_zombie",
+        lambda pid: pid == 12,
+    )
+    monkeypatch.setattr(
+        bounded_runner.os,
+        "kill",
+        lambda *_args: pytest.fail("confirmed zombies must not be signalled"),
+    )
+
+    assert bounded_runner._macos_matching_coalition_pids((77, 9)) == {11}
+
+
+def test_macos_matching_coalition_fails_closed_for_unreadable_live_process(
+    monkeypatch,
+):
+    current = os.getpid()
+    monkeypatch.setattr(
+        bounded_runner, "_macos_uid_pids", lambda: [current, 11]
+    )
+    monkeypatch.setattr(
+        bounded_runner, "_macos_process_coalition_ids", lambda _pid: None
+    )
+    monkeypatch.setattr(
+        bounded_runner, "_macos_process_is_zombie", lambda _pid: False
+    )
+    monkeypatch.setattr(bounded_runner.os, "kill", lambda _pid, _sig: None)
+
+    assert bounded_runner._macos_matching_coalition_pids((77, 9)) is None
+
+
+def test_macos_matching_coalition_skips_pid_reaped_during_zombie_lookup(
+    monkeypatch,
+):
+    current = os.getpid()
+    monkeypatch.setattr(
+        bounded_runner, "_macos_uid_pids", lambda: [current, 11]
+    )
+    monkeypatch.setattr(
+        bounded_runner, "_macos_process_coalition_ids", lambda _pid: None
+    )
+    monkeypatch.setattr(
+        bounded_runner, "_macos_process_is_zombie", lambda _pid: False
+    )
+
+    def vanished(_pid, sig):
+        assert sig == 0
+        raise ProcessLookupError
+
+    monkeypatch.setattr(bounded_runner.os, "kill", vanished)
+
+    assert bounded_runner._macos_matching_coalition_pids((77, 9)) == set()
 
 
 def test_macos_matching_coalition_ignores_exited_processes(monkeypatch):

@@ -33,7 +33,9 @@ MACOS_TERMINATE_GRACE_S = 0.5
 MACOS_KILL_GRACE_S = 0.5
 MACOS_LIBPROC_PATH = "/usr/lib/libproc.dylib"
 PROC_UID_ONLY = 4
+PROC_PIDT_SHORTBSDINFO = 13
 PROC_PIDCOALITIONINFO = 20
+MACOS_SZOMB = 5
 COALITION_NUM_TYPES = 2
 COALITION_TYPE_RESOURCE = 0
 _MACOS_LIBPROC: Any | None = None
@@ -69,6 +71,26 @@ class _ProcPidCoalitionInfo(ctypes.Structure):
         ("reserved1", ctypes.c_uint64),
         ("reserved2", ctypes.c_uint64),
         ("reserved3", ctypes.c_uint64),
+    ]
+
+
+class _ProcBsdShortInfo(ctypes.Structure):
+    """XNU proc_bsdshortinfo returned by PROC_PIDT_SHORTBSDINFO."""
+
+    _fields_ = [
+        ("pbsi_pid", ctypes.c_uint32),
+        ("pbsi_ppid", ctypes.c_uint32),
+        ("pbsi_pgid", ctypes.c_uint32),
+        ("pbsi_status", ctypes.c_uint32),
+        ("pbsi_comm", ctypes.c_char * 16),
+        ("pbsi_flags", ctypes.c_uint32),
+        ("pbsi_uid", ctypes.c_uint32),
+        ("pbsi_gid", ctypes.c_uint32),
+        ("pbsi_ruid", ctypes.c_uint32),
+        ("pbsi_rgid", ctypes.c_uint32),
+        ("pbsi_svuid", ctypes.c_uint32),
+        ("pbsi_svgid", ctypes.c_uint32),
+        ("pbsi_rfu", ctypes.c_uint32),
     ]
 
 
@@ -401,6 +423,30 @@ def _macos_process_coalition_ids(pid: int) -> tuple[int, int] | None:
     return resource, jetsam
 
 
+def _macos_process_is_zombie(pid: int) -> bool:
+    """Ignore only a confirmed XNU zombie; unreadable processes are not safe."""
+    library = _macos_libproc()
+    if library is None:
+        return False
+    info = _ProcBsdShortInfo()
+    size = ctypes.sizeof(info)
+    returned = int(
+        library.proc_pidinfo(
+            # XNU requires a nonzero arg to include zombie processes.
+            pid,
+            PROC_PIDT_SHORTBSDINFO,
+            1,
+            ctypes.byref(info),
+            size,
+        )
+    )
+    return (
+        returned == size
+        and info.pbsi_pid == pid
+        and info.pbsi_status == MACOS_SZOMB
+    )
+
+
 def _read_launchd_coalition(path: Path) -> tuple[int, int] | None:
     """Read and validate the launchd child's kernel coalition identity."""
     try:
@@ -437,6 +483,8 @@ def _macos_matching_coalition_pids(
             continue
         identity = _macos_process_coalition_ids(pid)
         if identity is None:
+            if _macos_process_is_zombie(pid):
+                continue
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
