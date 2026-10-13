@@ -929,8 +929,16 @@ class _DesktopOperations:
         [dict[str, Any], Any | None, dict[str, Any], dict[str, str]],
         Awaitable[dict[str, Any]],
     ]
+    input_devices: Callable[[dict[str, str]], Awaitable[int]]
+    input_transport: str | None
     capture_available: bool
     capture_requires_focus: bool
+
+
+async def _x11_input_devices(_env: dict[str, str]) -> int:
+    return (
+        3  # X11 provides both keyboard and pointer through the AT-SPI helper.
+    )
 
 
 async def _capture_x11_desktop(
@@ -1025,6 +1033,8 @@ class LinuxGuiBackend:
                 _capture_x11_desktop,
                 self._activate_atspi,
                 self._perform_x11,
+                input_devices=_x11_input_devices,
+                input_transport=None,
                 capture_available=True,
                 capture_requires_focus=False,
             )
@@ -1034,6 +1044,8 @@ class LinuxGuiBackend:
                     _capture_niri_desktop,
                     self._activate_niri,
                     self._perform_wayland,
+                    input_devices=portal_available_devices,
+                    input_transport="xdg-desktop-portal",
                     capture_available=bool(env.get("NIRI_SOCKET"))
                     and shutil.which("niri") is not None,
                     capture_requires_focus=False,
@@ -1042,6 +1054,8 @@ class LinuxGuiBackend:
                 _capture_portal_desktop,
                 self._activate_atspi,
                 self._perform_wayland,
+                input_devices=portal_available_devices,
+                input_transport="xdg-desktop-portal",
                 capture_available=False,
                 capture_requires_focus=True,
             )
@@ -1058,11 +1072,7 @@ class LinuxGuiBackend:
             )
         desktop = self._desktop_operations(env)
         data = await asyncio.to_thread(self._list_data, env)
-        devices = (
-            await portal_available_devices(env)
-            if session_type == "wayland"
-            else 3
-        )
+        devices = await desktop.input_devices(env)
         return {
             "backend": self.name,
             "platform": "linux",
@@ -1075,7 +1085,7 @@ class LinuxGuiBackend:
                 "coordinate_input": bool(devices & 2),
                 "keyboard_input": bool(devices & 1),
                 "semantic_actions": True,
-                "wayland_input": "xdg-desktop-portal"
+                "wayland_input": desktop.input_transport
                 if session_type == "wayland" and devices
                 else None,
                 "capture_requires_focus": desktop.capture_requires_focus,
@@ -1224,10 +1234,8 @@ class LinuxGuiBackend:
                 "capture_backend": capture_backend,
                 "coordinate_space": "window-relative",
                 "coordinate_input": bool(
-                    (await portal_available_devices(env)) & 2
-                )
-                if session_type == "wayland"
-                else True,
+                    (await self._desktop_operations(env).input_devices(env)) & 2
+                ),
                 "semantic_actions": True,
                 "session_type": session_type,
             },
@@ -1318,7 +1326,7 @@ class LinuxGuiBackend:
     async def focus_window(self, window: dict[str, Any]) -> None:
         env = await self._ensure_env()
         if _session_type(env) == "wayland" and not (
-            (await portal_available_devices(env)) & 2
+            (await self._desktop_operations(env).input_devices(env)) & 2
         ):
             raise GuiUnavailableError(
                 "Wayland RemoteDesktop portal does not provide pointer input"
@@ -1410,7 +1418,7 @@ class LinuxGuiBackend:
 
         if kind in {"type", "key"}:
             if _session_type(env) == "wayland" and not (
-                (await portal_available_devices(env)) & 1
+                (await self._desktop_operations(env).input_devices(env)) & 1
             ):
                 raise GuiUnavailableError(
                     "Wayland RemoteDesktop portal does not provide keyboard input"

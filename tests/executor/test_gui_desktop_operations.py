@@ -88,6 +88,14 @@ def test_desktop_operations_are_composed_independently(
     )
     assert ops.capture_available is available
     assert ops.capture_requires_focus is needs_focus
+    assert ops.input_devices is (
+        linux._x11_input_devices
+        if env["XDG_SESSION_TYPE"] == "x11"
+        else linux.portal_available_devices
+    )
+    assert ops.input_transport == (
+        None if env["XDG_SESSION_TYPE"] == "x11" else "xdg-desktop-portal"
+    )
 
 
 def test_missing_desktop_transport_fails_closed():
