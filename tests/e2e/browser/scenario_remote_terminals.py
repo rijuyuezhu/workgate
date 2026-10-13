@@ -180,6 +180,9 @@ def run_terminal_switch_races(harness: BrowserHarness) -> None:
             "background-color", "rgb(238, 241, 246)"
         )
         remote_button.focus()
+        page.keyboard.press("Tab")
+        page.keyboard.press("Shift+Tab")
+        expect(remote_button).to_be_focused()
         expect(remote_button).to_have_css("outline-style", "solid")
         expect(
             page.locator('#terminal-executor-locations [aria-current="true"]')
