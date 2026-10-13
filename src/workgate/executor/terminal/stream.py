@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import SecurityError
+from websockets.exceptions import InvalidStatus, SecurityError
 
 from ...protocol.terminal import (
     EXECUTOR_TERMINAL_STREAM_ROUTE,
@@ -249,10 +249,15 @@ async def connect_executor_terminal_stream(
                 if profile.control_url.startswith("https://")
                 else None,
             )
+        except InvalidStatus as exc:
+            raise RuntimeError(
+                f"Executor terminal WebSocket was rejected (HTTP {exc.response.status_code}); "
+                "check the paired Control URL and its WebSocket proxy rules"
+            ) from exc
         except Exception as exc:
             raise RuntimeError(
                 "Executor terminal WebSocket could not connect to Control; "
-                "check the Control WSS route, TLS trust, and the executor "
+                "check the paired Control URL, TLS trust, and the executor "
                 "service's HTTPS_PROXY/NO_PROXY settings"
             ) from exc
         accepted = await asyncio.wait_for(

@@ -404,9 +404,23 @@ def test_executor_terminal_stream_refuses_websocket_redirects() -> None:
     assert "redirects are disabled" in str(result)
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (OSError("test-only network failure"), "could not connect to Control"),
+        (
+            InvalidStatus(
+                Response(403, "Forbidden", Headers(Server="cloudflare"))
+            ),
+            r"was rejected \(HTTP 403\)",
+        ),
+    ],
+)
 @pytest.mark.asyncio
 async def test_executor_terminal_stream_connect_failure_identifies_wss_stage(
     monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    expected: str,
 ) -> None:
     closed: list[str] = []
 
@@ -419,7 +433,7 @@ async def test_executor_terminal_stream_connect_failure_identifies_wss_stage(
 
     async def fake_connect(url: str, **kwargs: Any):
         assert url.startswith("wss://")
-        raise OSError("test-only network failure")
+        raise failure
 
     async def fake_close(bridge_id: str):
         closed.append(bridge_id)
@@ -435,7 +449,7 @@ async def test_executor_terminal_stream_connect_failure_identifies_wss_stage(
 
     with pytest.raises(
         RuntimeError,
-        match="Executor terminal WebSocket could not connect to Control",
+        match=expected,
     ) as error:
         await stream_module.connect_executor_terminal_stream(
             _profile(),
@@ -444,6 +458,6 @@ async def test_executor_terminal_stream_connect_failure_identifies_wss_stage(
             cols=100,
             rows=30,
         )
-    assert "HTTPS_PROXY/NO_PROXY" in str(error.value)
-    assert isinstance(error.value.__cause__, OSError)
+    assert "paired Control URL" in str(error.value)
+    assert error.value.__cause__ is failure
     assert closed == ["bridge-remote"]
