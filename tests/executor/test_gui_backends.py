@@ -45,6 +45,7 @@ def test_macos_semantic_target_point_is_fenced_to_window(monkeypatch) -> None:
 def test_linux_desktop_environment_preserves_explicit_process_values(
     monkeypatch,
 ) -> None:
+    monkeypatch.delenv("NIRI_SOCKET", raising=False)
     monkeypatch.setenv("DISPLAY", ":5")
     monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
@@ -61,6 +62,7 @@ def test_linux_desktop_environment_preserves_explicit_process_values(
                 "WAYLAND_DISPLAY=wayland-1\n"
                 "XDG_SESSION_TYPE=wayland\n"
                 "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus\n"
+                "NIRI_SOCKET=/run/user/1000/niri-test.sock\n"
             ),
         ),
     )
@@ -71,6 +73,7 @@ def test_linux_desktop_environment_preserves_explicit_process_values(
     assert env["XDG_SESSION_TYPE"] == "x11"
     assert env["WAYLAND_DISPLAY"] == "wayland-1"
     assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
+    assert env["NIRI_SOCKET"] == "/run/user/1000/niri-test.sock"
 
 
 def test_linux_desktop_environment_uses_systemd_for_missing_values(
