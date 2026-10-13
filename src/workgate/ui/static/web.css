@@ -1834,14 +1834,29 @@ h2 {
 }
 
 .audit-call-panel-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 0;
   border-bottom: 1px solid var(--line);
   padding: 0.48rem 0.7rem;
+  background: transparent;
   color: #16825b;
+  cursor: pointer;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.08em;
+  text-align: left;
   text-transform: uppercase;
 }
+.audit-call-panel-heading::after { content: "↗"; font-size: 1rem; }
+.audit-detail-body[data-expanded-pane="request"] .audit-call-panel:first-child .audit-call-panel-heading::after,
+.audit-detail-body[data-expanded-pane="result"] .audit-call-panel:last-child .audit-call-panel-heading::after { content: "↙"; }
+.audit-call-panel[data-collapsed="true"] { grid-template-rows: auto; }
+.audit-call-panel[data-collapsed="true"] .audit-call-panel-heading::after { content: "▸"; }
+.audit-call-panel-heading:focus-visible { outline: 2px solid #6759e7; outline-offset: -2px; }
 
 .audit-call-panel-body {
   min-width: 0;
@@ -2547,7 +2562,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .task-sessions-main .session-audit-toolbar select { min-height: 32px; padding: 5px 8px; }
 .task-sessions-main .session-audit-toolbar .audit-control span { font-size: 10px; }
 .task-sessions-layout .task-session-list { margin-top: 0; }
-.task-sessions-main .audit-detail-body { min-height: 250px; }
+.task-sessions-main .audit-detail-body { min-height: 0; }
 @media (max-width: 1150px) {
   .tasks-layout { grid-template-columns: minmax(185px, 235px) minmax(0,1fr); }
   .task-sessions-layout { grid-template-columns: minmax(145px,185px) minmax(0,1fr); }
@@ -2656,7 +2671,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 /* Keep expandable audit content within stable workspaces, not the page flow. */
 .tasks-layout {
-  height: clamp(570px, calc(100dvh - 260px), 900px);
+  height: clamp(680px, calc(100dvh - 170px), 1020px);
   min-height: 0;
 }
 .tasks-layout > .session-list { min-height: 0; overflow-y: auto; }
@@ -2683,7 +2698,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .task-session-metadata[open] .session-detail-grid { max-height: 140px; overflow-y: auto; }
 
 .audit-panel > .audit-layout {
-  height: clamp(500px, calc(100dvh - 330px), 780px);
+  height: clamp(620px, calc(100dvh - 220px), 900px);
   min-height: 0;
 }
 .audit-list-pane { display: flex; flex-direction: column; min-height: 0; }
@@ -2697,6 +2712,12 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 }
 .audit-layout .audit-detail-body {
   min-height: 0; height: 100%; grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.audit-layout .audit-detail-body[data-expanded-pane="request"] {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.audit-layout .audit-detail-body[data-expanded-pane="result"] {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 .audit-value-content { overflow: visible; }
 .audit-call-panel-body { overscroll-behavior: contain; overflow-anchor: none; }
@@ -2715,7 +2736,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 @media (min-width: 781px) and (max-width: 1150px) {
   .task-sessions-main .session-audit-layout {
-    grid-template-rows: minmax(105px, .5fr) minmax(230px, 1fr);
+    grid-template-rows: minmax(90px, .3fr) minmax(320px, 1fr);
   }
 }
 @media (max-width: 780px) {
@@ -2726,9 +2747,9 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   .task-sessions-layout > .session-executions { overflow-y: visible; }
   .task-sessions-main { overflow: visible; }
   .task-sessions-main > .session-audit { overflow: visible; }
-  .task-sessions-main .session-audit-layout { height: 530px; }
+  .task-sessions-main .session-audit-layout { height: 600px; }
   .audit-panel > .audit-layout { height: auto; }
-  .audit-panel .audit-detail { height: 470px; }
+  .audit-panel .audit-detail { height: 600px; }
 }
 
 /* Mobile hierarchy: separate sections rather than merging stacked panes. */
@@ -2841,7 +2862,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   .audit-panel > .audit-layout > .audit-list-pane {
     height: 330px; min-height: 0; overflow: hidden;
   }
-  .audit-panel > .audit-layout > .audit-detail { height: 480px; padding: 12px; }
+  .audit-panel > .audit-layout > .audit-detail { height: 600px; padding: 12px; }
   .audit-panel .audit-filter-strip {
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px; padding: 12px;
@@ -2945,10 +2966,10 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   #tasks-panel[data-mobile-step="session-record"] #session-audit-filter-form,
   #tasks-panel[data-mobile-step="session-record"] #session-audit-list { display: none; }
   #tasks-panel[data-mobile-step="session-record"] .session-audit-layout {
-    display: block; height: auto; min-height: 520px;
+    display: block; height: auto; min-height: 620px;
   }
   #tasks-panel[data-mobile-step="session-record"] .session-audit-layout > .audit-detail {
-    display: grid; height: auto; min-height: 520px; max-height: none;
+    display: grid; height: auto; min-height: 620px; max-height: none;
   }
 
   #executors-panel[data-mobile-step="list"] .executors-layout > .executor-details { display: none; }
@@ -2966,7 +2987,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   #audit-panel[data-mobile-step="detail"] > #audit-summary,
   #audit-panel[data-mobile-step="detail"] .audit-layout > .audit-list-pane { display: none; }
   #audit-panel[data-mobile-step="detail"] .audit-layout > .audit-detail {
-    width: 100%; height: auto; min-height: 530px;
+    width: 100%; height: auto; min-height: 620px;
   }
 
   #file-panel[data-mobile-step="list"] .file-layout > .file-preview { display: none; }

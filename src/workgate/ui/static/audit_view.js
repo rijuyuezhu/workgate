@@ -273,7 +273,8 @@ export function createAuditView({ text, formatFileBytes }) {
     const panel = document.createElement("section");
     panel.className = "audit-call-panel";
     panel.setAttribute("aria-label", title);
-    const heading = document.createElement("div");
+    const heading = document.createElement("button");
+    heading.type = "button";
     heading.className = "audit-call-panel-heading";
     heading.textContent = title;
     const body = document.createElement("div");
@@ -281,10 +282,14 @@ export function createAuditView({ text, formatFileBytes }) {
     body.tabIndex = 0;
     body.setAttribute("aria-label", `${title} content`);
     panel.append(heading, body);
-    return { panel, body };
+    return { panel, heading, body };
   }
 
   function renderAuditDetailInto(entry, target) {
+    const entryId = text(entry.id, "");
+    const expandedPane = target.dataset.auditEntryId === entryId
+      ? target.dataset.expandedPane
+      : "split";
     const requestPanel = auditCallPanel("Call request");
     renderAuditValue(requestPanel.body, auditInput(entry), "No input recorded", "Call request");
 
@@ -308,6 +313,28 @@ export function createAuditView({ text, formatFileBytes }) {
     }
     renderAuditValue(resultPanel.body, auditOutput(entry), "No output recorded", "Call result");
     target.replaceChildren(requestPanel.panel, resultPanel.panel);
+    target.dataset.auditEntryId = entryId;
+
+    for (const [name, { heading, body }] of [["request", requestPanel], ["result", resultPanel]]) {
+      body.id = `${target.id}-${name}-content`;
+      heading.setAttribute("aria-controls", body.id);
+    }
+
+    function setExpandedPane(mode) {
+      target.dataset.expandedPane = mode;
+      for (const [name, { panel, heading, body }] of [["request", requestPanel], ["result", resultPanel]]) {
+        const collapsed = mode !== "split" && mode !== name;
+        panel.dataset.collapsed = String(collapsed);
+        body.hidden = collapsed;
+        heading.setAttribute("aria-expanded", String(!collapsed));
+      }
+    }
+    for (const [name, { heading }] of [["request", requestPanel], ["result", resultPanel]]) {
+      heading.addEventListener("click", () => {
+        setExpandedPane(target.dataset.expandedPane === name ? "split" : name);
+      });
+    }
+    setExpandedPane(expandedPane === "request" || expandedPane === "result" ? expandedPane : "split");
   }
 
 

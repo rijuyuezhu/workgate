@@ -3,6 +3,9 @@
 from playwright.sync_api import expect
 
 from tests.e2e.browser.harness import BrowserHarness
+from tests.e2e.browser.scenario_files_todos_audit import (
+    exercise_audit_pane_modes,
+)
 
 
 def run_mobile_drilldown(harness: BrowserHarness) -> None:
@@ -58,6 +61,7 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     step("tasks", "session-record")
     expect(page.locator("#session-audit-list")).to_be_hidden()
     expect(page.locator("#session-audit-detail-body")).to_be_visible()
+    exercise_audit_pane_modes(page, "#session-audit-detail-body")
     page.screenshot(
         path=str(harness.artifacts / "mobile-session-audit-record.png")
     )
@@ -110,6 +114,7 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     step("audit", "detail")
     expect(page.locator("#audit-list")).to_be_hidden()
     expect(page.locator("#audit-detail-body")).to_be_visible()
+    exercise_audit_pane_modes(page, "#audit-detail-body")
     page.screenshot(
         path=str(harness.artifacts / "mobile-global-audit-record.png")
     )

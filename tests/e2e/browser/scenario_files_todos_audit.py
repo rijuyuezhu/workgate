@@ -22,6 +22,40 @@ def _refresh_task(page) -> None:
     _show_task_tab(page, "progress")
 
 
+def exercise_audit_pane_modes(page, selector: str) -> None:
+    detail = page.locator(selector)
+    request = detail.locator(".audit-call-panel").nth(0)
+    result = detail.locator(".audit-call-panel").nth(1)
+    request_toggle = request.get_by_role("button", name="Call request")
+    result_toggle = result.get_by_role("button", name="Call result")
+    expect(detail).to_have_attribute("data-expanded-pane", "split")
+    expect(request_toggle).to_have_attribute("aria-expanded", "true")
+    expect(result_toggle).to_have_attribute("aria-expanded", "true")
+    initial_height = request.bounding_box()["height"]
+
+    request_toggle.click()
+    expect(detail).to_have_attribute("data-expanded-pane", "request")
+    expect(result_toggle).to_have_attribute("aria-expanded", "false")
+    expect(result.locator(".audit-call-panel-body")).to_be_hidden()
+    assert request.bounding_box()["height"] > initial_height + 25
+    expect(request.locator(".audit-call-panel-body")).to_be_visible()
+
+    # Modes change panel visibility, not the rendered entry or Tree/Raw state.
+    request.get_by_role("button", name="Raw").click()
+    expect(request.locator(".audit-detail-json")).to_be_visible()
+    result_toggle.click()
+    expect(detail).to_have_attribute("data-expanded-pane", "result")
+    expect(request.locator(".audit-call-panel-body")).to_be_hidden()
+    request_toggle.click()
+    expect(request.locator(".audit-detail-json")).to_be_visible()
+
+    # Keyboard activation of an already expanded pane restores the split.
+    request_toggle.focus()
+    request_toggle.press("Enter")
+    expect(detail).to_have_attribute("data-expanded-pane", "split")
+    expect(result.locator(".audit-call-panel-body")).to_be_visible()
+
+
 def run_files_todos_audit(harness: BrowserHarness) -> None:
     page = harness.page
     harness.navigate("files")
@@ -635,6 +669,17 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel")
     ).to_have_count(2)
+    exercise_audit_pane_modes(page, "#session-audit-detail-body")
+    page.locator("#session-audit-detail-body").get_by_role(
+        "button", name="Call request"
+    ).click()
+    page.locator("#session-audit-refresh").click()
+    expect(page.locator("#session-audit-detail-body")).to_have_attribute(
+        "data-expanded-pane", "request"
+    )
+    page.locator("#session-audit-detail-body").get_by_role(
+        "button", name="Call request"
+    ).click()
     session_request = page.locator(
         "#session-audit-detail-body .audit-call-panel"
     ).first
@@ -760,6 +805,17 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#audit-detail-body .audit-call-panel")).to_have_count(
         2
     )
+    exercise_audit_pane_modes(page, "#audit-detail-body")
+    page.locator("#audit-detail-body").get_by_role(
+        "button", name="Call result"
+    ).click()
+    page.locator("#audit-refresh").click()
+    expect(page.locator("#audit-detail-body")).to_have_attribute(
+        "data-expanded-pane", "result"
+    )
+    page.locator("#audit-detail-body").get_by_role(
+        "button", name="Call result"
+    ).click()
     expect(
         page.locator("#audit-detail-body .audit-call-panel").nth(0)
     ).to_contain_text("Call request")
