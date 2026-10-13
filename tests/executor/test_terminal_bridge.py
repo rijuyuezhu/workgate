@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import shutil
 import subprocess
@@ -135,8 +136,10 @@ async def test_terminal_bridge_registry_bounds_and_lifecycle(monkeypatch):
         "backend": TERMINAL_BRIDGE_BACKEND,
     }
 
-    with pytest.raises(TerminalBridgeBusyError, match="already has"):
-        await open_terminal_bridge_execute("demo", 80, 24)
+    second = await open_terminal_bridge_execute("demo", 80, 24)
+    second_id = second["bridge_id"]
+    assert second_id != bridge_id
+    assert (instances[1].cols, instances[1].rows) == (80, 24)
 
     read = await read_terminal_bridge_execute(bridge_id, 1024, 25)
     assert base64.b64decode(read["data_b64"]) == b"\x1b[31mready\x1b[0m"
@@ -166,12 +169,73 @@ async def test_terminal_bridge_registry_bounds_and_lifecycle(monkeypatch):
         "closed": True,
     }
     assert instances[0].closed is True
+    assert instances[1].closed is False
+    assert await close_terminal_bridge_execute(second_id) == {
+        "bridge_id": second_id,
+        "closed": True,
+    }
+    assert instances[1].closed is True
     assert await close_terminal_bridge_execute(bridge_id) == {
         "bridge_id": bridge_id,
         "closed": False,
     }
     with pytest.raises(TerminalBridgeNotFoundError):
         await read_terminal_bridge_execute(bridge_id)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_clients_on_same_shell_obey_global_bridge_limit(
+    monkeypatch,
+):
+    registry = bridge_module._bridge_registry()
+    registry.max_connections = 2
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    attempts = 0
+    attachments = []
+
+    class FakeAttach:
+        backend = TERMINAL_BRIDGE_BACKEND
+
+        def __init__(self, shell_id, cols, rows):
+            self.closed = False
+            attachments.append(self)
+
+        def close_sync(self):
+            self.closed = True
+
+    real_to_thread = asyncio.to_thread
+
+    async def wait_for_attach(function, *args, **kwargs):
+        nonlocal attempts
+        if function is FakeAttach:
+            attempts += 1
+            if attempts == 2:
+                entered.set()
+            await release.wait()
+            return FakeAttach(*args)
+        return await real_to_thread(function, *args, **kwargs)
+
+    monkeypatch.setattr(bridge_module, "_UnixTmuxAttach", FakeAttach)
+    monkeypatch.setattr(bridge_module.asyncio, "to_thread", wait_for_attach)
+    first = asyncio.create_task(open_terminal_bridge_execute("shared-shell"))
+    second = asyncio.create_task(open_terminal_bridge_execute("shared-shell"))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        assert len(registry.pending_bridges) == 2
+        with pytest.raises(TerminalBridgeBusyError, match="Too many active"):
+            await open_terminal_bridge_execute("shared-shell")
+    finally:
+        release.set()
+    first_bridge, second_bridge = await asyncio.gather(first, second)
+    assert first_bridge["bridge_id"] != second_bridge["bridge_id"]
+    assert len(registry.bridges) == 2
+    assert not registry.pending_bridges
+    await close_terminal_bridge_execute(first_bridge["bridge_id"])
+    assert len(registry.bridges) == 1
+    assert len([attach for attach in attachments if attach.closed]) == 1
+    await close_terminal_bridge_execute(second_bridge["bridge_id"])
+    assert all(attach.closed for attach in attachments)
 
 
 @pytest.mark.asyncio
@@ -237,11 +301,13 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         check=True,
     )
 
-    async def read_until(marker: bytes) -> bytes:
+    async def read_until(marker: bytes, attachment_id: str) -> bytes:
         deadline = time.monotonic() + 10
         output = bytearray()
         while time.monotonic() < deadline and marker not in output:
-            chunk = await read_terminal_bridge_execute(bridge_id, 65_536, 100)
+            chunk = await read_terminal_bridge_execute(
+                attachment_id, 65_536, 100
+            )
             output.extend(base64.b64decode(chunk["data_b64"]))
             if chunk["eof"]:
                 break
@@ -249,6 +315,7 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         return bytes(output)
 
     bridge_id = ""
+    second_id = ""
     try:
         opened = await open_terminal_bridge_execute(shell_id, 90, 28)
         bridge_id = opened["bridge_id"]
@@ -270,18 +337,50 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
             bridge_id,
             base64.b64encode(terminal_responses).decode("ascii"),
         )
-        await read_until(ready_marker)
+        await read_until(ready_marker, bridge_id)
 
         command = b"printf '\\033[31mBRIDGE_RAW_OK\\033[0m\\n'\r"
         await write_terminal_bridge_execute(
             bridge_id,
             base64.b64encode(command).decode("ascii"),
         )
-        await read_until(b"\x1b[31mBRIDGE_RAW_OK")
+        await read_until(b"\x1b[31mBRIDGE_RAW_OK", bridge_id)
 
+        # tmux supports multiple independently attached clients per session.
+        second = await open_terminal_bridge_execute(shell_id, 80, 24)
+        second_id = second["bridge_id"]
+        assert second_id != bridge_id
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            clients = subprocess.run(
+                [tmux, "list-clients", "-t", f"={shell_id}"],
+                check=True,
+                capture_output=True,
+            )
+            if len(clients.stdout.splitlines()) >= 2:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            raise AssertionError("tmux did not attach two clients")
+
+        # Closing one WebUI's PTY cannot close the other or the tmux session.
         await resize_terminal_bridge_execute(bridge_id, 120, 35)
         await close_terminal_bridge_execute(bridge_id)
         bridge_id = ""
+        await write_terminal_bridge_execute(
+            second_id,
+            base64.b64encode(terminal_responses).decode("ascii"),
+        )
+        await read_until(ready_marker, second_id)
+        await write_terminal_bridge_execute(
+            second_id,
+            base64.b64encode(b"printf 'MULTI-%s\\n' CLIENT_OK\r").decode(
+                "ascii"
+            ),
+        )
+        await read_until(b"MULTI-CLIENT_OK", second_id)
+        await close_terminal_bridge_execute(second_id)
+        second_id = ""
         assert (
             subprocess.run(
                 [tmux, "has-session", "-t", shell_id],
@@ -293,6 +392,8 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
     finally:
         if bridge_id:
             await close_terminal_bridge_execute(bridge_id)
+        if second_id:
+            await close_terminal_bridge_execute(second_id)
         subprocess.run(
             [tmux, "kill-session", "-t", shell_id],
             check=False,
@@ -368,7 +469,6 @@ async def test_terminal_bridge_expiry_reschedules_live_attachment_and_closes_idl
         idle_timeout_s=60,
     )
     registry.bridges[bridge.bridge_id] = bridge
-    registry.shell_bridges[bridge.shell_id] = bridge.bridge_id
     scheduled = []
     monkeypatch.setattr(
         bridge_module,
@@ -384,7 +484,6 @@ async def test_terminal_bridge_expiry_reschedules_live_attachment_and_closes_idl
     bridge_module._expire_bridge(registry, bridge.bridge_id)
     assert closed == ["closed"]
     assert bridge.bridge_id not in registry.bridges
-    assert bridge.shell_id not in registry.shell_bridges
     bridge_module._expire_bridge(registry, bridge.bridge_id)  # idempotent
 
 
@@ -405,11 +504,9 @@ async def test_terminal_bridge_registry_propagates_posix_attachment_cleanup_fail
         idle_timeout_s=60,
     )
     registry.bridges[bridge.bridge_id] = bridge
-    registry.shell_bridges[bridge.shell_id] = bridge.bridge_id
     with pytest.raises(RuntimeError, match="failed to close 1 terminal bridge"):
         await registry.aclose()
     assert not registry.bridges
-    assert not registry.shell_bridges
 
 
 @pytest.mark.asyncio
@@ -451,4 +548,4 @@ async def test_terminal_bridge_open_cancellation_releases_created_posix_attachme
         await asyncio.wait_for(opening, 2)
     assert len(attached) == 1
     assert attached[0].closed
-    assert not bridge_module._bridge_registry().pending_shells
+    assert not bridge_module._bridge_registry().pending_bridges

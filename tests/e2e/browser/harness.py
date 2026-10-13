@@ -110,6 +110,9 @@ class BrowserHarness:
     page: Page
     server: subprocess.Popen[Any]
     executor: subprocess.Popen[Any]
+    remote_executor_id: str | None = None
+    remote_executor: subprocess.Popen[Any] | None = None
+    remote_tmux_tmpdir: Path | None = None
     api_token: str | None = None
     terminal_sessions: list[tuple[str, str]] = field(default_factory=list)
     console_messages: list[str] = field(default_factory=list)
@@ -124,6 +127,8 @@ class BrowserHarness:
         root: Path,
         artifacts: Path,
         playwright: Playwright,
+        *,
+        with_remote_executor: bool = False,
     ) -> BrowserHarness:
         artifacts.mkdir(parents=True, exist_ok=True)
         executor_workspace = root / "workspace-executor"
@@ -150,6 +155,23 @@ class BrowserHarness:
             control_url=base_url,
             name="browser-loopback",
         )
+        remote_executor_id = None
+        remote_tmux_tmpdir = None
+        remote_workspace = root / "workspace-remote"
+        if with_remote_executor:
+            remote_workspace.mkdir(parents=True)
+            (remote_workspace / "remote-marker.txt").write_text(
+                "running-on-remote-executor\n", encoding="utf-8"
+            )
+            remote_tmux_tmpdir = Path(
+                tempfile.mkdtemp(prefix="workgate-b-rem-")
+            )
+            remote_executor_id = provision_executor_pair(
+                control_state_dir=control_state_dir,
+                executor_state_dir=root / "state-remote",
+                control_url=base_url,
+                name="browser-remote",
+            )
         env = control_env(
             mode="http",
             port=port,
@@ -188,6 +210,7 @@ class BrowserHarness:
             stderr_path=artifacts / "server.stderr.log",
         )
         executor: subprocess.Popen[Any] | None = None
+        remote_executor: subprocess.Popen[Any] | None = None
         try:
             _wait_for_http_ready(base_url, server)
             executor_process_env = executor_env(
@@ -203,6 +226,21 @@ class BrowserHarness:
                 stdout_path=artifacts / "executor.stdout.log",
                 stderr_path=artifacts / "executor.stderr.log",
             )
+            if remote_executor_id is not None:
+                remote_env = executor_env(
+                    remote_workspace,
+                    mode="http",
+                    state_dir=root / "state-remote",
+                )
+                assert remote_tmux_tmpdir is not None
+                remote_env["TMUX_TMPDIR"] = str(remote_tmux_tmpdir)
+                remote_executor = _start_logged_process(
+                    [sys.executable, "-m", "workgate.main", "executor", "run"],
+                    cwd=PROJECT_ROOT,
+                    env=remote_env,
+                    stdout_path=artifacts / "remote-executor.stdout.log",
+                    stderr_path=artifacts / "remote-executor.stderr.log",
+                )
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
                 viewport={"width": 1440, "height": 1000},
@@ -228,12 +266,18 @@ class BrowserHarness:
                 page=page,
                 server=server,
                 executor=executor,
+                remote_executor_id=remote_executor_id,
+                remote_executor=remote_executor,
+                remote_tmux_tmpdir=remote_tmux_tmpdir,
             )
             harness._attach_diagnostics()
             return harness
         except Exception:
+            _terminate_process(remote_executor)
             _terminate_process(executor)
             _terminate_process(server)
+            if remote_tmux_tmpdir is not None:
+                shutil.rmtree(remote_tmux_tmpdir, ignore_errors=True)
             shutil.rmtree(control_tmux_tmpdir, ignore_errors=True)
             shutil.rmtree(executor_tmux_tmpdir, ignore_errors=True)
             raise
@@ -319,8 +363,11 @@ class BrowserHarness:
                 self.context.close()
             with contextlib.suppress(Exception):
                 self.browser.close()
+            _terminate_process(self.remote_executor)
             _terminate_process(self.executor)
             _terminate_process(self.server)
+            if self.remote_tmux_tmpdir is not None:
+                shutil.rmtree(self.remote_tmux_tmpdir, ignore_errors=True)
             shutil.rmtree(self.control_tmux_tmpdir, ignore_errors=True)
             shutil.rmtree(self.executor_tmux_tmpdir, ignore_errors=True)
 

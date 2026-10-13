@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import SecurityError
+from websockets.exceptions import InvalidStatus, SecurityError
 
 from ...protocol.terminal import (
     EXECUTOR_TERMINAL_STREAM_ROUTE,
@@ -235,17 +235,31 @@ async def connect_executor_terminal_stream(
     bridge_id = str(bridge["bridge_id"])
     websocket: ClientConnection | None = None
     try:
-        websocket = await _NoRedirectConnect(
-            _stream_url(profile.control_url, stream_id),
-            additional_headers={
-                "Authorization": f"Bearer {profile.credential}",
-            },
-            compression=None,
-            max_size=TERMINAL_STREAM_MAX_FRAME_BYTES,
-            max_queue=1,
-            write_limit=TERMINAL_STREAM_MAX_FRAME_BYTES,
-            proxy=True if profile.control_url.startswith("https://") else None,
-        )
+        try:
+            websocket = await _NoRedirectConnect(
+                _stream_url(profile.control_url, stream_id),
+                additional_headers={
+                    "Authorization": f"Bearer {profile.credential}",
+                },
+                compression=None,
+                max_size=TERMINAL_STREAM_MAX_FRAME_BYTES,
+                max_queue=1,
+                write_limit=TERMINAL_STREAM_MAX_FRAME_BYTES,
+                proxy=True
+                if profile.control_url.startswith("https://")
+                else None,
+            )
+        except InvalidStatus as exc:
+            raise RuntimeError(
+                f"Executor terminal WebSocket was rejected (HTTP {exc.response.status_code}); "
+                "check the paired Control URL and its WebSocket proxy rules"
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(
+                "Executor terminal WebSocket could not connect to Control; "
+                "check the paired Control URL, TLS trust, and the executor "
+                "service's HTTPS_PROXY/NO_PROXY settings"
+            ) from exc
         accepted = await asyncio.wait_for(
             websocket.recv(), timeout=_STREAM_HANDSHAKE_TIMEOUT_S
         )

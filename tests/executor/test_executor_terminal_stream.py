@@ -402,3 +402,62 @@ def test_executor_terminal_stream_refuses_websocket_redirects() -> None:
 
     assert isinstance(result, SecurityError)
     assert "redirects are disabled" in str(result)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (OSError("test-only network failure"), "could not connect to Control"),
+        (
+            InvalidStatus(
+                Response(403, "Forbidden", Headers(Server="cloudflare"))
+            ),
+            r"was rejected \(HTTP 403\)",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_executor_terminal_stream_connect_failure_identifies_wss_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    expected: str,
+) -> None:
+    closed: list[str] = []
+
+    async def fake_open(shell_id: str, cols: int, rows: int):
+        return {
+            "bridge_id": "bridge-remote",
+            "shell_id": shell_id,
+            "backend": "tmux",
+        }
+
+    async def fake_connect(url: str, **kwargs: Any):
+        assert url.startswith("wss://")
+        raise failure
+
+    async def fake_close(bridge_id: str):
+        closed.append(bridge_id)
+        return {"bridge_id": bridge_id, "closed": True}
+
+    monkeypatch.setattr(stream_module, "_NoRedirectConnect", fake_connect)
+    monkeypatch.setattr(
+        stream_module, "open_terminal_bridge_execute", fake_open
+    )
+    monkeypatch.setattr(
+        stream_module, "close_terminal_bridge_execute", fake_close
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=expected,
+    ) as error:
+        await stream_module.connect_executor_terminal_stream(
+            _profile(),
+            stream_id="stream_abcdefghijklmnopqrstuvwxyz",
+            shell_id="shell-1",
+            cols=100,
+            rows=30,
+        )
+    assert "paired Control URL" in str(error.value)
+    assert error.value.__cause__ is failure
+    assert closed == ["bridge-remote"]
