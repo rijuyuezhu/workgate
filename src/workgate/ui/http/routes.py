@@ -13,11 +13,12 @@ from starlette.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
+    RedirectResponse,
     Response,
 )
 from starlette.routing import BaseRoute, Route
 
-from ...config.control import ControlConfig
+from ...config.control import ControlConfig, get_control_config
 from ...oauth.core.scopes import default_scope
 from ...oauth.core.urls import issuer_url, resource_url
 from ...version import version_info
@@ -149,6 +150,11 @@ def _index_headers() -> dict[str, str]:
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
     }
+
+
+async def ui_root_redirect(_request: Request) -> Response:
+    """Redirect the root URL to the configured WebUI."""
+    return RedirectResponse(f"{get_control_config().ui_path}/", status_code=307)
 
 
 async def ui_index(request: Request) -> Response:
@@ -295,6 +301,7 @@ def human_ui_routes(
         return [], []
     ui_path = settings.ui_path
     public_routes: list[BaseRoute] = [
+        Route("/", ui_root_redirect, methods=["GET"]),
         Route("/pair", ui_index, methods=["GET"]),
         Route(ui_path, ui_index, methods=["GET"]),
         Route(ui_path + "/", ui_index, methods=["GET"]),

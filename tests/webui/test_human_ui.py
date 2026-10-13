@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 from workgate.config.settings import Settings, clear_settings_cache
 from workgate.control.http.app import build_http_app
+from workgate.control.mcp.app import build_mcp, build_mcp_http_app
 from workgate.control.state import ExecutorTrustRecord
 from workgate.oauth.core.scopes import default_scope
 from workgate.oauth.core.state import (
@@ -30,6 +31,7 @@ from workgate.protocol.credentials import (
     new_executor_credential,
 )
 from workgate.protocol.ids import new_executor_id
+from workgate.tools.catalog import ToolCatalog
 from workgate.ui.http.session import (
     has_valid_ui_csrf,
     has_valid_ui_origin,
@@ -91,6 +93,37 @@ def test_ui_path_normalization_and_reserved_paths():
     ):
         with pytest.raises(ValidationError):
             Settings(ui_path=value)
+
+
+@pytest.mark.parametrize("auth_mode", ["none", "oauth"])
+@pytest.mark.parametrize("ui_path", ["/ui", "/control"])
+def test_human_ui_root_redirect(monkeypatch, tmp_path, auth_mode, ui_path):
+    _configure_ui(monkeypatch, tmp_path, auth_mode=auth_mode, ui_path=ui_path)
+    client = TestClient(build_http_app(), client=("203.0.113.10", 50000))
+
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == f"{ui_path}/"
+    assert "Workgate WebUI" in client.get("/").text
+
+
+def test_human_ui_root_redirect_without_runtime(monkeypatch, tmp_path):
+    _configure_ui(monkeypatch, tmp_path)
+    client = TestClient(build_http_app(tool_catalog=ToolCatalog(())))
+
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/ui/"
+
+
+def test_human_ui_root_redirect_in_mcp_mode(monkeypatch, tmp_path):
+    _configure_ui(monkeypatch, tmp_path, auth_mode="oauth")
+    client = TestClient(build_mcp_http_app(build_mcp()))
+
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/ui/"
+    assert client.get("/mcp", follow_redirects=False).status_code == 401
 
 
 def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
@@ -1015,6 +1048,7 @@ def test_human_ui_can_be_disabled(monkeypatch, tmp_path):
     _configure_ui(monkeypatch, tmp_path, ui_enabled=False)
     client = TestClient(build_http_app())
 
+    assert client.get("/", follow_redirects=False).status_code == 404
     assert client.get("/ui").status_code == 404
     assert client.get("/api/ui/bootstrap").status_code == 404
 
