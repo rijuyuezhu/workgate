@@ -567,10 +567,6 @@ async def _capture_niri_window(
             break
         except OSError, ValueError, EOFError:
             await asyncio.sleep(0.05)
-        except GuiUnavailableError as exc:
-            if "is invalid" not in str(exc):
-                raise
-            await asyncio.sleep(0.05)
     else:
         raise GuiUnavailableError("Niri did not write a complete screenshot")
     if await asyncio.to_thread(_niri_window_id, record, env) != window_id:
