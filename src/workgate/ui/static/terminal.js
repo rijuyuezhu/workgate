@@ -677,21 +677,23 @@ export function createTerminalController({
     elements.terminalXterm.addEventListener("click", () => controllerState.terminalXterm?.focus());
   elements.terminalStartForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const button = elements.terminalStartForm.querySelector("button");
-    button.disabled = true;
+    const generation = controllerState.terminalGeneration;
+    const requestedExecutor = controllerState.terminalExecutorId;
+    const current = () => generation === controllerState.terminalGeneration;
+    elements.terminalStartForm.querySelector("button").disabled = true;
     try {
-      const requestedExecutor = controllerState.terminalExecutorId;
       const name = elements.terminalName.value.trim();
       const result = await terminalAction("start", { cwd: ".", name: name || null });
-      if (requestedExecutor !== controllerState.terminalExecutorId || result.executor_id !== requestedExecutor) return;
+      if (!current() || result.executor_id !== requestedExecutor) return;
       elements.terminalName.value = "";
       await refreshTerminals({ force: true });
-      if (requestedExecutor === controllerState.terminalExecutorId) connectTerminal(result.shell_id);
+      if (current()) void connectTerminal(result.shell_id);
     } catch (error) {
+      if (!current()) return;
       elements.terminalState.textContent = "Unable to start terminal";
       showTerminalMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
+      if (current()) setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
     }
   });
 
@@ -734,9 +736,12 @@ export function createTerminalController({
   elements.terminalKill.addEventListener("click", async () => {
     if (!controllerState.selectedShellId) return;
     const shellId = controllerState.selectedShellId;
+    const generation = controllerState.terminalGeneration;
+    const current = () => generation === controllerState.terminalGeneration;
     elements.terminalKill.disabled = true;
     try {
       await terminalAction("kill", { shell_id: shellId });
+      if (!current()) return;
       closeTerminalSocket();
       controllerState.selectedShellId = "";
       elements.terminalTitle.textContent = "No terminal selected";
@@ -744,10 +749,11 @@ export function createTerminalController({
       showTerminalMessage(`Terminal ${controllerState.terminalExecutorId} / ${shellId} was terminated.`);
       await refreshTerminals({ force: true });
     } catch (error) {
+      if (!current()) return;
       elements.terminalState.textContent = "Unable to kill terminal";
       showTerminalMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
+      if (current()) setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
     }
   });
 

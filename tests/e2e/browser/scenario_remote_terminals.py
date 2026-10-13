@@ -252,3 +252,95 @@ def run_terminal_switch_races(harness: BrowserHarness) -> None:
         "cat remote-marker.txt",
         "running-on-remote-executor",
     )
+
+
+def _hold_terminal_action(page, action: str) -> None:
+    page.evaluate(
+        """action => {
+      const original = window.fetch;
+      window.__terminalActionFetch = original;
+      window.__terminalActionReplies = [];
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (String(args[0]).endsWith(`/api/ui/terminals/${action}`)) {
+          return new Promise(resolve => {
+            window.__terminalActionReplies.push(() => resolve(response));
+          });
+        }
+        return response;
+      };
+    }""",
+        action,
+    )
+
+
+def _release_terminal_action(page) -> None:
+    page.wait_for_function("() => window.__terminalActionReplies.length > 0")
+    page.evaluate("""() => {
+      window.__terminalActionReplies.shift()();
+      window.fetch = window.__terminalActionFetch;
+      delete window.__terminalActionFetch;
+      delete window.__terminalActionReplies;
+    }""")
+
+
+def run_terminal_action_races(harness: BrowserHarness) -> None:
+    """Old Start/Kill completions must not change a newly selected executor."""
+    remote_id = harness.remote_executor_id
+    assert remote_id is not None
+    local_id = harness.executor_id
+    page = harness.page
+    harness.navigate("terminals")
+    remote_button = page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{remote_id}"]'
+    )
+    local_button = page.locator(
+        f'#terminal-executor-locations button[data-executor-id="{local_id}"]'
+    )
+    remote_entry = page.locator(
+        '#terminal-list .terminal-session[title*="remote-browser-shell"]'
+    )
+    local_button.click()
+    local_entry = page.locator(
+        '#terminal-list .terminal-session[title*="local-browser-shell"]'
+    )
+    local_entry.click()
+    expect(page.locator("#terminal-state")).to_contain_text("Connected")
+
+    # The local kill has completed server-side when we release its HTTP
+    # response, but it must not disconnect the remote shell selected meanwhile.
+    _hold_terminal_action(page, "kill")
+    page.locator("#terminal-kill").click()
+    page.wait_for_function("() => window.__terminalActionReplies.length > 0")
+    remote_button.click()
+    remote_entry.click()
+    expect(page.locator("#terminal-state")).to_contain_text("Connected")
+    _release_terminal_action(page)
+    expect(page.locator("#terminal-state")).to_contain_text("Connected")
+    expect(page.locator("#terminal-title")).to_contain_text(
+        "remote-browser-shell"
+    )
+    _send_terminal(
+        harness,
+        remote_id,
+        "remote-browser-shell",
+        "cat remote-marker.txt",
+        "running-on-remote-executor",
+    )
+
+    # A->B->A is especially subtle: executor IDs match again, but the old
+    # Start result must not auto-attach a shell the user did not reselect.
+    local_button.click()
+    expect(page.locator("#terminal-start-form button")).to_be_enabled()
+    page.locator("#terminal-name").fill("stale-start-shell")
+    harness.track_terminal(local_id, "stale-start-shell")
+    _hold_terminal_action(page, "start")
+    page.locator("#terminal-start-form button").click()
+    page.wait_for_function("() => window.__terminalActionReplies.length > 0")
+    remote_button.click()
+    local_button.click()
+    expect(page.locator("#terminal-title")).to_have_text("No terminal selected")
+    _release_terminal_action(page)
+    expect(page.locator("#terminal-title")).to_have_text("No terminal selected")
+    expect(page.locator("#terminal-executor")).to_have_value(local_id)
+    expect(page.locator("#terminal-list")).to_contain_text("stale-start-shell")

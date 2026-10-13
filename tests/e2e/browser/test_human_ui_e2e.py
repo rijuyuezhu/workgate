@@ -16,6 +16,7 @@ from tests.e2e.browser.scenario_live_workspace import (
 from tests.e2e.browser.scenario_mobile_drilldown import run_mobile_drilldown
 from tests.e2e.browser.scenario_remote_terminals import (
     run_remote_terminals,
+    run_terminal_action_races,
     run_terminal_switch_races,
 )
 from tests.e2e.browser.scenario_terminals import run_terminals
@@ -59,6 +60,7 @@ def test_remote_executor_terminal_real_chromium(tmp_path):
             harness.login()
             run_remote_terminals(harness)
             run_terminal_switch_races(harness)
+            run_terminal_action_races(harness)
             harness.assert_clean_browser()
             failed = False
         finally:
