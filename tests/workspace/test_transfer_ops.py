@@ -1167,7 +1167,9 @@ def test_transfer_payload_and_temp_path_validation(tmp_path, monkeypatch):
 
     scratch = transfer_alloc_temp_path("unsafe/suffix")
     assert scratch.path.endswith(".bin")
-    scratch_path = Path(scratch.path)
+    scratch_path = transfer_ops._resolve_temp_path(
+        scratch.path, context=_context()
+    )
     scratch_path.mkdir()
     with pytest.raises(IsADirectoryError):
         transfer_ops.transfer_delete_temp_path(scratch.path, context=_context())
