@@ -90,14 +90,11 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
             "Connected"
         )
         expect(page.locator("#terminal-state")).to_contain_text("Connected")
-        # Input from the second client appears on the first client's stream.
+        # Raw WebSocket PTY input from the second client appears on the first.
         received_start = len(harness.websocket_events)
-        second_page.locator("#terminal-input").fill(
-            "printf 'dual-%s\\n' client"
-        )
-        second_page.locator("#terminal-input-form").get_by_role(
-            "button", name="Send"
-        ).click()
+        expect(second_page.locator("#terminal-xterm textarea")).to_be_focused()
+        second_page.keyboard.type("printf 'dual-%s\\n' client", delay=5)
+        second_page.keyboard.press("Enter")
         _wait_terminal_stream_marker(
             harness, "dual-client", websocket_event_start=received_start
         )
