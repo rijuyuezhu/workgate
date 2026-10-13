@@ -203,15 +203,14 @@ async def test_native_keyboard_wtype_cancel_kills_process(monkeypatch):
         returncode = None
         killed = False
 
-        async def communicate(self):
+        async def wait(self):
+            if self.killed:
+                return self.returncode
             await asyncio.sleep(3600)
 
         def kill(self):
             self.killed = True
             self.returncode = -9
-
-        async def wait(self):
-            return self.returncode
 
     process = SleepingProcess()
 
@@ -244,3 +243,89 @@ async def test_niri_focus_verification_checks_real_compositor_id(monkeypatch):
     monkeypatch.setattr(linux.subprocess, "run", run)
     with pytest.raises(GuiStaleStateError, match="different window"):
         await linux._assert_niri_window_focused(WINDOW, dict(ENV))
+
+
+@pytest.mark.asyncio
+async def test_native_keyboard_timeout_kills_virtual_keyboard_process(
+    monkeypatch,
+):
+    class Stalled:
+        returncode = None
+        killed = False
+
+        async def wait(self):
+            if self.killed:
+                return -9
+            await asyncio.sleep(3600)
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    process = Stalled()
+
+    async def spawn(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wtype")
+    monkeypatch.setattr(linux.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(linux, "_NIRI_WTYPE_TIMEOUT_S", 0.02)
+    with pytest.raises(GuiUnavailableError, match="timed out"):
+        await linux._run_niri_wtype(["-k", "a"], dict(ENV))
+    assert process.killed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("desktop", ["GNOME", "KDE"])
+async def test_opt_in_does_not_replace_other_wayland_portal(
+    monkeypatch, desktop
+):
+    backend = linux.LinuxGuiBackend(niri_native_keyboard_enabled=True)
+    env = {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": desktop}
+    ops = backend._desktop_operations(env)
+    assert (
+        getattr(ops.input, "__func__", None)
+        is linux.LinuxGuiBackend._perform_wayland
+    )
+    assert ops.input_devices is linux.portal_available_devices
+
+
+@pytest.mark.asyncio
+async def test_opt_in_does_not_replace_niri_pointer_portal(monkeypatch):
+    backend = linux.LinuxGuiBackend(niri_native_keyboard_enabled=True)
+    env = dict(ENV)
+    expected = {"method": "xdg-desktop-portal"}
+
+    async def portal_pointer(window, locator, action, selected_env):
+        assert window is WINDOW
+        assert action["type"] == "move"
+        assert selected_env == env
+        return expected
+
+    monkeypatch.setattr(backend, "_perform_wayland", portal_pointer)
+    result = await backend._perform_niri_input(
+        WINDOW, None, {"type": "move", "x": 2, "y": 3}, env
+    )
+    assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_native_keyboard_rejects_long_text_before_running_client(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_keyboard_enabled=True)
+    backend._env = dict(ENV)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wtype")
+
+    async def focused(*_args):
+        return None
+
+    async def must_not_send(*_args):
+        pytest.fail("Long input must not spawn native keyboard")
+
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_run_niri_wtype", must_not_send)
+    with pytest.raises(ValueError, match="limited to 512"):
+        await backend._perform_niri_input(
+            WINDOW, None, {"type": "type", "text": "a" * 513}, backend._env
+        )

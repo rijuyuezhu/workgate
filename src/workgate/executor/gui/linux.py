@@ -148,6 +148,7 @@ async def _assert_niri_window_focused(
         )
 
 
+_NIRI_WTYPE_TIMEOUT_S = 15.0
 _NIRI_MODIFIERS = {
     "CTRL": "ctrl",
     "CONTROL": "ctrl",
@@ -230,7 +231,7 @@ async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
             binary,
             *args,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             env=env,
         )
     except OSError as exc:
@@ -238,16 +239,14 @@ async def _run_niri_wtype(args: list[str], env: dict[str, str]) -> None:
             "Cannot start Niri virtual keyboard client"
         ) from exc
     try:
-        _stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=15
-        )
-    except BaseException as exc:
-        # Closing the process closes its Wayland virtual-keyboard resource,
-        # releasing any held modifiers even on timeout/cancellation.
+        await asyncio.wait_for(process.wait(), timeout=_NIRI_WTYPE_TIMEOUT_S)
+    except (asyncio.CancelledError, TimeoutError) as exc:
+        # Disconnecting this virtual keyboard releases held keys/modifiers.
         if process.returncode is None:
-            process.kill()
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(asyncio.shield(process.wait()), timeout=3)
+            await asyncio.shield(process.wait())
         if isinstance(exc, TimeoutError):
             raise GuiUnavailableError(
                 "Niri virtual keyboard timed out"
