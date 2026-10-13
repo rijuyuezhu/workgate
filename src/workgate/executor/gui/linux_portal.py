@@ -48,6 +48,16 @@ def _unwrap(value: Any) -> Any:
     return value
 
 
+def _portal_interface_xml(xml: str, *interfaces: str) -> str:
+    """Exclude unrelated portal interfaces before dbus-next parses the XML."""
+    root = ElementTree.fromstring(xml)
+    wanted = {*interfaces, "org.freedesktop.DBus.Properties"}
+    for item in list(root):
+        if item.tag == "interface" and item.get("name") not in wanted:
+            root.remove(item)
+    return ElementTree.tostring(root, encoding="unicode")
+
+
 async def _portal_proxy(bus: Any, path: str, *interfaces: str) -> Any:
     """Introspect only needed interfaces, avoiding unrelated broken portal XML."""
     from dbus_next.constants import MessageType
@@ -67,12 +77,7 @@ async def _portal_proxy(bus: Any, path: str, *interfaces: str) -> Any:
     )
     if reply.message_type != MessageType.METHOD_RETURN or not reply.body:
         raise GuiUnavailableError("Desktop portal introspection failed")
-    root = ElementTree.fromstring(str(reply.body[0]))
-    wanted = {*interfaces, "org.freedesktop.DBus.Properties"}
-    for item in list(root):
-        if item.tag == "interface" and item.get("name") not in wanted:
-            root.remove(item)
-    node = Node.parse(ElementTree.tostring(root, encoding="unicode"))
+    node = Node.parse(_portal_interface_xml(str(reply.body[0]), *interfaces))
     return bus.get_proxy_object("org.freedesktop.portal.Desktop", path, node)
 
 
@@ -108,7 +113,8 @@ async def portal_available_devices(env: dict[str, str]) -> int:
     except Exception:
         return 0
     finally:
-        bus.disconnect()
+        with contextlib.suppress(Exception):
+            bus.disconnect()
 
 
 _KEYSYMS = {
@@ -221,10 +227,14 @@ async def _portal_request(
                 )
             return await future
 
-        code, results = await asyncio.wait_for(
-            request_and_wait(),
-            timeout=timeout_s,
-        )
+        try:
+            code, results = await asyncio.wait_for(
+                request_and_wait(), timeout=timeout_s
+            )
+        except TimeoutError as exc:
+            raise GuiUnavailableError(
+                "Desktop portal request timed out (unavailable or not approved)"
+            ) from exc
     finally:
         with contextlib.suppress(Exception):
             bus.remove_message_handler(handler)
@@ -367,7 +377,8 @@ class PortalDesktop:
         async with self._lock:
             if self._session is not None:
                 return self._session
-            if not await portal_available_devices(self._env):
+            devices = (await portal_available_devices(self._env)) & 3
+            if not devices:
                 raise GuiUnavailableError(
                     "Wayland RemoteDesktop portal provides no input devices; "
                     "pointer and keyboard control are unavailable"
@@ -412,7 +423,7 @@ class PortalDesktop:
                         session,
                         {
                             "handle_token": Variant("s", device_token),
-                            "types": Variant("u", 3),
+                            "types": Variant("u", devices),
                         },
                     ),
                     handle_token=device_token,
@@ -701,6 +712,7 @@ async def portal_screenshot(destination: Path, env: dict[str, str]) -> None:
                 },
             ),
             handle_token=token,
+            timeout_s=20.0,
         )
         uri = str(results.get("uri") or "")
         parsed = urlparse(uri)

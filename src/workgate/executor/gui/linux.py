@@ -910,6 +910,7 @@ class LinuxGuiBackend:
             "monitors": data.get("monitors", []),
             "capabilities": {
                 "accessibility": "AT-SPI",
+                # Wayland capture depends on a successful portal permission grant.
                 "window_capture": session_type == "x11",
                 "coordinate_input": bool(devices & 1),
                 "keyboard_input": bool(devices & 2),

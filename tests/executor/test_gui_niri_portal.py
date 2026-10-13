@@ -127,36 +127,18 @@ async def test_semantic_click_does_not_require_window_activation(monkeypatch):
     assert result["semantic"] is True
 
 
-@pytest.mark.asyncio
-async def test_portal_skips_unrelated_unparseable_introspection(monkeypatch):
-    from dbus_next.constants import MessageType
-
+def test_portal_skips_unrelated_unparseable_introspection():
     xml = """<node><interface name="org.freedesktop.portal.Screenshot">
       <method name="Screenshot"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
       </interface><interface name="org.freedesktop.portal.PowerProfileMonitor">
       <property name="power-saver-enabled" type="b" access="read"/>
       </interface></node>"""
-
-    class Bus:
-        async def call(self, _message):
-            return SimpleNamespace(
-                message_type=MessageType.METHOD_RETURN, body=[xml]
-            )
-
-        def get_proxy_object(self, _service, _path, node):
-            return node
-
-    node = await linux_portal._portal_proxy(
-        Bus(),
-        "/org/freedesktop/portal/desktop",
-        "org.freedesktop.portal.Screenshot",
+    filtered = linux_portal._portal_interface_xml(
+        xml, "org.freedesktop.portal.Screenshot"
     )
-    assert "org.freedesktop.portal.Screenshot" in [
-        iface.name for iface in node.interfaces
-    ]
-    assert "org.freedesktop.portal.PowerProfileMonitor" not in [
-        iface.name for iface in node.interfaces
-    ]
+    assert 'name="org.freedesktop.portal.Screenshot"' in filtered
+    assert "PowerProfileMonitor" not in filtered
+    assert "power-saver-enabled" not in filtered
 
 
 @pytest.mark.asyncio
