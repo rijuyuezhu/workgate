@@ -24,7 +24,11 @@ from .base import (
     display_screenshot_path,
     quantize_scroll_amount,
 )
-from .linux_portal import PortalDesktop, portal_screenshot
+from .linux_portal import (
+    PortalDesktop,
+    portal_available_devices,
+    portal_screenshot,
+)
 
 _DESKTOP_ENV_KEYS = {
     "DISPLAY",
@@ -893,6 +897,11 @@ class LinuxGuiBackend:
                 "No graphical Linux session was found; DISPLAY/WAYLAND_DISPLAY are unavailable"
             )
         data = await asyncio.to_thread(self._list_data, env)
+        devices = (
+            await portal_available_devices(env)
+            if session_type == "wayland"
+            else 3
+        )
         return {
             "backend": self.name,
             "platform": "linux",
@@ -901,11 +910,12 @@ class LinuxGuiBackend:
             "monitors": data.get("monitors", []),
             "capabilities": {
                 "accessibility": "AT-SPI",
-                "window_capture": True,
-                "coordinate_input": True,
+                "window_capture": session_type == "x11",
+                "coordinate_input": bool(devices & 1),
+                "keyboard_input": bool(devices & 2),
                 "semantic_actions": True,
                 "wayland_input": "xdg-desktop-portal"
-                if session_type == "wayland"
+                if session_type == "wayland" and devices
                 else None,
                 "capture_requires_focus": session_type == "wayland",
             },
@@ -1055,7 +1065,11 @@ class LinuxGuiBackend:
                 "window_capture": screenshot_path is not None,
                 "capture_backend": capture_backend,
                 "coordinate_space": "window-relative",
-                "coordinate_input": True,
+                "coordinate_input": bool(
+                    (await portal_available_devices(env)) & 1
+                )
+                if session_type == "wayland"
+                else True,
                 "semantic_actions": True,
                 "session_type": session_type,
             },
@@ -1096,6 +1110,34 @@ class LinuxGuiBackend:
                 raise GuiUnavailableError(
                     "Niri could not activate the selected window"
                 ) from exc
+            try:
+                focused = await asyncio.to_thread(
+                    subprocess.run,
+                    ["niri", "msg", "-j", "focused-window"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                    env=env,
+                )
+                active = json.loads(focused.stdout)
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                raise GuiUnavailableError(
+                    "Cannot verify Niri window activation"
+                ) from exc
+            if not isinstance(active, dict) or any(
+                (
+                    active.get(key) != value
+                    for key, value in (
+                        ("id", niri_id),
+                        ("pid", window.get("pid")),
+                        ("title", window.get("title")),
+                    )
+                )
+            ):
+                raise GuiStaleStateError(
+                    "Niri focused a different window; refresh gui_state"
+                )
             return
         focus_action: dict[str, Any] = {"type": "focus"}
         if deadline is not None:
@@ -1113,6 +1155,12 @@ class LinuxGuiBackend:
 
     async def focus_window(self, window: dict[str, Any]) -> None:
         env = await self._ensure_env()
+        if _session_type(env) == "wayland" and not (
+            (await portal_available_devices(env)) & 1
+        ):
+            raise GuiUnavailableError(
+                "Wayland RemoteDesktop portal does not provide pointer input"
+            )
         await self._focus_window(window, env)
 
     async def perform_action(
@@ -1199,6 +1247,12 @@ class LinuxGuiBackend:
             locator = {**locator, "bounds": bounds}
 
         if kind in {"type", "key"}:
+            if _session_type(env) == "wayland" and not (
+                (await portal_available_devices(env)) & 2
+            ):
+                raise GuiUnavailableError(
+                    "Wayland RemoteDesktop portal does not provide keyboard input"
+                )
             if locator is not None:
                 await asyncio.to_thread(
                     self._helper,

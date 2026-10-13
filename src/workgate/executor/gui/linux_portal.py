@@ -50,8 +50,9 @@ def _unwrap(value: Any) -> Any:
 
 async def _portal_proxy(bus: Any, path: str, *interfaces: str) -> Any:
     """Introspect only needed interfaces, avoiding unrelated broken portal XML."""
-    from dbus_next import Message, MessageType
+    from dbus_next.constants import MessageType
     from dbus_next.introspection import Node
+    from dbus_next.message import Message
 
     reply = await _portal_lifecycle_wait(
         bus.call(
@@ -77,9 +78,10 @@ async def _portal_proxy(bus: Any, path: str, *interfaces: str) -> Any:
 
 async def portal_available_devices(env: dict[str, str]) -> int:
     """Report supported Wayland input devices without opening a portal session."""
-    from dbus_next import Message, MessageType
-
     MessageBus, _Variant = _portal_modules()
+    from dbus_next.constants import MessageType
+    from dbus_next.message import Message
+
     address = env.get("DBUS_SESSION_BUS_ADDRESS")
     bus = MessageBus(bus_address=address) if address else MessageBus()
     try:
