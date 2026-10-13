@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
+from xml.etree import ElementTree
 
 from ...errors import GuiUnavailableError
 
@@ -45,6 +46,67 @@ def _unwrap(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_unwrap(item) for item in value]
     return value
+
+
+async def _portal_proxy(bus: Any, path: str, *interfaces: str) -> Any:
+    """Introspect only needed interfaces, avoiding unrelated broken portal XML."""
+    from dbus_next import Message, MessageType
+    from dbus_next.introspection import Node
+
+    reply = await _portal_lifecycle_wait(
+        bus.call(
+            Message(
+                destination="org.freedesktop.portal.Desktop",
+                path=path,
+                interface="org.freedesktop.DBus.Introspectable",
+                member="Introspect",
+            )
+        ),
+        "introspecting the desktop portal",
+    )
+    if reply.message_type != MessageType.METHOD_RETURN or not reply.body:
+        raise GuiUnavailableError("Desktop portal introspection failed")
+    root = ElementTree.fromstring(str(reply.body[0]))
+    wanted = {*interfaces, "org.freedesktop.DBus.Properties"}
+    for item in list(root):
+        if item.tag == "interface" and item.get("name") not in wanted:
+            root.remove(item)
+    node = Node.parse(ElementTree.tostring(root, encoding="unicode"))
+    return bus.get_proxy_object("org.freedesktop.portal.Desktop", path, node)
+
+
+async def portal_available_devices(env: dict[str, str]) -> int:
+    """Report supported Wayland input devices without opening a portal session."""
+    from dbus_next import Message, MessageType
+
+    MessageBus, _Variant = _portal_modules()
+    address = env.get("DBUS_SESSION_BUS_ADDRESS")
+    bus = MessageBus(bus_address=address) if address else MessageBus()
+    try:
+        await _portal_lifecycle_wait(bus.connect(), "connecting to D-Bus")
+        reply = await _portal_lifecycle_wait(
+            bus.call(
+                Message(
+                    destination="org.freedesktop.portal.Desktop",
+                    path="/org/freedesktop/portal/desktop",
+                    interface="org.freedesktop.DBus.Properties",
+                    member="Get",
+                    signature="ss",
+                    body=[
+                        "org.freedesktop.portal.RemoteDesktop",
+                        "AvailableDeviceTypes",
+                    ],
+                )
+            ),
+            "checking Wayland input capabilities",
+        )
+        if reply.message_type != MessageType.METHOD_RETURN or not reply.body:
+            return 0
+        return int(_unwrap(reply.body[0]))
+    except Exception:
+        return 0
+    finally:
+        bus.disconnect()
 
 
 _KEYSYMS = {
@@ -205,17 +267,11 @@ class PortalDesktop:
                 candidate.connect(),
                 "connecting to D-Bus",
             )
-            intro = await _portal_lifecycle_wait(
-                connected.introspect(
-                    "org.freedesktop.portal.Desktop",
-                    "/org/freedesktop/portal/desktop",
-                ),
-                "introspecting the desktop portal",
-            )
-            obj = connected.get_proxy_object(
-                "org.freedesktop.portal.Desktop",
+            obj = await _portal_proxy(
+                connected,
                 "/org/freedesktop/portal/desktop",
-                intro,
+                "org.freedesktop.portal.RemoteDesktop",
+                "org.freedesktop.portal.ScreenCast",
             )
             remote = obj.get_interface("org.freedesktop.portal.RemoteDesktop")
             screen = obj.get_interface("org.freedesktop.portal.ScreenCast")
@@ -280,17 +336,8 @@ class PortalDesktop:
     async def _observe_session_closed(self, session: str) -> None:
         if self._bus is None:
             return
-        intro = await _portal_lifecycle_wait(
-            self._bus.introspect(
-                "org.freedesktop.portal.Desktop",
-                session,
-            ),
-            "introspecting the portal session",
-        )
-        obj = self._bus.get_proxy_object(
-            "org.freedesktop.portal.Desktop",
-            session,
-            intro,
+        obj = await _portal_proxy(
+            self._bus, session, "org.freedesktop.portal.Session"
         )
         iface = obj.get_interface("org.freedesktop.portal.Session")
         on_closed = getattr(iface, "on_closed", None)
@@ -305,17 +352,8 @@ class PortalDesktop:
     async def _close_session(self, session: str) -> None:
         if self._bus is None:
             return
-        intro = await _portal_lifecycle_wait(
-            self._bus.introspect(
-                "org.freedesktop.portal.Desktop",
-                session,
-            ),
-            "introspecting the portal session",
-        )
-        obj = self._bus.get_proxy_object(
-            "org.freedesktop.portal.Desktop",
-            session,
-            intro,
+        obj = await _portal_proxy(
+            self._bus, session, "org.freedesktop.portal.Session"
         )
         iface = obj.get_interface("org.freedesktop.portal.Session")
         await _portal_lifecycle_wait(
@@ -327,6 +365,11 @@ class PortalDesktop:
         async with self._lock:
             if self._session is not None:
                 return self._session
+            if not await portal_available_devices(self._env):
+                raise GuiUnavailableError(
+                    "Wayland RemoteDesktop portal provides no input devices; "
+                    "pointer and keyboard control are unavailable"
+                )
             await self._connect()
             assert self._remote is not None and self._screen is not None
             _MessageBus, Variant = _portal_modules()
@@ -639,17 +682,10 @@ async def portal_screenshot(destination: Path, env: dict[str, str]) -> None:
             candidate.disconnect()
         raise
     try:
-        intro = await _portal_lifecycle_wait(
-            bus.introspect(
-                "org.freedesktop.portal.Desktop",
-                "/org/freedesktop/portal/desktop",
-            ),
-            "introspecting the screenshot portal",
-        )
-        obj = bus.get_proxy_object(
-            "org.freedesktop.portal.Desktop",
+        obj = await _portal_proxy(
+            bus,
             "/org/freedesktop/portal/desktop",
-            intro,
+            "org.freedesktop.portal.Screenshot",
         )
         screenshot = obj.get_interface("org.freedesktop.portal.Screenshot")
         token = f"workgate_shot_{uuid.uuid4().hex}"

@@ -73,6 +73,39 @@ def _session_type(env: dict[str, str]) -> str:
     return "unknown"
 
 
+def _niri_window_id(window: dict[str, Any], env: dict[str, str]) -> int:
+    """Match the current Niri window using both process and exact title."""
+    try:
+        result = subprocess.run(
+            ["niri", "msg", "-j", "windows"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+            env=env,
+        )
+        candidates = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise GuiUnavailableError(
+            "Cannot query Niri windows for activation"
+        ) from exc
+    if not isinstance(candidates, list):
+        raise GuiUnavailableError("Invalid Niri window inventory")
+    matches = [
+        item
+        for item in candidates
+        if isinstance(item, dict)
+        and item.get("pid") == window.get("pid")
+        and item.get("title") == window.get("title")
+        and item.get("id") is not None
+    ]
+    if len(matches) != 1:
+        raise GuiStaleStateError(
+            "Cannot uniquely match the observed window in Niri; refresh gui_state"
+        )
+    return int(matches[0]["id"])
+
+
 def _helper_path() -> Path:
     return Path(__file__).with_name("linux_atspi_helper.py")
 
@@ -1035,6 +1068,35 @@ class LinuxGuiBackend:
         *,
         deadline: Any | None = None,
     ) -> None:
+        if (
+            _session_type(env) == "wayland"
+            and env.get("XDG_CURRENT_DESKTOP", "").lower() == "niri"
+        ):
+            if deadline is not None:
+                _assert_action_fresh({"_observation_deadline": deadline})
+            niri_id = await asyncio.to_thread(_niri_window_id, window, env)
+            try:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        "niri",
+                        "msg",
+                        "action",
+                        "focus-window",
+                        "--id",
+                        str(niri_id),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                    env=env,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise GuiUnavailableError(
+                    "Niri could not activate the selected window"
+                ) from exc
+            return
         focus_action: dict[str, Any] = {"type": "focus"}
         if deadline is not None:
             focus_action["_observation_deadline"] = deadline
