@@ -31,11 +31,11 @@ LAUNCHD_CONTROL_TIMEOUT_S = 1.0
 LAUNCHD_CLEANUP_GRACE_S = 0.25
 MACOS_TERMINATE_GRACE_S = 0.5
 MACOS_KILL_GRACE_S = 0.5
-MACOS_PROCESS_STATE_TIMEOUT_S = 0.1
 MACOS_LIBPROC_PATH = "/usr/lib/libproc.dylib"
-MACOS_PS_PATH = Path("/bin/ps")
 PROC_UID_ONLY = 4
+PROC_PIDT_SHORTBSDINFO = 13
 PROC_PIDCOALITIONINFO = 20
+MACOS_SZOMB = 5
 COALITION_NUM_TYPES = 2
 COALITION_TYPE_RESOURCE = 0
 _MACOS_LIBPROC: Any | None = None
@@ -71,6 +71,26 @@ class _ProcPidCoalitionInfo(ctypes.Structure):
         ("reserved1", ctypes.c_uint64),
         ("reserved2", ctypes.c_uint64),
         ("reserved3", ctypes.c_uint64),
+    ]
+
+
+class _ProcBsdShortInfo(ctypes.Structure):
+    """XNU proc_bsdshortinfo returned by PROC_PIDT_SHORTBSDINFO."""
+
+    _fields_ = [
+        ("pbsi_pid", ctypes.c_uint32),
+        ("pbsi_ppid", ctypes.c_uint32),
+        ("pbsi_pgid", ctypes.c_uint32),
+        ("pbsi_status", ctypes.c_uint32),
+        ("pbsi_comm", ctypes.c_char * 16),
+        ("pbsi_flags", ctypes.c_uint32),
+        ("pbsi_uid", ctypes.c_uint32),
+        ("pbsi_gid", ctypes.c_uint32),
+        ("pbsi_ruid", ctypes.c_uint32),
+        ("pbsi_rgid", ctypes.c_uint32),
+        ("pbsi_svuid", ctypes.c_uint32),
+        ("pbsi_svgid", ctypes.c_uint32),
+        ("pbsi_rfu", ctypes.c_uint32),
     ]
 
 
@@ -403,55 +423,23 @@ def _macos_process_coalition_ids(pid: int) -> tuple[int, int] | None:
     return resource, jetsam
 
 
-def _macos_zombie_states(pids: set[int]) -> dict[int, bool] | None:
-    """Return zombie states for ambiguous live pids, omitting processes that exited."""
-    requested = sorted(pid for pid in pids if pid > 0)
-    if not requested:
-        return {}
-    # Zombies may reject coalition reads while kill(pid, 0) still reports the
-    # PID as present. Query every ambiguous PID through one fixed system ps
-    # invocation so cleanup keeps a bounded time budget.
-    try:
-        result = subprocess.run(
-            [
-                str(MACOS_PS_PATH),
-                "-p",
-                ",".join(str(pid) for pid in requested),
-                "-o",
-                "pid=,state=",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=MACOS_PROCESS_STATE_TIMEOUT_S,
-            check=False,
+def _macos_process_is_zombie(pid: int) -> bool:
+    """Ignore only a confirmed XNU zombie; unreadable processes are not safe."""
+    library = _macos_libproc()
+    if library is None:
+        return False
+    info = _ProcBsdShortInfo()
+    size = ctypes.sizeof(info)
+    returned = int(
+        library.proc_pidinfo(
+            pid, PROC_PIDT_SHORTBSDINFO, 0, ctypes.byref(info), size
         )
-    except OSError, subprocess.TimeoutExpired:
-        return None
-    if result.returncode not in {0, 1}:
-        return None
-    states: dict[int, bool] = {}
-    for line in result.stdout.splitlines():
-        fields = line.split()
-        if len(fields) != 2:
-            return None
-        try:
-            pid = int(fields[0])
-        except ValueError:
-            return None
-        if pid not in pids or pid in states:
-            return None
-        states[pid] = fields[1].startswith("Z")
-    for pid in requested:
-        if pid in states:
-            continue
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            return None
-        return None
-    return states
+    )
+    return (
+        returned == size
+        and info.pbsi_pid == pid
+        and info.pbsi_status == MACOS_SZOMB
+    )
 
 
 def _read_launchd_coalition(path: Path) -> tuple[int, int] | None:
@@ -485,28 +473,22 @@ def _macos_matching_coalition_pids(
         return None
     resource_id = coalition_ids[COALITION_TYPE_RESOURCE]
     matching: set[int] = set()
-    ambiguous: set[int] = set()
     for pid in pids:
         if pid == os.getpid():
             continue
         identity = _macos_process_coalition_ids(pid)
         if identity is None:
+            if _macos_process_is_zombie(pid):
+                continue
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
                 continue
             except PermissionError:
                 return None
-            ambiguous.add(pid)
-            continue
+            return None
         if identity[COALITION_TYPE_RESOURCE] == resource_id:
             matching.add(pid)
-    if ambiguous:
-        zombie_states = _macos_zombie_states(ambiguous)
-        if zombie_states is None:
-            return None
-        if any(not is_zombie for is_zombie in zombie_states.values()):
-            return None
     return matching
 
 
