@@ -36,6 +36,7 @@ class ExecutorConfig(SharedRoleConfig):
     agent_auth_dir: Path
     temp_dir: Path
     gui_niri_native_keyboard_enabled: bool
+    gui_niri_native_pointer_enabled: bool
     max_skills: int
     max_skill_related_files: int
     max_skill_scan_entries: int
@@ -113,6 +114,7 @@ def resolve_executor_config(settings: Settings) -> ExecutorConfig:
             strict=False
         ),
         gui_niri_native_keyboard_enabled=settings.gui_niri_native_keyboard_enabled,
+        gui_niri_native_pointer_enabled=settings.gui_niri_native_pointer_enabled,
         max_skills=settings.max_skills,
         max_skill_related_files=settings.max_skill_related_files,
         max_skill_scan_entries=settings.max_skill_scan_entries,

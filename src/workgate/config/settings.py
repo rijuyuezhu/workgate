@@ -275,6 +275,8 @@ class Settings(BaseSettings):
     # Native desktop automation.
     gui_niri_native_keyboard_enabled: bool = False
     """Allow trusted local Niri Wayland-socket keyboard input using optional wtype (no Portal prompt)."""
+    gui_niri_native_pointer_enabled: bool = False
+    """Allow explicitly trusted Niri native pointer input using optional wdotool (no Portal prompt)."""
 
     # Agent capability bridge.
     agent_bridge_enabled: bool = True

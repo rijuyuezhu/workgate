@@ -293,6 +293,9 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec(
         "gui_niri_native_keyboard_enabled", "Safety and resource limits"
     ),
+    SettingSpec(
+        "gui_niri_native_pointer_enabled", "Safety and resource limits"
+    ),
     SettingSpec("max_skills", "Safety and resource limits", metavar="COUNT"),
     SettingSpec(
         "max_skill_related_files",

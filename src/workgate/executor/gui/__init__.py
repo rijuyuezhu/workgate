@@ -15,7 +15,9 @@ from .base import GuiBackend, GuiService
 
 
 def _backend_for_platform(
-    *, niri_native_keyboard_enabled: bool = False
+    *,
+    niri_native_keyboard_enabled: bool = False,
+    niri_native_pointer_enabled: bool = False,
 ) -> GuiBackend:
     system = platform.system()
     if system == "Darwin":
@@ -26,7 +28,8 @@ def _backend_for_platform(
         from .linux import LinuxGuiBackend
 
         return LinuxGuiBackend(
-            niri_native_keyboard_enabled=niri_native_keyboard_enabled
+            niri_native_keyboard_enabled=niri_native_keyboard_enabled,
+            niri_native_pointer_enabled=niri_native_pointer_enabled,
         )
     from ...errors import GuiUnavailableError
 
@@ -46,7 +49,8 @@ def build_gui_service(
         store,
         backend,
         backend_factory=lambda: _backend_for_platform(
-            niri_native_keyboard_enabled=config.gui_niri_native_keyboard_enabled
+            niri_native_keyboard_enabled=config.gui_niri_native_keyboard_enabled,
+            niri_native_pointer_enabled=config.gui_niri_native_pointer_enabled,
         ),
     )
 
