@@ -105,6 +105,8 @@ max_session_snapshot_bytes: 8388608
 max_file_read_bytes: 512000
 # Maximum raw bytes accepted by the native MCP image viewer.
 max_view_image_bytes: 20971520
+# Allow trusted local Niri Wayland-socket keyboard input using optional wtype (no Portal prompt).
+gui_niri_native_keyboard_enabled: false
 # Maximum number of discovered Skills across all configured sources.
 max_skills: 256
 # Maximum related files returned for one Skill.

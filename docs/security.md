@@ -58,6 +58,11 @@ approving broad operations, and keep interactive sessions private. Native GUI
 automation needs `gui:use` and the host OS's applicable permissions; it can
 interact with the executor's actual desktop rather than an isolated test page.
 Do not enable GUI access on a sensitive desktop without accepting that authority.
+On Niri, the optional `gui_niri_native_keyboard_enabled` setting uses the
+same-user Wayland socket through `wtype` with no per-application Portal consent
+prompt. It is disabled by default and grants keyboard authority over the live
+desktop when enabled; restrict who can connect to the executor. Typed text is
+passed to `wtype` via stdin, rather than command-line arguments.
 
 ## File links and transfers
 

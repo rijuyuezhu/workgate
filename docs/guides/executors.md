@@ -88,6 +88,30 @@ reboots or long periods offline do not require pairing again. If the executor
 was revoked or its credential was replaced, run `executor connect` again and
 complete the owner-approved flow.
 
+## Optional Niri native keyboard
+
+On Linux/Niri, the RemoteDesktop Portal may not offer keyboard input. To use
+Niri's compositor-supported virtual-keyboard protocol, install the `wtype`
+client on the executor host, then explicitly enable the executor-local setting:
+
+```yaml
+# ~/.config/workgate/executor/config.yaml
+gui_niri_native_keyboard_enabled: true
+```
+
+Restart that executor to apply the configuration. The default is `false`.
+This uses the **current user's Wayland socket** with no Portal permission
+prompt, and can send keyboard input to the actual desktop. Enable it only
+for a trusted executor account/session. Workgate checks the exact Niri window
+before and after input; external focus changes during typing cannot be
+prevented completely. Niri native text entry is limited to 512 characters
+per action and is passed to `wtype` through stdin, not process arguments.
+Never assume a session workdir isolates desktop access.
+
+Mouse/pointer input remains Portal-only; this option does **not** enable
+virtual pointer injection or use `/dev/uinput`. Other desktop environments
+retain their existing input behavior.
+
 ## Discover and manage executors
 
 Use the `executor` control tool before `session_start` when more than one

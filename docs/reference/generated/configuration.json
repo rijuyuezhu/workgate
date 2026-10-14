@@ -918,6 +918,26 @@
         ],
         [
           {
+            "code": "gui_niri_native_keyboard_enabled"
+          },
+          {
+            "lines": [
+              {
+                "code": "--gui-niri-native-keyboard-enabled"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_GUI_NIRI_NATIVE_KEYBOARD_ENABLED"
+          },
+          "true | false",
+          {
+            "code": "false"
+          },
+          "Allow trusted local Niri Wayland-socket keyboard input using optional wtype (no Portal prompt)."
+        ],
+        [
+          {
             "code": "max_skills"
           },
           {
@@ -2541,6 +2561,22 @@
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [
+        "true",
+        "false"
+      ],
+      "cli": "--gui-niri-native-keyboard-enabled",
+      "default": false,
+      "default_display": "false",
+      "description": "Allow trusted local Niri Wayland-socket keyboard input using optional wtype (no Portal prompt).",
+      "env": "WORKGATE_GUI_NIRI_NATIVE_KEYBOARD_ENABLED",
+      "name": "gui_niri_native_keyboard_enabled",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "true | false",
       "unset_cli": null
     },
     {

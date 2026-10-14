@@ -405,11 +405,15 @@ def quantize_scroll_amount(value: Any, *, limit: int = 100) -> int:
     return -magnitude if amount < 0 else magnitude
 
 
-async def _await_native_operation(awaitable: Any) -> Any:
+async def _await_native_operation(
+    awaitable: Any, *, on_cancel: Callable[[], None] | None = None
+) -> Any:
     task = asyncio.create_task(awaitable)
     try:
         return await asyncio.shield(task)
-    except BaseException:
+    except BaseException as exc:
+        if isinstance(exc, asyncio.CancelledError) and on_cancel is not None:
+            on_cancel()
         with contextlib.suppress(BaseException):
             await asyncio.shield(task)
         raise
@@ -706,8 +710,19 @@ class GuiService:
                     _assert_action_fresh(
                         action, stale_hint="call gui_state again"
                     )
+                    cancel_event = (
+                        asyncio.Event()
+                        if action["type"] in {"type", "key"}
+                        and getattr(
+                            backend, "cancel_safe_keyboard_input", False
+                        )
+                        else None
+                    )
+                    if cancel_event is not None:
+                        action["_cancel_event"] = cancel_event
                     result = await _await_native_operation(
-                        backend.perform_action(record.window, locator, action)
+                        backend.perform_action(record.window, locator, action),
+                        on_cancel=cancel_event.set if cancel_event else None,
                     )
                 except LookupError as exc:
                     raise GuiStaleStateError(str(exc)) from exc

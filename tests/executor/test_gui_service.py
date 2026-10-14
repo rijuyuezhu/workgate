@@ -33,6 +33,7 @@ class FakeGuiBackend:
         self.actions: list[tuple[Any, dict[str, Any]]] = []
         self.focuses = 0
         self.closed = False
+        self.cancel_safe_keyboard_input = False
 
     def window(self) -> dict[str, Any]:
         return {
@@ -410,6 +411,58 @@ async def test_gui_native_operations_are_serialized(tmp_path: Path) -> None:
     assert not second_call.done()
     release.set()
     await asyncio.gather(first_call, second_call)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_safe", [False, True])
+async def test_gui_action_cancellation_respects_native_cleanup_policy(
+    tmp_path: Path, cancel_safe: bool
+) -> None:
+    gui, backend, _store, owner, _second = service(tmp_path)
+    backend.cancel_safe_keyboard_input = cancel_safe
+    started = asyncio.Event()
+    release = asyncio.Event()
+    events: list[str] = []
+
+    async def held_keyboard(window, locator, action):
+        assert window["id"] == "window-1" and locator is None
+        events.append("started")
+        started.set()
+        event = action.get("_cancel_event")
+        if event is None:
+            await release.wait()
+            events.append("finished")
+        else:
+            await event.wait()
+            events.append("cancelled")
+            await asyncio.sleep(0.02)  # Native key-release cleanup must finish.
+            events.append("released")
+            raise asyncio.CancelledError
+        return {"method": "fake-keyboard"}
+
+    backend.perform_action = held_keyboard
+    state_id = str(
+        structured(await gui.snapshot(owner, "window-1", screenshot=False))[
+            "state_id"
+        ]
+    )
+    call = asyncio.create_task(
+        gui.act(owner, "window-1", state_id, [{"type": "type", "text": "test"}])
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    call.cancel()
+    if cancel_safe:
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(call, timeout=2)
+        assert events == ["started", "cancelled", "released"]
+    else:
+        await asyncio.sleep(0.03)
+        assert not call.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(call, timeout=2)
+        assert events == ["started", "finished"]
+    await gui.aclose()
 
 
 @pytest.mark.asyncio
