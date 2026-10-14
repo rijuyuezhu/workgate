@@ -231,6 +231,18 @@ async def test_pointer_rejects_output_disagreement_before_movement(
     assert commands == [("outputs", "--json")]
 
 
+def test_drag_cancellation_is_opt_in_only_for_niri_pointer():
+    pointer = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    pointer._env = dict(ENV)
+    assert pointer.cancel_safe_drag_input is True
+    assert pointer.cancel_safe_keyboard_input is False
+    pointer_disabled = linux.LinuxGuiBackend(niri_native_pointer_enabled=False)
+    pointer_disabled._env = dict(ENV)
+    assert pointer_disabled.cancel_safe_drag_input is False
+    pointer._env = {**ENV, "XDG_CURRENT_DESKTOP": "GNOME"}
+    assert pointer.cancel_safe_drag_input is False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [None, "move", "cancel", "stale"])
 async def test_drag_always_releases_button(monkeypatch, failure):

@@ -34,6 +34,7 @@ class FakeGuiBackend:
         self.focuses = 0
         self.closed = False
         self.cancel_safe_keyboard_input = False
+        self.cancel_safe_drag_input = False
 
     def window(self) -> dict[str, Any]:
         return {
@@ -489,16 +490,20 @@ async def test_gui_native_operations_are_serialized(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_safe", [False, True])
+@pytest.mark.parametrize("kind", ["type", "drag"])
 async def test_gui_action_cancellation_respects_native_cleanup_policy(
-    tmp_path: Path, cancel_safe: bool
+    tmp_path: Path, cancel_safe: bool, kind: str
 ) -> None:
     gui, backend, _store, owner, _second = service(tmp_path)
-    backend.cancel_safe_keyboard_input = cancel_safe
+    backend.cancel_safe_keyboard_input = (
+        cancel_safe if kind == "type" else False
+    )
+    backend.cancel_safe_drag_input = cancel_safe if kind == "drag" else False
     started = asyncio.Event()
     release = asyncio.Event()
     events: list[str] = []
 
-    async def held_keyboard(window, locator, action):
+    async def held_input(window, locator, action):
         assert window["id"] == "window-1" and locator is None
         events.append("started")
         started.set()
@@ -509,19 +514,26 @@ async def test_gui_action_cancellation_respects_native_cleanup_policy(
         else:
             await event.wait()
             events.append("cancelled")
-            await asyncio.sleep(0.02)  # Native key-release cleanup must finish.
+            await asyncio.sleep(0.02)  # Native input cleanup must finish.
             events.append("released")
             raise asyncio.CancelledError
-        return {"method": "fake-keyboard"}
+        return {"method": "fake-native"}
 
-    backend.perform_action = held_keyboard
+    backend.perform_action = held_input
     state_id = str(
         structured(await gui.snapshot(owner, "window-1", screenshot=False))[
             "state_id"
         ]
     )
     call = asyncio.create_task(
-        gui.act(owner, "window-1", state_id, [{"type": "type", "text": "test"}])
+        gui.act(
+            owner,
+            "window-1",
+            state_id,
+            [{"type": "type", "text": "test"}]
+            if kind == "type"
+            else [{"type": "drag", "x": 1, "y": 1, "to_x": 5, "to_y": 10}],
+        )
     )
     await asyncio.wait_for(started.wait(), timeout=2)
     call.cancel()

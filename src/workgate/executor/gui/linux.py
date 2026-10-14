@@ -1260,6 +1260,10 @@ class LinuxGuiBackend:
     def cancel_safe_keyboard_input(self) -> bool:
         return self._niri_native_keyboard_enabled and _is_niri(self._env or {})
 
+    @property
+    def cancel_safe_drag_input(self) -> bool:
+        return self._niri_native_pointer_enabled and _is_niri(self._env or {})
+
     def __init__(
         self,
         *,
@@ -1440,7 +1444,7 @@ class LinuxGuiBackend:
             workspaces=workspaces,
             outputs=outputs,
         )
-        to_x, to_y, end_px, end_py = x, y, px, py
+        drag_end: tuple[int, int, int, int] | None = None
         if kind == "drag":
             end_screen_x, end_screen_y = self._screen_point(
                 window, {"x": action.get("to_x"), "y": action.get("to_y")}, None
@@ -1449,7 +1453,7 @@ class LinuxGuiBackend:
                 end_screen_x - int(bounds["x"]),
                 end_screen_y - int(bounds["y"]),
             )
-            dest_output, end_px, end_py = niri_pointer_target(
+            _, end_px, end_py = niri_pointer_target(
                 window,
                 to_x,
                 to_y,
@@ -1457,8 +1461,7 @@ class LinuxGuiBackend:
                 workspaces=workspaces,
                 outputs=outputs,
             )
-            if dest_output != output_name:
-                raise GuiUnavailableError("Niri drag must remain on one output")
+            drag_end = (to_x, to_y, end_px, end_py)
         await _assert_niri_window_focused(window, env)
         available = await _wdotool(env, "outputs", "--json", capture=True)
         actual = (
@@ -1513,22 +1516,22 @@ class LinuxGuiBackend:
                 )
                 != (output_name, px, py)
                 or (
-                    kind == "drag"
+                    drag_end is not None
                     and niri_pointer_target(
                         window,
-                        to_x,
-                        to_y,
+                        drag_end[0],
+                        drag_end[1],
                         windows=updated_windows,
                         workspaces=updated_workspaces,
                         outputs=updated_outputs,
                     )
-                    != (output_name, end_px, end_py)
+                    != (output_name, drag_end[2], drag_end[3])
                 )
             ):
                 raise GuiStaleStateError(
                     "Niri window moved before pointer input"
                 )
-            if kind == "drag":
+            if drag_end is not None:
                 # The same-user Wayland seat retains the pressed button across
                 # wdotool invocations (verified on Niri 26.04). Always send
                 # mouseup on failure, timeout and task cancellation.
@@ -1544,8 +1547,8 @@ class LinuxGuiBackend:
                         "mousemove",
                         "--output",
                         output_name,
-                        str(end_px),
-                        str(end_py),
+                        str(drag_end[2]),
+                        str(drag_end[3]),
                     )
                     await asyncio.sleep(0.08)
                 finally:
@@ -1572,10 +1575,10 @@ class LinuxGuiBackend:
                 if dx or dy:
                     await _wdotool(env, "scroll", str(dx), str(dy))
         await _assert_niri_window_focused(window, env)
-        if kind == "drag":
+        if drag_end is not None:
             return {
                 "from": {"x": x, "y": y},
-                "to": {"x": to_x, "y": to_y},
+                "to": {"x": drag_end[0], "y": drag_end[1]},
                 "method": "niri-virtual-pointer",
             }
         return {"x": x, "y": y, "method": "niri-virtual-pointer"}
