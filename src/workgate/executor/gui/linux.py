@@ -215,6 +215,23 @@ def _niri_wtype_chord(keys: Any) -> list[str]:
     ]
 
 
+def _niri_wtype_input(action: dict[str, Any]) -> tuple[list[str], str | None]:
+    if action["type"] == "type":
+        text = str(action.get("text", ""))
+        if len(text) > 512:
+            raise ValueError(
+                "Niri native keyboard text is limited to 512 characters per action"
+            )
+        return ["-d", "18", "-"], text
+    return _niri_wtype_chord(action.get("keys")), None
+
+
+def _assert_niri_input_not_cancelled(action: dict[str, Any]) -> None:
+    event = action.get("_cancel_event")
+    if isinstance(event, asyncio.Event) and event.is_set():
+        raise asyncio.CancelledError
+
+
 def _niri_keyboard_available(env: dict[str, str]) -> bool:
     return (
         bool(env.get("WAYLAND_DISPLAY"))
@@ -224,8 +241,14 @@ def _niri_keyboard_available(env: dict[str, str]) -> bool:
 
 
 async def _run_niri_wtype(
-    args: list[str], env: dict[str, str], *, text: str | None = None
+    args: list[str],
+    env: dict[str, str],
+    *,
+    text: str | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise asyncio.CancelledError
     binary = shutil.which("wtype")
     if binary is None:
         raise GuiUnavailableError("Niri native keyboard requires wtype")
@@ -246,6 +269,19 @@ async def _run_niri_wtype(
         raise GuiUnavailableError(
             "Cannot start Niri virtual keyboard client"
         ) from exc
+
+    async def stop_on_cancel() -> None:
+        assert cancel_event is not None
+        await cancel_event.wait()
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+
+    watcher = (
+        asyncio.create_task(stop_on_cancel())
+        if cancel_event is not None
+        else None
+    )
     try:
         await asyncio.wait_for(
             process.communicate(
@@ -267,6 +303,13 @@ async def _run_niri_wtype(
                 "Niri virtual keyboard timed out"
             ) from exc
         raise
+    finally:
+        if watcher is not None:
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
+    if cancel_event is not None and cancel_event.is_set():
+        raise asyncio.CancelledError
     if process.returncode != 0:
         raise GuiUnavailableError("Niri virtual keyboard input failed")
 
@@ -1130,6 +1173,10 @@ class LinuxGuiBackend:
     name = "linux-atspi"
     _ENV_REFRESH_S = 30.0
 
+    @property
+    def cancel_safe_keyboard_input(self) -> bool:
+        return self._niri_native_keyboard_enabled and _is_niri(self._env or {})
+
     def __init__(self, *, niri_native_keyboard_enabled: bool = False) -> None:
         self._niri_native_keyboard_enabled = niri_native_keyboard_enabled
         self._env: dict[str, str] | None = None
@@ -1208,23 +1255,21 @@ class LinuxGuiBackend:
             raise GuiStaleStateError(
                 "Linux desktop session changed; refresh gui_state"
             )
+        _assert_niri_input_not_cancelled(action)
+        args, text = _niri_wtype_input(action)
         _assert_action_fresh(action)
         await _assert_niri_window_focused(window, env)
-        text = str(action.get("text", ""))
-        if kind == "type":
-            if len(text) > 512:
-                raise ValueError(
-                    "Niri native keyboard text is limited to 512 characters per action"
-                )
-            await _run_niri_wtype(["-d", "18", "-"], env, text=text)
-        else:
-            await _run_niri_wtype(_niri_wtype_chord(action.get("keys")), env)
+        _assert_niri_input_not_cancelled(action)
+        await _run_niri_wtype(
+            args, env, text=text, cancel_event=action.get("_cancel_event")
+        )
         if kind == "type":
             # Allow the focused application to consume queued key releases.
             await asyncio.sleep(0.12)
         _assert_action_fresh(action)
         await _assert_niri_window_focused(window, env)
         if kind == "type":
+            assert text is not None
             return {"characters": len(text), "method": "niri-virtual-keyboard"}
         return {"keys": action.get("keys"), "method": "niri-virtual-keyboard"}
 
@@ -1540,6 +1585,13 @@ class LinuxGuiBackend:
 
         env = await self._ensure_env()
         deadline = action.get("_observation_deadline")
+        if (
+            kind in {"type", "key"}
+            and self._niri_native_keyboard_enabled
+            and _is_niri(env)
+        ):
+            _niri_wtype_input(action)  # Reject invalid input before focusing.
+            _assert_niri_input_not_cancelled(action)
 
         if kind == "focus":
             if locator is None:
@@ -1648,6 +1700,7 @@ class LinuxGuiBackend:
             await self._focus_window(window, env, deadline=deadline)
 
         _assert_action_fresh(action)
+        _assert_niri_input_not_cancelled(action)
         return await self._desktop_operations(env).input(
             window, locator, action, env
         )

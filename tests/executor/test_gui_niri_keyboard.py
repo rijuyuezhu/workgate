@@ -147,7 +147,7 @@ async def test_native_keyboard_types_only_into_verified_focused_window(
         assert window is WINDOW
         calls.append("focused")
 
-    async def keyboard(args, env, *, text=None):
+    async def keyboard(args, env, *, text=None, cancel_event=None):
         assert env is backend._env
         calls.append((tuple(args), text))
 
@@ -424,3 +424,125 @@ async def test_niri_mixed_input_provider_reports_only_available_transports(
     assert result["keyboard_input"] is keyboard
     assert result["coordinate_input"] is pointer
     assert result["wayland_input"] == source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "type", "text": "x" * 513},
+        {"type": "key", "keys": "Ctrl"},
+        {"type": "key", "keys": "Ctrl+A+B"},
+    ],
+)
+async def test_niri_keyboard_rejects_invalid_input_without_focusing(
+    monkeypatch, action
+):
+    backend = linux.LinuxGuiBackend(niri_native_keyboard_enabled=True)
+    backend._env = dict(ENV)
+    focused = []
+
+    async def focus(*_args, **_kwargs):
+        focused.append(True)
+
+    monkeypatch.setattr(backend, "_focus_window", focus)
+    monkeypatch.setattr(linux.shutil, "which", lambda name: "/usr/bin/" + name)
+    with pytest.raises(ValueError):
+        await backend.perform_action(WINDOW, None, action)
+    assert focused == []
+
+
+@pytest.mark.asyncio
+async def test_niri_cancel_event_kills_active_wtype_before_other_input(
+    monkeypatch,
+):
+    cancelled = asyncio.Event()
+    running = asyncio.Event()
+    killed = asyncio.Event()
+
+    class Process:
+        returncode = None
+
+        async def communicate(self, data=None):
+            running.set()
+            await killed.wait()
+            return (b"", b"")
+
+        def kill(self):
+            self.returncode = -9
+            killed.set()
+
+        async def wait(self):
+            await killed.wait()
+            return self.returncode
+
+    async def spawn(*_args, **_kwargs):
+        return Process()
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wtype")
+    monkeypatch.setattr(linux.asyncio, "create_subprocess_exec", spawn)
+    action = asyncio.create_task(
+        linux._run_niri_wtype(
+            ["-d", "18", "-"],
+            dict(ENV),
+            text="private text",
+            cancel_event=cancelled,
+        )
+    )
+    await asyncio.wait_for(running.wait(), timeout=1)
+    cancelled.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(action, timeout=1)
+    assert killed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_niri_cancel_event_before_spawning_never_starts_wtype(
+    monkeypatch,
+):
+    cancelled = asyncio.Event()
+    cancelled.set()
+
+    async def no_spawn(*_args, **_kwargs):
+        pytest.fail("Cancelled native keyboard must not start a process")
+
+    monkeypatch.setattr(linux.asyncio, "create_subprocess_exec", no_spawn)
+    with pytest.raises(asyncio.CancelledError):
+        await linux._run_niri_wtype(
+            ["-k", "a"], dict(ENV), cancel_event=cancelled
+        )
+
+
+@pytest.mark.asyncio
+async def test_niri_cancel_during_window_focus_prevents_key_injection(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_keyboard_enabled=True)
+    backend._env = dict(ENV)
+    focus_started = asyncio.Event()
+    resume_focus = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def focus(*_args, **_kwargs):
+        focus_started.set()
+        await resume_focus.wait()
+
+    async def must_not_send(*_args, **_kwargs):
+        pytest.fail(
+            "Key input must stop when GUI action was cancelled while focusing"
+        )
+
+    monkeypatch.setattr(backend, "_focus_window", focus)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wtype")
+    monkeypatch.setattr(linux, "_run_niri_wtype", must_not_send)
+    action = {
+        "type": "type",
+        "text": "stop before sending",
+        "_cancel_event": cancelled,
+    }
+    task = asyncio.create_task(backend.perform_action(WINDOW, None, action))
+    await asyncio.wait_for(focus_started.wait(), timeout=1)
+    cancelled.set()
+    resume_focus.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1)
