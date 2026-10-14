@@ -66,8 +66,9 @@ passed to `wtype` via stdin, rather than command-line arguments.
 The separate opt-in `gui_niri_native_pointer_enabled` similarly permits
 native mouse events through `wdotool` with a forced `wlr-protocols` backend.
 It does not require root or `/dev/uinput`, but also has no per-window Portal
-consent. Only trusted executor sessions should enable it; current output
-rotation/scaling restrictions are described in the executor guide.
+consent. Only trusted executor sessions should enable it; compositor window position,
+output transform, scale and pixel-mode geometry must be verifiable, as described
+in the executor guide.
 Compositor focus and geometry checks cannot prove where the pointer remains
 when another local client is simultaneously moving it. Run native pointer
 automation only when the desktop is not also being controlled by a person.

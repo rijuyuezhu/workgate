@@ -40,7 +40,9 @@ OUTPUTS = {
             "height": 1080,
             "scale": 1.0,
             "transform": "Normal",
-        }
+        },
+        "modes": [{"width": 1920, "height": 1080}],
+        "current_mode": 0,
     },
     "win-panel": {
         "logical": {
@@ -50,7 +52,9 @@ OUTPUTS = {
             "height": 1920,
             "scale": 1.0,
             "transform": "90",
-        }
+        },
+        "modes": [{"width": 1920, "height": 1080}],
+        "current_mode": 0,
     },
 }
 
@@ -85,24 +89,61 @@ def test_multi_output_uses_workspace_output_not_assumed_primary():
     windows[0]["workspace_id"] = 6
     windows[0]["layout"]["tile_pos_in_workspace_view"] = [120.0, 170.0]
     outputs = deepcopy(OUTPUTS)
-    outputs["win-panel"]["logical"]["transform"] = "Normal"
+    outputs["win-panel"]["logical"].update(
+        {"transform": "Normal", "width": 1080, "height": 1920}
+    )
+    outputs["win-panel"]["modes"][0].update({"width": 1080, "height": 1920})
     assert resolve(windows=windows, outputs=outputs) == ("win-panel", 220, 270)
 
 
 @pytest.mark.parametrize(
-    "transform", ["90", "180", "270", "flipped", "flipped-90"]
+    ("transform", "expected"),
+    [
+        ("Normal", (250, 250)),
+        ("90", (250, 710)),
+        ("180", (1030, 710)),
+        ("270", (1030, 250)),
+        ("Flipped", (1030, 250)),
+        ("Flipped90", (250, 250)),
+        ("Flipped180", (250, 710)),
+        ("Flipped270", (1030, 710)),
+    ],
 )
-def test_rotated_or_flipped_output_is_not_guessed(transform):
+def test_all_niri_transforms_at_fractional_scale(transform, expected):
     outputs = deepcopy(OUTPUTS)
-    outputs["eDP-1"]["logical"]["transform"] = transform
-    with pytest.raises(GuiUnavailableError, match="unverified"):
+    logical = outputs["eDP-1"]["logical"]
+    logical.update({"scale": 1.25, "transform": transform})
+    logical["width"], logical["height"] = (
+        (768, 1024)
+        if transform in {"90", "270", "Flipped90", "Flipped270"}
+        else (1024, 768)
+    )
+    outputs["eDP-1"]["modes"][0].update({"width": 1280, "height": 960})
+    windows = deepcopy(WINDOWS)
+    windows[0]["layout"]["tile_pos_in_workspace_view"] = [100, 100]
+    assert resolve(windows=windows, outputs=outputs) == ("eDP-1", *expected)
+
+
+@pytest.mark.parametrize("scale", [0, -1, float("nan"), float("inf"), True])
+def test_invalid_scale_fails_closed(scale):
+    outputs = deepcopy(OUTPUTS)
+    outputs["eDP-1"]["logical"]["scale"] = scale
+    with pytest.raises(GuiUnavailableError, match="scale"):
         resolve(outputs=outputs)
 
 
-def test_scaled_output_is_not_guessed():
+@pytest.mark.parametrize("mode", [None, [], [{"width": 1111, "height": 1080}]])
+def test_missing_or_disagreeing_pixel_mode_fails_closed(mode):
     outputs = deepcopy(OUTPUTS)
-    outputs["eDP-1"]["logical"]["scale"] = 1.25
-    with pytest.raises(GuiUnavailableError, match="unverified"):
+    outputs["eDP-1"]["modes"] = mode
+    with pytest.raises(GuiUnavailableError, match="mode|disagree"):
+        resolve(outputs=outputs)
+
+
+def test_unknown_transform_fails_closed():
+    outputs = deepcopy(OUTPUTS)
+    outputs["eDP-1"]["logical"]["transform"] = "unsupported"
+    with pytest.raises(GuiUnavailableError, match="transform"):
         resolve(outputs=outputs)
 
 

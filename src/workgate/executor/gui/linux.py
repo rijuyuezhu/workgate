@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -1388,16 +1389,13 @@ class LinuxGuiBackend:
         env: dict[str, str],
     ) -> dict[str, Any]:
         kind = action["type"]
-        if kind == "drag":
-            raise GuiUnavailableError(
-                "Niri native drag is not supported safely"
-            )
         if kind not in {
             "move",
             "click",
             "double_click",
             "right_click",
             "scroll",
+            "drag",
         }:
             raise ValueError(f"Unsupported Niri native pointer action: {kind}")
         if not _niri_pointer_available(env):
@@ -1409,6 +1407,7 @@ class LinuxGuiBackend:
                 "Linux desktop session changed; refresh gui_state"
             )
         _assert_action_fresh(action)
+        _assert_niri_input_not_cancelled(action)
         if (
             locator is not None
             and action.get("x") is None
@@ -1441,6 +1440,25 @@ class LinuxGuiBackend:
             workspaces=workspaces,
             outputs=outputs,
         )
+        to_x, to_y, end_px, end_py = x, y, px, py
+        if kind == "drag":
+            end_screen_x, end_screen_y = self._screen_point(
+                window, {"x": action.get("to_x"), "y": action.get("to_y")}, None
+            )
+            to_x, to_y = (
+                end_screen_x - int(bounds["x"]),
+                end_screen_y - int(bounds["y"]),
+            )
+            dest_output, end_px, end_py = niri_pointer_target(
+                window,
+                to_x,
+                to_y,
+                windows=windows,
+                workspaces=workspaces,
+                outputs=outputs,
+            )
+            if dest_output != output_name:
+                raise GuiUnavailableError("Niri drag must remain on one output")
         await _assert_niri_window_focused(window, env)
         available = await _wdotool(env, "outputs", "--json", capture=True)
         actual = (
@@ -1453,9 +1471,13 @@ class LinuxGuiBackend:
             else []
         )
         logical = outputs[output_name]["logical"]
-        if len(actual) != 1 or any(
-            actual[0].get(key) != logical[key]
-            for key in ("x", "y", "width", "height", "scale")
+        if (
+            len(actual) != 1
+            or any(
+                actual[0].get(key) != logical[key]
+                for key in ("x", "y", "width", "height")
+            )
+            or actual[0].get("scale") != math.ceil(logical["scale"])
         ):
             raise GuiUnavailableError(
                 "Virtual pointer and Niri output geometry disagree"
@@ -1471,18 +1493,70 @@ class LinuxGuiBackend:
             updated_windows = await asyncio.to_thread(
                 _niri_json, env, "windows"
             )
-            if not isinstance(updated_windows, list) or niri_pointer_target(
-                window,
-                x,
-                y,
-                windows=updated_windows,
-                workspaces=workspaces,
-                outputs=outputs,
-            ) != (output_name, px, py):
+            updated_workspaces = await asyncio.to_thread(
+                _niri_json, env, "workspaces"
+            )
+            updated_outputs = await asyncio.to_thread(
+                _niri_json, env, "outputs"
+            )
+            if (
+                not isinstance(updated_windows, list)
+                or not isinstance(updated_workspaces, list)
+                or not isinstance(updated_outputs, dict)
+                or niri_pointer_target(
+                    window,
+                    x,
+                    y,
+                    windows=updated_windows,
+                    workspaces=updated_workspaces,
+                    outputs=updated_outputs,
+                )
+                != (output_name, px, py)
+                or (
+                    kind == "drag"
+                    and niri_pointer_target(
+                        window,
+                        to_x,
+                        to_y,
+                        windows=updated_windows,
+                        workspaces=updated_workspaces,
+                        outputs=updated_outputs,
+                    )
+                    != (output_name, end_px, end_py)
+                )
+            ):
                 raise GuiStaleStateError(
                     "Niri window moved before pointer input"
                 )
-            if kind in {"click", "double_click", "right_click"}:
+            if kind == "drag":
+                # The same-user Wayland seat retains the pressed button across
+                # wdotool invocations (verified on Niri 26.04). Always send
+                # mouseup on failure, timeout and task cancellation.
+                _assert_niri_input_not_cancelled(action)
+                try:
+                    await _wdotool(env, "mousedown", "1")
+                    await asyncio.sleep(0.08)
+                    _assert_action_fresh(action)
+                    _assert_niri_input_not_cancelled(action)
+                    await _assert_niri_window_focused(window, env)
+                    await _wdotool(
+                        env,
+                        "mousemove",
+                        "--output",
+                        output_name,
+                        str(end_px),
+                        str(end_py),
+                    )
+                    await asyncio.sleep(0.08)
+                finally:
+                    release = asyncio.create_task(_wdotool(env, "mouseup", "1"))
+                    try:
+                        await asyncio.shield(release)
+                    except asyncio.CancelledError:
+                        await asyncio.shield(release)
+                        raise
+                _assert_niri_input_not_cancelled(action)
+            elif kind in {"click", "double_click", "right_click"}:
                 button = "3" if kind == "right_click" else "1"
                 for index in range(2 if kind == "double_click" else 1):
                     if index:
@@ -1498,6 +1572,12 @@ class LinuxGuiBackend:
                 if dx or dy:
                     await _wdotool(env, "scroll", str(dx), str(dy))
         await _assert_niri_window_focused(window, env)
+        if kind == "drag":
+            return {
+                "from": {"x": x, "y": y},
+                "to": {"x": to_x, "y": to_y},
+                "method": "niri-virtual-pointer",
+            }
         return {"x": x, "y": y, "method": "niri-virtual-pointer"}
 
     def _desktop_operations(self, env: dict[str, str]) -> _DesktopOperations:
@@ -1822,14 +1902,6 @@ class LinuxGuiBackend:
         ):
             _niri_wtype_input(action)  # Reject invalid input before focusing.
             _assert_niri_input_not_cancelled(action)
-        if (
-            kind == "drag"
-            and self._niri_native_pointer_enabled
-            and _is_niri(env)
-        ):
-            raise GuiUnavailableError(
-                "Niri native drag is not supported safely"
-            )
 
         if kind == "focus":
             if locator is None:
