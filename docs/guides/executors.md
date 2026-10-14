@@ -138,7 +138,10 @@ window must be focused and visible; output geometry must agree between Niri
 and the client. Explicit window-relative coordinates are required if an
 AT-SPI element cannot perform a semantic click. Move, click, double-click,
 right-click and scroll are supported by the implementation; **drag is not**.
-If any validation fails, no button event is sent.
+If validation fails, no button event is sent. These checks cannot prevent a
+physical mouse or another same-user client from moving the global cursor
+between the motion and button commands. Do **not** run native pointer actions
+while someone else is actively using that desktop.
 
 ## Discover and manage executors
 

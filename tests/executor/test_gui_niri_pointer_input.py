@@ -292,3 +292,39 @@ async def test_pointer_rechecks_compositor_position_after_moving_before_click(
         ("outputs", "--json"),
         ("mousemove", "--output", "eDP-1", "900", "537"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_pointer_does_not_click_if_focus_changes_after_moving(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    commands = []
+    focus_checks = 0
+
+    async def focused(*_args):
+        nonlocal focus_checks
+        focus_checks += 1
+        if focus_checks == 2:
+            raise GuiStaleStateError("Focus moved during pointer action")
+
+    async def client(_env, *args, capture=False):
+        commands.append(args)
+        return deepcopy(CLIENT_OUTPUTS) if capture else None
+
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, name: deepcopy(COMPOSITOR[name])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    with pytest.raises(GuiStaleStateError, match="Focus moved"):
+        await backend._perform_niri_pointer(
+            WINDOW, None, {"type": "click", "x": 120, "y": 80}, backend._env
+        )
+    assert focus_checks == 2
+    assert commands == [
+        ("outputs", "--json"),
+        ("mousemove", "--output", "eDP-1", "920", "517"),
+    ]
