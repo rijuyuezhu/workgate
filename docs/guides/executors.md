@@ -116,8 +116,9 @@ retain their existing input behavior.
 
 On Linux/Niri, the RemoteDesktop Portal may not provide mouse input. An
 independent executor-local option enables the compositor-supported virtual
-pointer protocol through the optional `wdotool` CLI (available from the Arch
-AUR). This is **disabled by default**, even if the native keyboard is enabled:
+pointer protocol through the optional `wdotool` CLI (available as `wdotool`
+or `wdotool-bin` on the Arch AUR). This is **disabled by default**, even if
+the native keyboard is enabled:
 
 ```yaml
 # ~/.config/workgate/executor/config.yaml
@@ -134,8 +135,10 @@ its setting.
 
 Initial restrictions: only **unrotated, scale-1** outputs are eligible until
 hardware validation establishes how other transforms map coordinates. The
-window must be focused and visible; output geometry must agree between Niri
-and the client. Explicit window-relative coordinates are required if an
+window must be focused and visible, with a usable compositor-reported
+`tile_pos_in_workspace_view`; windows without this position are rejected.
+Output geometry must agree between Niri and the client. Explicit
+window-relative coordinates are required if an
 AT-SPI element cannot perform a semantic click. Move, click, double-click,
 right-click and scroll are supported by the implementation; **drag is not**.
 If validation fails, no button event is sent. These checks cannot prevent a

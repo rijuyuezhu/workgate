@@ -258,6 +258,10 @@ def _niri_json(env: dict[str, str], command: str) -> Any:
         ) from exc
 
 
+_NIRI_POINTER_COMMAND_TIMEOUT_S = 8.0
+_NIRI_POINTER_CLEANUP_TIMEOUT_S = 3.0
+
+
 async def _wdotool(
     env: dict[str, str], *args: str, capture: bool = False
 ) -> Any:
@@ -282,13 +286,17 @@ async def _wdotool(
             "Cannot start Niri virtual pointer client"
         ) from exc
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=8)
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(), timeout=_NIRI_POINTER_COMMAND_TIMEOUT_S
+        )
     except BaseException as exc:
         if process.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 process.kill()
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(process.wait(), timeout=3)
+            await asyncio.wait_for(
+                process.wait(), timeout=_NIRI_POINTER_CLEANUP_TIMEOUT_S
+            )
         if isinstance(exc, TimeoutError):
             raise GuiUnavailableError(
                 "Niri virtual pointer command timed out"
@@ -1312,7 +1320,12 @@ class LinuxGuiBackend:
             await portal.close()
 
     async def _niri_input_devices(self, env: dict[str, str]) -> int:
-        portal = await portal_available_devices(env)
+        portal = (
+            0
+            if self._niri_native_keyboard_enabled
+            and self._niri_native_pointer_enabled
+            else await portal_available_devices(env)
+        )
         pointer = (
             2 * int(_niri_pointer_available(env))
             if self._niri_native_pointer_enabled
@@ -1433,7 +1446,8 @@ class LinuxGuiBackend:
         )
         logical = outputs[output_name]["logical"]
         if len(actual) != 1 or any(
-            actual[0].get(key) != logical[key] for key in ("width", "height")
+            actual[0].get(key) != logical[key]
+            for key in ("x", "y", "width", "height", "scale")
         ):
             raise GuiUnavailableError(
                 "Virtual pointer and Niri output geometry disagree"

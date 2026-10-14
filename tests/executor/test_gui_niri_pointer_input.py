@@ -1,5 +1,6 @@
 """Niri native pointer remains default-off, target-bound and never falls back to uinput."""
 
+import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -187,7 +188,19 @@ async def test_pointer_refuses_stale_focus_before_any_input(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_pointer_rejects_output_disagreement_before_movement(monkeypatch):
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("width", 1080),
+        ("height", 1920),
+        ("x", 120),
+        ("y", -100),
+        ("scale", 1.25),
+    ],
+)
+async def test_pointer_rejects_output_disagreement_before_movement(
+    monkeypatch, field, value
+):
     backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
     backend._env = dict(ENV)
     commands = []
@@ -202,7 +215,9 @@ async def test_pointer_rejects_output_disagreement_before_movement(monkeypatch):
     async def client(_env, *args, capture=False):
         commands.append(args)
         if capture:
-            return [{"name": "eDP-1", "width": 1080, "height": 1920}]
+            outputs = deepcopy(CLIENT_OUTPUTS)
+            outputs[0][field] = value
+            return outputs
         pytest.fail("Pointer must not move if outputs disagree")
 
     monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
@@ -328,3 +343,63 @@ async def test_pointer_does_not_click_if_focus_changes_after_moving(
         ("outputs", "--json"),
         ("mousemove", "--output", "eDP-1", "920", "517"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_both_niri_native_devices_do_not_query_portal(monkeypatch):
+    backend = linux.LinuxGuiBackend(
+        niri_native_keyboard_enabled=True, niri_native_pointer_enabled=True
+    )
+    backend._env = dict(ENV)
+
+    async def forbidden_portal(_env):
+        pytest.fail("Both native input devices must not depend on Portal")
+
+    monkeypatch.setattr(linux, "portal_available_devices", forbidden_portal)
+    monkeypatch.setattr(linux.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(backend, "_list_data", lambda _env: {"windows": []})
+    cap = (await backend.list_windows())["capabilities"]
+    assert cap["keyboard_input"] and cap["coordinate_input"]
+    assert cap["wayland_input"] == "niri-virtual-keyboard+niri-virtual-pointer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_native_pointer_process_reaped_after_abort(monkeypatch, cancel):
+    started = asyncio.Event()
+
+    class Child:
+        returncode = None
+        killed = False
+
+        async def communicate(self):
+            started.set()
+            await asyncio.sleep(3600)
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    child = Child()
+
+    async def spawn(*_argv, **_kwargs):
+        return child
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    monkeypatch.setattr(linux.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(linux, "_NIRI_POINTER_COMMAND_TIMEOUT_S", 0.02)
+    task = asyncio.create_task(
+        linux._wdotool(dict(ENV), "mousemove", "50", "60")
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    if cancel:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+    else:
+        with pytest.raises(GuiUnavailableError, match="timed out"):
+            await asyncio.wait_for(task, timeout=1)
+    assert child.killed
