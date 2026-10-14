@@ -667,3 +667,38 @@ async def test_niri_failed_semantic_click_does_not_silently_retry_as_pointer(
             {"semantic": {"path": [0]}},
             {"type": "click", "element_id": "e1"},
         )
+
+
+@pytest.mark.asyncio
+async def test_niri_semantic_click_fallback_still_needs_window_activation(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    commands = []
+
+    def helper(payload, _env=None):
+        commands.append(payload["command"])
+        if payload["command"] == "semantic_action":
+            raise linux._SemanticActionUnavailableError(
+                "no AT-SPI action interface"
+            )
+        return {"bounds": {"x": 30, "y": 40, "width": 20, "height": 30}}
+
+    async def cannot_activate(*_args, **_kwargs):
+        commands.append("activate")
+        raise GuiUnavailableError("Target window activation unavailable")
+
+    async def no_input(*_args, **_kwargs):
+        pytest.fail("Native pointer may not run if activation fails")
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(backend, "_focus_window", cannot_activate)
+    monkeypatch.setattr(backend, "_perform_niri_pointer", no_input)
+    with pytest.raises(GuiUnavailableError, match="activation unavailable"):
+        await backend.perform_action(
+            WINDOW,
+            {"semantic": {"path": [0], "accessible_id": "stable"}},
+            {"type": "click", "element_id": "e1"},
+        )
+    assert commands == ["semantic_action", "resolve_locator", "activate"]
