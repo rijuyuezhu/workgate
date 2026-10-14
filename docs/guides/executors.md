@@ -137,10 +137,11 @@ Initial restrictions: only **unrotated, scale-1** outputs are eligible until
 hardware validation establishes how other transforms map coordinates. The
 window must be focused and visible, with a usable compositor-reported
 `tile_pos_in_workspace_view`; windows without this position are rejected.
-Output geometry must agree between Niri and the client. Explicit
-window-relative coordinates are required if an
-AT-SPI element cannot perform a semantic click. Move, click, double-click,
-right-click and scroll are supported by the implementation; **drag is not**.
+Output geometry must agree between Niri and the client. If an AT-SPI element
+has no semantic click action, a fresh `element_id` may be clicked using its
+validated element-center bounds; explicit window-relative coordinates remain
+supported. Elements without usable in-window bounds are rejected. Move,
+click, double-click, right-click and scroll are supported; **drag is not**.
 If validation fails, no button event is sent. These checks cannot prevent a
 physical mouse or another same-user client from moving the global cursor
 between the motion and button commands. Do **not** run native pointer actions
