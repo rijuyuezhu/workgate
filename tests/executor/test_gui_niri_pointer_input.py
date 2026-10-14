@@ -403,3 +403,267 @@ async def test_native_pointer_process_reaped_after_abort(monkeypatch, cancel):
         with pytest.raises(GuiUnavailableError, match="timed out"):
             await asyncio.wait_for(task, timeout=1)
     assert child.killed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", ["click", "right_click", "double_click", "move", "scroll"]
+)
+async def test_niri_element_only_pointer_uses_validated_center(
+    monkeypatch, kind
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    commands = []
+
+    async def focused(*_args):
+        return None
+
+    async def wdotool(_env, *args, capture=False):
+        commands.append(args)
+        return deepcopy(CLIENT_OUTPUTS) if capture else None
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, name: deepcopy(COMPOSITOR[name])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", wdotool)
+    result = await backend._perform_niri_pointer(
+        WINDOW,
+        {"bounds": {"x": 30, "y": 40, "width": 20, "height": 30}},
+        {"type": kind, "element_id": "e1"},
+        backend._env,
+    )
+    assert result == {"x": 40, "y": 55, "method": "niri-virtual-pointer"}
+    assert ("mousemove", "--output", "eDP-1", "840", "492") in commands
+
+
+@pytest.mark.asyncio
+async def test_niri_element_only_click_semantic_first_then_pointer(monkeypatch):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    commands = []
+    locator = {
+        "semantic": {
+            "path": [0],
+            "accessible_id": "id",
+            "fingerprint": "stable",
+        }
+    }
+
+    def helper(payload, _env=None):
+        commands.append(("helper", payload["command"]))
+        if payload["command"] == "semantic_action":
+            raise linux._SemanticActionUnavailableError(
+                "no AT-SPI action interface"
+            )
+        assert payload["locator"] is locator["semantic"]
+        return {"bounds": {"x": 30, "y": 40, "width": 20, "height": 30}}
+
+    async def focused(*_args, **_kwargs):
+        return None
+
+    async def wdotool(_env, *args, capture=False):
+        commands.append(args)
+        return deepcopy(CLIENT_OUTPUTS) if capture else None
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(backend, "_focus_window", focused)
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, name: deepcopy(COMPOSITOR[name])
+    )
+    monkeypatch.setattr(linux, "_wdotool", wdotool)
+    result = await backend.perform_action(
+        WINDOW, locator, {"type": "click", "element_id": "e1"}
+    )
+    assert result == {"x": 40, "y": 55, "method": "niri-virtual-pointer"}
+    assert commands[:2] == [
+        ("helper", "semantic_action"),
+        ("helper", "resolve_locator"),
+    ]
+    assert ("mousemove", "--output", "eDP-1", "840", "492") in commands
+    assert ("click", "1") in commands
+
+
+@pytest.mark.asyncio
+async def test_niri_element_click_prefers_semantic_and_never_synthesizes(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    seen = []
+
+    def helper(payload, _env=None):
+        seen.append(payload["command"])
+        return {"semantic": True}
+
+    async def no_pointer(*_args, **_kwargs):
+        pytest.fail(
+            "Native pointer must not run after successful semantic click"
+        )
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(backend, "_perform_niri_pointer", no_pointer)
+    result = await backend.perform_action(
+        WINDOW,
+        {"semantic": {"path": [0]}},
+        {"type": "click", "element_id": "e1"},
+    )
+    assert result == {"semantic": True}
+    assert seen == ["semantic_action"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        {"x": 30, "y": 40, "width": 0, "height": 10},
+        {"x": 310, "y": 220, "width": 30, "height": 50},
+        {"x": -40, "y": 5, "width": 20, "height": 20},
+        {"y": 40, "width": 20, "height": 20},
+        {"x": 30, "width": 20, "height": 20},
+    ],
+)
+async def test_niri_element_bad_bounds_rejected_before_pointer(
+    monkeypatch, bounds
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+
+    async def no_pointer(*_args, **_kwargs):
+        pytest.fail(
+            "Invalid element bounds must not inject any native pointer events"
+        )
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    monkeypatch.setattr(linux, "_wdotool", no_pointer)
+    with pytest.raises(ValueError):
+        await backend._perform_niri_pointer(
+            WINDOW,
+            {"bounds": bounds},
+            {"type": "click", "element_id": "e1"},
+            backend._env,
+        )
+
+
+@pytest.mark.asyncio
+async def test_niri_element_with_explicit_coordinates_uses_them_instead_of_center(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    commands = []
+
+    async def focused(*_args):
+        return None
+
+    async def wdotool(_env, *args, capture=False):
+        commands.append(args)
+        return deepcopy(CLIENT_OUTPUTS) if capture else None
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, name: deepcopy(COMPOSITOR[name])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", wdotool)
+    result = await backend._perform_niri_pointer(
+        WINDOW,
+        {"bounds": {"x": 30, "y": 40, "width": 20, "height": 30}},
+        {"type": "click", "element_id": "e1", "x": 100, "y": 110},
+        backend._env,
+    )
+    assert result["x"] == 100 and result["y"] == 110
+    assert ("mousemove", "--output", "eDP-1", "900", "547") in commands
+
+
+@pytest.mark.asyncio
+async def test_niri_element_screen_bounds_convert_using_nonzero_window_origin(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    window = deepcopy(WINDOW)
+    window["bounds"]["x"] = 50
+    window["bounds"]["y"] = 60
+    commands = []
+
+    async def focused(*_args):
+        return None
+
+    async def wdotool(_env, *args, capture=False):
+        commands.append(args)
+        return deepcopy(CLIENT_OUTPUTS) if capture else None
+
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, name: deepcopy(COMPOSITOR[name])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", wdotool)
+    result = await backend._perform_niri_pointer(
+        window,
+        {"bounds": {"x": 80, "y": 90, "width": 20, "height": 20}},
+        {"type": "click", "element_id": "e1"},
+        backend._env,
+    )
+    assert result["x"] == 40 and result["y"] == 40
+    assert ("mousemove", "--output", "eDP-1", "840", "477") in commands
+
+
+@pytest.mark.asyncio
+async def test_niri_stale_element_identity_never_sends_pointer(monkeypatch):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+
+    def helper(payload, _env=None):
+        if payload["command"] == "semantic_action":
+            raise linux._SemanticActionUnavailableError(
+                "no AT-SPI action interface"
+            )
+        raise GuiStaleStateError(
+            "AT-SPI target element changed since observation"
+        )
+
+    async def no_pointer(*_args, **_kwargs):
+        pytest.fail("Stale element must not send virtual pointer input")
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(linux, "_wdotool", no_pointer)
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda *_: pytest.fail("No compositor operation")
+    )
+    with pytest.raises(GuiStaleStateError, match="changed"):
+        await backend.perform_action(
+            WINDOW,
+            {"semantic": {"path": [0], "accessible_id": "stale"}},
+            {"type": "click", "element_id": "e1"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_niri_failed_semantic_click_does_not_silently_retry_as_pointer(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+
+    def helper(payload, _env=None):
+        raise GuiUnavailableError("AT-SPI activation rejected the action")
+
+    async def no_pointer(*_args, **_kwargs):
+        pytest.fail(
+            "Failed semantic click must not be retried as a native click"
+        )
+
+    monkeypatch.setattr(backend, "_helper", helper)
+    monkeypatch.setattr(linux, "_wdotool", no_pointer)
+    with pytest.raises(GuiUnavailableError, match="activation rejected"):
+        await backend.perform_action(
+            WINDOW,
+            {"semantic": {"path": [0]}},
+            {"type": "click", "element_id": "e1"},
+        )

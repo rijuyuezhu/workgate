@@ -1408,14 +1408,22 @@ class LinuxGuiBackend:
             raise GuiStaleStateError(
                 "Linux desktop session changed; refresh gui_state"
             )
-        if locator is not None and (
-            action.get("x") is None or action.get("y") is None
-        ):
-            raise GuiUnavailableError(
-                "Native Niri pointer requires explicit window-relative coordinates"
-            )
         _assert_action_fresh(action)
-        x, y = int(action["x"]), int(action["y"])
+        if (
+            locator is not None
+            and action.get("x") is None
+            and action.get("y") is None
+        ):
+            element_bounds = locator.get("bounds")
+            if (
+                not isinstance(element_bounds, dict)
+                or not {"x", "y"} <= element_bounds.keys()
+            ):
+                raise ValueError("Target element has incomplete screen bounds")
+        screen_x, screen_y = self._screen_point(window, action, locator)
+        bounds = window["bounds"]
+        x = screen_x - int(bounds["x"])
+        y = screen_y - int(bounds["y"])
         windows = await asyncio.to_thread(_niri_json, env, "windows")
         workspaces = await asyncio.to_thread(_niri_json, env, "workspaces")
         outputs = await asyncio.to_thread(_niri_json, env, "outputs")
