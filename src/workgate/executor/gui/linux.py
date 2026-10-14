@@ -26,6 +26,7 @@ from .base import (
     display_screenshot_path,
     quantize_scroll_amount,
 )
+from .linux_niri_pointer import niri_pointer_target
 from .linux_portal import (
     PortalDesktop,
     _key_parts,
@@ -230,6 +231,79 @@ def _assert_niri_input_not_cancelled(action: dict[str, Any]) -> None:
     event = action.get("_cancel_event")
     if isinstance(event, asyncio.Event) and event.is_set():
         raise asyncio.CancelledError
+
+
+def _niri_pointer_available(env: dict[str, str]) -> bool:
+    return (
+        bool(env.get("WAYLAND_DISPLAY"))
+        and bool(env.get("NIRI_SOCKET"))
+        and shutil.which("wdotool") is not None
+    )
+
+
+def _niri_json(env: dict[str, str], command: str) -> Any:
+    try:
+        result = subprocess.run(
+            ["niri", "msg", "-j", command],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+            env=env,
+        )
+        return json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise GuiUnavailableError(
+            f"Cannot query Niri {command} for pointer input"
+        ) from exc
+
+
+async def _wdotool(
+    env: dict[str, str], *args: str, capture: bool = False
+) -> Any:
+    binary = shutil.which("wdotool")
+    if binary is None:
+        raise GuiUnavailableError("Niri native pointer requires wdotool")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            "--backend",
+            "wlr-protocols",
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE
+            if capture
+            else asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+    except OSError as exc:
+        raise GuiUnavailableError(
+            "Cannot start Niri virtual pointer client"
+        ) from exc
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=8)
+    except BaseException as exc:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(process.wait(), timeout=3)
+        if isinstance(exc, TimeoutError):
+            raise GuiUnavailableError(
+                "Niri virtual pointer command timed out"
+            ) from exc
+        raise
+    if process.returncode != 0:
+        raise GuiUnavailableError("Niri virtual pointer command failed")
+    if capture:
+        try:
+            return json.loads(stdout)
+        except ValueError as exc:
+            raise GuiUnavailableError(
+                "Invalid virtual pointer output inventory"
+            ) from exc
+    return None
 
 
 def _niri_keyboard_available(env: dict[str, str]) -> bool:
@@ -1177,8 +1251,14 @@ class LinuxGuiBackend:
     def cancel_safe_keyboard_input(self) -> bool:
         return self._niri_native_keyboard_enabled and _is_niri(self._env or {})
 
-    def __init__(self, *, niri_native_keyboard_enabled: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        niri_native_keyboard_enabled: bool = False,
+        niri_native_pointer_enabled: bool = False,
+    ) -> None:
         self._niri_native_keyboard_enabled = niri_native_keyboard_enabled
+        self._niri_native_pointer_enabled = niri_native_pointer_enabled
         self._env: dict[str, str] | None = None
         self._env_refreshed_at = 0.0
         self._portal: PortalDesktop | None = None
@@ -1232,9 +1312,17 @@ class LinuxGuiBackend:
             await portal.close()
 
     async def _niri_input_devices(self, env: dict[str, str]) -> int:
-        # Pointer remains Portal-owned; keyboard requires explicit local trust.
-        pointer = (await portal_available_devices(env)) & 2
-        keyboard = int(_niri_keyboard_available(env))
+        portal = await portal_available_devices(env)
+        pointer = (
+            2 * int(_niri_pointer_available(env))
+            if self._niri_native_pointer_enabled
+            else portal & 2
+        )
+        keyboard = (
+            int(_niri_keyboard_available(env))
+            if self._niri_native_keyboard_enabled
+            else portal & 1
+        )
         return pointer | keyboard
 
     async def _perform_niri_input(
@@ -1246,6 +1334,12 @@ class LinuxGuiBackend:
     ) -> dict[str, Any]:
         kind = action["type"]
         if kind not in {"type", "key"}:
+            if self._niri_native_pointer_enabled:
+                return await self._perform_niri_pointer(
+                    window, locator, action, env
+                )
+            return await self._perform_wayland(window, locator, action, env)
+        if not self._niri_native_keyboard_enabled:
             return await self._perform_wayland(window, locator, action, env)
         if not _niri_keyboard_available(env):
             raise GuiUnavailableError(
@@ -1273,6 +1367,117 @@ class LinuxGuiBackend:
             return {"characters": len(text), "method": "niri-virtual-keyboard"}
         return {"keys": action.get("keys"), "method": "niri-virtual-keyboard"}
 
+    async def _perform_niri_pointer(
+        self,
+        window: dict[str, Any],
+        locator: Any | None,
+        action: dict[str, Any],
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        kind = action["type"]
+        if kind == "drag":
+            raise GuiUnavailableError(
+                "Niri native drag is not supported safely"
+            )
+        if kind not in {
+            "move",
+            "click",
+            "double_click",
+            "right_click",
+            "scroll",
+        }:
+            raise ValueError(f"Unsupported Niri native pointer action: {kind}")
+        if not _niri_pointer_available(env):
+            raise GuiUnavailableError(
+                "Niri native pointer requires wdotool and Wayland"
+            )
+        if env != self._env:
+            raise GuiStaleStateError(
+                "Linux desktop session changed; refresh gui_state"
+            )
+        if locator is not None and (
+            action.get("x") is None or action.get("y") is None
+        ):
+            raise GuiUnavailableError(
+                "Native Niri pointer requires explicit window-relative coordinates"
+            )
+        _assert_action_fresh(action)
+        x, y = int(action["x"]), int(action["y"])
+        windows = await asyncio.to_thread(_niri_json, env, "windows")
+        workspaces = await asyncio.to_thread(_niri_json, env, "workspaces")
+        outputs = await asyncio.to_thread(_niri_json, env, "outputs")
+        if (
+            not isinstance(windows, list)
+            or not isinstance(workspaces, list)
+            or not isinstance(outputs, dict)
+        ):
+            raise GuiUnavailableError("Invalid Niri compositor inventory")
+        output_name, px, py = niri_pointer_target(
+            window,
+            x,
+            y,
+            windows=windows,
+            workspaces=workspaces,
+            outputs=outputs,
+        )
+        await _assert_niri_window_focused(window, env)
+        available = await _wdotool(env, "outputs", "--json", capture=True)
+        actual = (
+            [
+                o
+                for o in available
+                if isinstance(o, dict) and o.get("name") == output_name
+            ]
+            if isinstance(available, list)
+            else []
+        )
+        logical = outputs[output_name]["logical"]
+        if len(actual) != 1 or any(
+            actual[0].get(key) != logical[key] for key in ("width", "height")
+        ):
+            raise GuiUnavailableError(
+                "Virtual pointer and Niri output geometry disagree"
+            )
+        _assert_action_fresh(action)
+        await _wdotool(
+            env, "mousemove", "--output", output_name, str(px), str(py)
+        )
+        if kind != "move":
+            await asyncio.sleep(0.08)
+            _assert_action_fresh(action)
+            await _assert_niri_window_focused(window, env)
+            updated_windows = await asyncio.to_thread(
+                _niri_json, env, "windows"
+            )
+            if not isinstance(updated_windows, list) or niri_pointer_target(
+                window,
+                x,
+                y,
+                windows=updated_windows,
+                workspaces=workspaces,
+                outputs=outputs,
+            ) != (output_name, px, py):
+                raise GuiStaleStateError(
+                    "Niri window moved before pointer input"
+                )
+            if kind in {"click", "double_click", "right_click"}:
+                button = "3" if kind == "right_click" else "1"
+                for index in range(2 if kind == "double_click" else 1):
+                    if index:
+                        _assert_action_fresh(action)
+                        await _assert_niri_window_focused(window, env)
+                    await _wdotool(env, "click", button)
+            else:
+                default_y = (
+                    action.get("amount", -3) if "delta_x" not in action else 0
+                )
+                dy = quantize_scroll_amount(action.get("delta_y", default_y))
+                dx = quantize_scroll_amount(action.get("delta_x", 0))
+                if dx or dy:
+                    await _wdotool(env, "scroll", str(dx), str(dy))
+        await _assert_niri_window_focused(window, env)
+        return {"x": x, "y": y, "method": "niri-virtual-pointer"}
+
     def _desktop_operations(self, env: dict[str, str]) -> _DesktopOperations:
         """Compose desktop-specific operations without changing shared AT-SPI behavior."""
         session = _session_type(env)
@@ -1289,20 +1494,23 @@ class LinuxGuiBackend:
         if session == "wayland":
             if _is_niri(env):
                 native_keyboard = self._niri_native_keyboard_enabled
+                native_pointer = self._niri_native_pointer_enabled
                 return _DesktopOperations(
                     _capture_niri_desktop,
                     self._activate_niri,
                     self._perform_niri_input
-                    if native_keyboard
+                    if native_keyboard or native_pointer
                     else self._perform_wayland,
                     input_devices=self._niri_input_devices
-                    if native_keyboard
+                    if native_keyboard or native_pointer
                     else portal_available_devices,
                     input_transports=(
                         "niri-virtual-keyboard"
                         if native_keyboard
                         else "xdg-desktop-portal",
-                        "xdg-desktop-portal",
+                        "niri-virtual-pointer"
+                        if native_pointer
+                        else "xdg-desktop-portal",
                     ),
                     capture_available=bool(env.get("NIRI_SOCKET"))
                     and shutil.which("niri") is not None,
@@ -1592,6 +1800,14 @@ class LinuxGuiBackend:
         ):
             _niri_wtype_input(action)  # Reject invalid input before focusing.
             _assert_niri_input_not_cancelled(action)
+        if (
+            kind == "drag"
+            and self._niri_native_pointer_enabled
+            and _is_niri(env)
+        ):
+            raise GuiUnavailableError(
+                "Niri native drag is not supported safely"
+            )
 
         if kind == "focus":
             if locator is None:

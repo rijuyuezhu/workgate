@@ -112,6 +112,34 @@ Mouse/pointer input remains Portal-only; this option does **not** enable
 virtual pointer injection or use `/dev/uinput`. Other desktop environments
 retain their existing input behavior.
 
+## Optional Niri native pointer (experimental)
+
+On Linux/Niri, the RemoteDesktop Portal may not provide mouse input. An
+independent executor-local option enables the compositor-supported virtual
+pointer protocol through the optional `wdotool` CLI (available from the Arch
+AUR). This is **disabled by default**, even if the native keyboard is enabled:
+
+```yaml
+# ~/.config/workgate/executor/config.yaml
+gui_niri_native_pointer_enabled: true
+```
+
+The pointer is scoped by Niri's focused window and compositor-reported
+workspace/output position, not by the often-zero AT-SPI window origin. The
+implementation forces `wdotool --backend wlr-protocols`: it never falls back
+to `/dev/uinput`. There is no Portal consent prompt; the connected executor
+has native pointer authority over the current user's entire Wayland desktop.
+Only enable this on trusted desktop sessions. Restart the executor to apply
+its setting.
+
+Initial restrictions: only **unrotated, scale-1** outputs are eligible until
+hardware validation establishes how other transforms map coordinates. The
+window must be focused and visible; output geometry must agree between Niri
+and the client. Explicit window-relative coordinates are required if an
+AT-SPI element cannot perform a semantic click. Move, click, double-click,
+right-click and scroll are supported by the implementation; **drag is not**.
+If any validation fails, no button event is sent.
+
 ## Discover and manage executors
 
 Use the `executor` control tool before `session_start` when more than one

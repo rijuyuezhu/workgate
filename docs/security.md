@@ -63,6 +63,11 @@ same-user Wayland socket through `wtype` with no per-application Portal consent
 prompt. It is disabled by default and grants keyboard authority over the live
 desktop when enabled; restrict who can connect to the executor. Typed text is
 passed to `wtype` via stdin, rather than command-line arguments.
+The separate opt-in `gui_niri_native_pointer_enabled` similarly permits
+native mouse events through `wdotool` with a forced `wlr-protocols` backend.
+It does not require root or `/dev/uinput`, but also has no per-window Portal
+consent. Only trusted executor sessions should enable it; current output
+rotation/scaling restrictions are described in the executor guide.
 
 ## File links and transfers
 

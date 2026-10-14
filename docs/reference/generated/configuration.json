@@ -938,6 +938,26 @@
         ],
         [
           {
+            "code": "gui_niri_native_pointer_enabled"
+          },
+          {
+            "lines": [
+              {
+                "code": "--gui-niri-native-pointer-enabled"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_GUI_NIRI_NATIVE_POINTER_ENABLED"
+          },
+          "true | false",
+          {
+            "code": "false"
+          },
+          "Allow explicitly trusted Niri native pointer input using optional wdotool (no Portal prompt)."
+        ],
+        [
+          {
             "code": "max_skills"
           },
           {
@@ -2574,6 +2594,22 @@
       "description": "Allow trusted local Niri Wayland-socket keyboard input using optional wtype (no Portal prompt).",
       "env": "WORKGATE_GUI_NIRI_NATIVE_KEYBOARD_ENABLED",
       "name": "gui_niri_native_keyboard_enabled",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "true | false",
+      "unset_cli": null
+    },
+    {
+      "choices": [
+        "true",
+        "false"
+      ],
+      "cli": "--gui-niri-native-pointer-enabled",
+      "default": false,
+      "default_display": "false",
+      "description": "Allow explicitly trusted Niri native pointer input using optional wdotool (no Portal prompt).",
+      "env": "WORKGATE_GUI_NIRI_NATIVE_POINTER_ENABLED",
+      "name": "gui_niri_native_pointer_enabled",
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "true | false",
