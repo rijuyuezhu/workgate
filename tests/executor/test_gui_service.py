@@ -236,6 +236,80 @@ async def test_gui_state_owner_isolation_and_single_use(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_gui_semantic_click_does_not_require_pointer_window_focus(
+    tmp_path: Path,
+) -> None:
+    gui, backend, _store, owner, _other = service(tmp_path)
+    state_id = str(
+        structured(await gui.snapshot(owner, "window-1", screenshot=False))[
+            "state_id"
+        ]
+    )
+
+    async def unavailable_pointer_focus(window: dict[str, Any]) -> None:
+        raise GuiUnavailableError("RemoteDesktop portal has no pointer input")
+
+    backend.focus_window = unavailable_pointer_focus
+    result = await gui.act(
+        owner, "window-1", state_id, [{"type": "click", "element_id": "e1"}]
+    )
+    assert result["actions"][0]["performed"] is True
+    assert backend.actions[0][0] == {"fingerprint": "stable"}
+    assert "_focus_prepared" not in backend.actions[0][1]
+    await gui.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "click", "x": 1, "y": 2},
+        {"type": "double_click", "element_id": "e1"},
+        {"type": "right_click", "element_id": "e1"},
+        {"type": "move", "element_id": "e1"},
+        {"type": "scroll", "element_id": "e1"},
+    ],
+)
+async def test_gui_other_pointer_actions_still_require_focus(
+    tmp_path: Path, action: dict[str, Any]
+) -> None:
+    gui, backend, _store, owner, _other = service(tmp_path)
+    state_id = str(
+        structured(await gui.snapshot(owner, "window-1", screenshot=False))[
+            "state_id"
+        ]
+    )
+
+    async def unavailable_pointer_focus(window: dict[str, Any]) -> None:
+        raise GuiUnavailableError("RemoteDesktop portal has no pointer input")
+
+    backend.focus_window = unavailable_pointer_focus
+    with pytest.raises(GuiUnavailableError, match="no pointer input"):
+        await gui.act(owner, "window-1", state_id, [action])
+    assert backend.actions == []
+    await gui.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gui_semantic_click_still_rejects_stale_window_without_focus(
+    tmp_path: Path,
+) -> None:
+    gui, backend, _store, owner, _other = service(tmp_path)
+    state_id = str(
+        structured(await gui.snapshot(owner, "window-1", screenshot=False))[
+            "state_id"
+        ]
+    )
+    backend.bounds["width"] += 1
+    with pytest.raises(GuiStaleStateError, match="moved or resized"):
+        await gui.act(
+            owner, "window-1", state_id, [{"type": "click", "element_id": "e1"}]
+        )
+    assert backend.actions == []
+    await gui.aclose()
+
+
+@pytest.mark.asyncio
 async def test_gui_invalid_action_does_not_consume_state(
     tmp_path: Path,
 ) -> None:

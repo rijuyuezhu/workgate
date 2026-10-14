@@ -700,13 +700,16 @@ class GuiService:
                         await self._assert_window_geometry_unchanged(
                             backend, record.window
                         )
-                        await _await_native_operation(
-                            backend.focus_window(record.window)
-                        )
-                        await self._assert_window_geometry_unchanged(
-                            backend, record.window
-                        )
-                        action["_focus_prepared"] = True
+                        if not (
+                            action["type"] == "click" and locator is not None
+                        ):
+                            await _await_native_operation(
+                                backend.focus_window(record.window)
+                            )
+                            await self._assert_window_geometry_unchanged(
+                                backend, record.window
+                            )
+                            action["_focus_prepared"] = True
                     _assert_action_fresh(
                         action, stale_hint="call gui_state again"
                     )
