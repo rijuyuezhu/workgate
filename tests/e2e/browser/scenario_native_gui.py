@@ -276,12 +276,12 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
             )
         assert cancelled
         assert len(actions) == before + 1
-        assert actions[-1]["action"] == {
-            "type": "scroll",
-            "x": 40,
-            "y": 25,
-            "amount": 2,
-        }
+        wheel_action = actions[-1]["action"]
+        assert wheel_action["type"] == "scroll", wheel_action
+        assert wheel_action["amount"] == 2, wheel_action
+        # The screenshot has a one-pixel border; logical dimensions may round.
+        assert abs(wheel_action["x"] - 40) <= 1, wheel_action
+        assert abs(wheel_action["y"] - 25) <= 1, wheel_action
         assert (
             page.evaluate(
                 "document.querySelector('.task-sessions-main').scrollTop"
