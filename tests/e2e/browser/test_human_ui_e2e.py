@@ -14,6 +14,7 @@ from tests.e2e.browser.scenario_live_workspace import (
     run_live_workspace_remount,
 )
 from tests.e2e.browser.scenario_mobile_drilldown import run_mobile_drilldown
+from tests.e2e.browser.scenario_native_gui import run_native_gui_manual
 from tests.e2e.browser.scenario_remote_terminals import (
     run_remote_terminals,
     run_terminal_action_races,
@@ -33,6 +34,7 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_background_polling(browser_harness)
     run_terminals(browser_harness)
     run_mobile_drilldown(browser_harness)
+    run_native_gui_manual(browser_harness)
     browser_harness.assert_clean_browser()
 
 

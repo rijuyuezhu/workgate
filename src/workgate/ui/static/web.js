@@ -472,6 +472,7 @@ void (async () => {
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
+    if (view !== "tasks") guiViewer.close();
     mobileNavigation.sync(view);
 
     if (syncHash && location.hash !== `#${view}`) {
