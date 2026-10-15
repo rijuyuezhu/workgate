@@ -24,6 +24,7 @@ from .transfer import (
     _write_receipt_path,
     transfer_abort_write,
     transfer_begin_write,
+    transfer_mark_peer_unclaimed,
     transfer_write_bytes,
 )
 
@@ -293,7 +294,7 @@ class PeerReceiverManager:
                 await asyncio.sleep(_RECEIPT_GRACE_S)
             async with self._lock:
                 await self._cancel_locked(
-                    lease.transfer_id, preserve_received=True
+                    lease.transfer_id, preserve_received=True, auto_retire=True
                 )
         except asyncio.CancelledError:
             return
@@ -327,6 +328,16 @@ class PeerReceiverManager:
         preserve_received: bool = False,
     ) -> bool:
         async with self._lock:
+            # The listener may have expired before Control persisted the
+            # checkpoint. An explicit claim still clears its orphan deadline.
+            if preserve_received and transfer_id not in self._leases:
+                await self._io(
+                    transfer_mark_peer_unclaimed,
+                    transfer_id,
+                    unclaimed=False,
+                    context=self._context,
+                )
+                return False
             return await self._cancel_locked(
                 transfer_id,
                 session_id=session_id,
@@ -339,6 +350,7 @@ class PeerReceiverManager:
         *,
         session_id: str | None = None,
         preserve_received: bool = False,
+        auto_retire: bool = False,
     ) -> bool:
         lease = self._leases.get(transfer_id)
         if lease is None or (
@@ -354,7 +366,6 @@ class PeerReceiverManager:
         lease.state = "cancelling"
         if lease.server is not None:
             lease.server.close()
-            await lease.server.wait_closed()
         current = asyncio.current_task()
         if lease.expiry is not None and lease.expiry is not current:
             lease.expiry.cancel()
@@ -365,13 +376,24 @@ class PeerReceiverManager:
         ):
             lease.task.cancel()
             await asyncio.gather(lease.task, return_exceptions=True)
-        if not preserve_received:
-            try:
+        if lease.server is not None:
+            # Do not wait for idle, unauthenticated clients to close themselves.
+            lease.server.close_clients()
+            await lease.server.wait_closed()
+        try:
+            if preserve_received:
+                await self._io(
+                    transfer_mark_peer_unclaimed,
+                    transfer_id,
+                    unclaimed=auto_retire,
+                    context=self._context,
+                )
+            else:
                 await self._abort(lease.session_id, lease.path, transfer_id)
-            except Exception:
-                lease.state = "cleanup_failed"
-                logger.exception("peer cancel cleanup failed")
-                raise
+        except Exception:
+            lease.state = "cleanup_failed"
+            logger.exception("peer cancel cleanup failed")
+            raise
         self._leases.pop(transfer_id, None)
         return True
 
@@ -397,7 +419,9 @@ class PeerReceiverManager:
         for transfer_id in transfer_ids:
             try:
                 await self._cancel_locked(
-                    transfer_id, preserve_received=transfer_id in retained
+                    transfer_id,
+                    preserve_received=transfer_id in retained,
+                    auto_retire=transfer_id in retained,
                 )
             except Exception as exc:
                 errors.append(exc)
