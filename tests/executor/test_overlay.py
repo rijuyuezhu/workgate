@@ -99,3 +99,15 @@ def test_overlay_hello_rejects_non_cgnat_peer_address():
         TrustedOverlay(
             provider="tailscale", tailnet_id="tailnet-id", ipv4="127.0.0.1"
         )
+
+
+def test_overlay_hello_rejects_invalid_ipv4():
+    with pytest.raises(ValueError, match="invalid"):
+        TrustedOverlay(provider="tailscale", tailnet_id="tailnet-id", ipv4="not-an-ip")
+
+
+def test_overlay_hello_accepts_cgnat_ipv4():
+    result = TrustedOverlay(
+        provider="tailscale", tailnet_id="tailnet-id", ipv4="100.64.1.9"
+    )
+    assert result.ipv4 == "100.64.1.9"

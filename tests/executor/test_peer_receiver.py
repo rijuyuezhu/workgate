@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
@@ -19,6 +20,17 @@ from workgate.executor.transfer import (
 )
 from workgate.protocol.executor import TrustedOverlay
 from workgate.protocol.ids import new_session_id
+
+
+class _PeerArgs(TypedDict):
+    session_id: str
+    path: str
+    transfer_id: str
+    expected_bytes: int
+    expected_sha256: str
+    overwrite: bool
+    tailnet_id: str
+
 
 TAILNET = "tailnet-test"
 
@@ -230,4 +242,302 @@ async def test_peer_receiver_rejects_changed_overlay_and_over_capacity(
                 tailnet_id=TAILNET,
             )
     finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_does_not_release_transfer_identity_before_disk_cleanup(
+    tmp_path, monkeypatch
+):
+    manager, _, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "e" * 22
+    args: _PeerArgs = {
+        "session_id": sid,
+        "path": "staged.bin",
+        "transfer_id": tid,
+        "expected_bytes": 2,
+        "expected_sha256": hashlib.sha256(b"ab").hexdigest(),
+        "overwrite": True,
+        "tailnet_id": TAILNET,
+    }
+    await manager.prepare(**args)
+    entered, release = asyncio.Event(), asyncio.Event()
+    abort = manager._abort
+
+    async def delayed_abort(*args):
+        entered.set()
+        await release.wait()
+        await abort(*args)
+
+    monkeypatch.setattr(manager, "_abort", delayed_abort)
+    cancelling = asyncio.create_task(manager.cancel(tid))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        preparing = asyncio.create_task(manager.prepare(**args))
+        await asyncio.sleep(0.05)
+        assert not preparing.done()
+        release.set()
+        assert await cancelling is True
+        info = await preparing
+        assert await _connect(info, str(info["token"]), b"ab") == b"OK\n"
+        await _wait_status(manager, tid, "received")
+    finally:
+        release.set()
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_cleanup_failure_remains_retryable(tmp_path, monkeypatch):
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "f" * 22
+    await manager.prepare(
+        session_id=sid,
+        path="staged.bin",
+        transfer_id=tid,
+        expected_bytes=2,
+        expected_sha256=hashlib.sha256(b"ab").hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    abort = manager._abort
+    attempts = 0
+
+    async def fail_once(*args):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("injected failure")
+        await abort(*args)
+
+    monkeypatch.setattr(manager, "_abort", fail_once)
+    try:
+        with pytest.raises(OSError, match="injected failure"):
+            await manager.cancel(tid)
+        assert manager.status(tid) == "cleanup_failed"
+        assert await manager.cancel(tid) is True
+        assert manager.status(tid) == "unknown"
+        begin = transfer_begin_write(
+            "staged.bin", True, 2, tid, session_id=sid, context=context
+        )
+        assert begin.offset == 0
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_waiting_lease_expires_but_active_transfer_survives_total_timeout(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(peer_module, "_CONNECT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(peer_module, "_IDLE_TIMEOUT_S", 0.5)
+    manager, _, sid, _ = _receiver(tmp_path, monkeypatch)
+    pending = "copy_" + "g" * 22
+    try:
+        await manager.prepare(
+            session_id=sid,
+            path="pending.bin",
+            transfer_id=pending,
+            expected_bytes=1,
+            expected_sha256=hashlib.sha256(b"a").hexdigest(),
+            overwrite=True,
+            tailnet_id=TAILNET,
+        )
+        await _wait_status(manager, pending, "unknown")
+
+        tid = "copy_" + "h" * 22
+        info = await manager.prepare(
+            session_id=sid,
+            path="slow.bin",
+            transfer_id=tid,
+            expected_bytes=2,
+            expected_sha256=hashlib.sha256(b"ab").hexdigest(),
+            overwrite=True,
+            tailnet_id=TAILNET,
+        )
+        reader, writer = await asyncio.open_connection(
+            str(info["host"]), int(info["port"])
+        )
+        try:
+            writer.write(str(info["token"]).encode() + b"\na")
+            await writer.drain()
+            await _wait_status(manager, tid, "receiving")
+            await asyncio.sleep(0.08)
+            assert manager.status(tid) == "receiving"
+            writer.write(b"b")
+            await writer.drain()
+            assert await asyncio.wait_for(reader.read(), 2) == b"OK\n"
+            assert manager.status(tid) == "received"
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prepare_bind_error_retains_cleanup_failure_for_retry(
+    tmp_path, monkeypatch
+):
+    manager, _, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "m" * 22
+    bind_failed = OSError("injected bind error")
+
+    async def fail_bind(*args, **kwargs):
+        raise bind_failed
+
+    abort = manager._abort
+    attempts = 0
+
+    async def fail_first_cleanup(*args):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("injected cleanup error")
+        await abort(*args)
+
+    monkeypatch.setattr(peer_module.asyncio, "start_server", fail_bind)
+    monkeypatch.setattr(manager, "_abort", fail_first_cleanup)
+    try:
+        with pytest.raises(OSError, match="cleanup error"):
+            await manager.prepare(
+                session_id=sid,
+                path="staged.bin",
+                transfer_id=tid,
+                expected_bytes=2,
+                expected_sha256=hashlib.sha256(b"ab").hexdigest(),
+                overwrite=True,
+                tailnet_id=TAILNET,
+            )
+        assert manager.status(tid) == "cleanup_failed"
+        assert await manager.cancel(tid) is True
+        assert manager.status(tid) == "unknown"
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_inflight_disk_write_before_abort(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    manager, _, sid, workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "n" * 22
+    block = b"abcd"
+    info = await manager.prepare(
+        session_id=sid,
+        path="out.bin",
+        transfer_id=tid,
+        expected_bytes=len(block),
+        expected_sha256=hashlib.sha256(block).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    original = peer_module.transfer_write_bytes
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_write(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(peer_module, "transfer_write_bytes", slow_write)
+    reader, writer = await asyncio.open_connection(
+        str(info["host"]), int(info["port"])
+    )
+    try:
+        writer.write(str(info["token"]).encode() + b"\n" + block)
+        await writer.drain()
+        assert await asyncio.to_thread(entered.wait, 2)
+        cancelling = asyncio.create_task(manager.cancel(tid))
+        await asyncio.sleep(0.05)
+        assert not cancelling.done()
+        release.set()
+        assert await asyncio.wait_for(cancelling, 3) is True
+        assert manager.status(tid) == "unknown"
+        assert not (workspace / "out.bin").exists()
+    finally:
+        release.set()
+        writer.close()
+        with contextlib.suppress(ConnectionResetError):
+            await writer.wait_closed()
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_revokes_pending_authenticated_claims(
+    tmp_path, monkeypatch
+):
+    manager, _, sid, workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "p" * 22
+    info = await manager.prepare(
+        session_id=sid,
+        path="late.bin",
+        transfer_id=tid,
+        expected_bytes=2,
+        expected_sha256=hashlib.sha256(b"ab").hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    reader, writer = await asyncio.open_connection(
+        str(info["host"]), int(info["port"])
+    )
+    try:
+        await asyncio.sleep(0.02)
+        assert await manager.cancel(tid)
+        writer.write(str(info["token"]).encode() + b"\nab")
+        with contextlib.suppress(ConnectionResetError, BrokenPipeError):
+            await writer.drain()
+        with contextlib.suppress(ConnectionResetError):
+            assert await asyncio.wait_for(reader.read(16), 1) == b""
+        assert not (workspace / "late.bin").exists()
+        assert manager.status(tid) == "unknown"
+    finally:
+        writer.close()
+        with contextlib.suppress(ConnectionResetError):
+            await writer.wait_closed()
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_begin_waits_for_thread_and_cleans_receipt(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    original = peer_module.transfer_begin_write
+
+    def slow_begin(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(peer_module, "transfer_begin_write", slow_begin)
+    tid = "copy_" + "q" * 22
+    task = asyncio.create_task(
+        manager.prepare(
+            session_id=sid,
+            path="cancelled.bin",
+            transfer_id=tid,
+            expected_bytes=3,
+            expected_sha256=hashlib.sha256(b"abc").hexdigest(),
+            overwrite=True,
+            tailnet_id=TAILNET,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert manager.status(tid) == "unknown"
+        begun = transfer_begin_write(
+            "cancelled.bin", True, 3, tid, session_id=sid, context=context
+        )
+        assert begun.resumed is False
+    finally:
+        release.set()
         await manager.aclose()

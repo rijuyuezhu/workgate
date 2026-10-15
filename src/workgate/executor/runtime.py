@@ -354,13 +354,13 @@ class ExecutorRuntime:
             if command.op == SESSION_LOOKUP_OP:
                 return self.sessions.lookup(session_id)
             if command.op == SESSION_TERMINATE_OP:
-                await self.peer_receiver.cancel_session(session_id)
-                return await self.sessions.terminate(session_id)
+                async with self.peer_receiver.session_lifecycle(session_id):
+                    return await self.sessions.terminate(session_id)
             workdir = command.args.get("workdir")
             if not isinstance(workdir, str) or not workdir:
                 raise ValueError("session.change_workdir requires workdir")
-            await self.peer_receiver.cancel_session(session_id)
-            return await self.sessions.change_workdir(session_id, workdir)
+            async with self.peer_receiver.session_lifecycle(session_id):
+                return await self.sessions.change_workdir(session_id, workdir)
 
         args = dict(command.args)
         if command.session_id is not None:
