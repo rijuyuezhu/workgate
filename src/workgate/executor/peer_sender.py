@@ -1,7 +1,6 @@
 """One-shot trusted-overlay raw byte sender for executor-to-executor transfers."""
 
 import asyncio
-import contextlib
 import ipaddress
 import re
 
@@ -120,7 +119,10 @@ async def send_peer_transfer(
             }
         finally:
             writer.close()
-            with contextlib.suppress(OSError):
-                await writer.wait_closed()
+            try:
+                async with asyncio.timeout(_CONNECT_TIMEOUT_S):
+                    await writer.wait_closed()
+            except TimeoutError, OSError:
+                writer.transport.abort()
     finally:
         handle.close()

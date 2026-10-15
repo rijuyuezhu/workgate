@@ -403,3 +403,49 @@ async def test_source_session_workdir_change_interrupts_stream(
     finally:
         await src.aclose()
         await dst.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sender_does_not_hang_when_peer_stalls_socket_close(
+    peer_runtimes, monkeypatch
+):
+    import asyncio
+
+    src, dst, src_sid, _dst_sid, source_dir, _ = peer_runtimes
+    data = b"S" * (4 * 1024 * 1024)
+    (source_dir / "source.bin").write_bytes(data)
+    monkeypatch.setattr(sender_module, "_IO_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(sender_module, "_CONNECT_TIMEOUT_S", 0.1)
+
+    async def stalled_peer(reader, writer):
+        try:
+            await asyncio.sleep(2)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(stalled_peer, "127.0.0.1", 0)
+    try:
+        port = server.sockets[0].getsockname()[1]
+        info = {
+            "host": "127.0.0.1",
+            "port": port,
+            "token": "A" * 43,
+            "transfer_id": "copy_" + "j" * 22,
+        }
+        with pytest.raises((TimeoutError, RuntimeError, ConnectionError)):
+            await asyncio.wait_for(
+                _send(
+                    src,
+                    src_sid,
+                    info,
+                    len(data),
+                    hashlib.sha256(data).hexdigest(),
+                ),
+                1,
+            )
+    finally:
+        server.close()
+        await server.wait_closed()
+        await src.aclose()
+        await dst.aclose()
