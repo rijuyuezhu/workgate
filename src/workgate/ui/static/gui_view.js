@@ -48,34 +48,45 @@ export function createGuiViewer({ request }) {
     capture.disabled = true;
     clearImage();
     state.textContent = sessionId
-      ? "Load windows to view a native desktop frame"
+      ? "Opening native window list…"
       : "GUI is only available for an active, connected session";
   }
 
   async function loadWindows() {
     if (!sessionId) return;
     const currentSession = sessionId;
+    const selectedWindow = windows.value;
     const revision = ++generation;
     load.disabled = true;
     capture.disabled = true;
     windows.disabled = true;
-    windows.replaceChildren(new Option("Select a window", ""));
-    clearImage();
-    state.textContent = "Loading windows…";
+    state.textContent = "Refreshing window list…";
     try {
       const data = await request(`/gui/windows?${new URLSearchParams({ session_id: currentSession })}`);
       if (revision !== generation || sessionId !== currentSession) return;
       if (!Array.isArray(data?.windows)) throw new Error("Invalid native GUI window list");
+      windows.replaceChildren(new Option("Select a window", ""));
       for (const window of data.windows) {
         const id = String(window.id || "");
         if (!id) continue;
         const label = String(window.title || window.app || id);
         windows.add(new Option(label, id));
       }
+      if (selectedWindow && Array.from(windows.options).some((option) => option.value === selectedWindow)) {
+        windows.value = selectedWindow;
+      } else {
+        clearImage();
+      }
       windows.disabled = windows.options.length < 2;
-      state.textContent = windows.disabled ? "No native GUI windows available" : "Choose a window and capture a frame";
+      capture.disabled = !windows.value;
+      const count = windows.options.length - 1;
+      state.textContent = count
+        ? `${count} window${count === 1 ? "" : "s"} · list refreshed at ${new Date().toLocaleTimeString()}`
+        : "No native GUI windows available";
     } catch (error) {
       if (revision === generation && sessionId === currentSession) {
+        windows.disabled = windows.options.length < 2;
+        capture.disabled = !windows.value;
         state.textContent = error instanceof Error ? error.message : String(error);
       }
     } finally {
