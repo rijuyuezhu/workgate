@@ -1,8 +1,17 @@
 """Executor protocol v1 wire models."""
 
 from enum import StrEnum
+from ipaddress import IPv4Address, IPv4Network
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 from .ids import CommandId, SessionId
 
@@ -79,6 +88,27 @@ class JobInventorySummary(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class TrustedOverlay(BaseModel):
+    """Advisory, executor-reported overlay membership (not an authorization)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Literal["tailscale"]
+    tailnet_id: str = Field(min_length=1, max_length=128)
+    ipv4: str = Field(min_length=7, max_length=15)
+
+    @field_validator("ipv4")
+    @classmethod
+    def only_tailnet_ipv4(cls, address: str) -> str:
+        try:
+            ip = IPv4Address(address)
+        except ValueError as exc:
+            raise ValueError("overlay IPv4 address is invalid") from exc
+        if ip not in IPv4Network("100.64.0.0/10"):
+            raise ValueError("overlay IPv4 address is not Tailscale CGNAT")
+        return str(ip)
+
+
 class ExecutorHelloRequest(BaseModel):
     """Authenticated reconnect hello with a complete bounded inventory."""
 
@@ -86,6 +116,7 @@ class ExecutorHelloRequest(BaseModel):
 
     runtime: ExecutorRuntimeSummary
     capabilities: tuple[str, ...] = ()
+    overlay: TrustedOverlay | None = None
     boot_id: str | None = Field(default=None, min_length=1, max_length=256)
     default_workdir: str = Field(min_length=1, max_length=4096)
     sessions: tuple[SessionInventorySummary, ...]

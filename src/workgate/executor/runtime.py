@@ -27,6 +27,7 @@ from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
 from .gui import GuiService, build_gui_service
 from .path import resolve_default_workdir, resolve_path
+from .peer_receiver import PeerReceiverManager
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
 from .terminal.runtime import (
@@ -80,6 +81,8 @@ class ExecutorRuntime:
     """Executor-owned ephemeral structured browser resources."""
     gui: GuiService
     """Executor-owned short-lived native desktop GUI observations."""
+    peer_receiver: PeerReceiverManager
+    """One-time trusted-overlay transfer listeners."""
     runtime_state_store: ExecutorRuntimeStateStore
     """Small persisted runtime ownership/update authority."""
     managed_service: bool = False
@@ -112,8 +115,10 @@ class ExecutorRuntime:
     async def _build_reconnect_hello(self) -> ExecutorHelloRequest:
         """Build one complete authoritative executor resource inventory."""
         from .hello import build_executor_hello
+        from .overlay import detect_tailscale_overlay
 
         runtime_state = self._runtime_state()
+        overlay = await asyncio.to_thread(detect_tailscale_overlay)
 
         with (
             use_role_config(self.config),
@@ -135,6 +140,7 @@ class ExecutorRuntime:
                         shells=shells,
                         jobs=jobs,
                         runtime_ownership=runtime_state.ownership,
+                        overlay=overlay,
                     )
         raise ExecutorResourceInventoryUnavailable(
             "session inventory changed while reconnect snapshot was built"
@@ -348,15 +354,46 @@ class ExecutorRuntime:
             if command.op == SESSION_LOOKUP_OP:
                 return self.sessions.lookup(session_id)
             if command.op == SESSION_TERMINATE_OP:
+                await self.peer_receiver.cancel_session(session_id)
                 return await self.sessions.terminate(session_id)
             workdir = command.args.get("workdir")
             if not isinstance(workdir, str) or not workdir:
                 raise ValueError("session.change_workdir requires workdir")
+            await self.peer_receiver.cancel_session(session_id)
             return await self.sessions.change_workdir(session_id, workdir)
 
         args = dict(command.args)
         if command.session_id is not None:
             args.setdefault("session_id", command.session_id)
+        if command.op == "transfer.peer_prepare":
+            if command.session_id is None:
+                raise ValueError("peer prepare requires a destination session")
+            return await self.peer_receiver.prepare(
+                session_id=str(command.session_id),
+                path=str(args["path"]),
+                transfer_id=str(args["transfer_id"]),
+                expected_bytes=int(str(args["expected_bytes"])),
+                expected_sha256=str(args["expected_sha256"]),
+                overwrite=bool(args["overwrite"]),
+                tailnet_id=str(args["tailnet_id"]),
+            )
+        if command.op in {"transfer.peer_status", "transfer.peer_cancel"}:
+            if command.session_id is None:
+                raise ValueError(
+                    "peer operation requires a destination session"
+                )
+            transfer_id = str(args["transfer_id"])
+            session_id = str(command.session_id)
+            if command.op == "transfer.peer_status":
+                return {
+                    "state": self.peer_receiver.status(
+                        transfer_id, session_id=session_id
+                    )
+                }
+            cancelled = await self.peer_receiver.cancel(
+                transfer_id, session_id=session_id
+            )
+            return {"cancelled": cancelled}
         if command.op in {"transfer.http_upload", "transfer.http_download"}:
             profile_store = self.profile_store
             profile = None if profile_store is None else profile_store.load()
@@ -435,7 +472,10 @@ class ExecutorRuntime:
             finally:
                 try:
                     try:
-                        await self.gui.aclose()
+                        try:
+                            await self.peer_receiver.aclose()
+                        finally:
+                            await self.gui.aclose()
                     finally:
                         await self.browser.aclose()
                 finally:
@@ -526,6 +566,7 @@ def build_executor_runtime(
         profile_store=profile_store,
         browser=browser_service,
         gui=gui_service,
+        peer_receiver=PeerReceiverManager(config, services.tool_session_store),
         runtime_state_store=runtime_state_store,
         managed_service=managed_service,
         runtime_ownership=runtime_ownership,
