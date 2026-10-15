@@ -76,6 +76,25 @@ async def _wait_status(
     raise AssertionError(f"expected {want}, got {manager.status(transfer_id)}")
 
 
+async def _assert_stopped(info: dict[str, str | int]) -> None:
+    # TCP backlog can still complete a handshake after close; it must never
+    # consume or accept further transfer bytes.
+    try:
+        reader, writer = await asyncio.open_connection(
+            str(info["host"]), int(info["port"])
+        )
+    except OSError:
+        return
+    try:
+        writer.write(str(info["token"]).encode() + b"\nabcdefgh")
+        with pytest.raises((ConnectionError, TimeoutError, OSError)):
+            await asyncio.wait_for(reader.readexactly(3), 0.3)
+    finally:
+        writer.close()
+        with contextlib.suppress(ConnectionResetError):
+            await writer.wait_closed()
+
+
 @pytest.mark.asyncio
 async def test_peer_receiver_one_use_transactional_success(
     tmp_path, monkeypatch
@@ -113,21 +132,7 @@ async def test_peer_receiver_one_use_transactional_success(
         # Closing the receiver must not erase already published output.
         await manager.cancel(tid)
         assert (workspace / "output.bin").read_bytes() == data
-        # TCP backlog can still complete a handshake after close; it must never
-        # consume or accept any further transfer data.
-        try:
-            reader, writer = await asyncio.open_connection(
-                str(info["host"]), int(info["port"])
-            )
-        except OSError:
-            pass
-        else:
-            writer.write(str(info["token"]).encode() + b"\nabcdefgh")
-            with pytest.raises((ConnectionError, TimeoutError, OSError)):
-                await asyncio.wait_for(reader.readexactly(3), 0.3)
-            writer.close()
-            with contextlib.suppress(ConnectionResetError):
-                await writer.wait_closed()
+        await _assert_stopped(info)
     finally:
         await manager.aclose()
 
@@ -177,21 +182,7 @@ async def test_peer_receiver_cancellation_and_expiry(tmp_path, monkeypatch):
         await manager.cancel_session(sid)
         assert manager.status(tid) == "unknown"
         assert not (workspace / "staged.bin").exists()
-        # TCP backlog can still complete a handshake after close; it must never
-        # consume or accept any further transfer data.
-        try:
-            reader, writer = await asyncio.open_connection(
-                str(info["host"]), int(info["port"])
-            )
-        except OSError:
-            pass
-        else:
-            writer.write(str(info["token"]).encode() + b"\nabcdefgh")
-            with pytest.raises((ConnectionError, TimeoutError, OSError)):
-                await asyncio.wait_for(reader.readexactly(3), 0.3)
-            writer.close()
-            with contextlib.suppress(ConnectionResetError):
-                await writer.wait_closed()
+        await _assert_stopped(info)
         begin = transfer_begin_write(
             "staged.bin", True, 8, tid, session_id=sid, context=context
         )
