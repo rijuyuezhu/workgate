@@ -12,6 +12,7 @@ from tests.e2e.helpers import (
     run_http_process_with_executors,
     streamable_http_tool_client,
 )
+from workgate.executor.overlay import detect_tailscale_overlay
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -188,6 +189,9 @@ async def test_real_two_executors_object_store_large_session_copy(
     tmp_path: Path,
 ) -> None:
     pytest.importorskip("boto3")
+    expected_transport = (
+        "peer_direct" if detect_tailscale_overlay() else "object_store"
+    )
     payload = (b"object-store-transfer-" * 70000) + b"done"
     assert len(payload) > 1024 * 1024
     source_workspace = tmp_path / "object-source"
@@ -237,7 +241,7 @@ async def test_real_two_executors_object_store_large_session_copy(
                     "background": False,
                 },
             )
-            assert copied["transport"] == "object_store"
+            assert copied["transport"] == expected_transport
             assert copied["fallbacks"] == []
             assert copied["bytes"] == len(payload)
             assert copied["sha256"] == hashlib.sha256(payload).hexdigest()
@@ -263,7 +267,7 @@ async def test_real_two_executors_object_store_large_session_copy(
                     "background": False,
                 },
             )
-            assert directory_copy["transport"] == "object_store"
+            assert directory_copy["transport"] == expected_transport
             assert directory_copy["fallbacks"] == []
             assert directory_copy["chunks"] > 1
             assert (
@@ -271,9 +275,17 @@ async def test_real_two_executors_object_store_large_session_copy(
             ).read_bytes() == directory_payload
             with object_store.lock:
                 assert object_store.objects == {}
-                assert object_store.puts == 2
-                assert object_store.gets >= 2
-                assert object_store.deletes == 2
+                if expected_transport == "peer_direct":
+                    # The configured object store is never touched when direct works.
+                    assert (
+                        object_store.puts,
+                        object_store.gets,
+                        object_store.deletes,
+                    ) == (0, 0, 0)
+                else:
+                    assert object_store.puts == 2
+                    assert object_store.gets >= 2
+                    assert object_store.deletes == 2
 
             control_payload_dir = (
                 tmp_path
@@ -286,6 +298,9 @@ async def test_real_two_executors_object_store_large_session_copy(
 
 
 async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
+    expected_transport = (
+        "peer_direct" if detect_tailscale_overlay() else "control_relay"
+    )
     payload = (b"cross-executor-transfer-" * 70000) + b"done"
     assert len(payload) > 1024 * 1024
     source_workspace = tmp_path / "executor-source"
@@ -321,7 +336,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "background": False,
             },
         )
-        assert copied["transport"] == "control_relay"
+        assert copied["transport"] == expected_transport
         assert copied["relation"]["route"] == "different_executors"
         assert copied["relation"]["same_executor"] is False
         assert copied["source"]["executor_id"] == source_executor.executor_id
@@ -352,7 +367,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
                 "background": False,
             },
         )
-        assert directory_copy["transport"] == "control_relay"
+        assert directory_copy["transport"] == expected_transport
         assert directory_copy["relation"]["route"] == "different_executors"
         assert directory_copy["chunks"] > 1
         assert (
