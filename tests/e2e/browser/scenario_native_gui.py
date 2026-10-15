@@ -24,6 +24,26 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
     observation_ttl = [30]
 
     page = harness.context.new_page()
+
+    def hold_next_gui_action(page):
+        # Keep one GUI fetch in flight to exercise actual Chromium defaults.
+        page.evaluate(
+            """() => {
+                    const original = window.fetch.bind(window);
+                    window.fetch = (url, opts) => {
+                        if (String(url).endsWith('/gui/action')) {
+                            return new Promise(resolve => {
+                                window.releaseGuiAction = () => {
+                                    window.fetch = original;
+                                    resolve(original(url, opts));
+                                };
+                            });
+                        }
+                        return original(url, opts);
+                    };
+                }"""
+        )
+
     try:
 
         def supply(route):
@@ -311,9 +331,64 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
             page.keyboard.press("Control+s")
         assert actions[-1]["action"] == {"type": "key", "keys": "Ctrl+S"}
+        # Individual printable characters are not sent while every action
+        # consumes a new screenshot token. Multi-character text uses the form.
+        before = len(actions)
+        printable = frame.evaluate(
+            """el => {
+                const e = new KeyboardEvent('keydown', {key: 'A', shiftKey: true,
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+        )
+        assert printable is False
+        assert len(actions) == before
+        page.locator("#session-gui-text").fill("abcDEF 汉字")
         with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
-            page.keyboard.press("Shift+A")
-        assert actions[-1]["action"] == {"type": "type", "text": "A"}
+            page.locator("#session-gui-text-form button").click()
+        assert actions[-1]["action"] == {"type": "type", "text": "abcDEF 汉字"}
+
+        # Hold one real action's fetch unresolved. Supported keys must still
+        # suppress Chromium scrolling/shortcuts, including repeated keydown,
+        # but must never dispatch a second one-shot action while busy.
+        hold_next_gui_action(page)
+        frame.evaluate("el => el.focus({preventScroll: true})")
+        scroll_before = page.evaluate(
+            "document.querySelector('.task-sessions-main').scrollTop"
+        )
+        before = len(actions)
+        page.keyboard.press("ArrowDown")
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Sending manual input"
+        )
+        page.keyboard.press("ArrowDown")
+        event_results = frame.evaluate(
+            """el => {
+                const repeat = new KeyboardEvent('keydown', {key: 'ArrowDown', repeat: true,
+                    bubbles: true, cancelable: true});
+                const save = new KeyboardEvent('keydown', {key: 's', ctrlKey: true,
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(repeat);
+                el.dispatchEvent(save);
+                return [repeat.defaultPrevented, save.defaultPrevented];
+            }"""
+        )
+        assert event_results == [True, True]
+        page.wait_for_timeout(
+            200
+        )  # Give native browser scrolling time to settle.
+        assert (
+            page.evaluate(
+                "document.querySelector('.task-sessions-main').scrollTop"
+            )
+            == scroll_before
+        )
+        assert len(actions) == before  # Still waiting for the first request.
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.evaluate("window.releaseGuiAction()")
+        assert len(actions) == before + 1
+        assert actions[-1]["action"] == {"type": "key", "keys": "Down"}
 
         before = len(actions)
         # Browser-reserved chords and IME composition are never intercepted.
@@ -352,6 +427,31 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         )
         assert accepted is False
         assert len(actions) == before
+
+        # Keyboard-only backend: a pending key must not swallow ordinary
+        # browser wheel gestures when native coordinate input is unavailable.
+        frame.evaluate("el => el.focus({preventScroll: true})")
+        hold_next_gui_action(page)
+        page.keyboard.press("ArrowUp")
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Sending manual input"
+        )
+        wheel_during_key = frame.evaluate(
+            """el => {
+                const r = el.getBoundingClientRect();
+                const e = new WheelEvent('wheel', {bubbles: true, cancelable: true,
+                    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                    deltaY: 100});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+        )
+        assert wheel_during_key is False
+        assert len(actions) == before
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.evaluate("window.releaseGuiAction()")
+        assert len(actions) == before + 1
+        assert actions[-1]["action"] == {"type": "key", "keys": "Up"}
         page.locator("#session-gui-manual").click()
         expect(frame).to_have_attribute("tabindex", "-1")
         page.locator("#session-gui-back").click()

@@ -27,6 +27,7 @@ export function createGuiViewer({ request }) {
   let busy = false;
   let dragStart = null;
   let pointerAvailable = false;
+  let pointerCapableWhileBusy = false;
 
   function setManual(enabled) {
     if (!enabled && manualEnabled) {
@@ -214,14 +215,10 @@ export function createGuiViewer({ request }) {
     const special = {
       ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
       Enter: "Enter", Tab: "Tab", Backspace: "Backspace", Delete: "Delete",
-      Escape: "Escape", Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown",
+      Escape: "Escape", Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown", " ": "Space",
     }[event.key];
     if (special && (!event.shiftKey || event.key !== "Tab")) {
       return { type: "key", keys: `${event.shiftKey ? "Shift+" : ""}${special}` };
-    }
-    // CJK/IME stays in the text field; do not synthesize composition events.
-    if (event.key.length === 1 && /^[\x20-\x7e]$/.test(event.key)) {
-      return { type: "type", text: event.key };
     }
     return null;
   }
@@ -237,6 +234,7 @@ export function createGuiViewer({ request }) {
     const currentWindow = windows.value;
     const { id } = observation;
     const revision = ++generation;
+    pointerCapableWhileBusy = pointerAvailable;
     busy = true;
     observation = null; // One-use native state, even when action fails or times out.
     capture.disabled = true;
@@ -254,6 +252,7 @@ export function createGuiViewer({ request }) {
       }
     } finally {
       busy = false;
+      pointerCapableWhileBusy = false;
       if (revision === generation) capture.disabled = !sessionId || !windows.value;
     }
   }
@@ -290,7 +289,10 @@ export function createGuiViewer({ request }) {
       if (!manualEnabled || event.ctrlKey || event.metaKey || event.altKey) return;
       // A trackpad gesture emits multiple events: never scroll the WebUI while
       // its first accepted native action is still refreshing the frame.
-      if (busy) { event.preventDefault(); return; }
+      if (busy) {
+        if (pointerCapableWhileBusy) event.preventDefault();
+        return;
+      }
       if (!readyForInput() || !pointerAvailable) return;
       const target = point(event);
       if (!target || !event.deltaY) return;
@@ -300,10 +302,13 @@ export function createGuiViewer({ request }) {
       void act({ type: "scroll", ...target, amount });
     }, { passive: false });
     image.addEventListener("keydown", (event) => {
-      if (document.activeElement !== image || !readyForInput() || event.repeat || event.defaultPrevented) return;
+      if (!manualEnabled || document.activeElement !== image || event.defaultPrevented) return;
       const action = keyAction(event);
       if (!action) return;
+      // Suppress the browser shortcut/scroll even when a native action is busy
+      // or this observation has expired. Never queue or repeat native input.
       event.preventDefault();
+      if (event.repeat || !readyForInput()) return;
       void act(action);
     });
     image.addEventListener("pointerup", imagePointerUp);
