@@ -287,7 +287,11 @@ export function createGuiViewer({ request }) {
       }
     });
     image.addEventListener("wheel", (event) => {
-      if (!readyForInput() || !pointerAvailable || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (!manualEnabled || event.ctrlKey || event.metaKey || event.altKey) return;
+      // A trackpad gesture emits multiple events: never scroll the WebUI while
+      // its first accepted native action is still refreshing the frame.
+      if (busy) { event.preventDefault(); return; }
+      if (!readyForInput() || !pointerAvailable) return;
       const target = point(event);
       if (!target || !event.deltaY) return;
       const unit = event.deltaMode === 1 ? 3 : event.deltaMode === 2 ? 1 : 60;
