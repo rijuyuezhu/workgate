@@ -537,6 +537,33 @@
               </label>
               <button id="session-gui-capture" type="button" disabled>Capture frame</button>
             </div>
+            <div class="session-gui-control-mode">
+              <button id="session-gui-manual" type="button" aria-pressed="false" disabled>Enter manual mode</button>
+              <span class="muted">Manual input is serialized with model actions, not exclusive desktop ownership.</span>
+            </div>
+            <div id="session-gui-manual-controls" class="session-gui-manual-controls" hidden>
+              <label for="session-gui-pointer-mode">Pointer
+                <select id="session-gui-pointer-mode">
+                  <option value="click">Click</option>
+                  <option value="double_click">Double-click</option>
+                  <option value="right_click">Right-click</option>
+                  <option value="drag">Drag</option>
+                </select>
+              </label>
+              <button id="session-gui-focus" type="button">Focus window</button>
+              <button id="session-gui-scroll-up" type="button">Scroll up</button>
+              <button id="session-gui-scroll-down" type="button">Scroll down</button>
+              <form id="session-gui-key-form" autocomplete="off">
+                <label for="session-gui-key">Key/chord</label>
+                <input id="session-gui-key" type="text" maxlength="256" placeholder="Ctrl+S" spellcheck="false">
+                <button type="submit">Send keys</button>
+              </form>
+              <form id="session-gui-text-form" autocomplete="off">
+                <label for="session-gui-text">Type text</label>
+                <input id="session-gui-text" type="text" maxlength="4096" spellcheck="false">
+                <button type="submit">Type</button>
+              </form>
+            </div>
             <img id="session-gui-image" class="session-gui-image" alt="Selected native GUI window screenshot" hidden>
           </section>
 
