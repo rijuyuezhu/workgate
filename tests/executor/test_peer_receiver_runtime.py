@@ -240,3 +240,98 @@ async def test_peer_runtime_status_cancel_bound_to_session(
             await call("transfer.peer_prepare", None, {})
     finally:
         await runtime.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "invalid"),
+    [
+        ("overwrite", "false"),
+        ("overwrite", 0),
+        ("overwrite", None),
+        ("expected_bytes", "1"),
+        ("expected_bytes", True),
+        ("path", 123),
+        ("transfer_id", 123),
+        ("expected_sha256", None),
+        ("tailnet_id", 1),
+    ],
+)
+async def test_peer_prepare_rejects_coerced_json_arguments(
+    tmp_path, monkeypatch, key, invalid
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "already.bin").write_bytes(b"original")
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                default_workdir=workspace,
+                state_dir=tmp_path / "state",
+                agent_bridge_enabled=False,
+            )
+        ),
+        enable_control_connection=False,
+    )
+    monkeypatch.setattr(
+        peer_module,
+        "detect_tailscale_overlay",
+        lambda: TrustedOverlay.model_construct(
+            provider="tailscale", tailnet_id="tailnet-test", ipv4="127.0.0.1"
+        ),
+    )
+    sid = new_session_id()
+    runtime.services.tool_session_store.create_session(
+        session_id=str(sid), workdir=workspace
+    )
+    args = {
+        "path": "already.bin",
+        "transfer_id": "copy_" + "z" * 22,
+        "expected_bytes": 1,
+        "expected_sha256": hashlib.sha256(b"x").hexdigest(),
+        "overwrite": False,
+        "tailnet_id": "tailnet-test",
+    }
+    args[key] = invalid
+    try:
+        with pytest.raises(ValueError, match=rf"peer {key} must be"):
+            await runtime._execute_protocol_command(
+                ExecutorCommand(
+                    id=new_command_id(),
+                    op="transfer.peer_prepare",
+                    session_id=sid,
+                    args=args,
+                )
+            )
+        assert (workspace / "already.bin").read_bytes() == b"original"
+    finally:
+        await runtime.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["transfer.peer_status", "transfer.peer_cancel"])
+async def test_peer_followup_rejects_nonstr_transfer_id(tmp_path, op):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                default_workdir=workspace,
+                state_dir=tmp_path / "state",
+                agent_bridge_enabled=False,
+            )
+        ),
+        enable_control_connection=False,
+    )
+    try:
+        with pytest.raises(ValueError, match="peer transfer_id must be str"):
+            await runtime._execute_protocol_command(
+                ExecutorCommand(
+                    id=new_command_id(),
+                    op=op,
+                    session_id=new_session_id(),
+                    args={"transfer_id": 123},
+                )
+            )
+    finally:
+        await runtime.aclose()

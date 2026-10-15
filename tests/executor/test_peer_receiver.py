@@ -541,3 +541,165 @@ async def test_cancel_during_begin_waits_for_thread_and_cleans_receipt(
     finally:
         release.set()
         await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["runtime", "session"])
+async def test_cleanup_failure_does_not_leave_other_listeners_open(
+    tmp_path, monkeypatch, scope
+):
+    manager, _, sid, _ = _receiver(tmp_path, monkeypatch)
+    tids = ("copy_" + "u" * 22, "copy_" + "v" * 22)
+    endpoints = []
+    for tid in tids:
+        endpoints.append(
+            await manager.prepare(
+                session_id=sid,
+                path=f"{tid}.bin",
+                transfer_id=tid,
+                expected_bytes=1,
+                expected_sha256=hashlib.sha256(b"x").hexdigest(),
+                overwrite=True,
+                tailnet_id=TAILNET,
+            )
+        )
+    abort = manager._abort
+    failed = True
+
+    async def fail_once(session_id, path, transfer_id):
+        nonlocal failed
+        if transfer_id == tids[0] and failed:
+            failed = False
+            raise OSError("injected disk failure")
+        return await abort(session_id, path, transfer_id)
+
+    monkeypatch.setattr(manager, "_abort", fail_once)
+    try:
+        with pytest.raises(
+            ExceptionGroup, match="peer receiver cleanup failed"
+        ) as exc:
+            if scope == "runtime":
+                await manager.aclose()
+            else:
+                await manager.cancel_session(sid)
+        assert len(exc.value.exceptions) == 1
+        assert isinstance(exc.value.exceptions[0], OSError)
+        assert manager.status(tids[0]) == "cleanup_failed"
+        assert manager.status(tids[1]) == "unknown"
+        for info in endpoints:
+            await _assert_stopped(info)
+        if scope == "runtime":
+            await manager.aclose()
+        else:
+            await manager.cancel_session(sid)
+        assert manager.status(tids[0]) == "unknown"
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_begin_partial_failure_is_rolled_back(tmp_path, monkeypatch):
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "w" * 22
+    original = peer_module.transfer_begin_write
+
+    def fail_after_allocating(*args, **kwargs):
+        original(*args, **kwargs)
+        raise OSError("injected write receipt I/O failure")
+
+    monkeypatch.setattr(
+        peer_module, "transfer_begin_write", fail_after_allocating
+    )
+    try:
+        with pytest.raises(OSError, match="receipt I/O failure"):
+            await manager.prepare(
+                session_id=sid,
+                path="partial.bin",
+                transfer_id=tid,
+                expected_bytes=3,
+                expected_sha256=hashlib.sha256(b"abc").hexdigest(),
+                overwrite=True,
+                tailnet_id=TAILNET,
+            )
+        assert manager.status(tid) == "unknown"
+        begun = transfer_begin_write(
+            "partial.bin", True, 3, tid, session_id=sid, context=context
+        )
+        assert begun.resumed is False
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_begin_does_not_steal_existing_transfer_receipt(
+    tmp_path, monkeypatch
+):
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "x" * 22
+    original = transfer_begin_write(
+        "owned.bin", True, 3, tid, session_id=sid, context=context
+    )
+    assert not original.resumed
+    try:
+        with pytest.raises(ValueError, match="new transfer identity"):
+            await manager.prepare(
+                session_id=sid,
+                path="owned.bin",
+                transfer_id=tid,
+                expected_bytes=3,
+                expected_sha256=hashlib.sha256(b"abc").hexdigest(),
+                overwrite=True,
+                tailnet_id=TAILNET,
+            )
+        still_owned = transfer_begin_write(
+            "owned.bin", True, 3, tid, session_id=sid, context=context
+        )
+        assert still_owned.resumed is True
+        assert manager.status(tid) == "unknown"
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_begin_failure_cleanup_can_be_retried(tmp_path, monkeypatch):
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "y" * 22
+    original = peer_module.transfer_begin_write
+    abort = manager._abort
+    fail_abort = True
+
+    def fail_after_allocating(*args, **kwargs):
+        original(*args, **kwargs)
+        raise OSError("injected begin failure")
+
+    async def fail_first_abort(*args):
+        nonlocal fail_abort
+        if fail_abort:
+            fail_abort = False
+            raise OSError("injected cleanup failure")
+        await abort(*args)
+
+    monkeypatch.setattr(
+        peer_module, "transfer_begin_write", fail_after_allocating
+    )
+    monkeypatch.setattr(manager, "_abort", fail_first_abort)
+    try:
+        with pytest.raises(OSError, match="injected begin failure"):
+            await manager.prepare(
+                session_id=sid,
+                path="partial.bin",
+                transfer_id=tid,
+                expected_bytes=3,
+                expected_sha256=hashlib.sha256(b"abc").hexdigest(),
+                overwrite=True,
+                tailnet_id=TAILNET,
+            )
+        assert manager.status(tid) == "cleanup_failed"
+        assert await manager.cancel(tid)
+        assert manager.status(tid) == "unknown"
+        fresh = transfer_begin_write(
+            "partial.bin", True, 3, tid, session_id=sid, context=context
+        )
+        assert fresh.resumed is False
+    finally:
+        await manager.aclose()

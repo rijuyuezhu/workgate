@@ -6,8 +6,9 @@ from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from pydantic import JsonValue
 from websockets.exceptions import ConnectionClosedOK
 
 from ..config.executor import ExecutorConfig
@@ -51,6 +52,16 @@ if TYPE_CHECKING:
     from .profile import ExecutorProfileStore
     from .runtime_update import ExecutorRuntimeState, ExecutorRuntimeStateStore
     from .sessions import ExecutorSessionService
+
+
+def _peer_arg[T: (str, int, bool)](
+    args: dict[str, JsonValue], key: str, expected_type: type[T]
+) -> T:
+    """Peer RPC metadata must use exact JSON types, without coercion."""
+    value = args.get(key)
+    if type(value) is not expected_type:
+        raise ValueError(f"peer {key} must be {expected_type.__name__}")
+    return cast(T, value)
 
 
 @dataclass
@@ -370,19 +381,19 @@ class ExecutorRuntime:
                 raise ValueError("peer prepare requires a destination session")
             return await self.peer_receiver.prepare(
                 session_id=str(command.session_id),
-                path=str(args["path"]),
-                transfer_id=str(args["transfer_id"]),
-                expected_bytes=int(str(args["expected_bytes"])),
-                expected_sha256=str(args["expected_sha256"]),
-                overwrite=bool(args["overwrite"]),
-                tailnet_id=str(args["tailnet_id"]),
+                path=_peer_arg(args, "path", str),
+                transfer_id=_peer_arg(args, "transfer_id", str),
+                expected_bytes=_peer_arg(args, "expected_bytes", int),
+                expected_sha256=_peer_arg(args, "expected_sha256", str),
+                overwrite=_peer_arg(args, "overwrite", bool),
+                tailnet_id=_peer_arg(args, "tailnet_id", str),
             )
         if command.op in {"transfer.peer_status", "transfer.peer_cancel"}:
             if command.session_id is None:
                 raise ValueError(
                     "peer operation requires a destination session"
                 )
-            transfer_id = str(args["transfer_id"])
+            transfer_id = _peer_arg(args, "transfer_id", str)
             session_id = str(command.session_id)
             if command.op == "transfer.peer_status":
                 return {

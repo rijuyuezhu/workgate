@@ -21,6 +21,7 @@ from .overlay import detect_tailscale_overlay
 from .tool_session.store import ToolSessionStore
 from .transfer import (
     TransferContext,
+    _write_receipt_path,
     transfer_abort_write,
     transfer_begin_write,
     transfer_write_bytes,
@@ -116,8 +117,13 @@ class PeerReceiverManager:
             overlay = await asyncio.to_thread(detect_tailscale_overlay)
             if overlay is None or overlay.tailnet_id != tailnet_id:
                 raise RuntimeError("trusted overlay is unavailable or changed")
-            # A cancelled RPC cannot interrupt the disk thread. Recover the
-            # result first and undo only a newly created, uncommitted receipt.
+            # A peer receiver owns only a *new* transaction. Never roll back an
+            # existing receipt, including one with offset zero.
+            if _write_receipt_path(self._context, transfer_id).exists():
+                raise ValueError(
+                    "peer receiver requires a new transfer identity"
+                )
+            # The disk thread must settle even when this RPC is cancelled.
             beginning = asyncio.create_task(
                 self._io(
                     transfer_begin_write,
@@ -131,33 +137,30 @@ class PeerReceiverManager:
             )
             try:
                 begun = await asyncio.shield(beginning)
-            except asyncio.CancelledError:
+            except BaseException as exc:
+                if isinstance(exc, asyncio.CancelledError):
+                    with contextlib.suppress(Exception):
+                        await beginning
+                # Begin may have written a receipt before throwing. We proved
+                # this transfer identity was unowned before calling Begin.
                 try:
-                    begun = await beginning
+                    await self._abort(session_id, path, transfer_id)
                 except Exception:
-                    pass
-                else:
-                    if not begun.completed and begun.offset == 0:
-                        try:
-                            await self._abort(session_id, path, transfer_id)
-                        except Exception:
-                            logger.exception(
-                                "cancelled peer prepare cleanup failed"
-                            )
-                            self._leases[transfer_id] = _Lease(
-                                session_id,
-                                transfer_id,
-                                path,
-                                expected_bytes,
-                                expected_sha256,
-                                "",
-                                None,
-                                state="cleanup_failed",
-                            )
+                    logger.exception("peer begin cleanup failed")
+                    self._leases[transfer_id] = _Lease(
+                        session_id,
+                        transfer_id,
+                        path,
+                        expected_bytes,
+                        expected_sha256,
+                        "",
+                        None,
+                        state="cleanup_failed",
+                    )
                 raise
-            if begun.offset or begun.completed:
+            if begun.offset or begun.completed or begun.resumed:
                 raise RuntimeError(
-                    "peer receiver requires an empty uncommitted write"
+                    "peer receiver requires a new uncommitted write"
                 )
             lease = _Lease(
                 session_id,
@@ -352,10 +355,32 @@ class PeerReceiverManager:
         self._leases.pop(transfer_id, None)
         return True
 
-    async def _cancel_session_locked(self, session_id: str) -> None:
-        for transfer_id, lease in tuple(self._leases.items()):
-            if lease.session_id == session_id:
+    async def _cancel_many_locked(self, transfer_ids: tuple[str, ...]) -> None:
+        # Immediately revoke every lease and close every listener before any
+        # potentially failing disk cleanup can interrupt shutdown.
+        for transfer_id in transfer_ids:
+            lease = self._leases.get(transfer_id)
+            if lease is not None:
+                lease.state = "cancelling"
+                if lease.server is not None:
+                    lease.server.close()
+        errors: list[Exception] = []
+        for transfer_id in transfer_ids:
+            try:
                 await self._cancel_locked(transfer_id)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("peer receiver cleanup failed", errors)
+
+    async def _cancel_session_locked(self, session_id: str) -> None:
+        await self._cancel_many_locked(
+            tuple(
+                transfer_id
+                for transfer_id, lease in self._leases.items()
+                if lease.session_id == session_id
+            )
+        )
 
     async def cancel_session(self, session_id: str) -> None:
         async with self._lock:
@@ -364,5 +389,4 @@ class PeerReceiverManager:
     async def aclose(self) -> None:
         async with self._lock:
             self._closed = True
-            for transfer_id in tuple(self._leases):
-                await self._cancel_locked(transfer_id)
+            await self._cancel_many_locked(tuple(self._leases))
