@@ -10699,6 +10699,7 @@
                 "description": "Actual data route selected for the copy operation.",
                 "enum": [
                   "same_executor",
+                  "peer_direct",
                   "object_store",
                   "control_relay"
                 ],
