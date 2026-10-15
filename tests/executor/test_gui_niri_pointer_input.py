@@ -48,7 +48,9 @@ COMPOSITOR = {
                 "height": 1080,
                 "scale": 1.0,
                 "transform": "Normal",
-            }
+            },
+            "modes": [{"width": 1920, "height": 1080}],
+            "current_mode": 0,
         }
     },
 }
@@ -229,21 +231,320 @@ async def test_pointer_rejects_output_disagreement_before_movement(
     assert commands == [("outputs", "--json")]
 
 
+def test_drag_cancellation_is_opt_in_only_for_niri_pointer():
+    pointer = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    pointer._env = dict(ENV)
+    assert pointer.cancel_safe_drag_input is True
+    assert pointer.cancel_safe_keyboard_input is False
+    pointer_disabled = linux.LinuxGuiBackend(niri_native_pointer_enabled=False)
+    pointer_disabled._env = dict(ENV)
+    assert pointer_disabled.cancel_safe_drag_input is False
+    pointer._env = {**ENV, "XDG_CURRENT_DESKTOP": "GNOME"}
+    assert pointer.cancel_safe_drag_input is False
+
+
 @pytest.mark.asyncio
-async def test_drag_rejected_before_any_window_focus(monkeypatch):
+@pytest.mark.parametrize("failure", [None, "move", "cancel", "stale"])
+async def test_drag_always_releases_button(monkeypatch, failure):
     backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
     backend._env = dict(ENV)
-    focus = []
+    commands = []
+    cancel = asyncio.Event()
+    focus_checks = 0
 
-    async def focused(*_args, **_kwargs):
-        focus.append(True)
+    async def focused(*_args):
+        nonlocal focus_checks
+        focus_checks += 1
+        if failure == "stale" and focus_checks == 3:
+            raise GuiStaleStateError("Window lost focus during drag")
 
-    monkeypatch.setattr(backend, "_focus_window", focused)
-    with pytest.raises(GuiUnavailableError, match="drag"):
-        await backend.perform_action(
-            WINDOW, None, {"type": "drag", "x": 1, "y": 1, "to_x": 3, "to_y": 3}
+    async def client(_env, *args, capture=False):
+        if capture:
+            return deepcopy(CLIENT_OUTPUTS)
+        commands.append(args)
+        if args[0] == "mousedown" and failure == "cancel":
+            cancel.set()
+        if args[0] == "mousemove" and len(commands) == 3 and failure == "move":
+            raise GuiUnavailableError("Failed to move pointer")
+
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, what: deepcopy(COMPOSITOR[what])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    action = {
+        "type": "drag",
+        "x": 100,
+        "y": 100,
+        "to_x": 150,
+        "to_y": 125,
+        "_cancel_event": cancel,
+    }
+    if failure is None:
+        result = await backend._perform_niri_pointer(
+            WINDOW, None, action, backend._env
         )
-    assert focus == []
+        assert result == {
+            "from": {"x": 100, "y": 100},
+            "to": {"x": 150, "y": 125},
+            "method": "niri-virtual-pointer",
+        }
+    else:
+        error = (
+            asyncio.CancelledError
+            if failure == "cancel"
+            else (
+                GuiStaleStateError
+                if failure == "stale"
+                else GuiUnavailableError
+            )
+        )
+        with pytest.raises(error):
+            await backend._perform_niri_pointer(
+                WINDOW, None, action, backend._env
+            )
+    assert commands[0] == ("mousemove", "--output", "eDP-1", "900", "537")
+    assert commands[1] == ("mousedown", "1")
+    assert commands[-1] == ("mouseup", "1")
+    if failure is None:
+        assert commands[2] == ("mousemove", "--output", "eDP-1", "950", "562")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_during", ["inventory", "pressed_focus"])
+async def test_drag_cancel_during_async_validation_never_moves_after_cancel(
+    monkeypatch, cancel_during
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    cancel = asyncio.Event()
+    entered, resume = asyncio.Event(), asyncio.Event()
+    commands = []
+    focus_checks = 0
+
+    async def focused(*_args):
+        nonlocal focus_checks
+        focus_checks += 1
+        if cancel_during == "pressed_focus" and focus_checks == 3:
+            entered.set()
+            await resume.wait()
+
+    async def client(_env, *args, capture=False):
+        if capture:
+            if cancel_during == "inventory":
+                entered.set()
+                await resume.wait()
+            return deepcopy(CLIENT_OUTPUTS)
+        commands.append(args)
+
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, key: deepcopy(COMPOSITOR[key])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    task = asyncio.create_task(
+        backend._perform_niri_pointer(
+            WINDOW,
+            None,
+            {
+                "type": "drag",
+                "x": 100,
+                "y": 100,
+                "to_x": 150,
+                "to_y": 125,
+                "_cancel_event": cancel,
+            },
+            backend._env,
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    cancel.set()
+    resume.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)
+    assert commands == (
+        []
+        if cancel_during == "inventory"
+        else [
+            ("mousemove", "--output", "eDP-1", "900", "537"),
+            ("mousedown", "1"),
+            ("mouseup", "1"),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_cancelled_drag_never_moves_or_releases_mouse(monkeypatch):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    cancelled = asyncio.Event()
+    cancelled.set()
+
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail("Cancelled drag must never reach wdotool")
+
+    monkeypatch.setattr(linux, "_wdotool", forbidden)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    with pytest.raises(asyncio.CancelledError):
+        await backend._perform_niri_pointer(
+            WINDOW,
+            None,
+            {
+                "type": "drag",
+                "x": 100,
+                "y": 100,
+                "to_x": 150,
+                "to_y": 125,
+                "_cancel_event": cancelled,
+            },
+            backend._env,
+        )
+
+
+@pytest.mark.asyncio
+async def test_drag_task_cancellation_still_sends_mouseup(monkeypatch):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    pressed, released = asyncio.Event(), asyncio.Event()
+
+    async def client(_env, *args, capture=False):
+        if capture:
+            return deepcopy(CLIENT_OUTPUTS)
+        if args[0] == "mousedown":
+            pressed.set()
+        elif args[0] == "mouseup":
+            released.set()
+
+    async def focused(*_args):
+        return None
+
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, name: deepcopy(COMPOSITOR[name])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    task = asyncio.create_task(
+        backend._perform_niri_pointer(
+            WINDOW,
+            None,
+            {"type": "drag", "x": 100, "y": 100, "to_x": 150, "to_y": 125},
+            backend._env,
+        )
+    )
+    await asyncio.wait_for(pressed.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert released.is_set()
+
+
+@pytest.mark.asyncio
+async def test_changed_output_transform_prevents_click(monkeypatch):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    output_queries = 0
+    commands = []
+
+    def inventory(_env, key):
+        nonlocal output_queries
+        data = deepcopy(COMPOSITOR[key])
+        if key == "outputs":
+            output_queries += 1
+            if output_queries == 2:
+                data["eDP-1"]["logical"]["transform"] = "180"
+        return data
+
+    async def focused(*_args):
+        pass
+
+    async def client(_env, *args, capture=False):
+        if capture:
+            return deepcopy(CLIENT_OUTPUTS)
+        commands.append(args)
+
+    monkeypatch.setattr(linux, "_niri_json", inventory)
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    with pytest.raises(GuiStaleStateError, match="moved"):
+        await backend._perform_niri_pointer(
+            WINDOW, None, {"type": "click", "x": 100, "y": 100}, backend._env
+        )
+    assert commands == [("mousemove", "--output", "eDP-1", "900", "537")]
+
+
+@pytest.mark.asyncio
+async def test_drag_rejects_invalid_destination_before_any_pointer_input(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, what: deepcopy(COMPOSITOR[what])
+    )
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("Invalid drag must not inject pointer events")
+
+    monkeypatch.setattr(linux, "_wdotool", unexpected)
+    with pytest.raises(ValueError, match="outside"):
+        await backend._perform_niri_pointer(
+            WINDOW,
+            None,
+            {"type": "drag", "x": 1, "y": 1, "to_x": 400, "to_y": 3},
+            backend._env,
+        )
+
+
+@pytest.mark.asyncio
+async def test_fractional_scale_pointer_uses_actual_wayland_integer_scale(
+    monkeypatch,
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    compositor = deepcopy(COMPOSITOR)
+    compositor["windows"][0]["layout"]["tile_pos_in_workspace_view"] = [
+        100,
+        100,
+    ]
+    logical = compositor["outputs"]["eDP-1"]["logical"]
+    logical.update({"scale": 1.25, "width": 1024, "height": 768})
+    compositor["outputs"]["eDP-1"]["modes"][0].update(
+        {"width": 1280, "height": 960}
+    )
+    commands = []
+
+    async def client(_env, *args, capture=False):
+        if capture:
+            return [
+                {
+                    "name": "eDP-1",
+                    "x": 0,
+                    "y": 0,
+                    "width": 1024,
+                    "height": 768,
+                    "scale": 2,
+                }
+            ]
+        commands.append(args)
+
+    async def focused(*_args):
+        return None
+
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, key: deepcopy(compositor[key])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    await backend._perform_niri_pointer(
+        WINDOW, None, {"type": "move", "x": 100, "y": 100}, backend._env
+    )
+    assert commands == [("mousemove", "--output", "eDP-1", "250", "250")]
 
 
 @pytest.mark.asyncio

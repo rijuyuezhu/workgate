@@ -713,14 +713,17 @@ class GuiService:
                     _assert_action_fresh(
                         action, stale_hint="call gui_state again"
                     )
-                    cancel_event = (
-                        asyncio.Event()
-                        if action["type"] in {"type", "key"}
+                    kind = action["type"]
+                    cancel_safe = (
+                        kind in {"type", "key"}
                         and getattr(
                             backend, "cancel_safe_keyboard_input", False
                         )
-                        else None
+                    ) or (
+                        kind == "drag"
+                        and getattr(backend, "cancel_safe_drag_input", False)
                     )
+                    cancel_event = asyncio.Event() if cancel_safe else None
                     if cancel_event is not None:
                         action["_cancel_event"] = cancel_event
                     result = await _await_native_operation(

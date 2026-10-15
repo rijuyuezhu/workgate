@@ -133,17 +133,26 @@ has native pointer authority over the current user's entire Wayland desktop.
 Only enable this on trusted desktop sessions. Restart the executor to apply
 its setting.
 
-Initial restrictions: only **unrotated, scale-1** outputs are eligible until
-hardware validation establishes how other transforms map coordinates. The
-window must be focused and visible, with a usable compositor-reported
-`tile_pos_in_workspace_view`; windows without this position are rejected.
-Output geometry must agree between Niri and the client. If an AT-SPI element
+Niri 26.04 / `wdotool` 0.5.3 was tested with normal, 90°/180°/270°,
+flipped, and flipped-rotation outputs, including a 1.25× virtual display.
+The mapping uses compositor-reported logical window geometry and the selected
+output's physical mode; `wdotool` reports integer Wayland scale even when
+Niri's logical scale is fractional. Missing/inconsistent mode or output data
+fails closed. The window must be focused and visible, with a usable
+compositor-reported `tile_pos_in_workspace_view`; windows without this
+position are still rejected rather than guessing from AT-SPI bounds.
+
+If an AT-SPI element
 has no semantic click action, a fresh `element_id` may be clicked using its
 validated element-center bounds; explicit window-relative coordinates remain
 supported. Elements without usable in-window bounds are rejected. Move,
-click, double-click, right-click and scroll are supported; **drag is not**.
-If validation fails, no button event is sent. These checks cannot prevent a
-physical mouse or another same-user client from moving the global cursor
+click, double-click, right-click, scroll and drag are supported. Drag requires
+both endpoints to validate against one focused window and output, and sends a
+bounded `mouseup` on success, failure or cancellation. Abrupt process loss or
+another same-user pointer client can still interfere with global button state.
+Pre-input validation prevents invalid targets from receiving button events.
+These checks cannot prevent a physical mouse or another same-user client from
+moving the global cursor
 between the motion and button commands. Do **not** run native pointer actions
 while someone else is actively using that desktop.
 
