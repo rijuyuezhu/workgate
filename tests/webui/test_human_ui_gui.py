@@ -213,6 +213,7 @@ async def test_gui_view_real_paired_executor_gui_service(tmp_path, monkeypatch):
         workdir="project",
         executor_id=harness.executor_id,
     )
+    assert isinstance(second, dict)
     other_session = str(second["session_id"])
     other = client.get(
         "/api/ui/gui/windows",
