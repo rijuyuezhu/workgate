@@ -236,7 +236,11 @@ class ControlSessionCopyService:
                         transport=selected_route,
                     )
                 finally:
-                    if owner_job_id is None:
+                    retained = self._checkpoints.load(active_transfer_id)
+                    if owner_job_id is None and (
+                        retained is None
+                        or retained.transport == "control_relay"
+                    ):
                         with contextlib.suppress(Exception):
                             abandoned = self._checkpoints.prepare_abandonment(
                                 active_transfer_id
@@ -591,6 +595,9 @@ class ControlSessionCopyService:
         dict[str, Any],
         Literal["peer_direct", "object_store", "control_relay"],
     ]:
+        if checkpoint is not None and checkpoint.transport == "peer_direct":
+            metrics = await self._resume_peer_import(checkpoint, dst=dst)
+            return checkpoint.kind, metrics, "peer_direct"
         if checkpoint is not None:
             (
                 resolved_kind,
@@ -631,6 +638,7 @@ class ControlSessionCopyService:
                 try:
                     selected_metrics = await self._copy_cross_executor_via_peer(
                         src,
+                        src_path=src_path,
                         prepared=prepared,
                         dst=dst,
                         dst_path=dst_path,
@@ -638,6 +646,7 @@ class ControlSessionCopyService:
                         chunk_size=chunk_size,
                         progress=progress,
                         transfer_id=transfer_id,
+                        owner_job_id=owner_job_id,
                         tailnet_id=overlay[0],
                         receiver_host=overlay[1],
                         cleanup_errors=cleanup_errors,
@@ -734,6 +743,7 @@ class ControlSessionCopyService:
         self,
         src: ControlSessionRecord,
         *,
+        src_path: str,
         prepared: _PreparedCrossExecutorSource,
         dst: ControlSessionRecord,
         dst_path: str,
@@ -741,6 +751,7 @@ class ControlSessionCopyService:
         chunk_size: int,
         progress: ProgressCallback | None,
         transfer_id: str,
+        owner_job_id: str | None,
         tailnet_id: str,
         receiver_host: str,
         cleanup_errors: list[str],
@@ -758,7 +769,7 @@ class ControlSessionCopyService:
 
         prepare_attempted = False
         cleanup_attempted = False
-        published = False
+        commit_started = False
         stage = "prepare"
         try:
             try:
@@ -856,96 +867,41 @@ class ControlSessionCopyService:
                     ) from exc
                 raise _PeerRouteUnavailable(stage) from None
 
-            # Publication starts here: no route fallback past this point.
-            begin_args: dict[str, JsonValue] = {
-                "path": import_path,
-                "transfer_id": transfer_id,
-                "expected_bytes": prepared.payload_size,
-                "overwrite": True if unbound_temp else overwrite,
-            }
-            finish_args: dict[str, JsonValue] = {
-                "path": import_path,
-                "transfer_id": transfer_id,
-                "expected_bytes": prepared.payload_size,
-                "expected_sha256": prepared.payload_sha256,
-            }
-            if unbound_temp:
-                begin_args["_workgate_unbound_temp"] = True
-                finish_args["_workgate_unbound_temp"] = True
-            destination_path = await self._finish_write_with_receipt_recovery(
-                dst,
-                begin_args=begin_args,
-                finish_args=finish_args,
-                expected_bytes=prepared.payload_size,
-                expected_sha256=prepared.payload_sha256,
-            )
-            published = True
+            # Persist recovery authority *before* the first publication RPC.
+            # A committed transfer can be reconciled using its executor receipt
+            # even after Control restarts or loses both finish responses.
             chunks = (
                 (prepared.payload_size + chunk_size - 1) // chunk_size
                 if prepared.payload_size
                 else 0
             )
-            await self._report(
-                progress,
-                phase="transferring",
-                bytes_transferred=prepared.payload_size,
-                total_bytes=prepared.payload_size,
-                chunks=chunks,
-                chunk_size=chunk_size,
-            )
-            entries: int | None = None
-            if unbound_temp:
-                await self._report(
-                    progress,
-                    phase="unpacking",
-                    bytes_transferred=prepared.payload_size,
-                    total_bytes=prepared.payload_size,
-                )
-                unpack = await self._unpack_with_receipt_recovery(
-                    dst,
-                    {
-                        "archive_path": import_path,
-                        "dst_path": dst_path,
-                        "overwrite": overwrite,
-                        "cleanup_archive": True,
-                        "transfer_id": transfer_id,
-                        "expected_archive_bytes": prepared.payload_size,
-                        "expected_archive_sha256": prepared.payload_sha256,
-                    },
-                )
-                destination_path = unpack.path
-                entries = unpack.entries
-                cleanup_errors.extend(unpack.cleanup_errors)
-            try:
-                await self._call(
-                    dst,
-                    "transfer_release_receipts",
-                    {"transfer_id": transfer_id},
-                )
-            except Exception as exc:
-                cleanup_errors.append(
-                    "destination transfer receipt cleanup failed: "
-                    f"{type(exc).__name__}"
-                )
-            base = {
-                "chunks": chunks,
-                "chunk_size": chunk_size,
-                "source_path": prepared.source_resolved_path,
-                "destination_path": destination_path,
-                "resumed_bytes": 0,
-            }
-            if prepared.kind == "file":
-                return {
-                    **base,
-                    "bytes": prepared.payload_size,
-                    "sha256": prepared.payload_sha256,
+            checkpoint = self._checkpoints.begin_peer_import(
+                checkpoint={
+                    "transfer_id": transfer_id,
+                    "owner_job_id": owner_job_id,
+                    "source_session_id": str(src.session_id),
+                    "source_executor_id": str(src.executor_id),
+                    "destination_session_id": str(dst.session_id),
+                    "destination_executor_id": str(dst.executor_id),
+                    "source_path": src_path,
+                    "destination_path": dst_path,
+                    "kind": prepared.kind,
+                    "overwrite": overwrite,
+                    "chunk_size": chunk_size,
+                    "source_resolved_path": prepared.source_resolved_path,
+                    "payload_size": prepared.payload_size,
+                    "payload_sha256": prepared.payload_sha256,
+                    "import_path": import_path,
+                    "import_resource_id": transfer_id,
+                    "chunks": chunks,
                 }
-            return {
-                **base,
-                "archive_bytes": prepared.payload_size,
-                "archive_sha256": prepared.payload_sha256,
-                "entries": entries,
-            }
+            )
+            commit_started = True
+            metrics = await self._resume_peer_import(
+                checkpoint, dst=dst, progress=progress
+            )
+            cleanup_errors[:] = metrics.get("cleanup_errors", [])
+            return metrics
         finally:
             # A cancelled Control RPC may have offered prepare without seeing
             # its acknowledgement. Ordered destination RPCs make this cleanup
@@ -955,20 +911,116 @@ class ControlSessionCopyService:
                     await self._call(
                         dst,
                         "transfer.peer_cancel",
-                        {"transfer_id": transfer_id},
+                        {
+                            "transfer_id": transfer_id,
+                            "preserve_received": commit_started,
+                        },
                     )
                 except Exception as exc:
-                    if published:
+                    if self._checkpoints.load(transfer_id) is not None:
                         cleanup_errors.append(
                             f"peer listener cleanup failed: {type(exc).__name__}"
                         )
                     else:
                         raise
-            if unbound_temp and not published:
+            if unbound_temp and not commit_started:
                 with contextlib.suppress(Exception):
                     await self._call(
                         dst, "transfer_delete_temp_path", {"path": import_path}
                     )
+
+    async def _resume_peer_import(
+        self,
+        checkpoint: SessionCopyCheckpoint,
+        *,
+        dst: ControlSessionRecord,
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        if checkpoint.last_known_step == "imported":
+            if not checkpoint.receipts_released:
+                checkpoint = await self._release_import_receipts(
+                    checkpoint, dst=dst
+                )
+            return self._checkpoint_metrics(checkpoint)
+        if checkpoint.import_path is None:
+            raise RuntimeError(
+                "peer import checkpoint has no destination receipt"
+            )
+        unbound_temp = checkpoint.kind == "dir"
+        begin_args: dict[str, JsonValue] = {
+            "path": checkpoint.import_path,
+            "transfer_id": checkpoint.transfer_id,
+            "expected_bytes": checkpoint.payload_size,
+            "overwrite": True if unbound_temp else checkpoint.overwrite,
+        }
+        finish_args: dict[str, JsonValue] = {
+            "path": checkpoint.import_path,
+            "transfer_id": checkpoint.transfer_id,
+            "expected_bytes": checkpoint.payload_size,
+            "expected_sha256": checkpoint.payload_sha256,
+        }
+        if unbound_temp:
+            begin_args["_workgate_unbound_temp"] = True
+            finish_args["_workgate_unbound_temp"] = True
+        begin = TransferBeginWriteOutput.model_validate(
+            await self._call(dst, "transfer_begin_write", begin_args)
+        )
+        if begin.completed:
+            if (
+                begin.offset != checkpoint.payload_size
+                or begin.sha256 != checkpoint.payload_sha256
+            ):
+                raise RuntimeError("peer commit receipt integrity mismatch")
+            published_path = begin.path
+        else:
+            published_path = await self._finish_write_with_receipt_recovery(
+                dst,
+                begin_args=begin_args,
+                finish_args=finish_args,
+                expected_bytes=checkpoint.payload_size,
+                expected_sha256=checkpoint.payload_sha256,
+            )
+        await self._report(
+            progress,
+            phase="transferring",
+            bytes_transferred=checkpoint.payload_size,
+            total_bytes=checkpoint.payload_size,
+            chunks=checkpoint.chunks,
+            chunk_size=checkpoint.chunk_size,
+        )
+        entries: int | None = None
+        cleanup_errors = list(checkpoint.cleanup_errors)
+        if unbound_temp:
+            await self._report(
+                progress,
+                phase="unpacking",
+                bytes_transferred=checkpoint.payload_size,
+                total_bytes=checkpoint.payload_size,
+            )
+            unpack = await self._unpack_with_receipt_recovery(
+                dst,
+                {
+                    "archive_path": checkpoint.import_path,
+                    "dst_path": checkpoint.destination_path,
+                    "overwrite": checkpoint.overwrite,
+                    "cleanup_archive": True,
+                    "transfer_id": checkpoint.transfer_id,
+                    "expected_archive_bytes": checkpoint.payload_size,
+                    "expected_archive_sha256": checkpoint.payload_sha256,
+                },
+            )
+            published_path = unpack.path
+            entries = unpack.entries
+            cleanup_errors.extend(unpack.cleanup_errors)
+        checkpoint = self._checkpoints.update(
+            checkpoint.transfer_id,
+            destination_resolved_path=published_path,
+            entries=entries,
+            cleanup_errors=cleanup_errors,
+            last_known_step="imported",
+        )
+        checkpoint = await self._release_import_receipts(checkpoint, dst=dst)
+        return self._checkpoint_metrics(checkpoint)
 
     async def _call_object_store_route(
         self,

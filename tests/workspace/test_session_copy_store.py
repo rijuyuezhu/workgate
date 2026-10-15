@@ -148,6 +148,7 @@ def test_abandonment_tombstone_is_durable_and_releases_payload_capacity(
     state, payloads, checkpoints, checkpoint = _commit_checkpoint(
         tmp_path, data=b"payload"
     )
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
 
     tombstone = checkpoints.prepare_abandonment(checkpoint.transfer_id)
@@ -222,6 +223,7 @@ def test_corrupt_checkpoint_store_fails_closed_without_payload_cleanup(
     tmp_path,
 ):
     state, payloads, checkpoints, checkpoint = _commit_checkpoint(tmp_path)
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     state.write_json(
         checkpoints.path,
@@ -243,6 +245,7 @@ def test_corrupt_checkpoint_store_fails_closed_without_payload_cleanup(
 
 def test_unsupported_checkpoint_schema_preserves_recovery_payload(tmp_path):
     state, payloads, checkpoints, checkpoint = _commit_checkpoint(tmp_path)
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     old_schema = state.read_json(checkpoints.path)
     assert isinstance(old_schema, dict)
@@ -260,6 +263,7 @@ def test_checkpoint_remove_persists_metadata_before_payload_delete(
     tmp_path, monkeypatch
 ):
     state, payloads, checkpoints, checkpoint = _commit_checkpoint(tmp_path)
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     real_write_json = state.write_json
 
@@ -336,6 +340,7 @@ def test_malformed_job_authority_never_prunes_managed_checkpoint(tmp_path):
     checkpoint = checkpoints.update(
         checkpoint.transfer_id, owner_job_id=owner_job_id
     )
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
 
     assert checkpoints.prepare_abandonments() == ()
@@ -359,6 +364,7 @@ def test_authoritative_missing_owner_prunes_unreachable_managed_checkpoint(
     checkpoint = checkpoints.update(
         checkpoint.transfer_id, owner_job_id=owner_job_id
     )
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     state.write_json(state.layout.jobs_store_path, {"version": 2, "jobs": []})
 
@@ -377,6 +383,7 @@ def test_confirmed_succeeded_owner_prunes_managed_checkpoint(tmp_path):
     checkpoint = checkpoints.update(
         checkpoint.transfer_id, owner_job_id=owner_job_id
     )
+    assert checkpoint.payload_id is not None
     payload_path = payloads.path(checkpoint.payload_id, namespace="transfer")
     state.write_json(
         state.layout.jobs_store_path,

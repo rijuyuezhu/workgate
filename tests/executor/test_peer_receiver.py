@@ -703,3 +703,71 @@ async def test_begin_failure_cleanup_can_be_retried(tmp_path, monkeypatch):
         assert fresh.resumed is False
     finally:
         await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["retire", "shutdown", "expire"])
+async def test_verified_receipt_survives_retirement(
+    tmp_path, monkeypatch, mode
+):
+    manager, context, sid, _workspace = _receiver(tmp_path, monkeypatch)
+    data = b"retained pending commit"
+    tid = "copy_" + "o" * 22
+    info = await manager.prepare(
+        session_id=sid,
+        path="retained.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        if mode == "retire":
+            assert await manager.cancel(tid, preserve_received=True)
+        elif mode == "shutdown":
+            await manager.aclose()
+        else:
+            lease = manager._leases[tid]
+            monkeypatch.setattr(peer_module, "_CONNECT_TIMEOUT_S", 0.01)
+            monkeypatch.setattr(peer_module, "_RECEIPT_GRACE_S", 0.01)
+            assert lease.expiry is not None
+            lease.expiry.cancel()
+            await manager._expire(lease)
+        assert manager.status(tid) == "unknown"
+        result = transfer_begin_write(
+            "retained.bin",
+            True,
+            len(data),
+            tid,
+            session_id=sid,
+            context=context,
+        )
+        assert result.resumed and result.offset == len(data)
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unverified_receipt_is_never_preserved(tmp_path, monkeypatch):
+    manager, context, sid, _workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "p" * 22
+    await manager.prepare(
+        session_id=sid,
+        path="pending.bin",
+        transfer_id=tid,
+        expected_bytes=2,
+        expected_sha256=hashlib.sha256(b"ab").hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await manager.cancel(tid, preserve_received=True)
+        result = transfer_begin_write(
+            "pending.bin", True, 2, tid, session_id=sid, context=context
+        )
+        assert not result.resumed and result.offset == 0
+    finally:
+        await manager.aclose()

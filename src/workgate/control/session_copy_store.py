@@ -50,7 +50,8 @@ class SessionCopyCheckpoint(BaseModel):
     kind: Literal["file", "dir"]
     overwrite: bool
     chunk_size: Annotated[int, Field(gt=0)]
-    payload_id: PayloadId
+    payload_id: PayloadId | None = None
+    transport: Literal["control_relay", "peer_direct"] = "control_relay"
     payload_size: Annotated[int, Field(ge=0)]
     payload_sha256: _Sha256
     source_resolved_path: str
@@ -69,6 +70,10 @@ class SessionCopyCheckpoint(BaseModel):
 
     @model_validator(mode="after")
     def validate_step(self) -> SessionCopyCheckpoint:
+        if (self.transport == "peer_direct") != (self.payload_id is None):
+            raise ValueError(
+                "session-copy transport and payload receipt disagree"
+            )
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
         if self.last_known_step in {"importing", "imported"} and (
@@ -277,7 +282,8 @@ class SessionCopyCheckpointStore:
             retained = sum(
                 checkpoint.payload_size
                 for checkpoint in registry.transfers.values()
-                if not checkpoint.abandoning
+                if checkpoint.payload_id is not None
+                and not checkpoint.abandoning
             )
             reserved = sum(
                 reservation.payload_size
@@ -348,6 +354,34 @@ class SessionCopyCheckpointStore:
             self._save_registry_unlocked(registry)
             return record
 
+    def begin_peer_import(
+        self, *, checkpoint: dict[str, Any]
+    ) -> SessionCopyCheckpoint:
+        """Persist peer commit authority before any destination can be published."""
+        now = time.time()
+        record = SessionCopyCheckpoint.model_validate(
+            {
+                **checkpoint,
+                "transport": "peer_direct",
+                "payload_id": None,
+                "last_known_step": "importing",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        with self._state_store.transaction(self.path):
+            registry = self._load_registry_unlocked()
+            if (
+                record.transfer_id in registry.transfers
+                or record.transfer_id in registry.reservations
+            ):
+                raise RuntimeError(
+                    "session-copy transfer identity is already in use"
+                )
+            registry.transfers[record.transfer_id] = record
+            self._save_registry_unlocked(registry)
+        return record
+
     def update(self, transfer_id: str, **changes: Any) -> SessionCopyCheckpoint:
         with self._state_store.transaction(self.path):
             registry = self._load_registry_unlocked()
@@ -372,7 +406,8 @@ class SessionCopyCheckpointStore:
             removed = registry.transfers.pop(transfer_id, None)
             if removed is None:
                 return
-            payload_id = str(removed.payload_id)
+            if removed.payload_id is not None:
+                payload_id = str(removed.payload_id)
             self._save_registry_unlocked(registry)
         if payload_id is not None:
             self._payloads.remove_payload(payload_id, namespace="transfer")
@@ -402,7 +437,7 @@ class SessionCopyCheckpointStore:
             referenced = {
                 str(item.payload_id)
                 for item in registry.transfers.values()
-                if not item.abandoning
+                if item.payload_id is not None and not item.abandoning
             }
             self._payloads.prune_unreferenced_payloads("transfer", referenced)
             return checkpoint
@@ -474,7 +509,8 @@ class SessionCopyCheckpointStore:
             referenced = {
                 str(checkpoint.payload_id)
                 for checkpoint in transfers.values()
-                if not checkpoint.abandoning
+                if checkpoint.payload_id is not None
+                and not checkpoint.abandoning
             }
             # Keep payload GC under the same feature lock as checkpoint mutation.
             # Persisting abandoning=true first means a crash cannot delete the

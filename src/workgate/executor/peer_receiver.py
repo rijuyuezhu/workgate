@@ -261,9 +261,9 @@ class PeerReceiverManager:
                     received += len(block)
                 if digest.hexdigest() != lease.expected_sha256:
                     raise ValueError("peer transfer digest mismatch")
-                lease.state = "received"
                 writer.write(b"OK\n")
                 await writer.drain()
+                lease.state = "received"
             except Exception, asyncio.CancelledError:
                 lease.state = "failed"
                 try:
@@ -291,7 +291,10 @@ class PeerReceiverManager:
                 await asyncio.sleep(1)
             if lease.state == "received":
                 await asyncio.sleep(_RECEIPT_GRACE_S)
-            await self.cancel(lease.transfer_id)
+            async with self._lock:
+                await self._cancel_locked(
+                    lease.transfer_id, preserve_received=True
+                )
         except asyncio.CancelledError:
             return
         except Exception:
@@ -317,21 +320,37 @@ class PeerReceiverManager:
         return lease.state
 
     async def cancel(
-        self, transfer_id: str, *, session_id: str | None = None
+        self,
+        transfer_id: str,
+        *,
+        session_id: str | None = None,
+        preserve_received: bool = False,
     ) -> bool:
         async with self._lock:
-            return await self._cancel_locked(transfer_id, session_id=session_id)
+            return await self._cancel_locked(
+                transfer_id,
+                session_id=session_id,
+                preserve_received=preserve_received,
+            )
 
     async def _cancel_locked(
-        self, transfer_id: str, *, session_id: str | None = None
+        self,
+        transfer_id: str,
+        *,
+        session_id: str | None = None,
+        preserve_received: bool = False,
     ) -> bool:
         lease = self._leases.get(transfer_id)
         if lease is None or (
             session_id is not None and lease.session_id != session_id
         ):
             return False
-        # An already connected, not-yet-authenticated peer must not claim this
-        # lease while the listener and its write receipt are being discarded.
+        # Retain a receipt only if the entire payload was already authenticated
+        # and verified. Pending/partial transfers still require abort.
+        preserve_received = preserve_received and lease.state in {
+            "received",
+            "cancelling",
+        }
         lease.state = "cancelling"
         if lease.server is not None:
             lease.server.close()
@@ -346,18 +365,28 @@ class PeerReceiverManager:
         ):
             lease.task.cancel()
             await asyncio.gather(lease.task, return_exceptions=True)
-        try:
-            await self._abort(lease.session_id, lease.path, transfer_id)
-        except Exception:
-            lease.state = "cleanup_failed"
-            logger.exception("peer cancel cleanup failed")
-            raise
+        if not preserve_received:
+            try:
+                await self._abort(lease.session_id, lease.path, transfer_id)
+            except Exception:
+                lease.state = "cleanup_failed"
+                logger.exception("peer cancel cleanup failed")
+                raise
         self._leases.pop(transfer_id, None)
         return True
 
-    async def _cancel_many_locked(self, transfer_ids: tuple[str, ...]) -> None:
+    async def _cancel_many_locked(
+        self, transfer_ids: tuple[str, ...], *, preserve_received: bool = False
+    ) -> None:
         # Immediately revoke every lease and close every listener before any
         # potentially failing disk cleanup can interrupt shutdown.
+        retained = {
+            transfer_id
+            for transfer_id in transfer_ids
+            if preserve_received
+            and (lease := self._leases.get(transfer_id)) is not None
+            and lease.state == "received"
+        }
         for transfer_id in transfer_ids:
             lease = self._leases.get(transfer_id)
             if lease is not None:
@@ -367,7 +396,9 @@ class PeerReceiverManager:
         errors: list[Exception] = []
         for transfer_id in transfer_ids:
             try:
-                await self._cancel_locked(transfer_id)
+                await self._cancel_locked(
+                    transfer_id, preserve_received=transfer_id in retained
+                )
             except Exception as exc:
                 errors.append(exc)
         if errors:
@@ -389,4 +420,6 @@ class PeerReceiverManager:
     async def aclose(self) -> None:
         async with self._lock:
             self._closed = True
-            await self._cancel_many_locked(tuple(self._leases))
+            await self._cancel_many_locked(
+                tuple(self._leases), preserve_received=True
+            )

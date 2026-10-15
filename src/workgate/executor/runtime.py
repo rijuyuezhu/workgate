@@ -429,7 +429,13 @@ class ExecutorRuntime:
                     )
                 }
             cancelled = await self.peer_receiver.cancel(
-                transfer_id, session_id=session_id
+                transfer_id,
+                session_id=session_id,
+                preserve_received=(
+                    _peer_arg(args, "preserve_received", bool)
+                    if "preserve_received" in args
+                    else False
+                ),
             )
             return {"cancelled": cancelled}
         if command.op in {"transfer.http_upload", "transfer.http_download"}:
