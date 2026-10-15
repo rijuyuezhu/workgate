@@ -2965,6 +2965,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
     height: auto; max-height: none; min-height: 210px; overflow-y: visible;
   }
   #tasks-panel[data-mobile-step="session"] .session-audit-layout > .audit-detail { display: none; }
+  #tasks-panel[data-mobile-step="session-record"] #session-gui,
   #tasks-panel[data-mobile-step="session-record"] .task-sessions-main > .session-execution-detail,
   #tasks-panel[data-mobile-step="session-record"] .session-audit > .session-resource-heading,
   #tasks-panel[data-mobile-step="session-record"] #session-audit-filter-form,
