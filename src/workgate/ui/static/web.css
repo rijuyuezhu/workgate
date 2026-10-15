@@ -3022,3 +3022,29 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* GUI is a session drill-down, not another task tab or inline Audit panel. */
+.session-detail-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-sessions-layout.gui-open { grid-template-columns: minmax(0, 1fr); }
+.task-sessions-layout.gui-open > .session-executions,
+.task-sessions-layout.gui-open .session-execution-detail,
+.task-sessions-layout.gui-open .session-audit { display: none; }
+.task-sessions-layout:not(.gui-open) #session-gui { display: none; }
+.task-sessions-layout.gui-open .task-sessions-main { overflow-y: auto; }
+.session-gui { min-height: 0; }
+.session-gui-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.session-gui-heading h3 { margin: 0; font-size: 15px; }
+.session-gui-heading .muted { margin-left: auto; font-size: 11px; }
+.session-gui-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 0.65rem; margin-top: 1rem; }
+.session-gui-controls label { display: grid; gap: 0.25rem; flex: 1 1 12rem; min-width: 0; }
+.session-gui-controls select { width: 100%; min-width: 0; }
+.session-gui-image { display: block; max-width: 100%; max-height: calc(100dvh - 320px); width: auto; height: auto; margin: 1rem auto 0; border: 1px solid var(--line); border-radius: 6px; object-fit: contain; }
+.session-gui-image[hidden], #session-gui[hidden] { display: none; }
+@media (max-width: 780px) {
+  .session-detail-actions { width: 100%; }
+  .session-gui-heading .muted { width: 100%; margin-left: 0; }
+  .session-gui-image { max-height: none; }
+  #tasks-panel:has(.task-sessions-layout.gui-open) > .mobile-subpage-bar { display: none; }
+  #tasks-panel .task-sessions-layout.gui-open .task-sessions-main { display: flex; }
+  #tasks-panel .task-sessions-layout.gui-open > .session-executions { display: none; }
+}

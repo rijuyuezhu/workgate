@@ -53,6 +53,10 @@ The Sessions view reads the same control-owned task state used by MCP clients. I
 
 `session_end` only ends the selected execution context. Its task remains readable and mutable, including when no execution sessions remain active.
 
+### Native GUI viewer
+
+In **Tasks → Sessions**, select an active execution session and click **Open GUI** to enter a dedicated read-only viewer. Use **Back to session** to return to the session Audit; The window list loads automatically; **Refresh windows** updates that list without losing the current selection if the window remains available. **Capture frame** requests a fresh screenshot from that session's bound executor. Frames are displayed only on demand, are not stored by the control service, and are cleared when the selected session or window changes. The viewer requires the `gui:use` OAuth scope and native GUI capture support on the executor. Manual mouse and keyboard takeover is not yet available in this view.
+
 ### Audit
 
 Filter recent activity and inspect details allowed by the current OAuth scopes. Audit entries may contain project text and command output; treat them as sensitive. See [Audit log](audit-log.md).

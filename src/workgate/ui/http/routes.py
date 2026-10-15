@@ -39,6 +39,7 @@ from .files import (
     api_file_preview,
     api_files,
 )
+from .gui import api_gui_state, api_gui_windows
 from .session import (
     api_ui_session_logout,
     api_ui_session_oauth,
@@ -332,6 +333,8 @@ def human_ui_routes(
             api_session_action,
             methods=["POST"],
         ),
+        Route(UI_API_PREFIX + "/gui/windows", api_gui_windows, methods=["GET"]),
+        Route(UI_API_PREFIX + "/gui/state", api_gui_state, methods=["GET"]),
         Route(UI_API_PREFIX + "/files", api_files, methods=["GET"]),
         Route(
             UI_API_PREFIX + "/files/preview",

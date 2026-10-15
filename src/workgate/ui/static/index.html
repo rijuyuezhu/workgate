@@ -507,7 +507,10 @@
                 <strong id="session-detail-title">No session selected</strong>
                 <span id="session-detail-status" class="muted">Select a retained execution session to inspect it</span>
               </div>
-              <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
+              <div class="session-detail-actions">
+                <button id="session-gui-open" type="button" disabled>Open GUI</button>
+                <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
+              </div>
             </div>
             <details class="task-session-metadata">
               <summary>Session metadata</summary>
@@ -519,6 +522,22 @@
               <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
             </dl>
             </details>
+          </section>
+
+          <section id="session-gui" class="session-resource session-gui" hidden>
+            <div class="session-gui-heading">
+              <button id="session-gui-back" type="button">← Back to session</button>
+              <h3>Native GUI</h3>
+              <span id="session-gui-state" class="muted" aria-live="polite">Select a window</span>
+            </div>
+            <div class="session-gui-controls">
+              <button id="session-gui-load" type="button" disabled>Refresh windows</button>
+              <label for="session-gui-windows">Window
+                <select id="session-gui-windows" disabled><option value="">Select a window</option></select>
+              </label>
+              <button id="session-gui-capture" type="button" disabled>Capture frame</button>
+            </div>
+            <img id="session-gui-image" class="session-gui-image" alt="Selected native GUI window screenshot" hidden>
           </section>
 
           <section class="session-resource session-audit">
