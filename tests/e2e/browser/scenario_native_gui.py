@@ -256,6 +256,89 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
             == scroll
         )
         expect(page.locator("#session-gui-image")).to_be_visible()
+
+        # A focused frame accepts wheel and a deliberately restricted keyboard
+        # set, without scrolling the surrounding WebUI or stealing IME/shortcuts.
+        frame = page.locator("#session-gui-image")
+        expect(frame).to_have_attribute("tabindex", "0")
+        assert frame.evaluate("el => document.activeElement !== el")
+        before = len(actions)
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            cancelled = frame.evaluate(
+                """el => {
+                    const r = el.getBoundingClientRect();
+                    const e = new WheelEvent('wheel', {bubbles: true, cancelable: true,
+                        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                        deltaY: 120});
+                    el.dispatchEvent(e);
+                    return e.defaultPrevented;
+                }"""
+            )
+        assert cancelled
+        assert len(actions) == before + 1
+        assert actions[-1]["action"] == {
+            "type": "scroll",
+            "x": 40,
+            "y": 25,
+            "amount": 2,
+        }
+        assert (
+            page.evaluate(
+                "document.querySelector('.task-sessions-main').scrollTop"
+            )
+            == scroll
+        )
+
+        frame.evaluate("el => el.focus({preventScroll: true})")
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.keyboard.press("ArrowDown")
+        assert actions[-1]["action"] == {"type": "key", "keys": "Down"}
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.keyboard.press("Control+s")
+        assert actions[-1]["action"] == {"type": "key", "keys": "Ctrl+S"}
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.keyboard.press("Shift+A")
+        assert actions[-1]["action"] == {"type": "type", "text": "A"}
+
+        before = len(actions)
+        # Browser-reserved chords and IME composition are never intercepted.
+        intercepted = frame.evaluate(
+            """el => {
+                const reserved = new KeyboardEvent('keydown', {key: 'l', ctrlKey: true,
+                    bubbles: true, cancelable: true});
+                const ime = new KeyboardEvent('keydown', {key: 'x', isComposing: true,
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(reserved);
+                el.dispatchEvent(ime);
+                return [reserved.defaultPrevented, ime.defaultPrevented];
+            }"""
+        )
+        assert intercepted == [False, False]
+        page.locator("#session-gui-text").fill("汉字输入")
+        page.locator("#session-gui-text").press("ArrowUp")
+        assert len(actions) == before
+
+        # On a mobile viewport, absent pointer capability must leave wheel
+        # gestures to the browser; manual mode off removes keyboard focus.
+        page.set_viewport_size({"width": 390, "height": 844})
+        pointer_enabled[0] = False
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.locator("#session-gui-capture").click()
+        before = len(actions)
+        accepted = frame.evaluate(
+            """el => {
+                const r = el.getBoundingClientRect();
+                const e = new WheelEvent('wheel', {bubbles: true, cancelable: true,
+                    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                    deltaY: 100});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+        )
+        assert accepted is False
+        assert len(actions) == before
+        page.locator("#session-gui-manual").click()
+        expect(frame).to_have_attribute("tabindex", "-1")
         page.locator("#session-gui-back").click()
         expect(page.locator("#session-gui")).to_be_hidden()
         expect(page.locator(".session-audit")).to_be_visible()
