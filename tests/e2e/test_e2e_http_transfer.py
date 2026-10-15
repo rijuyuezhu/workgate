@@ -1,5 +1,6 @@
 import hashlib
 import os
+import socket
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -106,6 +107,25 @@ def _local_s3_server():
         thread.join(timeout=5)
 
 
+def _set_test_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, unavailable: bool
+) -> None:
+    """Isolate child-process Tailnet discovery without changing the host VPN."""
+    bin_dir = tmp_path / "test-bin"
+    bin_dir.mkdir()
+    tailscale = bin_dir / "tailscale"
+    if unavailable:
+        status = (
+            '{"BackendState":"Running","CurrentTailnet":{"StableID":"test"},'
+            '"Self":{"Online":true,"TailscaleIPs":["100.101.101.101"]}}'
+        )
+        tailscale.write_text(f"#!/bin/sh\nprintf '%s\\n' '{status}'\n")
+    else:
+        tailscale.write_text("#!/bin/sh\nexit 1\n")
+    tailscale.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
 async def _start_session(client, *, executor_id: str) -> dict:
     return await client.call_tool(
         "session_start",
@@ -185,13 +205,12 @@ async def test_real_same_executor_large_session_copy(tmp_path: Path) -> None:
 
 
 @pytest.mark.topology
+@pytest.mark.parametrize("unavailable_overlay", [False, True])
 async def test_real_two_executors_object_store_large_session_copy(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unavailable_overlay: bool
 ) -> None:
     pytest.importorskip("boto3")
-    expected_transport = (
-        "peer_direct" if detect_tailscale_overlay() else "object_store"
-    )
+    _set_test_overlay(tmp_path, monkeypatch, unavailable=unavailable_overlay)
     payload = (b"object-store-transfer-" * 70000) + b"done"
     assert len(payload) > 1024 * 1024
     source_workspace = tmp_path / "object-source"
@@ -241,8 +260,10 @@ async def test_real_two_executors_object_store_large_session_copy(
                     "background": False,
                 },
             )
-            assert copied["transport"] == expected_transport
-            assert copied["fallbacks"] == []
+            assert copied["transport"] == "object_store"
+            assert copied["fallbacks"] == (
+                ["peer_direct:prepare"] if unavailable_overlay else []
+            )
             assert copied["bytes"] == len(payload)
             assert copied["sha256"] == hashlib.sha256(payload).hexdigest()
             assert (
@@ -267,25 +288,19 @@ async def test_real_two_executors_object_store_large_session_copy(
                     "background": False,
                 },
             )
-            assert directory_copy["transport"] == expected_transport
-            assert directory_copy["fallbacks"] == []
+            assert directory_copy["transport"] == "object_store"
+            assert directory_copy["fallbacks"] == (
+                ["peer_direct:prepare"] if unavailable_overlay else []
+            )
             assert directory_copy["chunks"] > 1
             assert (
                 destination_workspace / "destination-directory" / "payload.bin"
             ).read_bytes() == directory_payload
             with object_store.lock:
                 assert object_store.objects == {}
-                if expected_transport == "peer_direct":
-                    # The configured object store is never touched when direct works.
-                    assert (
-                        object_store.puts,
-                        object_store.gets,
-                        object_store.deletes,
-                    ) == (0, 0, 0)
-                else:
-                    assert object_store.puts == 2
-                    assert object_store.gets >= 2
-                    assert object_store.deletes == 2
+                assert object_store.puts == 2
+                assert object_store.gets >= 2
+                assert object_store.deletes == 2
 
             control_payload_dir = (
                 tmp_path
@@ -297,9 +312,34 @@ async def test_real_two_executors_object_store_large_session_copy(
             assert not list(control_payload_dir.glob("payload_*.bin"))
 
 
-async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
+@pytest.mark.parametrize("overlay_mode", ["none", "unavailable", "live"])
+async def test_real_two_executors_large_session_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlay_mode: str
+) -> None:
+    if overlay_mode != "live":
+        _set_test_overlay(
+            tmp_path, monkeypatch, unavailable=overlay_mode == "unavailable"
+        )
+    else:
+        overlay = detect_tailscale_overlay()
+        if overlay is None:
+            pytest.skip("no local trusted overlay")
+        # Detection alone does not mean that the advertised IP can be bound.
+        try:
+            with socket.socket() as server:
+                server.bind((overlay.ipv4, 0))
+                server.listen()
+                with socket.create_connection(
+                    (overlay.ipv4, server.getsockname()[1]), timeout=1
+                ):
+                    pass
+        except OSError:
+            pytest.skip("trusted overlay address is not locally reachable")
     expected_transport = (
-        "peer_direct" if detect_tailscale_overlay() else "control_relay"
+        "peer_direct" if overlay_mode == "live" else "control_relay"
+    )
+    expected_fallbacks = (
+        ["peer_direct:prepare"] if overlay_mode == "unavailable" else []
     )
     payload = (b"cross-executor-transfer-" * 70000) + b"done"
     assert len(payload) > 1024 * 1024
@@ -337,6 +377,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
             },
         )
         assert copied["transport"] == expected_transport
+        assert copied["fallbacks"] == expected_fallbacks
         assert copied["relation"]["route"] == "different_executors"
         assert copied["relation"]["same_executor"] is False
         assert copied["source"]["executor_id"] == source_executor.executor_id
@@ -368,6 +409,7 @@ async def test_real_two_executors_large_session_copy(tmp_path: Path) -> None:
             },
         )
         assert directory_copy["transport"] == expected_transport
+        assert directory_copy["fallbacks"] == expected_fallbacks
         assert directory_copy["relation"]["route"] == "different_executors"
         assert directory_copy["chunks"] > 1
         assert (
