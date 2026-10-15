@@ -36,6 +36,7 @@ _TRANSFER_ORDERED_OPS = frozenset(
         "transfer_finish_write",
         "transfer.http_download",
         "transfer.peer_prepare",
+        "transfer.peer_send",
         "transfer.peer_cancel",
         "transfer.peer_status",
         "transfer.http_upload",

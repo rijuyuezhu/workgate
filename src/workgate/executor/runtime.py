@@ -29,6 +29,7 @@ from .files import files_config_from_executor_config
 from .gui import GuiService, build_gui_service
 from .path import resolve_default_workdir, resolve_path
 from .peer_receiver import PeerReceiverManager
+from .peer_sender import send_peer_transfer
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
 from .terminal.runtime import (
@@ -387,6 +388,32 @@ class ExecutorRuntime:
                 expected_sha256=_peer_arg(args, "expected_sha256", str),
                 overwrite=_peer_arg(args, "overwrite", bool),
                 tailnet_id=_peer_arg(args, "tailnet_id", str),
+            )
+        if command.op == "transfer.peer_send":
+            if command.session_id is None:
+                raise ValueError("peer send requires a source session")
+            return await send_peer_transfer(
+                self.config,
+                self.services.tool_session_store,
+                session_id=str(command.session_id),
+                path=_peer_arg(args, "path", str),
+                transfer_id=_peer_arg(args, "transfer_id", str),
+                host=_peer_arg(args, "host", str),
+                port=_peer_arg(args, "port", int),
+                token=_peer_arg(args, "token", str),
+                tailnet_id=_peer_arg(args, "tailnet_id", str),
+                expected_bytes=_peer_arg(args, "expected_bytes", int),
+                expected_sha256=_peer_arg(args, "expected_sha256", str),
+                chunk_size=(
+                    _peer_arg(args, "chunk_size", int)
+                    if "chunk_size" in args
+                    else None
+                ),
+                unbound_temp=(
+                    _peer_arg(args, "_workgate_unbound_temp", bool)
+                    if "_workgate_unbound_temp" in args
+                    else False
+                ),
             )
         if command.op in {"transfer.peer_status", "transfer.peer_cancel"}:
             if command.session_id is None:
