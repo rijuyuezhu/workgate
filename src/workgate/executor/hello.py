@@ -14,6 +14,7 @@ from ..protocol.executor import (
     JobInventorySummary,
     SessionInventorySummary,
     ShellInventorySummary,
+    TrustedOverlay,
 )
 from .browser import browser_capability_available
 from .gui import gui_capability_available
@@ -27,6 +28,7 @@ def build_executor_hello(
     shells: tuple[ShellInventorySummary, ...] = (),
     jobs: tuple[JobInventorySummary, ...] = (),
     runtime_ownership: ExecutorRuntimeOwnership = ExecutorRuntimeOwnership.UNKNOWN,
+    overlay: TrustedOverlay | None = None,
 ) -> ExecutorHelloRequest:
     """Return one complete inventory of executor-owned resources."""
     return ExecutorHelloRequest(
@@ -35,6 +37,7 @@ def build_executor_hello(
             platform=platform.system()[:128] or None,
             ownership=runtime_ownership,
         ),
+        overlay=overlay,
         capabilities=(
             EXECUTOR_CAPABILITY_SESSIONS,
             *(

@@ -6,8 +6,9 @@ from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from pydantic import JsonValue
 from websockets.exceptions import ConnectionClosedOK
 
 from ..config.executor import ExecutorConfig
@@ -27,6 +28,7 @@ from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
 from .gui import GuiService, build_gui_service
 from .path import resolve_default_workdir, resolve_path
+from .peer_receiver import PeerReceiverManager
 from .services import RuntimeServices, build_runtime_services
 from .shell_service import ShellService
 from .terminal.runtime import (
@@ -50,6 +52,16 @@ if TYPE_CHECKING:
     from .profile import ExecutorProfileStore
     from .runtime_update import ExecutorRuntimeState, ExecutorRuntimeStateStore
     from .sessions import ExecutorSessionService
+
+
+def _peer_arg[T: (str, int, bool)](
+    args: dict[str, JsonValue], key: str, expected_type: type[T]
+) -> T:
+    """Peer RPC metadata must use exact JSON types, without coercion."""
+    value = args.get(key)
+    if type(value) is not expected_type:
+        raise ValueError(f"peer {key} must be {expected_type.__name__}")
+    return cast(T, value)
 
 
 @dataclass
@@ -80,6 +92,8 @@ class ExecutorRuntime:
     """Executor-owned ephemeral structured browser resources."""
     gui: GuiService
     """Executor-owned short-lived native desktop GUI observations."""
+    peer_receiver: PeerReceiverManager
+    """One-time trusted-overlay transfer listeners."""
     runtime_state_store: ExecutorRuntimeStateStore
     """Small persisted runtime ownership/update authority."""
     managed_service: bool = False
@@ -112,8 +126,10 @@ class ExecutorRuntime:
     async def _build_reconnect_hello(self) -> ExecutorHelloRequest:
         """Build one complete authoritative executor resource inventory."""
         from .hello import build_executor_hello
+        from .overlay import detect_tailscale_overlay
 
         runtime_state = self._runtime_state()
+        overlay = await asyncio.to_thread(detect_tailscale_overlay)
 
         with (
             use_role_config(self.config),
@@ -135,6 +151,7 @@ class ExecutorRuntime:
                         shells=shells,
                         jobs=jobs,
                         runtime_ownership=runtime_state.ownership,
+                        overlay=overlay,
                     )
         raise ExecutorResourceInventoryUnavailable(
             "session inventory changed while reconnect snapshot was built"
@@ -348,15 +365,46 @@ class ExecutorRuntime:
             if command.op == SESSION_LOOKUP_OP:
                 return self.sessions.lookup(session_id)
             if command.op == SESSION_TERMINATE_OP:
-                return await self.sessions.terminate(session_id)
+                async with self.peer_receiver.session_lifecycle(session_id):
+                    return await self.sessions.terminate(session_id)
             workdir = command.args.get("workdir")
             if not isinstance(workdir, str) or not workdir:
                 raise ValueError("session.change_workdir requires workdir")
-            return await self.sessions.change_workdir(session_id, workdir)
+            async with self.peer_receiver.session_lifecycle(session_id):
+                return await self.sessions.change_workdir(session_id, workdir)
 
         args = dict(command.args)
         if command.session_id is not None:
             args.setdefault("session_id", command.session_id)
+        if command.op == "transfer.peer_prepare":
+            if command.session_id is None:
+                raise ValueError("peer prepare requires a destination session")
+            return await self.peer_receiver.prepare(
+                session_id=str(command.session_id),
+                path=_peer_arg(args, "path", str),
+                transfer_id=_peer_arg(args, "transfer_id", str),
+                expected_bytes=_peer_arg(args, "expected_bytes", int),
+                expected_sha256=_peer_arg(args, "expected_sha256", str),
+                overwrite=_peer_arg(args, "overwrite", bool),
+                tailnet_id=_peer_arg(args, "tailnet_id", str),
+            )
+        if command.op in {"transfer.peer_status", "transfer.peer_cancel"}:
+            if command.session_id is None:
+                raise ValueError(
+                    "peer operation requires a destination session"
+                )
+            transfer_id = _peer_arg(args, "transfer_id", str)
+            session_id = str(command.session_id)
+            if command.op == "transfer.peer_status":
+                return {
+                    "state": self.peer_receiver.status(
+                        transfer_id, session_id=session_id
+                    )
+                }
+            cancelled = await self.peer_receiver.cancel(
+                transfer_id, session_id=session_id
+            )
+            return {"cancelled": cancelled}
         if command.op in {"transfer.http_upload", "transfer.http_download"}:
             profile_store = self.profile_store
             profile = None if profile_store is None else profile_store.load()
@@ -435,7 +483,10 @@ class ExecutorRuntime:
             finally:
                 try:
                     try:
-                        await self.gui.aclose()
+                        try:
+                            await self.peer_receiver.aclose()
+                        finally:
+                            await self.gui.aclose()
                     finally:
                         await self.browser.aclose()
                 finally:
@@ -526,6 +577,7 @@ def build_executor_runtime(
         profile_store=profile_store,
         browser=browser_service,
         gui=gui_service,
+        peer_receiver=PeerReceiverManager(config, services.tool_session_store),
         runtime_state_store=runtime_state_store,
         managed_service=managed_service,
         runtime_ownership=runtime_ownership,
