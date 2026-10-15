@@ -195,10 +195,15 @@ export function createGuiViewer({ request }) {
     return { x: Math.floor(fx * observation.width), y: Math.floor(fy * observation.height) };
   }
 
+  function readyForInput() {
+    return manualEnabled && !busy && Boolean(sessionId) && Boolean(windows.value)
+      && Boolean(observation) && performance.now() < observation.expires;
+  }
+
   async function act(action) {
     if (!manualEnabled || busy || !sessionId || !windows.value) return;
     if (!observation || performance.now() >= observation.expires) {
-      clearImage();
+      invalidateObservation();
       state.textContent = "Observation expired; capture a fresh frame";
       return;
     }
@@ -218,7 +223,7 @@ export function createGuiViewer({ request }) {
       await captureWindow();
     } catch (_error) {
       if (revision === generation && currentSession === sessionId) {
-        clearImage();
+        invalidateObservation();
         state.textContent = "Input failed or observation expired; capture a fresh frame (not retried)";
       }
     } finally {
@@ -258,13 +263,19 @@ export function createGuiViewer({ request }) {
     scrollDown.addEventListener("click", () => void act({ type: "scroll", x: Math.floor((observation?.width || 0) / 2), y: Math.floor((observation?.height || 0) / 2), amount: 3 }));
     keyForm.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (key.value.trim()) void act({ type: "key", keys: key.value.trim() });
-      key.value = "";
+      const keys = key.value.trim();
+      if (!keys) return;
+      const accepted = readyForInput();
+      void act({ type: "key", keys });
+      if (accepted) key.value = "";
     });
     textForm.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (typed.value) void act({ type: "type", text: typed.value });
-      typed.value = "";
+      const text = typed.value;
+      if (!text) return;
+      const accepted = readyForInput();
+      void act({ type: "type", text });
+      if (accepted) typed.value = "";
     });
     load.addEventListener("click", () => void loadWindows());
     capture.addEventListener("click", () => void captureWindow());

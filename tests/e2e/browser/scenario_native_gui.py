@@ -21,6 +21,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
     states = []
     pointer_enabled = [True]
     reject_input = [False]
+    observation_ttl = [30]
 
     page = harness.context.new_page()
     try:
@@ -78,7 +79,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
                         "ok": True,
                         "data": {
                             "state_id": token,
-                            "state_ttl_s": 30,
+                            "state_ttl_s": observation_ttl[0],
                             "capabilities": {
                                 "coordinate_input": pointer_enabled[0]
                             },
@@ -176,11 +177,47 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         assert len(actions) == 2
         reject_input[0] = True
         page.locator("#session-gui-key").fill("Escape")
-        page.locator("#session-gui-key-form button").click()
+        page.locator("#session-gui-image").evaluate(
+            "el => { el.style.height = '900px'; el.style.maxHeight = 'none'; }"
+        )
+        error_scroll = page.evaluate(
+            """() => {
+                const container = document.querySelector('.task-sessions-main');
+                container.scrollTop = 180;
+                return container.scrollTop;
+            }"""
+        )
+        assert error_scroll >= 100
+        page.locator("#session-gui-key-form button").evaluate(
+            "button => button.click()"
+        )
         expect(page.locator("#session-gui-state")).to_contain_text(
             "Input failed"
         )
+        expect(page.locator("#session-gui-image")).to_be_visible()
+        assert (
+            page.evaluate(
+                "document.querySelector('.task-sessions-main').scrollTop"
+            )
+            == error_scroll
+        )
         expect(page.locator("#session-gui-manual")).to_be_enabled()
+        observation_ttl[0] = 0
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.locator("#session-gui-capture").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Captured frame"
+        )
+        expect(page.locator("#session-gui-image")).to_be_visible()
+        page.locator("#session-gui-text").fill("Keep this unsent text")
+        page.locator("#session-gui-text-form button").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Observation expired"
+        )
+        expect(page.locator("#session-gui-text")).to_have_value(
+            "Keep this unsent text"
+        )
+        assert len(actions) == 2  # A stale observation never dispatched text.
         page.locator("#session-gui-manual").click()
         expect(page.locator("#session-gui-manual-controls")).to_be_hidden()
         assert len(actions) == 2

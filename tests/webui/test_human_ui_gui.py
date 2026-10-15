@@ -285,10 +285,24 @@ async def test_gui_manual_action_enforces_scope_bounds_and_redaction(
     )
     assert (
         client.post(
-            "/api/ui/gui/action", headers=valid, content=b"x" * 8200
+            "/api/ui/gui/action", headers=valid, content=b"x" * (64 * 1024 + 1)
         ).status_code
         == 413
     )
+    # Only actions actually exposed by Manual mode belong on this HTTP surface.
+    for unsupported in (
+        {"type": "wait", "seconds": 30},
+        {"type": "set_value", "element_id": "any", "text": "x"},
+        {"type": "move", "x": 1, "y": 1},
+    ):
+        assert (
+            client.post(
+                "/api/ui/gui/action",
+                headers=valid,
+                json={**body, "action": unsupported},
+            ).status_code
+            == 400
+        )
     assert calls == []
     response = client.post("/api/ui/gui/action", headers=valid, json=body)
     assert response.status_code == 200, response.text
@@ -306,6 +320,16 @@ async def test_gui_manual_action_enforces_scope_bounds_and_redaction(
             },
         )
     ]
+    # The native 4,096-character limit must also work with multibyte text.
+    long_text = "汉" * 4096
+    long_response = client.post(
+        "/api/ui/gui/action",
+        headers=valid,
+        json={**body, "action": {"type": "type", "text": long_text}},
+    )
+    assert long_response.status_code == 200
+    assert long_response.json()["data"] == {"performed": True}
+    assert long_text not in long_response.text
 
 
 @pytest.mark.asyncio

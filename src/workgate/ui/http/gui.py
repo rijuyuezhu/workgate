@@ -17,10 +17,23 @@ from .common import bounded_text, json_error
 
 _GUI_ACTION_ADAPTER = TypeAdapter(GuiActionsArg)
 _GUI_STATE_ADAPTER = TypeAdapter(GuiStateIdArg)
-_MAX_GUI_ACTION_BODY_BYTES = 8 * 1024
+# A 4,096-character GUI text action can exceed 8 KiB after JSON/UTF-8 encoding.
+_MAX_GUI_ACTION_BODY_BYTES = 64 * 1024
+_MANUAL_ACTION_TYPES = frozenset(
+    {
+        "click",
+        "double_click",
+        "right_click",
+        "drag",
+        "scroll",
+        "focus",
+        "type",
+        "key",
+    }
+)
 
 
-def _authorized_session(request: Request) -> tuple[Any, str]:
+def _authorized_runtime(request: Request) -> Any:
     try:
         require_oauth_scopes((SCOPE_GUI_USE,))
     except MissingOAuthScopeError as exc:
@@ -28,6 +41,11 @@ def _authorized_session(request: Request) -> tuple[Any, str]:
     runtime = getattr(request.app.state, "control_runtime", None)
     if runtime is None:
         raise RuntimeError("WebUI GUI requires the control runtime")
+    return runtime
+
+
+def _authorized_session(request: Request) -> tuple[Any, str]:
+    runtime = _authorized_runtime(request)
     session_id = bounded_text(
         request.query_params.get("session_id"),
         field="session_id",
@@ -122,16 +140,13 @@ async def api_gui_action(request: Request) -> Response:
     """Dispatch one explicit user input through the normal session-owned GUI tool."""
     try:
         # Check authorization before accepting sensitive keyboard or text data.
-        try:
-            require_oauth_scopes((SCOPE_GUI_USE,))
-        except MissingOAuthScopeError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        runtime = _authorized_runtime(request)
         total = 0
         chunks = []
         async for chunk in request.stream():
             total += len(chunk)
             if total > _MAX_GUI_ACTION_BODY_BYTES:
-                return _ok_error(
+                return _input_error(
                     413, "GUI input exceeds the allowed request size"
                 )
             chunks.append(chunk)
@@ -157,9 +172,8 @@ async def api_gui_action(request: Request) -> Response:
         )
         state_id = _GUI_STATE_ADAPTER.validate_python(body["state_id"])
         actions = _GUI_ACTION_ADAPTER.validate_python([body["action"]])
-        runtime = getattr(request.app.state, "control_runtime", None)
-        if runtime is None:
-            raise RuntimeError("WebUI GUI requires the control runtime")
+        if actions[0]["type"] not in _MANUAL_ACTION_TYPES:
+            raise ValueError("Unsupported manual GUI input")
         result = await runtime.session_coordinator.call_session_tool(
             "gui_action",
             {
@@ -179,10 +193,10 @@ async def api_gui_action(request: Request) -> Response:
     except HTTPException:
         raise
     except ValueError, ValidationError:
-        return _ok_error(400, "Invalid GUI input")
+        return _input_error(400, "Invalid GUI input")
     except Exception as exc:
         # Native errors may quote typed content: do not expose exception text.
-        return _ok_error(
+        return _input_error(
             409 if isinstance(exc, GuiStaleStateError) else 502,
             "GUI observation is stale; capture again"
             if isinstance(exc, GuiStaleStateError)
@@ -190,7 +204,7 @@ async def api_gui_action(request: Request) -> Response:
         )
 
 
-def _ok_error(status: int, message: str) -> JSONResponse:
+def _input_error(status: int, message: str) -> JSONResponse:
     return JSONResponse(
         {"ok": False, "message": message},
         status_code=status,
