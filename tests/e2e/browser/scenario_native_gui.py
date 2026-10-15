@@ -226,7 +226,12 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         # Use a tall frame so the bug is observable even with this tiny mock PNG.
         reject_input[0] = False
         pointer_enabled[0] = True
-        page.locator("#session-gui-capture").click()
+        observation_ttl[0] = 30
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.locator("#session-gui-capture").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Captured frame"
+        )
         expect(page.locator("#session-gui-image")).to_be_visible()
         page.locator("#session-gui-manual").click()
         page.locator("#session-gui-image").evaluate(
