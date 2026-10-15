@@ -489,6 +489,43 @@ async def test_gui_native_operations_are_serialized(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_gui_input_and_new_observation_share_native_execution_lock(
+    tmp_path: Path,
+) -> None:
+    gui, backend, _store, owner, _second = service(tmp_path)
+    observed = structured(
+        await gui.snapshot(owner, "window-1", screenshot=False)
+    )
+    state_id = str(observed["state_id"])
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_input(window, locator, action):
+        started.set()
+        await release.wait()
+        return {"performed": True}
+
+    backend.perform_action = held_input
+    human = asyncio.create_task(
+        gui.act(
+            owner, "window-1", state_id, [{"type": "key", "keys": "Escape"}]
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    model = asyncio.create_task(
+        gui.snapshot(owner, "window-1", screenshot=False)
+    )
+    await asyncio.sleep(0)
+    assert (
+        not model.done()
+    )  # No new model observation while human input is active.
+    release.set()
+    await asyncio.wait_for(human, timeout=2)
+    next_state = structured(await asyncio.wait_for(model, timeout=2))
+    assert next_state["state_id"] != state_id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_safe", [False, True])
 @pytest.mark.parametrize("kind", ["type", "drag"])
 async def test_gui_action_cancellation_respects_native_cleanup_policy(
