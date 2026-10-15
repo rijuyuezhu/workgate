@@ -21,19 +21,19 @@ Then follow the [Quickstart](quickstart.md).
 Workgate is **not published to PyPI**. Choose a tag from
 [GitHub Releases](https://github.com/rijuyuezhu/workgate/releases) and install
 from that Git revision, not from `pip install workgate` or `uvx workgate`.
-The examples below pin `v5.0.0a3` (**prerelease**); choose a non-prerelease
+The examples below pin `v5.0.0a4` (**prerelease**); choose a non-prerelease
 release tag for a stable deployment.
 
 Run without a persistent installation (requires Python 3.14):
 
 ```bash
-uvx --python 3.14 --from 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a3' workgate --help
+uvx --python 3.14 --from 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a4' workgate --help
 ```
 
 Or install the CLI in an isolated environment:
 
 ```bash
-pipx install 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a3' --python python3.14
+pipx install 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a4' --python python3.14
 workgate --help
 ```
 
@@ -51,8 +51,8 @@ For source or Python-package executors, install the optional GUI bindings:
 
 ```bash
 uv sync --extra gui  # source checkout
-pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a3' --python python3.14
-python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a3'  # existing environment
+pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a4' --python python3.14
+python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a4'  # existing environment
 ```
 
 Release self-contained executables already bundle the corresponding Python GUI bindings.

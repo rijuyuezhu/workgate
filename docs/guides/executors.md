@@ -108,9 +108,9 @@ prevented completely. Niri native text entry is limited to 512 characters
 per action and is passed to `wtype` through stdin, not process arguments.
 Never assume a session workdir isolates desktop access.
 
-Mouse/pointer input remains Portal-only; this option does **not** enable
-virtual pointer injection or use `/dev/uinput`. Other desktop environments
-retain their existing input behavior.
+This keyboard option does **not** enable native pointer input. The separate
+Niri pointer option below is also opt-in and never uses `/dev/uinput`.
+Other desktop environments retain their existing input behavior.
 
 ## Optional Niri native pointer (experimental)
 
