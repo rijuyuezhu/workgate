@@ -1486,6 +1486,7 @@ class LinuxGuiBackend:
                 "Virtual pointer and Niri output geometry disagree"
             )
         _assert_action_fresh(action)
+        _assert_niri_input_not_cancelled(action)
         await _wdotool(
             env, "mousemove", "--output", output_name, str(px), str(py)
         )
@@ -1542,6 +1543,7 @@ class LinuxGuiBackend:
                     _assert_action_fresh(action)
                     _assert_niri_input_not_cancelled(action)
                     await _assert_niri_window_focused(window, env)
+                    _assert_niri_input_not_cancelled(action)
                     await _wdotool(
                         env,
                         "mousemove",

@@ -312,6 +312,70 @@ async def test_drag_always_releases_button(monkeypatch, failure):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_during", ["inventory", "pressed_focus"])
+async def test_drag_cancel_during_async_validation_never_moves_after_cancel(
+    monkeypatch, cancel_during
+):
+    backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
+    backend._env = dict(ENV)
+    cancel = asyncio.Event()
+    entered, resume = asyncio.Event(), asyncio.Event()
+    commands = []
+    focus_checks = 0
+
+    async def focused(*_args):
+        nonlocal focus_checks
+        focus_checks += 1
+        if cancel_during == "pressed_focus" and focus_checks == 3:
+            entered.set()
+            await resume.wait()
+
+    async def client(_env, *args, capture=False):
+        if capture:
+            if cancel_during == "inventory":
+                entered.set()
+                await resume.wait()
+            return deepcopy(CLIENT_OUTPUTS)
+        commands.append(args)
+
+    monkeypatch.setattr(
+        linux, "_niri_json", lambda _env, key: deepcopy(COMPOSITOR[key])
+    )
+    monkeypatch.setattr(linux, "_assert_niri_window_focused", focused)
+    monkeypatch.setattr(linux, "_wdotool", client)
+    monkeypatch.setattr(linux.shutil, "which", lambda _: "/usr/bin/wdotool")
+    task = asyncio.create_task(
+        backend._perform_niri_pointer(
+            WINDOW,
+            None,
+            {
+                "type": "drag",
+                "x": 100,
+                "y": 100,
+                "to_x": 150,
+                "to_y": 125,
+                "_cancel_event": cancel,
+            },
+            backend._env,
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    cancel.set()
+    resume.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)
+    assert commands == (
+        []
+        if cancel_during == "inventory"
+        else [
+            ("mousemove", "--output", "eDP-1", "900", "537"),
+            ("mousedown", "1"),
+            ("mouseup", "1"),
+        ]
+    )
+
+
+@pytest.mark.asyncio
 async def test_pre_cancelled_drag_never_moves_or_releases_mouse(monkeypatch):
     backend = linux.LinuxGuiBackend(niri_native_pointer_enabled=True)
     backend._env = dict(ENV)
