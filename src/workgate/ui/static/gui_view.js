@@ -1,6 +1,9 @@
 // On-demand native GUI observation; no streaming, persistent frames or input takeover.
 export function createGuiViewer({ request }) {
   const panel = document.getElementById("session-gui");
+  const layout = panel.closest(".task-sessions-layout");
+  const openButton = document.getElementById("session-gui-open");
+  const backButton = document.getElementById("session-gui-back");
   const state = document.getElementById("session-gui-state");
   const windows = document.getElementById("session-gui-windows");
   const load = document.getElementById("session-gui-load");
@@ -9,6 +12,20 @@ export function createGuiViewer({ request }) {
   let sessionId = "";
   let selectedKey = "";
   let generation = 0;
+
+  function close() {
+    layout.classList.remove("gui-open");
+    panel.hidden = true;
+    generation++;
+    clearImage();
+  }
+
+  function open() {
+    if (!sessionId) return;
+    layout.classList.add("gui-open");
+    panel.hidden = false;
+    void loadWindows();
+  }
 
   function clearImage() {
     image.removeAttribute("src");
@@ -23,8 +40,8 @@ export function createGuiViewer({ request }) {
     if (nextKey === selectedKey) return;
     selectedKey = nextKey;
     sessionId = status === "active" && availability === "available" ? id : "";
-    generation++;
-    panel.hidden = !id;
+    close();
+    openButton.disabled = !sessionId;
     windows.replaceChildren(new Option("Select a window", ""));
     windows.disabled = true;
     load.disabled = !sessionId;
@@ -94,6 +111,9 @@ export function createGuiViewer({ request }) {
   }
 
   function bind() {
+    openButton.addEventListener("click", open);
+    backButton.addEventListener("click", close);
+    window.addEventListener("popstate", close);
     load.addEventListener("click", () => void loadWindows());
     capture.addEventListener("click", () => void captureWindow());
     windows.addEventListener("change", () => {

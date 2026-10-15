@@ -55,7 +55,7 @@ The Sessions view reads the same control-owned task state used by MCP clients. I
 
 ### Native GUI viewer
 
-In **Tasks → Sessions**, select an active execution session and use **Load windows** to choose a native desktop window. **Capture frame** requests a fresh screenshot from that session's bound executor. Frames are displayed only on demand, are not stored by the control service, and are cleared when the selected session or window changes. The viewer requires the `gui:use` OAuth scope and native GUI capture support on the executor. Manual mouse and keyboard takeover is not yet available in this view.
+In **Tasks → Sessions**, select an active execution session and click **Open GUI** to enter a dedicated read-only viewer. Use **Back to session** to return to the session Audit; **Load windows** lets you choose a native desktop window. **Capture frame** requests a fresh screenshot from that session's bound executor. Frames are displayed only on demand, are not stored by the control service, and are cleared when the selected session or window changes. The viewer requires the `gui:use` OAuth scope and native GUI capture support on the executor. Manual mouse and keyboard takeover is not yet available in this view.
 
 ### Audit
 

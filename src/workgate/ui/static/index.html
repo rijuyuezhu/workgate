@@ -507,7 +507,10 @@
                 <strong id="session-detail-title">No session selected</strong>
                 <span id="session-detail-status" class="muted">Select a retained execution session to inspect it</span>
               </div>
-              <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
+              <div class="session-detail-actions">
+                <button id="session-gui-open" type="button" disabled>Open GUI</button>
+                <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
+              </div>
             </div>
             <details class="task-session-metadata">
               <summary>Session metadata</summary>
@@ -522,9 +525,10 @@
           </section>
 
           <section id="session-gui" class="session-resource session-gui" hidden>
-            <div class="session-resource-heading">
-              <div><h3>Native GUI</h3></div>
-              <span id="session-gui-state" class="muted" aria-live="polite">Select a session</span>
+            <div class="session-gui-heading">
+              <button id="session-gui-back" type="button">← Back to session</button>
+              <h3>Native GUI</h3>
+              <span id="session-gui-state" class="muted" aria-live="polite">Select a window</span>
             </div>
             <div class="session-gui-controls">
               <button id="session-gui-load" type="button" disabled>Load windows</button>
