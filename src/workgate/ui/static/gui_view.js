@@ -116,7 +116,7 @@ export function createGuiViewer({ request }) {
       }
       windows.disabled = windows.options.length < 2;
       capture.disabled = !windows.value;
-      manual.disabled = !windows.value || !observation;
+      manual.disabled = !windows.value || (!observation && !manualEnabled);
       if (!windows.value) setManual(false);
       const count = windows.options.length - 1;
       state.textContent = count
@@ -126,7 +126,7 @@ export function createGuiViewer({ request }) {
       if (revision === generation && sessionId === currentSession) {
         windows.disabled = windows.options.length < 2;
         capture.disabled = !windows.value;
-        manual.disabled = !windows.value || !observation;
+        manual.disabled = !windows.value || (!observation && !manualEnabled);
         state.textContent = error instanceof Error ? error.message : String(error);
       }
     } finally {
@@ -172,7 +172,10 @@ export function createGuiViewer({ request }) {
         state.textContent = error instanceof Error ? error.message : String(error);
       }
     } finally {
-      if (revision === generation && sessionId === currentSession) capture.disabled = false;
+      if (revision === generation && sessionId === currentSession) {
+        capture.disabled = false;
+        manual.disabled = !observation && !manualEnabled;
+      }
     }
   }
 
@@ -190,7 +193,6 @@ export function createGuiViewer({ request }) {
     if (!manualEnabled || busy || !sessionId || !windows.value) return;
     if (!observation || performance.now() >= observation.expires) {
       clearImage();
-      manual.disabled = true;
       state.textContent = "Observation expired; capture a fresh frame";
       return;
     }
@@ -211,7 +213,6 @@ export function createGuiViewer({ request }) {
     } catch (_error) {
       if (revision === generation && currentSession === sessionId) {
         clearImage();
-        manual.disabled = true;
         state.textContent = "Input failed or observation expired; capture a fresh frame (not retried)";
       }
     } finally {

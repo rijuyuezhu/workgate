@@ -20,6 +20,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
     actions = []
     states = []
     pointer_enabled = [True]
+    reject_input = [False]
 
     page = harness.context.new_page()
     try:
@@ -98,8 +99,15 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
                     }
                 )
             elif path == "gui/action":
-                actions.append(route.request.post_data_json)
-                route.fulfill(json={"ok": True, "data": {"performed": True}})
+                if reject_input[0]:
+                    route.fulfill(
+                        status=409, json={"ok": False, "message": "Stale state"}
+                    )
+                else:
+                    actions.append(route.request.post_data_json)
+                    route.fulfill(
+                        json={"ok": True, "data": {"performed": True}}
+                    )
             elif path == "todos":
                 route.fulfill(
                     json={"ok": True, "data": {"task": {}, "todos": []}}
@@ -165,6 +173,16 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         page.mouse.click(
             shot["x"] + shot["width"] / 2, shot["y"] + shot["height"] / 2
         )
+        assert len(actions) == 2
+        reject_input[0] = True
+        page.locator("#session-gui-key").fill("Escape")
+        page.locator("#session-gui-key-form button").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Input failed"
+        )
+        expect(page.locator("#session-gui-manual")).to_be_enabled()
+        page.locator("#session-gui-manual").click()
+        expect(page.locator("#session-gui-manual-controls")).to_be_hidden()
         assert len(actions) == 2
         page.locator("#session-gui-back").click()
         expect(page.locator("#session-gui")).to_be_hidden()
