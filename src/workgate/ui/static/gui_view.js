@@ -27,6 +27,7 @@ export function createGuiViewer({ request }) {
   let busy = false;
   let dragStart = null;
   let pointerAvailable = false;
+  let pointerCapableWhileBusy = false;
 
   function setManual(enabled) {
     if (!enabled && manualEnabled) {
@@ -40,6 +41,8 @@ export function createGuiViewer({ request }) {
     manual.setAttribute("aria-pressed", String(manualEnabled));
     manual.textContent = manualEnabled ? "Exit manual mode" : "Enter manual mode";
     image.classList.toggle("session-gui-interactive", manualEnabled);
+    image.tabIndex = manualEnabled ? 0 : -1;
+    if (!manualEnabled && document.activeElement === image) image.blur();
     dragStart = null;
   }
 
@@ -200,6 +203,26 @@ export function createGuiViewer({ request }) {
       && Boolean(observation) && performance.now() < observation.expires;
   }
 
+  function keyAction(event) {
+    if (event.isComposing || event.key === "Process" || event.key === "Dead"
+      || event.getModifierState("AltGraph") || event.altKey) return null;
+    const command = event.ctrlKey || event.metaKey;
+    if (command) {
+      const letter = event.key.toLowerCase();
+      if (!/^[acvsxyz]$/.test(letter) || (event.shiftKey && letter !== "z")) return null;
+      return { type: "key", keys: `${event.metaKey ? "Meta" : "Ctrl"}+${event.shiftKey ? "Shift+" : ""}${letter.toUpperCase()}` };
+    }
+    const special = {
+      ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+      Enter: "Enter", Tab: "Tab", Backspace: "Backspace", Delete: "Delete",
+      Escape: "Escape", Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown", " ": "Space",
+    }[event.key];
+    if (special && (!event.shiftKey || event.key !== "Tab")) {
+      return { type: "key", keys: `${event.shiftKey ? "Shift+" : ""}${special}` };
+    }
+    return null;
+  }
+
   async function act(action) {
     if (!manualEnabled || busy || !sessionId || !windows.value) return;
     if (!observation || performance.now() >= observation.expires) {
@@ -211,6 +234,7 @@ export function createGuiViewer({ request }) {
     const currentWindow = windows.value;
     const { id } = observation;
     const revision = ++generation;
+    pointerCapableWhileBusy = pointerAvailable;
     busy = true;
     observation = null; // One-use native state, even when action fails or times out.
     capture.disabled = true;
@@ -228,6 +252,7 @@ export function createGuiViewer({ request }) {
       }
     } finally {
       busy = false;
+      pointerCapableWhileBusy = false;
       if (revision === generation) capture.disabled = !sessionId || !windows.value;
     }
   }
@@ -252,9 +277,39 @@ export function createGuiViewer({ request }) {
     window.addEventListener("popstate", close);
     manual.addEventListener("click", () => setManual(!manualEnabled));
     image.addEventListener("pointerdown", (event) => {
-      if (!manualEnabled || busy || event.button !== 0) return;
+      if (!readyForInput() || event.button !== 0) return;
+      image.focus({ preventScroll: true });
       dragStart = point(event);
-      if (dragStart) { image.setPointerCapture(event.pointerId); event.preventDefault(); }
+      if (dragStart) {
+        image.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      }
+    });
+    image.addEventListener("wheel", (event) => {
+      if (!manualEnabled || event.ctrlKey || event.metaKey || event.altKey) return;
+      // A trackpad gesture emits multiple events: never scroll the WebUI while
+      // its first accepted native action is still refreshing the frame.
+      if (busy) {
+        if (pointerCapableWhileBusy) event.preventDefault();
+        return;
+      }
+      if (!readyForInput() || !pointerAvailable) return;
+      const target = point(event);
+      if (!target || !event.deltaY) return;
+      const unit = event.deltaMode === 1 ? 3 : event.deltaMode === 2 ? 1 : 60;
+      const amount = Math.sign(event.deltaY) * Math.max(1, Math.min(12, Math.round(Math.abs(event.deltaY) / unit)));
+      event.preventDefault();
+      void act({ type: "scroll", ...target, amount });
+    }, { passive: false });
+    image.addEventListener("keydown", (event) => {
+      if (!manualEnabled || document.activeElement !== image || event.defaultPrevented) return;
+      const action = keyAction(event);
+      if (!action) return;
+      // Suppress the browser shortcut/scroll even when a native action is busy
+      // or this observation has expired. Never queue or repeat native input.
+      event.preventDefault();
+      if (event.repeat || !readyForInput()) return;
+      void act(action);
     });
     image.addEventListener("pointerup", imagePointerUp);
     image.addEventListener("pointercancel", () => { dragStart = null; });

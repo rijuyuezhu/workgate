@@ -24,6 +24,26 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
     observation_ttl = [30]
 
     page = harness.context.new_page()
+
+    def hold_next_gui_action(page):
+        # Keep one GUI fetch in flight to exercise actual Chromium defaults.
+        page.evaluate(
+            """() => {
+                    const original = window.fetch.bind(window);
+                    window.fetch = (url, opts) => {
+                        if (String(url).endsWith('/gui/action')) {
+                            return new Promise(resolve => {
+                                window.releaseGuiAction = () => {
+                                    window.fetch = original;
+                                    resolve(original(url, opts));
+                                };
+                            });
+                        }
+                        return original(url, opts);
+                    };
+                }"""
+        )
+
     try:
 
         def supply(route):
@@ -256,6 +276,184 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
             == scroll
         )
         expect(page.locator("#session-gui-image")).to_be_visible()
+
+        # A focused frame accepts wheel and a deliberately restricted keyboard
+        # set, without scrolling the surrounding WebUI or stealing IME/shortcuts.
+        frame = page.locator("#session-gui-image")
+        expect(frame).to_have_attribute("tabindex", "0")
+        assert frame.evaluate("el => document.activeElement !== el")
+        assert (
+            frame.evaluate(
+                """el => {
+                const e = new KeyboardEvent('keydown', {key: 'Enter',
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+            )
+            is False
+        )
+        before = len(actions)
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            cancelled = frame.evaluate(
+                """el => {
+                    const r = el.getBoundingClientRect();
+                    const e = new WheelEvent('wheel', {bubbles: true, cancelable: true,
+                        clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                        deltaY: 120});
+                    el.dispatchEvent(e);
+                    const second = new WheelEvent('wheel', {bubbles: true,
+                        cancelable: true, clientX: r.left + r.width / 2,
+                        clientY: r.top + r.height / 2, deltaY: 80});
+                    el.dispatchEvent(second);
+                    return [e.defaultPrevented, second.defaultPrevented];
+                }"""
+            )
+        assert cancelled == [True, True]
+        assert len(actions) == before + 1
+        wheel_action = actions[-1]["action"]
+        assert wheel_action["type"] == "scroll", wheel_action
+        assert wheel_action["amount"] == 2, wheel_action
+        # The screenshot has a one-pixel border; logical dimensions may round.
+        assert abs(wheel_action["x"] - 40) <= 1, wheel_action
+        assert abs(wheel_action["y"] - 25) <= 1, wheel_action
+        assert (
+            page.evaluate(
+                "document.querySelector('.task-sessions-main').scrollTop"
+            )
+            == scroll
+        )
+
+        frame.evaluate("el => el.focus({preventScroll: true})")
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.keyboard.press("ArrowDown")
+        assert actions[-1]["action"] == {"type": "key", "keys": "Down"}
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.keyboard.press("Control+s")
+        assert actions[-1]["action"] == {"type": "key", "keys": "Ctrl+S"}
+        # Individual printable characters are not sent while every action
+        # consumes a new screenshot token. Multi-character text uses the form.
+        before = len(actions)
+        printable = frame.evaluate(
+            """el => {
+                const e = new KeyboardEvent('keydown', {key: 'A', shiftKey: true,
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+        )
+        assert printable is False
+        assert len(actions) == before
+        page.locator("#session-gui-text").fill("abcDEF 汉字")
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.locator("#session-gui-text-form button").click()
+        assert actions[-1]["action"] == {"type": "type", "text": "abcDEF 汉字"}
+
+        # Hold one real action's fetch unresolved. Supported keys must still
+        # suppress Chromium scrolling/shortcuts, including repeated keydown,
+        # but must never dispatch a second one-shot action while busy.
+        hold_next_gui_action(page)
+        frame.evaluate("el => el.focus({preventScroll: true})")
+        scroll_before = page.evaluate(
+            "document.querySelector('.task-sessions-main').scrollTop"
+        )
+        before = len(actions)
+        page.keyboard.press("ArrowDown")
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Sending manual input"
+        )
+        page.keyboard.press("ArrowDown")
+        event_results = frame.evaluate(
+            """el => {
+                const repeat = new KeyboardEvent('keydown', {key: 'ArrowDown', repeat: true,
+                    bubbles: true, cancelable: true});
+                const save = new KeyboardEvent('keydown', {key: 's', ctrlKey: true,
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(repeat);
+                el.dispatchEvent(save);
+                return [repeat.defaultPrevented, save.defaultPrevented];
+            }"""
+        )
+        assert event_results == [True, True]
+        page.wait_for_timeout(
+            200
+        )  # Give native browser scrolling time to settle.
+        assert (
+            page.evaluate(
+                "document.querySelector('.task-sessions-main').scrollTop"
+            )
+            == scroll_before
+        )
+        assert len(actions) == before  # Still waiting for the first request.
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.evaluate("window.releaseGuiAction()")
+        assert len(actions) == before + 1
+        assert actions[-1]["action"] == {"type": "key", "keys": "Down"}
+
+        before = len(actions)
+        # Browser-reserved chords and IME composition are never intercepted.
+        intercepted = frame.evaluate(
+            """el => {
+                const reserved = new KeyboardEvent('keydown', {key: 'l', ctrlKey: true,
+                    bubbles: true, cancelable: true});
+                const ime = new KeyboardEvent('keydown', {key: 'x', isComposing: true,
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(reserved);
+                el.dispatchEvent(ime);
+                return [reserved.defaultPrevented, ime.defaultPrevented];
+            }"""
+        )
+        assert intercepted == [False, False]
+        page.locator("#session-gui-text").fill("汉字输入")
+        page.locator("#session-gui-text").press("ArrowUp")
+        assert len(actions) == before
+
+        # On a mobile viewport, absent pointer capability must leave wheel
+        # gestures to the browser; manual mode off removes keyboard focus.
+        page.set_viewport_size({"width": 390, "height": 844})
+        pointer_enabled[0] = False
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.locator("#session-gui-capture").click()
+        before = len(actions)
+        accepted = frame.evaluate(
+            """el => {
+                const r = el.getBoundingClientRect();
+                const e = new WheelEvent('wheel', {bubbles: true, cancelable: true,
+                    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                    deltaY: 100});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+        )
+        assert accepted is False
+        assert len(actions) == before
+
+        # Keyboard-only backend: a pending key must not swallow ordinary
+        # browser wheel gestures when native coordinate input is unavailable.
+        frame.evaluate("el => el.focus({preventScroll: true})")
+        hold_next_gui_action(page)
+        page.keyboard.press("ArrowUp")
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Sending manual input"
+        )
+        wheel_during_key = frame.evaluate(
+            """el => {
+                const r = el.getBoundingClientRect();
+                const e = new WheelEvent('wheel', {bubbles: true, cancelable: true,
+                    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+                    deltaY: 100});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+        )
+        assert wheel_during_key is False
+        assert len(actions) == before
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.evaluate("window.releaseGuiAction()")
+        assert len(actions) == before + 1
+        assert actions[-1]["action"] == {"type": "key", "keys": "Up"}
+        page.locator("#session-gui-manual").click()
+        expect(frame).to_have_attribute("tabindex", "-1")
         page.locator("#session-gui-back").click()
         expect(page.locator("#session-gui")).to_be_hidden()
         expect(page.locator(".session-audit")).to_be_visible()

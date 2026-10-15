@@ -3059,3 +3059,4 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .session-gui-manual-controls form label { width: 100%; }
 .session-gui-manual-controls input { min-width: 90px; max-width: 240px; }
 .session-gui-image.session-gui-interactive { cursor: crosshair; touch-action: none; }
+.session-gui-image.session-gui-interactive:focus { outline: 2px solid #5f55cd; outline-offset: 3px; }
