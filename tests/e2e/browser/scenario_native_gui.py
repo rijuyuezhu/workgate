@@ -262,6 +262,17 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         frame = page.locator("#session-gui-image")
         expect(frame).to_have_attribute("tabindex", "0")
         assert frame.evaluate("el => document.activeElement !== el")
+        assert (
+            frame.evaluate(
+                """el => {
+                const e = new KeyboardEvent('keydown', {key: 'Enter',
+                    bubbles: true, cancelable: true});
+                el.dispatchEvent(e);
+                return e.defaultPrevented;
+            }"""
+            )
+            is False
+        )
         before = len(actions)
         with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
             cancelled = frame.evaluate(

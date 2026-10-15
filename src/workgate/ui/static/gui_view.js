@@ -296,7 +296,7 @@ export function createGuiViewer({ request }) {
       void act({ type: "scroll", ...target, amount });
     }, { passive: false });
     image.addEventListener("keydown", (event) => {
-      if (!readyForInput() || event.repeat || event.defaultPrevented) return;
+      if (document.activeElement !== image || !readyForInput() || event.repeat || event.defaultPrevented) return;
       const action = keyAction(event);
       if (!action) return;
       event.preventDefault();
