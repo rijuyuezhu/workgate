@@ -221,19 +221,22 @@ def _prune_transfer_scratch(context: TransferContext) -> None:
     # Automatically retired Peer receipts get a seven-day handoff grace.
     # Control-claimed receipts are never expired by this sweep.
     receipt_dir = context.store.state_store.layout.executor_transfers_dir
+    unclaimed_before = time.time() - _PEER_UNCLAIMED_GRACE_S
     for path in receipt_dir.glob("write-*.json"):
         try:
             receipt = _load_write_receipt(context, path)
             if (
                 receipt.peer_unclaimed_at is not None
-                and time.time() - receipt.peer_unclaimed_at
-                > _PEER_UNCLAIMED_GRACE_S
+                and receipt.peer_unclaimed_at < unclaimed_before
             ):
                 transfer_id = path.name.removeprefix("write-").removesuffix(
                     ".json"
                 )
                 transfer_abort_write(
-                    receipt.destination, transfer_id, context=context
+                    receipt.destination,
+                    transfer_id,
+                    context=context,
+                    _unclaimed_before=unclaimed_before,
                 )
         except OSError, ValueError, RuntimeError:
             # Fail closed on corrupt receipts; never block unrelated transfers.
@@ -1810,6 +1813,7 @@ def transfer_abort_write(
     session_id: str | None = None,
     workdir: str | None = None,
     context: TransferContext,
+    _unclaimed_before: float | None = None,
 ) -> TransferAbortWriteOutput:
     """Abort an active chunked write and remove its private state."""
     destination, receipt = _bound_write_destination(
@@ -1829,7 +1833,16 @@ def transfer_abort_write(
             if receipt_path.exists()
             else receipt
         )
-        if current is not None and current.status != "receiving":
+        # A Control claim may have cleared the orphan deadline since GC's
+        # initial scan. Recheck under the receipt lock before deleting bytes.
+        if (current is not None and current.status != "receiving") or (
+            _unclaimed_before is not None
+            and (
+                current is None
+                or current.peer_unclaimed_at is None
+                or current.peer_unclaimed_at > _unclaimed_before
+            )
+        ):
             return TransferAbortWriteOutput(
                 path=_display_user_path(
                     destination,

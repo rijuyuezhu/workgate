@@ -921,3 +921,100 @@ async def test_control_claim_after_listener_expiry_clears_orphan_deadline(
         assert receipt_path.exists()
     finally:
         await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verified_peer_receipt_has_orphan_deadline_before_retirement(
+    tmp_path, monkeypatch
+):
+    from workgate.executor.transfer import _write_receipt_path
+
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "j" * 22
+    data = b"verified before acknowledgement"
+    info = await manager.prepare(
+        session_id=sid,
+        path="unexpected-exit.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        # No cancel/aclose/expiry is needed to make orphan recovery bounded.
+        receipt = context.store.state_store.read_json(
+            _write_receipt_path(context, tid)
+        )
+        assert isinstance(receipt, dict)
+        assert isinstance(receipt.get("peer_unclaimed_at"), float)
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gc_cannot_abort_peer_after_concurrent_control_claim(
+    tmp_path, monkeypatch
+):
+    import time
+
+    import workgate.executor.transfer as transfer_module
+    from workgate.executor.transfer import (
+        _PEER_UNCLAIMED_GRACE_S,
+        _write_receipt_path,
+        transfer_alloc_temp_path,
+    )
+    from workgate.persistence import use_state_store
+
+    manager, context, sid, workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "k" * 22
+    data = b"authenticated bytes for later commit"
+    info = await manager.prepare(
+        session_id=sid,
+        path="race.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        await manager.aclose()
+        receipt_path = _write_receipt_path(context, tid)
+        original_abort = transfer_module.transfer_abort_write
+        intercepted = False
+
+        def claim_just_before_gc_aborts(
+            path, transfer_id, *, context, **kwargs
+        ):
+            nonlocal intercepted
+            intercepted = True
+            transfer_module.transfer_mark_peer_unclaimed(
+                tid, unclaimed=False, context=context
+            )
+            return original_abort(path, transfer_id, context=context, **kwargs)
+
+        monkeypatch.setattr(
+            transfer_module, "transfer_abort_write", claim_just_before_gc_aborts
+        )
+        clock = time.time()
+        monkeypatch.setattr(
+            transfer_module.time,
+            "time",
+            lambda: clock + _PEER_UNCLAIMED_GRACE_S + 60,
+        )
+        with use_state_store(context.store.state_store):
+            transfer_alloc_temp_path(context=context)
+        assert intercepted
+        assert receipt_path.exists()
+        resumed = transfer_begin_write(
+            "race.bin", True, len(data), tid, session_id=sid, context=context
+        )
+        assert resumed.resumed and resumed.offset == len(data)
+        assert not (workspace / "race.bin").exists()
+    finally:
+        await manager.aclose()

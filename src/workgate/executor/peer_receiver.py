@@ -262,6 +262,14 @@ class PeerReceiverManager:
                     received += len(block)
                 if digest.hexdigest() != lease.expected_sha256:
                     raise ValueError("peer transfer digest mismatch")
+                # Persist the orphan deadline before the sender can see OK.
+                # A killed executor then leaves a bounded, recoverable receipt.
+                await self._io(
+                    transfer_mark_peer_unclaimed,
+                    lease.transfer_id,
+                    unclaimed=True,
+                    context=self._context,
+                )
                 writer.write(b"OK\n")
                 await writer.drain()
                 lease.state = "received"
@@ -382,12 +390,14 @@ class PeerReceiverManager:
             await lease.server.wait_closed()
         try:
             if preserve_received:
-                await self._io(
-                    transfer_mark_peer_unclaimed,
-                    transfer_id,
-                    unclaimed=auto_retire,
-                    context=self._context,
-                )
+                if not auto_retire:
+                    # Control has durably claimed this validated receipt.
+                    await self._io(
+                        transfer_mark_peer_unclaimed,
+                        transfer_id,
+                        unclaimed=False,
+                        context=self._context,
+                    )
             else:
                 await self._abort(lease.session_id, lease.path, transfer_id)
         except Exception:
