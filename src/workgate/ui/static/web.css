@@ -686,6 +686,14 @@ h2 {
   text-align: left;
 }
 
+.task-session-list .session-entry,
+.session-list .unattached-session-entry {
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.session-entry-main { display: grid; gap: 0.35rem; min-width: 0; }
+
 .session-entry strong,
 .session-entry-meta {
   overflow: hidden;
@@ -2555,6 +2563,10 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .task-session-metadata { margin-top: 8px; }
 .task-session-metadata summary { color: #778196; font-size: 11px; cursor: pointer; }
 .task-session-metadata .session-detail-grid { margin-top: 10px; }
+#session-detail-executor { display: block; white-space: normal; overflow-wrap: anywhere; }
+.session-detail-executor-id-row { display: flex; align-items: start; gap: 6px; margin-top: 4px; min-width: 0; }
+#session-detail-executor-id { flex: 1; min-width: 0; font-size: 11px; color: #7b8495; white-space: normal; overflow-wrap: anywhere; user-select: text; }
+#session-detail-executor-copy { flex: none; padding: 2px 5px; font-size: 10px; }
 .task-sessions-main .session-audit-layout { grid-template-columns: minmax(145px, .85fr) minmax(0, 1.15fr); min-height: 360px; }
 .task-sessions-main .session-audit-toolbar {
   display: flex; flex-wrap: wrap; align-items: end; gap: 7px; margin-top: 10px;

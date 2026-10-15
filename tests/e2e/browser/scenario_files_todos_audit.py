@@ -385,6 +385,86 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-audit-summary")).to_contain_text("records")
     audit_top = page.locator("#session-audit-filter-form").bounding_box()
     assert audit_top and audit_top["y"] < 820
+    # #347: Executor identity is shared by attached and legacy unattached
+    # Sessions. Inventory changes update it without re-creating focused rows.
+    attached_entry = page.locator(
+        f'#session-list .session-entry[data-session-id="{session_id}"]'
+    )
+    unattached_entry = page.locator(
+        f'#task-list .unattached-session-entry[data-session-id="{unattached_session_id}"]'
+    )
+    for entry in (attached_entry, unattached_entry):
+        expect(entry.locator(".executor-band-mark")).to_have_text("B")
+        assert (entry.get_attribute("title") or "").endswith("browser-loopback")
+    expect(page.locator("#session-detail-executor")).to_have_text(
+        "browser-loopback"
+    )
+    expect(page.locator("#session-detail-executor-id")).to_have_text(
+        harness.executor_id
+    )
+    details = page.locator(".task-session-metadata")
+    details.locator("summary").click()
+    expect(page.locator("#session-detail-executor-copy")).to_be_enabled()
+    harness.context.grant_permissions(
+        ["clipboard-read", "clipboard-write"], origin=harness.base_url
+    )
+    page.locator("#session-detail-executor-copy").click()
+    expect(page.locator("#session-detail-executor-copy")).to_have_text("Copied")
+    assert (
+        page.evaluate("navigator.clipboard.readText()") == harness.executor_id
+    )
+    page.screenshot(
+        path=str(harness.artifacts / "session-executor-desktop.png")
+    )
+    details.locator("summary").click()
+    attached_entry.focus()
+    assert attached_entry.evaluate("el => document.activeElement === el")
+
+    def rename_session_executor(route: Route) -> None:
+        response = route.fetch()
+        payload = response.json()
+        for executor in payload.get("data", {}).get("executors", []):
+            if executor.get("executor_id") == harness.executor_id:
+                executor["name"] = "Renamed Executor"
+                executor["online"] = False
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors", rename_session_executor)
+    expect(page.locator("#session-detail-executor")).to_have_text(
+        "Renamed Executor", timeout=12_000
+    )
+    for entry in (attached_entry, unattached_entry):
+        expect(entry.locator(".executor-band-mark")).to_have_text("R")
+        assert (entry.get_attribute("title") or "").endswith("Renamed Executor")
+    expect(page.locator("#session-detail-status")).to_contain_text(
+        "executor offline"
+    )
+    expect(attached_entry).to_be_focused()
+    expect(attached_entry).to_have_attribute("aria-current", "true")
+    page.unroute("**/api/ui/executors", rename_session_executor)
+
+    def omit_session_executor(route: Route) -> None:
+        response = route.fetch()
+        payload = response.json()
+        payload["data"]["executors"] = [
+            row
+            for row in payload["data"]["executors"]
+            if row.get("executor_id") != harness.executor_id
+        ]
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors", omit_session_executor)
+    expect(page.locator("#session-detail-executor")).to_have_text(
+        harness.executor_id, timeout=12_000
+    )
+    expect(attached_entry.locator(".executor-band-mark")).to_have_text("E")
+    expect(unattached_entry.locator(".executor-band-mark")).to_have_text("E")
+    page.unroute("**/api/ui/executors", omit_session_executor)
+    expect(page.locator("#session-detail-executor")).to_have_text(
+        "browser-loopback", timeout=12_000
+    )
+    expect(attached_entry).to_be_focused()
+
     expect(page.locator("#todo-summary")).to_contain_text("0 total")
     _show_task_tab(page, "progress")
     expect(page.locator("#task-status")).to_have_text("active")

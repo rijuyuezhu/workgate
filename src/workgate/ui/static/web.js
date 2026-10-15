@@ -255,6 +255,8 @@ void (async () => {
     sessionDetailCreated: document.getElementById("session-detail-created"),
     sessionDetailId: document.getElementById("session-detail-id"),
     sessionDetailExecutor: document.getElementById("session-detail-executor"),
+    sessionDetailExecutorId: document.getElementById("session-detail-executor-id"),
+    sessionDetailExecutorCopy: document.getElementById("session-detail-executor-copy"),
     sessionDetailStatus: document.getElementById("session-detail-status"),
     sessionDetailTitle: document.getElementById("session-detail-title"),
     sessionDetailUpdated: document.getElementById("session-detail-updated"),

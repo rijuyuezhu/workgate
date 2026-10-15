@@ -45,10 +45,19 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     page.locator("#task-tab-sessions").click()
     expect(page.locator("#session-list .session-entry").first).to_be_visible()
     expect(page.locator(".task-sessions-main")).to_be_hidden()
+    expect(
+        page.locator("#session-list .session-entry .executor-band-mark").first
+    ).to_have_text("B")
     page.locator("#session-list .session-entry").first.click()
     step("tasks", "session")
     expect(page.locator("#session-list")).to_be_hidden()
     expect(page.locator("#session-audit-list")).to_be_visible()
+    expect(page.locator("#session-detail-executor")).to_have_text(
+        "browser-loopback"
+    )
+    expect(page.locator("#session-detail-executor-id")).to_have_text(
+        harness.executor_id
+    )
     expect(
         page.locator(".mobile-subpage-bar:visible .mobile-subpage-back")
     ).to_have_text("← Task")
