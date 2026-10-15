@@ -282,10 +282,14 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
                         clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
                         deltaY: 120});
                     el.dispatchEvent(e);
-                    return e.defaultPrevented;
+                    const second = new WheelEvent('wheel', {bubbles: true,
+                        cancelable: true, clientX: r.left + r.width / 2,
+                        clientY: r.top + r.height / 2, deltaY: 80});
+                    el.dispatchEvent(second);
+                    return [e.defaultPrevented, second.defaultPrevented];
                 }"""
             )
-        assert cancelled
+        assert cancelled == [True, True]
         assert len(actions) == before + 1
         wheel_action = actions[-1]["action"]
         assert wheel_action["type"] == "scroll", wheel_action
