@@ -678,6 +678,7 @@ async def test_cross_executor_retry_uses_control_relay_with_source_offline(
     assert imported is not None
     assert imported.last_known_step == "imported"
     assert imported.receipts_released is False
+    assert checkpoint.payload_id is not None
     payload_path = service._payloads.path(
         checkpoint.payload_id, namespace="transfer"
     )
@@ -757,6 +758,7 @@ async def test_retention_abandonment_keeps_tombstone_until_executor_reconciles(
         import_resource_id=checkpoint.transfer_id,
         last_known_step="importing",
     )
+    assert checkpoint.payload_id is not None
     payload_path = service._payloads.path(
         checkpoint.payload_id, namespace="transfer"
     )
@@ -868,6 +870,7 @@ async def test_corrupt_control_payload_fails_without_destination_publish(
     service, _sessions, transport, checkpoint, _state_store = (
         _checkpoint_service(tmp_path, b"payload")
     )
+    assert checkpoint.payload_id is not None
     payload_path = service._payloads.path(
         checkpoint.payload_id, namespace="transfer"
     )

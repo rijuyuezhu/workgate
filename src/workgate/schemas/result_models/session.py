@@ -265,9 +265,9 @@ class SessionCopyOutput(BaseModel):
     kind: Literal["file", "dir"] = Field(
         description="Resolved copied object kind."
     )
-    transport: Literal["same_executor", "object_store", "control_relay"] = (
-        Field(description="Actual data route selected for the copy operation.")
-    )
+    transport: Literal[
+        "same_executor", "peer_direct", "object_store", "control_relay"
+    ] = Field(description="Actual data route selected for the copy operation.")
     resumed_bytes: int = Field(
         default=0,
         description="Bytes reused from a validated transfer-specific import checkpoint.",

@@ -703,3 +703,318 @@ async def test_begin_failure_cleanup_can_be_retried(tmp_path, monkeypatch):
         assert fresh.resumed is False
     finally:
         await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["retire", "shutdown", "expire"])
+async def test_verified_receipt_survives_retirement(
+    tmp_path, monkeypatch, mode
+):
+    manager, context, sid, _workspace = _receiver(tmp_path, monkeypatch)
+    data = b"retained pending commit"
+    tid = "copy_" + "o" * 22
+    info = await manager.prepare(
+        session_id=sid,
+        path="retained.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        if mode == "retire":
+            assert await manager.cancel(tid, preserve_received=True)
+        elif mode == "shutdown":
+            await manager.aclose()
+        else:
+            lease = manager._leases[tid]
+            monkeypatch.setattr(peer_module, "_CONNECT_TIMEOUT_S", 0.01)
+            monkeypatch.setattr(peer_module, "_RECEIPT_GRACE_S", 0.01)
+            assert lease.expiry is not None
+            lease.expiry.cancel()
+            await manager._expire(lease)
+        assert manager.status(tid) == "unknown"
+        result = transfer_begin_write(
+            "retained.bin",
+            True,
+            len(data),
+            tid,
+            session_id=sid,
+            context=context,
+        )
+        assert result.resumed and result.offset == len(data)
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unverified_receipt_is_never_preserved(tmp_path, monkeypatch):
+    manager, context, sid, _workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "p" * 22
+    await manager.prepare(
+        session_id=sid,
+        path="pending.bin",
+        transfer_id=tid,
+        expected_bytes=2,
+        expected_sha256=hashlib.sha256(b"ab").hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await manager.cancel(tid, preserve_received=True)
+        result = transfer_begin_write(
+            "pending.bin", True, 2, tid, session_id=sid, context=context
+        )
+        assert not result.resumed and result.offset == 0
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authenticated", [True, False])
+async def test_cancel_closes_idle_tcp_clients_without_hanging(
+    tmp_path, monkeypatch, authenticated
+):
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    transfer_id = "copy_" + "z" * 22
+    info = await manager.prepare(
+        session_id=sid,
+        path="idle.bin",
+        transfer_id=transfer_id,
+        expected_bytes=1000,
+        expected_sha256=hashlib.sha256(b"a" * 1000).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    reader, writer = await asyncio.open_connection(
+        str(info["host"]), int(info["port"])
+    )
+    try:
+        if authenticated:
+            writer.write(str(info["token"]).encode() + b"\na")
+            await writer.drain()
+            await _wait_status(manager, transfer_id, "receiving")
+        else:
+            await asyncio.sleep(0.03)  # Allow the idle client to be accepted.
+        assert await asyncio.wait_for(manager.cancel(transfer_id), 1) is True
+        assert manager.status(transfer_id) == "unknown"
+        assert await asyncio.wait_for(reader.read(1), 1) == b""
+        resumed = transfer_begin_write(
+            "idle.bin",
+            True,
+            1000,
+            transfer_id,
+            session_id=sid,
+            context=context,
+        )
+        assert not resumed.resumed
+    finally:
+        writer.close()
+        with contextlib.suppress(OSError, TimeoutError):
+            await asyncio.wait_for(writer.wait_closed(), 1)
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control_claimed", [True, False])
+async def test_passively_retained_peer_receipts_expire_but_claimed_do_not(
+    tmp_path, monkeypatch, control_claimed
+):
+    import time
+
+    from workgate.executor.transfer import (
+        _PEER_UNCLAIMED_GRACE_S,
+        _write_receipt_path,
+        transfer_alloc_temp_path,
+    )
+
+    manager, context, sid, workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "u" * 22
+    payload = b"verified and retained bytes"
+    info = await manager.prepare(
+        session_id=sid,
+        path="staged.bin",
+        transfer_id=tid,
+        expected_bytes=len(payload),
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), payload) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        if control_claimed:
+            assert await manager.cancel(tid, preserve_received=True)
+        else:
+            await manager.aclose()
+        receipt_path = _write_receipt_path(context, tid)
+        receipt = context.store.state_store.read_json(receipt_path)
+        assert isinstance(receipt, dict)
+        assert (receipt.get("peer_unclaimed_at") is None) == control_claimed
+        original_time = time.time()
+        monkeypatch.setattr(
+            "workgate.executor.transfer.time.time",
+            lambda: original_time + _PEER_UNCLAIMED_GRACE_S + 1,
+        )
+        transfer_alloc_temp_path(context=context)
+        assert receipt_path.exists() is control_claimed
+        resumed = transfer_begin_write(
+            "staged.bin",
+            True,
+            len(payload),
+            tid,
+            session_id=sid,
+            context=context,
+        )
+        assert resumed.resumed is control_claimed
+        if control_claimed:
+            assert resumed.offset == len(payload)
+        else:
+            assert resumed.offset == 0
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_control_claim_after_listener_expiry_clears_orphan_deadline(
+    tmp_path, monkeypatch
+):
+    import time
+
+    from workgate.executor.transfer import (
+        _PEER_UNCLAIMED_GRACE_S,
+        _write_receipt_path,
+        transfer_alloc_temp_path,
+    )
+
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "r" * 22
+    data = b"verified peer payload"
+    info = await manager.prepare(
+        session_id=sid,
+        path="late.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        await manager.aclose()  # Receiver retires before Control claims data.
+        receipt_path = _write_receipt_path(context, tid)
+        before = context.store.state_store.read_json(receipt_path)
+        assert isinstance(before, dict) and "peer_unclaimed_at" in before
+        assert await manager.cancel(tid, preserve_received=True) is False
+        after = context.store.state_store.read_json(receipt_path)
+        assert isinstance(after, dict) and "peer_unclaimed_at" not in after
+        now = time.time()
+        monkeypatch.setattr(
+            "workgate.executor.transfer.time.time",
+            lambda: now + _PEER_UNCLAIMED_GRACE_S + 1,
+        )
+        transfer_alloc_temp_path(context=context)
+        assert receipt_path.exists()
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verified_peer_receipt_has_orphan_deadline_before_retirement(
+    tmp_path, monkeypatch
+):
+    from workgate.executor.transfer import _write_receipt_path
+
+    manager, context, sid, _ = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "j" * 22
+    data = b"verified before acknowledgement"
+    info = await manager.prepare(
+        session_id=sid,
+        path="unexpected-exit.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        # No cancel/aclose/expiry is needed to make orphan recovery bounded.
+        receipt = context.store.state_store.read_json(
+            _write_receipt_path(context, tid)
+        )
+        assert isinstance(receipt, dict)
+        assert isinstance(receipt.get("peer_unclaimed_at"), float)
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gc_cannot_abort_peer_after_concurrent_control_claim(
+    tmp_path, monkeypatch
+):
+    import time
+
+    import workgate.executor.transfer as transfer_module
+    from workgate.executor.transfer import (
+        _PEER_UNCLAIMED_GRACE_S,
+        _write_receipt_path,
+        transfer_alloc_temp_path,
+    )
+    from workgate.persistence import use_state_store
+
+    manager, context, sid, workspace = _receiver(tmp_path, monkeypatch)
+    tid = "copy_" + "k" * 22
+    data = b"authenticated bytes for later commit"
+    info = await manager.prepare(
+        session_id=sid,
+        path="race.bin",
+        transfer_id=tid,
+        expected_bytes=len(data),
+        expected_sha256=hashlib.sha256(data).hexdigest(),
+        overwrite=True,
+        tailnet_id=TAILNET,
+    )
+    try:
+        assert await _connect(info, str(info["token"]), data) == b"OK\n"
+        await _wait_status(manager, tid, "received")
+        await manager.aclose()
+        receipt_path = _write_receipt_path(context, tid)
+        original_abort = transfer_module.transfer_abort_write
+        intercepted = False
+
+        def claim_just_before_gc_aborts(
+            path, transfer_id, *, context, **kwargs
+        ):
+            nonlocal intercepted
+            intercepted = True
+            transfer_module.transfer_mark_peer_unclaimed(
+                tid, unclaimed=False, context=context
+            )
+            return original_abort(path, transfer_id, context=context, **kwargs)
+
+        monkeypatch.setattr(
+            transfer_module, "transfer_abort_write", claim_just_before_gc_aborts
+        )
+        clock = time.time()
+        monkeypatch.setattr(
+            transfer_module.time,
+            "time",
+            lambda: clock + _PEER_UNCLAIMED_GRACE_S + 60,
+        )
+        with use_state_store(context.store.state_store):
+            transfer_alloc_temp_path(context=context)
+        assert intercepted
+        assert receipt_path.exists()
+        resumed = transfer_begin_write(
+            "race.bin", True, len(data), tid, session_id=sid, context=context
+        )
+        assert resumed.resumed and resumed.offset == len(data)
+        assert not (workspace / "race.bin").exists()
+    finally:
+        await manager.aclose()

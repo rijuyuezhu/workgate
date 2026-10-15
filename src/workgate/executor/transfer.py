@@ -56,6 +56,7 @@ from .tool_session.store import ToolSessionStore
 _TRANSFER_TMP_MARKER = "workgate-transfer"
 _TRANSFER_STALE_GRACE_S = 24 * 60 * 60
 _TRANSFER_TMP_PRUNE_MINIMUM_AGE_S = 24 * 60 * 60
+_PEER_UNCLAIMED_GRACE_S = 7 * 24 * 60 * 60
 
 _ReceiptPath = Annotated[str, Field(min_length=1, max_length=8192)]
 _ReceiptSha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -79,6 +80,7 @@ class _WriteTransferReceipt(BaseModel):
     final_sha256: _ReceiptSha256 | None = None
     updated_at: _ReceiptTimestamp
     committed_at: _ReceiptTimestamp | None = None
+    peer_unclaimed_at: _ReceiptTimestamp | None = None
 
     @model_validator(mode="after")
     def _validate_final_state(self) -> _WriteTransferReceipt:
@@ -216,6 +218,29 @@ def _receipt_owned_transfer_scratch_paths(
 
 
 def _prune_transfer_scratch(context: TransferContext) -> None:
+    # Automatically retired Peer receipts get a seven-day handoff grace.
+    # Control-claimed receipts are never expired by this sweep.
+    receipt_dir = context.store.state_store.layout.executor_transfers_dir
+    unclaimed_before = time.time() - _PEER_UNCLAIMED_GRACE_S
+    for path in receipt_dir.glob("write-*.json"):
+        try:
+            receipt = _load_write_receipt(context, path)
+            if (
+                receipt.peer_unclaimed_at is not None
+                and receipt.peer_unclaimed_at < unclaimed_before
+            ):
+                transfer_id = path.name.removeprefix("write-").removesuffix(
+                    ".json"
+                )
+                transfer_abort_write(
+                    receipt.destination,
+                    transfer_id,
+                    context=context,
+                    _unclaimed_before=unclaimed_before,
+                )
+        except OSError, ValueError, RuntimeError:
+            # Fail closed on corrupt receipts; never block unrelated transfers.
+            continue
     protected = _receipt_owned_transfer_scratch_paths(context)
     if protected is None:
         return
@@ -572,6 +597,25 @@ def _validate_abandon_receipt_identity(
         ) from None
     if write_receipt.destination != unpack_receipt.archive:
         raise ValueError("transfer archive write receipt identity mismatch")
+
+
+def transfer_mark_peer_unclaimed(
+    transfer_id: str, *, unclaimed: bool, context: TransferContext
+) -> None:
+    """Age out a verified peer receipt only when Control has not claimed it."""
+    path = _write_receipt_path(context, transfer_id)
+    with path_lock(path):
+        if not path.exists():
+            return  # Already committed and released by Control.
+        receipt = _load_write_receipt(context, path)
+        if receipt.status != "receiving":
+            return
+        updated = receipt.model_copy(
+            update={"peer_unclaimed_at": time.time() if unclaimed else None}
+        )
+        _write_write_receipt(
+            context, path, updated.model_dump(mode="python", exclude_none=True)
+        )
 
 
 def transfer_release_receipts(
@@ -1769,6 +1813,7 @@ def transfer_abort_write(
     session_id: str | None = None,
     workdir: str | None = None,
     context: TransferContext,
+    _unclaimed_before: float | None = None,
 ) -> TransferAbortWriteOutput:
     """Abort an active chunked write and remove its private state."""
     destination, receipt = _bound_write_destination(
@@ -1788,7 +1833,16 @@ def transfer_abort_write(
             if receipt_path.exists()
             else receipt
         )
-        if current is not None and current.status != "receiving":
+        # A Control claim may have cleared the orphan deadline since GC's
+        # initial scan. Recheck under the receipt lock before deleting bytes.
+        if (current is not None and current.status != "receiving") or (
+            _unclaimed_before is not None
+            and (
+                current is None
+                or current.peer_unclaimed_at is None
+                or current.peer_unclaimed_at > _unclaimed_before
+            )
+        ):
             return TransferAbortWriteOutput(
                 path=_display_user_path(
                     destination,

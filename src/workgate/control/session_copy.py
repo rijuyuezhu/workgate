@@ -66,6 +66,14 @@ class _PreparedCrossExecutorSource:
     cleanup_path: str | None = None
 
 
+class _PeerRouteUnavailable(Exception):
+    """A direct attempt is safely canceled before any publication."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 class ControlSessionCopyService:
     """Copy data without creating, migrating, or rebinding either session."""
 
@@ -228,7 +236,11 @@ class ControlSessionCopyService:
                         transport=selected_route,
                     )
                 finally:
-                    if owner_job_id is None:
+                    retained = self._checkpoints.load(active_transfer_id)
+                    if owner_job_id is None and (
+                        retained is None
+                        or retained.transport == "control_relay"
+                    ):
                         with contextlib.suppress(Exception):
                             abandoned = self._checkpoints.prepare_abandonment(
                                 active_transfer_id
@@ -581,8 +593,11 @@ class ControlSessionCopyService:
     ) -> tuple[
         Literal["file", "dir"],
         dict[str, Any],
-        Literal["object_store", "control_relay"],
+        Literal["peer_direct", "object_store", "control_relay"],
     ]:
+        if checkpoint is not None and checkpoint.transport == "peer_direct":
+            metrics = await self._resume_peer_import(checkpoint, dst=dst)
+            return checkpoint.kind, metrics, "peer_direct"
         if checkpoint is not None:
             (
                 resolved_kind,
@@ -616,8 +631,32 @@ class ControlSessionCopyService:
         fallbacks: list[str] = []
         selected_kind: Literal["file", "dir"]
         selected_metrics: dict[str, Any]
-        selected_route: Literal["object_store", "control_relay"]
+        selected_route: Literal["peer_direct", "object_store", "control_relay"]
         try:
+            overlay = await self._compatible_peer_overlay(src, dst)
+            if overlay is not None and prepared.payload_size <= 4 * 1024**3:
+                try:
+                    selected_metrics = await self._copy_cross_executor_via_peer(
+                        src,
+                        src_path=src_path,
+                        prepared=prepared,
+                        dst=dst,
+                        dst_path=dst_path,
+                        overwrite=overwrite,
+                        chunk_size=chunk_size,
+                        progress=progress,
+                        transfer_id=transfer_id,
+                        owner_job_id=owner_job_id,
+                        tailnet_id=overlay[0],
+                        receiver_host=overlay[1],
+                        cleanup_errors=cleanup_errors,
+                    )
+                except _PeerRouteUnavailable as exc:
+                    fallbacks.append(f"peer_direct:{exc.reason}")
+                else:
+                    selected_metrics["cleanup_errors"] = cleanup_errors
+                    selected_metrics["fallbacks"] = fallbacks
+                    return prepared.kind, selected_metrics, "peer_direct"
             if self._object_store.enabled:
                 try:
                     selected_metrics = (
@@ -674,6 +713,314 @@ class ControlSessionCopyService:
                         transfer_id,
                         cleanup_errors=cleanup_errors,
                     )
+
+    async def _compatible_peer_overlay(
+        self, src: ControlSessionRecord, dst: ControlSessionRecord
+    ) -> tuple[str, str] | None:
+        """Overlay announcements are hints; executors revalidate before use."""
+        inventory = getattr(self._transport, "inventory", None)
+        if inventory is None:
+            return None
+        try:
+            src_hello, dst_hello = await asyncio.gather(
+                inventory(str(src.executor_id)), inventory(str(dst.executor_id))
+            )
+        except Exception:
+            return None
+        src_overlay = None if src_hello is None else src_hello.overlay
+        dst_overlay = None if dst_hello is None else dst_hello.overlay
+        if (
+            src_overlay is None
+            or dst_overlay is None
+            or src_overlay.provider != "tailscale"
+            or dst_overlay.provider != "tailscale"
+            or src_overlay.tailnet_id != dst_overlay.tailnet_id
+        ):
+            return None
+        return src_overlay.tailnet_id, dst_overlay.ipv4
+
+    async def _copy_cross_executor_via_peer(
+        self,
+        src: ControlSessionRecord,
+        *,
+        src_path: str,
+        prepared: _PreparedCrossExecutorSource,
+        dst: ControlSessionRecord,
+        dst_path: str,
+        overwrite: bool,
+        chunk_size: int,
+        progress: ProgressCallback | None,
+        transfer_id: str,
+        owner_job_id: str | None,
+        tailnet_id: str,
+        receiver_host: str,
+        cleanup_errors: list[str],
+    ) -> dict[str, Any]:
+        """Stage peer bytes and commit only on independently confirmed receipt."""
+        unbound_temp = prepared.kind == "dir"
+        import_path = dst_path
+        if unbound_temp:
+            allocated = TransferAllocTempPathOutput.model_validate(
+                await self._call(
+                    dst, "transfer_alloc_temp_path", {"suffix": ".tar.gz"}
+                )
+            )
+            import_path = allocated.path
+
+        prepare_attempted = False
+        cleanup_attempted = False
+        commit_started = False
+        stage = "prepare"
+        try:
+            try:
+                prepare_attempted = True
+                raw = await self._call(
+                    dst,
+                    "transfer.peer_prepare",
+                    {
+                        "path": import_path,
+                        "transfer_id": transfer_id,
+                        "expected_bytes": prepared.payload_size,
+                        "expected_sha256": prepared.payload_sha256,
+                        "overwrite": True if unbound_temp else overwrite,
+                        "tailnet_id": tailnet_id,
+                    },
+                )
+                if not isinstance(raw, dict):
+                    raise ValueError("peer receiver endpoint is invalid")
+                address = raw.get("host")
+                port = raw.get("port")
+                token = raw.get("token")
+                if (
+                    not isinstance(address, str)
+                    or address != receiver_host
+                    or type(port) is not int
+                    or not 1 <= port <= 65535
+                    or not isinstance(token, str)
+                    or len(token) != 43
+                    or raw.get("transfer_id") != transfer_id
+                ):
+                    raise ValueError("peer receiver endpoint is invalid")
+                stage = "send"
+                await self._report(
+                    progress,
+                    phase="transferring",
+                    bytes_transferred=0,
+                    total_bytes=prepared.payload_size,
+                    chunk_size=chunk_size,
+                )
+                uploaded = await self._call(
+                    src,
+                    "transfer.peer_send",
+                    {
+                        "path": prepared.transfer_path,
+                        "transfer_id": transfer_id,
+                        "host": address,
+                        "port": port,
+                        "token": token,
+                        "tailnet_id": tailnet_id,
+                        "expected_bytes": prepared.payload_size,
+                        "expected_sha256": prepared.payload_sha256,
+                        "chunk_size": chunk_size,
+                        "_workgate_unbound_temp": prepared.unbound_temp,
+                    },
+                )
+                if (
+                    not isinstance(uploaded, dict)
+                    or type(uploaded.get("bytes")) is not int
+                    or uploaded["bytes"] != prepared.payload_size
+                    or uploaded.get("sha256") != prepared.payload_sha256
+                    or uploaded.get("transfer_id") != transfer_id
+                ):
+                    raise ValueError("peer sender acknowledgement is invalid")
+                stage = "verify"
+                state = await self._call(
+                    dst, "transfer.peer_status", {"transfer_id": transfer_id}
+                )
+                if (
+                    not isinstance(state, dict)
+                    or state.get("state") != "received"
+                ):
+                    raise RuntimeError("peer receiver did not confirm receipt")
+            except Exception as exc:
+                # Never fall back until receiver teardown and abort are confirmed.
+                # A failed cancellation is a hard error; never retry in
+                # finally and mask it with a second failure.
+                cleanup_attempted = True
+                try:
+                    canceled = await self._call(
+                        dst,
+                        "transfer.peer_cancel",
+                        {"transfer_id": transfer_id},
+                    )
+                except Exception:
+                    raise RuntimeError(
+                        "peer cancellation could not be confirmed"
+                    ) from exc
+                if (
+                    not isinstance(canceled, dict)
+                    or type(canceled.get("cancelled")) is not bool
+                    or (canceled["cancelled"] is False and stage != "prepare")
+                ):
+                    raise RuntimeError(
+                        "peer cancellation was not confirmed"
+                    ) from exc
+                raise _PeerRouteUnavailable(stage) from None
+
+            # Persist recovery authority *before* the first publication RPC.
+            # A committed transfer can be reconciled using its executor receipt
+            # even after Control restarts or loses both finish responses.
+            chunks = (
+                (prepared.payload_size + chunk_size - 1) // chunk_size
+                if prepared.payload_size
+                else 0
+            )
+            checkpoint = self._checkpoints.begin_peer_import(
+                checkpoint={
+                    "transfer_id": transfer_id,
+                    "owner_job_id": owner_job_id,
+                    "source_session_id": str(src.session_id),
+                    "source_executor_id": str(src.executor_id),
+                    "destination_session_id": str(dst.session_id),
+                    "destination_executor_id": str(dst.executor_id),
+                    "source_path": src_path,
+                    "destination_path": dst_path,
+                    "kind": prepared.kind,
+                    "overwrite": overwrite,
+                    "chunk_size": chunk_size,
+                    "source_resolved_path": prepared.source_resolved_path,
+                    "payload_size": prepared.payload_size,
+                    "payload_sha256": prepared.payload_sha256,
+                    "import_path": import_path,
+                    "import_resource_id": transfer_id,
+                    "chunks": chunks,
+                }
+            )
+            commit_started = True
+            metrics = await self._resume_peer_import(
+                checkpoint, dst=dst, progress=progress
+            )
+            cleanup_errors[:] = metrics.get("cleanup_errors", [])
+            return metrics
+        finally:
+            # A cancelled Control RPC may have offered prepare without seeing
+            # its acknowledgement. Ordered destination RPCs make this cleanup
+            # run only after any offered prepare has settled.
+            if prepare_attempted and not cleanup_attempted:
+                try:
+                    await self._call(
+                        dst,
+                        "transfer.peer_cancel",
+                        {
+                            "transfer_id": transfer_id,
+                            "preserve_received": commit_started,
+                        },
+                    )
+                except Exception as exc:
+                    if self._checkpoints.load(transfer_id) is not None:
+                        cleanup_errors.append(
+                            f"peer listener cleanup failed: {type(exc).__name__}"
+                        )
+                    else:
+                        raise
+            if unbound_temp and not commit_started:
+                with contextlib.suppress(Exception):
+                    await self._call(
+                        dst, "transfer_delete_temp_path", {"path": import_path}
+                    )
+
+    async def _resume_peer_import(
+        self,
+        checkpoint: SessionCopyCheckpoint,
+        *,
+        dst: ControlSessionRecord,
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        if checkpoint.last_known_step == "imported":
+            if not checkpoint.receipts_released:
+                checkpoint = await self._release_import_receipts(
+                    checkpoint, dst=dst
+                )
+            return self._checkpoint_metrics(checkpoint)
+        if checkpoint.import_path is None:
+            raise RuntimeError(
+                "peer import checkpoint has no destination receipt"
+            )
+        unbound_temp = checkpoint.kind == "dir"
+        begin_args: dict[str, JsonValue] = {
+            "path": checkpoint.import_path,
+            "transfer_id": checkpoint.transfer_id,
+            "expected_bytes": checkpoint.payload_size,
+            "overwrite": True if unbound_temp else checkpoint.overwrite,
+        }
+        finish_args: dict[str, JsonValue] = {
+            "path": checkpoint.import_path,
+            "transfer_id": checkpoint.transfer_id,
+            "expected_bytes": checkpoint.payload_size,
+            "expected_sha256": checkpoint.payload_sha256,
+        }
+        if unbound_temp:
+            begin_args["_workgate_unbound_temp"] = True
+            finish_args["_workgate_unbound_temp"] = True
+        begin = TransferBeginWriteOutput.model_validate(
+            await self._call(dst, "transfer_begin_write", begin_args)
+        )
+        if begin.completed:
+            if (
+                begin.offset != checkpoint.payload_size
+                or begin.sha256 != checkpoint.payload_sha256
+            ):
+                raise RuntimeError("peer commit receipt integrity mismatch")
+            published_path = begin.path
+        else:
+            published_path = await self._finish_write_with_receipt_recovery(
+                dst,
+                begin_args=begin_args,
+                finish_args=finish_args,
+                expected_bytes=checkpoint.payload_size,
+                expected_sha256=checkpoint.payload_sha256,
+            )
+        await self._report(
+            progress,
+            phase="transferring",
+            bytes_transferred=checkpoint.payload_size,
+            total_bytes=checkpoint.payload_size,
+            chunks=checkpoint.chunks,
+            chunk_size=checkpoint.chunk_size,
+        )
+        entries: int | None = None
+        cleanup_errors = list(checkpoint.cleanup_errors)
+        if unbound_temp:
+            await self._report(
+                progress,
+                phase="unpacking",
+                bytes_transferred=checkpoint.payload_size,
+                total_bytes=checkpoint.payload_size,
+            )
+            unpack = await self._unpack_with_receipt_recovery(
+                dst,
+                {
+                    "archive_path": checkpoint.import_path,
+                    "dst_path": checkpoint.destination_path,
+                    "overwrite": checkpoint.overwrite,
+                    "cleanup_archive": True,
+                    "transfer_id": checkpoint.transfer_id,
+                    "expected_archive_bytes": checkpoint.payload_size,
+                    "expected_archive_sha256": checkpoint.payload_sha256,
+                },
+            )
+            published_path = unpack.path
+            entries = unpack.entries
+            cleanup_errors.extend(unpack.cleanup_errors)
+        checkpoint = self._checkpoints.update(
+            checkpoint.transfer_id,
+            destination_resolved_path=published_path,
+            entries=entries,
+            cleanup_errors=cleanup_errors,
+            last_known_step="imported",
+        )
+        checkpoint = await self._release_import_receipts(checkpoint, dst=dst)
+        return self._checkpoint_metrics(checkpoint)
 
     async def _call_object_store_route(
         self,
@@ -1699,7 +2046,9 @@ class ControlSessionCopyService:
         kind: Literal["file", "dir"],
         metrics: dict[str, Any],
         *,
-        transport: Literal["same_executor", "object_store", "control_relay"],
+        transport: Literal[
+            "same_executor", "peer_direct", "object_store", "control_relay"
+        ],
     ) -> SessionCopyOutput:
         same_executor = src.executor_id == dst.executor_id
         source_binding = ControlSessionCopyService._binding_snapshot(src)
