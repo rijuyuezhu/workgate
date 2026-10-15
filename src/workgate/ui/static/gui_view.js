@@ -26,6 +26,7 @@ export function createGuiViewer({ request }) {
   let manualEnabled = false;
   let busy = false;
   let dragStart = null;
+  let pointerAvailable = false;
 
   function setManual(enabled) {
     if (!enabled && manualEnabled) {
@@ -59,6 +60,10 @@ export function createGuiViewer({ request }) {
 
   function clearImage() {
     observation = null;
+    pointerAvailable = false;
+    pointerMode.disabled = true;
+    scrollUp.disabled = true;
+    scrollDown.disabled = true;
     image.removeAttribute("src");
     image.hidden = true;
   }
@@ -154,8 +159,14 @@ export function createGuiViewer({ request }) {
       }
       image.src = `data:${mime};base64,${data.image.data}`;
       image.hidden = false;
+      pointerAvailable = data?.capabilities?.coordinate_input === true && Boolean(observation);
+      pointerMode.disabled = !pointerAvailable;
+      scrollUp.disabled = !pointerAvailable;
+      scrollDown.disabled = !pointerAvailable;
       manual.disabled = !observation;
-      state.textContent = "Captured frame · refresh manually to observe changes";
+      state.textContent = pointerAvailable
+        ? "Captured frame · refresh manually to observe changes"
+        : "Captured frame · pointer input unavailable on this backend";
     } catch (error) {
       if (revision === generation && sessionId === currentSession) {
         state.textContent = error instanceof Error ? error.message : String(error);
@@ -166,7 +177,7 @@ export function createGuiViewer({ request }) {
   }
 
   function point(event) {
-    if (!observation || image.hidden) return null;
+    if (!observation || !pointerAvailable || image.hidden) return null;
     const rect = image.getBoundingClientRect();
     if (image.clientWidth <= 0 || image.clientHeight <= 0) return null;
     const fx = (event.clientX - rect.left - image.clientLeft) / image.clientWidth;

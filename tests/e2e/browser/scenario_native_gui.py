@@ -19,6 +19,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
     window_id = "window_gui_e2e"
     actions = []
     states = []
+    pointer_enabled = [True]
 
     page = harness.context.new_page()
     try:
@@ -77,6 +78,9 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
                         "data": {
                             "state_id": token,
                             "state_ttl_s": 30,
+                            "capabilities": {
+                                "coordinate_input": pointer_enabled[0]
+                            },
                             "window": {
                                 "id": window_id,
                                 "bounds": {
@@ -149,6 +153,15 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         assert actions[1]["state_id"] != actions[0]["state_id"]
         page.locator("#session-gui-manual").click()
         expect(page.locator("#session-gui-manual-controls")).to_be_hidden()
+        page.mouse.click(
+            shot["x"] + shot["width"] / 2, shot["y"] + shot["height"] / 2
+        )
+        assert len(actions) == 2
+        pointer_enabled[0] = False
+        page.locator("#session-gui-capture").click()
+        expect(page.locator("#session-gui-pointer-mode")).to_be_disabled()
+        expect(page.locator("#session-gui-scroll-up")).to_be_disabled()
+        page.locator("#session-gui-manual").click()
         page.mouse.click(
             shot["x"] + shot["width"] / 2, shot["y"] + shot["height"] / 2
         )
