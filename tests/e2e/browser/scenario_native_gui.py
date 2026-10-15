@@ -184,6 +184,36 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         page.locator("#session-gui-manual").click()
         expect(page.locator("#session-gui-manual-controls")).to_be_hidden()
         assert len(actions) == 2
+
+        # Refreshing an image must not collapse the scrollable GUI workspace.
+        # Use a tall frame so the bug is observable even with this tiny mock PNG.
+        reject_input[0] = False
+        pointer_enabled[0] = True
+        page.locator("#session-gui-capture").click()
+        expect(page.locator("#session-gui-image")).to_be_visible()
+        page.locator("#session-gui-manual").click()
+        page.locator("#session-gui-image").evaluate(
+            "el => { el.style.height = '900px'; el.style.maxHeight = 'none'; }"
+        )
+        scroll = page.evaluate(
+            """() => {
+                const container = document.querySelector('.task-sessions-main');
+                container.scrollTop = 180;
+                return container.scrollTop;
+            }"""
+        )
+        assert scroll >= 100, scroll
+        with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
+            page.locator("#session-gui-focus").evaluate(
+                "button => button.click()"
+            )
+        assert (
+            page.evaluate(
+                "document.querySelector('.task-sessions-main').scrollTop"
+            )
+            == scroll
+        )
+        expect(page.locator("#session-gui-image")).to_be_visible()
         page.locator("#session-gui-back").click()
         expect(page.locator("#session-gui")).to_be_hidden()
         expect(page.locator(".session-audit")).to_be_visible()

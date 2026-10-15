@@ -58,12 +58,16 @@ export function createGuiViewer({ request }) {
     void loadWindows();
   }
 
-  function clearImage() {
+  function invalidateObservation() {
     observation = null;
     pointerAvailable = false;
     pointerMode.disabled = true;
     scrollUp.disabled = true;
     scrollDown.disabled = true;
+  }
+
+  function clearImage() {
+    invalidateObservation();
     image.removeAttribute("src");
     image.hidden = true;
   }
@@ -140,7 +144,9 @@ export function createGuiViewer({ request }) {
     const currentSession = sessionId;
     const revision = ++generation;
     capture.disabled = true;
-    clearImage();
+    // Keep the previous frame in the layout so capturing does not reset scroll.
+    // The old state token is invalid immediately; it cannot authorize input.
+    invalidateObservation();
     manual.disabled = true;
     state.textContent = "Capturing window…";
     try {
