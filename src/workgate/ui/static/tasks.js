@@ -9,6 +9,7 @@ export function createTasksController({
   renderAuditDetailMessage,
   onInventory = () => {},
   onNavigate = () => {},
+  onSessionChange = () => {},
   initialTaskId = "",
   initialSessionId = "",
 }) {
@@ -252,6 +253,7 @@ export function createTasksController({
 
   function renderSessionDetail() {
     const session = selectedSession();
+    onSessionChange(session && { ...session, availability: sessionAvailability(session) });
     document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
     if (!session) {
       elements.sessionDetailStatus.dataset.state = "other";

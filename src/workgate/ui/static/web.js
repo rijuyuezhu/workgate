@@ -14,6 +14,7 @@ void (async () => {
     { createTerminalController },
     { createFilesController },
     { createTasksController },
+    { createGuiViewer },
     { createMobileNavigation },
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
@@ -23,6 +24,7 @@ void (async () => {
     import(assetUrl("terminal.js")),
     import(assetUrl("files.js")),
     import(assetUrl("tasks.js")),
+    import(assetUrl("gui_view.js")),
     import(assetUrl("mobile_navigation.js")),
   ]);
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -387,6 +389,9 @@ void (async () => {
   });
   files.bind();
 
+  const guiViewer = createGuiViewer({ request });
+  guiViewer.bind();
+
   const tasks = createTasksController({
     elements,
     request,
@@ -399,6 +404,7 @@ void (async () => {
     onInventory: (items) => dashboard.renderTasks(items),
     initialTaskId: deepLink.taskId,
     initialSessionId: deepLink.sessionId,
+    onSessionChange: (session) => guiViewer.selectSession(session),
     onNavigate: (step, options) => mobileNavigation.go("tasks", step, options),
   });
   tasks.bind();
