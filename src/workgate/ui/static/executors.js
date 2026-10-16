@@ -201,9 +201,9 @@ export function createExecutorsController({
 
   function renderDiagnosticCards(container, local) {
     const metrics = [
-      ["CPU", "cpu_percent", "blue"],
-      ["Memory", "memory_percent", "violet"],
-      ["Disk", "disk_percent", "green"],
+      ["CPU", "cpu_percent", "violet"],
+      ["Memory", "memory_percent", "blue"],
+      ["Disk", "disk_percent", "amber"],
     ];
     const grid = document.createElement("div");
     grid.className = "executor-metric-grid";
@@ -216,8 +216,16 @@ export function createExecutorsController({
       title.textContent = label;
       const mark = document.createElement("span");
       mark.className = `dashboard-metric-icon ${tone}`;
-      const glyph = rowIcon(key === "cpu_percent" ? "stdio" : key === "memory_percent" ? "skill" : "project");
-      if (glyph) mark.append(glyph);
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      const shapes = key === "cpu_percent"
+        ? ['<path d="M8 2v3M16 2v3M8 19v3M16 19v3M2 8h3M2 16h3M19 8h3M19 16h3"/>', '<rect x="6" y="6" width="12" height="12" rx="3"/>', '<path d="M9 9h6v6H9z"/>']
+        : key === "memory_percent"
+          ? ['<rect x="4" y="4" width="16" height="16" rx="3"/>', '<path d="M8 8h8M8 12h8M8 16h5"/>']
+          : ['<ellipse cx="12" cy="6" rx="7" ry="3"/>', '<path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"/>'];
+      svg.innerHTML = shapes.join("");
+      mark.append(svg);
       head.append(title, mark);
       const value = document.createElement("strong");
       const number = local?.health?.[key];
@@ -307,7 +315,6 @@ export function createExecutorsController({
     for (const source of ["managed", "global"]) {
       const rows = selected.filter((skill) => skill.source === source).map((skill) => ({
         title: skill.name, detail: source === "managed" ? "Executor-managed" : "User-global · Read only", icon: "skill",
-        status: "Effective",
       }));
       rows.push(...overridden.filter((skill) => skill.source === source).map((skill) => ({
         title: skill.name, detail: "Overridden", icon: "skill", status: "Overridden",

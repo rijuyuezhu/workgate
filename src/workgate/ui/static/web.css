@@ -3183,9 +3183,9 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-metric-card > strong { display: block; margin: 15px 0; color: #30384a; font-size: 27px; letter-spacing: -.03em; }
 .executor-metric-card > strong.executor-metric-unavailable { color: #a1a8b5; font-weight: 500; }
 .executor-metric-track { height: 5px; border-radius: 10px; background: #edf0f4; overflow: hidden; }
-.executor-metric-track > span { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
-.executor-metric-card:nth-child(2) .executor-metric-track > span { background: var(--accent); }
-.executor-metric-card:nth-child(3) .executor-metric-track > span { background: var(--green); }
+.executor-metric-track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.executor-metric-card:nth-child(2) .executor-metric-track > span { background: var(--blue); }
+.executor-metric-card:nth-child(3) .executor-metric-track > span { background: var(--amber); }
 .executor-diagnostic-status { padding: 13px 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
 .executor-diagnostic-status h4 { margin: 0 0 12px; font-size: 12px; }
 .executor-diagnostic-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
