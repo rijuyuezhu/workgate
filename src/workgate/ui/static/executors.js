@@ -326,6 +326,7 @@ export function createExecutorsController({
       state.diagnosticLoading = false;
       state.diagnosticError = "";
       renderDiagnostics();
+      if (state.selectedId) void loadDiagnostics();
     }
     onInventory(state.executors);
   }

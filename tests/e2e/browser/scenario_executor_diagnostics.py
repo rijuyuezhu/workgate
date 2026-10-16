@@ -20,8 +20,11 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.goto(f"{harness.base_url}/ui#executors")
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#executor-list .executor-row")).to_be_visible()
-    # An inventory poll alone must never start a Skill scan or MCP probe.
-    assert not calls
+    # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
+    expect(page.locator("#executor-diagnostics-state")).to_contain_text(
+        "On-demand runtime snapshot"
+    )
+    assert len(calls) == 1
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
     ).first.click()
