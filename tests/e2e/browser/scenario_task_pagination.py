@@ -119,3 +119,53 @@ def run_task_pagination_ui(harness: BrowserHarness) -> None:
     finally:
         page.unroute(pattern, small_pages)
         page.set_viewport_size({"width": 1360, "height": 900})
+
+
+def run_task_reselection_ui(harness: BrowserHarness) -> None:
+    """Re-selecting a Task must preserve its Session list even with cached data."""
+    page = harness.page
+    page.set_viewport_size({"width": 1360, "height": 900})
+    created = harness.api(
+        "POST",
+        "/tools/task",
+        body={"action": "create", "label": "reselect-with-session"},
+    )
+    assert created["status"] == 200 and not created["payload"].get("isError"), (
+        created
+    )
+    task_id = created["payload"]["structuredContent"]["result"]["task_id"]
+    session = harness.api(
+        "POST",
+        "/tools/session_start",
+        body={
+            "executor_id": harness.executor_id,
+            "task_id": task_id,
+            "workdir": ".",
+        },
+    )
+    assert session["status"] == 200 and not session["payload"].get("isError"), (
+        session
+    )
+    session_id = session["payload"]["structuredContent"]["session_id"]
+    page.goto(
+        f"{harness.base_url}/ui?task_id={task_id}&session_id={session_id}#tasks"
+    )
+    entry = page.locator(
+        f'#session-list .session-entry[data-session-id="{session_id}"]'
+    )
+    expect(entry).to_be_visible()
+    task_entry = page.locator(
+        f'#task-list .task-entry[data-task-id="{task_id}"]'
+    )
+    expect(task_entry).to_be_visible()
+    task_entry.click()
+    page.locator("#task-tab-sessions").click()
+    expect(entry).to_be_visible()
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
+    expect(page.locator("#task-list")).to_be_visible()
+    task_entry.click()
+    page.locator("#task-tab-sessions").click()
+    expect(entry).to_be_visible()
+    expect(page.locator("#task-status")).to_have_text("active")
+    page.set_viewport_size({"width": 1360, "height": 900})

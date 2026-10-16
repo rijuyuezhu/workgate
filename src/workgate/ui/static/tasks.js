@@ -634,8 +634,9 @@ export function createTasksController({
     ) return;
 
     controllerState.selectionRevision += 1;
+    const sameTask = next === controllerState.taskId;
     controllerState.taskId = next;
-    controllerState.selectedTaskRow = null;
+    if (!sameTask) controllerState.selectedTaskRow = null;
     controllerState.selectedLegacySession = null;
     showTab("progress");
     const task = selectedTaskSummary();
@@ -644,7 +645,7 @@ export function createTasksController({
       : [];
     controllerState.sessionId = "";
     controllerState.todoDirty = false;
-    clearTaskResources("Loading selected task");
+    if (!sameTask) clearTaskResources("Loading selected task");
     resetSessionAuditWorkspace(
       controllerState.sessionId
         ? "Loading selected session"
