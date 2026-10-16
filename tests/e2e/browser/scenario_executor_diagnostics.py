@@ -25,37 +25,51 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
     ).first.click()
+    bounds = page.locator("#executor-list").bounding_box()
+    assert bounds is not None and 220 <= bounds["width"] <= 260
+    expect(page.locator('[data-executor-subtab="overview"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-body")).to_contain_text(
+        "Control · Network MCP"
+    )
+    expect(page.locator("#executor-mcp-body")).to_contain_text(
+        "Executor · Local MCP"
+    )
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-body")).to_contain_text(
+        "Executor-managed"
+    )
+    page.locator('[data-executor-subtab="diagnostics"]').click()
     expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "On-demand snapshot"
+        "On-demand runtime snapshot"
     )
     expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Control-owned network MCP"
-    )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Executor-local stdio MCP"
-    )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Executor Skill sources"
+        "Agent Bridge manifest"
     )
     assert len(calls) == 1
     page.evaluate(
-        "window.firstDiagnosticNode = document.querySelector('.executor-diagnostics-group')"
+        "window.firstDiagnosticNode = document.querySelector('.executor-manage-group')"
     )
     page.wait_for_timeout(4500)
     assert page.evaluate(
-        "document.querySelector('.executor-diagnostics-group') === window.firstDiagnosticNode"
+        "document.querySelector('.executor-manage-group') === window.firstDiagnosticNode"
     ), "Executor inventory polling replaced diagnostic DOM"
     assert len(calls) == 1, (
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
     page.locator("#executor-diagnostics-refresh").click()
     expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "On-demand snapshot"
+        "On-demand runtime snapshot"
     )
     assert len(calls) == 2
     page.set_viewport_size({"width": 390, "height": 844})
     page.locator("#executor-list .executor-row").first.click()
+    page.locator('[data-executor-subtab="diagnostics"]').click()
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-body")).to_be_visible()
     assert page.evaluate(
         "document.documentElement.scrollWidth <= innerWidth + 1"
     )
