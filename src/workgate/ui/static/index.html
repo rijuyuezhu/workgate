@@ -266,8 +266,28 @@
           <label>Transport <select id="executor-integration-transport"><option value="stdio">stdio · Local process</option><option value="http">HTTP · Network</option></select></label>
           <label id="executor-integration-url-wrap">Server URL <input id="executor-integration-url" type="url" placeholder="https://example.org/mcp" autocomplete="off"></label>
           <label id="executor-integration-command-wrap">Command <input id="executor-integration-command" placeholder="/usr/bin/server" spellcheck="false"></label>
-          <details class="executor-integration-advanced"><summary>Credentials and advanced settings</summary>
-            <p class="muted">Secret references only. Never enter tokens or passwords here.</p>
+          <fieldset class="executor-mcp-auth-settings">
+            <legend>Authentication</legend>
+            <div class="executor-auth-inputs">
+              <label>Method <select id="executor-integration-auth-mode"><option value="none">None</option><option value="secret">Secret references</option><option value="oauth">OAuth 2.0</option></select></label>
+              <label id="executor-integration-oauth-scopes-wrap" hidden>OAuth scopes (space-separated)<input id="executor-integration-oauth-scopes" autocomplete="off" spellcheck="false" placeholder="read write"></label>
+            </div>
+            <div id="executor-mcp-auth-management" hidden>
+              <p id="executor-mcp-auth-status" class="muted" role="status">Loading authentication status…</p>
+              <div id="executor-mcp-secret-list" class="executor-auth-secret-list"></div>
+              <div class="executor-auth-secret-add">
+                <label>Secret name <input id="executor-mcp-secret-name" autocomplete="off" spellcheck="false" placeholder="api_token" maxlength="128"></label>
+                <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Not displayed after saving"></label>
+                <button id="executor-mcp-secret-set" type="button">Store secret</button>
+              </div>
+              <div id="executor-mcp-oauth-actions" hidden>
+                <p class="muted">Interactive OAuth authorization currently uses the CLI on the owning host: <code>workgate mcp auth SERVER</code>. Web authorization follows in a separate issue.</p>
+                <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth credentials</button>
+              </div>
+            </div>
+          </fieldset>
+          <details class="executor-integration-advanced"><summary>Credential references and advanced settings</summary>
+            <p class="muted">Use only named references to stored secrets. Never put raw tokens in this JSON field.</p>
             <label>Advanced settings (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
           </details>
           <label id="executor-integration-args-wrap">Arguments (JSON array) <textarea id="executor-integration-args" rows="3" spellcheck="false">[]</textarea></label>

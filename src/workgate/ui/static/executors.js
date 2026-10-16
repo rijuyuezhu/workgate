@@ -57,7 +57,7 @@ export function createExecutorsController({
     renderDiagnostics();
     void loadDiagnostics(true);
     void refreshMetrics();
-    void loadManagement();
+    if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
   }
 
   function timestamp(value, fallback = "Never") {
@@ -132,7 +132,7 @@ export function createExecutorsController({
         renderDiagnostics();
         void loadDiagnostics();
         void refreshMetrics();
-        void loadManagement();
+        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
         onNavigate("detail");
       });
       elements.executorList.append(button);
@@ -324,7 +324,9 @@ export function createExecutorsController({
     state.management = null;
     renderManagement();
     const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"]];
+    const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     const results = await Promise.all(sources.map(async ([owner, kind]) => {
+      if (owner === "executor" && !online) return { error: "Executor offline · local management unavailable" };
       try { return await request(managementQuery(owner, kind)); }
       catch (error) {
         if (error.authenticationRequired) { void reloadApp(); return { error: "Authentication required" }; }
@@ -381,7 +383,11 @@ export function createExecutorsController({
     elements.executorIntegrationMcpFields.hidden = skill;
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
+    elements.executorMcpAuthManagement.hidden = skill || !editing.item;
     if (skill) return;
+    const mode = elements.executorIntegrationAuthMode.value;
+    elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
+    elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
     elements.executorIntegrationTransport.value = owner === "control" ? "http" : "stdio";
     elements.executorIntegrationTransport.disabled = true;
     elements.executorIntegrationUrlWrap.hidden = owner !== "control";
@@ -412,6 +418,12 @@ export function createExecutorsController({
     elements.executorIntegrationContent.value = "";
     elements.executorIntegrationArgs.value = "[]";
     elements.executorIntegrationAdvanced.value = "{}";
+    elements.executorIntegrationAuthMode.value = "none";
+    elements.executorIntegrationOAuthScopes.value = "";
+    elements.executorMcpSecretName.value = "";
+    elements.executorMcpSecretValue.value = "";
+    elements.executorMcpSecretList.replaceChildren();
+    elements.executorMcpAuthStatus.textContent = "Loading auth status…";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
     elements.executorIntegrationToggle.textContent = edit.enabled ? "Disable" : "Enable";
@@ -434,8 +446,12 @@ export function createExecutorsController({
         elements.executorIntegrationCommand.value = config.command || "";
         elements.executorIntegrationArgs.value = JSON.stringify(config.args || [], null, 2);
         const advanced = {};
-        for (const key of ["auth", "integrationId", "env", "headers"]) if (config[key] !== undefined) advanced[key] = config[key];
+        for (const key of ["integrationId", "env", "headers"]) if (config[key] !== undefined) advanced[key] = config[key];
         elements.executorIntegrationAdvanced.value = JSON.stringify(advanced, null, 2);
+        elements.executorIntegrationAuthMode.value = config.auth?.mode || "none";
+        elements.executorIntegrationOAuthScopes.value = (config.auth?.scopes || []).join(" ");
+        setEditorType();
+        void loadEditorAuth(edit);
       }
       editorStatus("Review and save. Edits do not restart MCP servers.");
       elements.executorIntegrationSave.disabled = false;
@@ -475,6 +491,70 @@ export function createExecutorsController({
     }
   }
 
+  function authQuery(edit) {
+    const params = new URLSearchParams({owner: edit.owner, name: edit.name});
+    if (edit.owner === "executor") params.set("executor_id", edit.executorId);
+    return `/integrations/auth?${params.toString()}`;
+  }
+
+  async function loadEditorAuth(edit) {
+    if (edit.kind !== "mcp" || !edit.item) return;
+    try {
+      const result = await request(authQuery(edit));
+      if (state.editor !== edit) return;
+      edit.authStatus = result;
+      const status = result.auth || {};
+      elements.executorMcpAuthStatus.textContent = `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` · expires ${new Date(status.expires_at * 1000).toLocaleString()}` : ""}`;
+      const list = elements.executorMcpSecretList;
+      list.replaceChildren();
+      for (const key of result.secret_names || []) {
+        const line = document.createElement("div");
+        line.className = "executor-auth-secret-row";
+        const name = document.createElement("code");
+        name.textContent = key;
+        const label = document.createElement("span");
+        label.textContent = "Stored · value hidden";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", () => {
+          if (globalThis.confirm(`Remove stored secret “${key}”?`)) void mutateAuth("delete_secret", {secret_name:key});
+        });
+        line.append(name, label, remove);
+        list.append(line);
+      }
+      if (!list.childElementCount) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = "No private secrets saved for this MCP.";
+        list.append(empty);
+      }
+    } catch (error) {
+      if (state.editor === edit) elements.executorMcpAuthStatus.textContent = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function mutateAuth(action, fields = {}) {
+    const edit = state.editor;
+    if (!edit || edit.kind !== "mcp" || !edit.item) return;
+    const body = {owner:edit.owner, executor_id:edit.executorId, name:edit.name, action, ...fields};
+    elements.executorMcpSecretSet.disabled = true;
+    elements.executorMcpOAuthClear.disabled = true;
+    try {
+      await request("/integrations/auth", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+      if (state.editor !== edit) return;
+      elements.executorMcpSecretValue.value = "";
+      editorStatus(action === "clear_oauth" ? "Local OAuth credentials cleared (remote tokens not revoked)." : "Private credential updated. Values are never shown.");
+      await loadEditorAuth(edit);
+    } catch (error) {
+      if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      elements.executorMcpSecretValue.value = "";
+      elements.executorMcpSecretSet.disabled = false;
+      elements.executorMcpOAuthClear.disabled = false;
+    }
+  }
+
   function editorConfig() {
     const edit = state.editor;
     if (!edit) return null;
@@ -482,8 +562,11 @@ export function createExecutorsController({
     try { advanced = JSON.parse(elements.executorIntegrationAdvanced.value || "{}"); }
     catch { throw new Error("Advanced settings must be valid JSON."); }
     if (!advanced || Array.isArray(advanced) || typeof advanced !== "object") throw new Error("Advanced settings must be an object.");
-    if (Object.keys(advanced).some((key) => !["auth", "env", "headers", "integrationId"].includes(key))) throw new Error("Advanced settings may contain only auth, env, headers and integrationId.");
-    const config = { type: edit.owner === "control" ? "http" : "stdio", ...advanced };
+    if (Object.keys(advanced).some((key) => !["env", "headers", "integrationId"].includes(key))) throw new Error("Advanced settings may contain only env, headers and integrationId.");
+    const mode = elements.executorIntegrationAuthMode.value;
+    if (mode === "oauth" && edit.owner !== "control") throw new Error("OAuth requires a network HTTP MCP server.");
+    const config = { type: edit.owner === "control" ? "http" : "stdio", ...advanced,
+      auth: {mode, scopes: mode === "oauth" ? [...new Set(elements.executorIntegrationOAuthScopes.value.trim().split(/\s+/).filter(Boolean))] : []} };
     if (edit.owner === "control") config.url = elements.executorIntegrationUrl.value.trim();
     else {
       config.command = elements.executorIntegrationCommand.value.trim();
@@ -817,9 +900,20 @@ export function createExecutorsController({
       }
       setEditorType();
     });
+    elements.executorIntegrationAuthMode.addEventListener("change", setEditorType);
+    elements.executorMcpSecretSet.addEventListener("click", () => {
+      const key = elements.executorMcpSecretName.value.trim();
+      const value = elements.executorMcpSecretValue.value;
+      if (!key || !value) { editorStatus("Enter both a secret reference name and a value."); return; }
+      void mutateAuth("set_secret", {secret_name:key, secret_value:value});
+    });
+    elements.executorMcpOAuthClear.addEventListener("click", () => {
+      if (globalThis.confirm("Clear locally stored OAuth credentials? This does not revoke tokens at the provider."))
+        void mutateAuth("clear_oauth");
+    });
     elements.executorIntegrationClose.addEventListener("click", () => elements.executorIntegrationDialog.close());
     elements.executorIntegrationCancel.addEventListener("click", () => elements.executorIntegrationDialog.close());
-    elements.executorIntegrationDialog.addEventListener("close", () => { state.editor = null; elements.executorIntegrationSave.disabled = false; });
+    elements.executorIntegrationDialog.addEventListener("close", () => { state.editor = null; elements.executorMcpSecretValue.value = ""; elements.executorIntegrationSave.disabled = false; });
     elements.executorIntegrationForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const edit = state.editor;

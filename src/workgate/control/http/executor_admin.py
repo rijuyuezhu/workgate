@@ -1,7 +1,8 @@
 """Authenticated owner administration for final executors and pairing."""
 
 import asyncio
-from typing import Any, cast
+import math
+from typing import Any, Literal, cast
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -9,6 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
+from ...agent_bridge.auth_management import manage_mcp_auth
 from ...agent_bridge.diagnostics import manifest_diagnostics
 from ...agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
 from ...agent_bridge.state import load_agent_manifest
@@ -22,6 +24,17 @@ from ..pairing import (
     ExecutorPairingService,
     PairingAttemptView,
 )
+
+
+class _IntegrationAuthBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    owner: Literal["control", "executor"]
+    name: str = Field(min_length=1, max_length=128)
+    action: Literal["set_secret", "delete_secret", "clear_oauth"]
+    executor_id: str | None = Field(default=None, max_length=128)
+    secret_name: str | None = Field(default=None, max_length=128)
+    secret_value: str | None = Field(default=None, max_length=65_536)
 
 
 class _IntegrationMutationBody(BaseModel):
@@ -310,6 +323,108 @@ def executor_admin_routes(
                 }
             )
 
+    async def integration_auth(request: Request) -> Response:
+        """Credential metadata and mutations on the owning Control or Executor."""
+        try:
+            require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if request.method == "GET":
+            owner = request.query_params.get("owner")
+            name = request.query_params.get("name")
+            executor_id = request.query_params.get("executor_id")
+            action = "status"
+            secret_name = secret_value = None
+        else:
+            try:
+                body = _IntegrationAuthBody.model_validate(await request.json())
+            except ValidationError, ValueError, TypeError:
+                return _json_error(
+                    "InvalidAuthRequest",
+                    "Invalid MCP auth fields",
+                    status_code=400,
+                )
+            owner, name, executor_id = body.owner, body.name, body.executor_id
+            action, secret_name, secret_value = (
+                body.action,
+                body.secret_name,
+                body.secret_value,
+            )
+        if owner not in {"control", "executor"} or not name or len(name) > 128:
+            return _json_error(
+                "InvalidAuthRequest",
+                "Select a configured MCP server",
+                status_code=400,
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        if owner == "executor":
+            if not executor_id or len(executor_id) > 128:
+                return _json_error(
+                    "InvalidExecutor", "Select an Executor", status_code=400
+                )
+            record = runtime.control_state.snapshot_executors().get(executor_id)
+            if record is None or record.revoked_at is not None:
+                return _json_error(
+                    "UnknownExecutor", "Unknown Executor", status_code=404
+                )
+            if not await runtime.executor_transport.is_online(executor_id):
+                return _json_error(
+                    "OfflineExecutor", "Executor offline", status_code=503
+                )
+        try:
+            if owner == "control":
+                result = await asyncio.to_thread(
+                    manage_mcp_auth,
+                    runtime.config.agent_config_dir,
+                    runtime.config.agent_auth_dir,
+                    action,
+                    name=name,
+                    owner_type="network",
+                    secret_name=secret_name,
+                    secret_value=secret_value,
+                )
+            else:
+                args = {"action": action, "name": name}
+                if secret_name is not None:
+                    args["secret_name"] = secret_name
+                if secret_value is not None:
+                    args["secret_value"] = secret_value
+                response = await runtime.executor_transport.call(
+                    executor_id,
+                    "ui.mcp.auth",
+                    args,
+                    timeout_s=12,
+                )
+                if not response.ok or not isinstance(response.result, dict):
+                    raise ValueError("Executor rejected MCP auth request")
+                result = response.result
+            if request.method == "POST":
+                audit(
+                    "integration_auth_management",
+                    owner=owner,
+                    executor_id=executor_id,
+                    action=action,
+                    name=name,
+                    ok=True,
+                )
+            return _json_ok(result)
+        except ValidationError, KeyError, ValueError, OSError:
+            return _json_error(
+                "AuthRejected",
+                "Invalid MCP auth operation; check server and references",
+                status_code=409,
+            )
+        except RuntimeError, TimeoutError, ConnectionError:
+            return _json_error(
+                "AuthUnavailable",
+                "MCP auth service unavailable",
+                status_code=503,
+            )
+
     async def integrations(request: Request) -> Response:
         """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
         _require_executor_admin_scope()
@@ -383,6 +498,16 @@ def executor_admin_routes(
                 require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
             except MissingOAuthScopeError as exc:
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if (
+            request.method == "POST"
+            and action in {"update", "enable", "disable", "delete", "remove"}
+            and not revision
+        ):
+            return _json_error(
+                "RevisionRequired",
+                "Reload the entry before modifying it",
+                status_code=400,
+            )
         if request.method == "GET" and action not in {"list", "get"}:
             return _json_error(
                 "InvalidMethod", "Mutations require POST", status_code=405
@@ -560,6 +685,11 @@ def executor_admin_routes(
         Route(api_prefix + "/executors", executors, methods=["GET"]),
         Route(
             api_prefix + "/integrations", integrations, methods=["GET", "POST"]
+        ),
+        Route(
+            api_prefix + "/integrations/auth",
+            integration_auth,
+            methods=["GET", "POST"],
         ),
         Route(
             api_prefix + "/executors/diagnostics", diagnostics, methods=["GET"]

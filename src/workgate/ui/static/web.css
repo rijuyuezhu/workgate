@@ -3306,3 +3306,17 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] strong,
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] .executor-row-mark { color: #858d9a; }
+.executor-mcp-auth-settings { border: 1px solid #e8ebf1; border-radius: 6px; padding: 11px 13px; display: grid; gap: 12px; min-width: 0; }
+.executor-mcp-auth-settings legend { color: #566178; font-size: 12px; font-weight: 700; padding: 0 5px; }
+.executor-auth-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.executor-auth-secret-list { display: grid; gap: 5px; }
+.executor-auth-secret-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 9px; padding: 6px 0; border-bottom: 1px solid #eceff4; }
+.executor-auth-secret-row code { color: #364355; font-size: 11px; }
+.executor-auth-secret-row span { color: #8592a4; font-size: 11px; }
+.executor-auth-secret-row button { font-size: 11px; padding: 4px 8px; }
+.executor-auth-secret-add { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; align-items: end; gap: 8px; }
+.executor-auth-secret-add button { white-space: nowrap; }
+#executor-mcp-oauth-actions { border-top: 1px solid #eceff4; padding-top: 10px; }
+#executor-mcp-oauth-actions p { font-size: 11px; line-height: 1.6; }
+#executor-mcp-oauth-actions code { overflow-wrap: anywhere; }
+@media (max-width: 620px) { .executor-auth-inputs { grid-template-columns: minmax(0,1fr); } .executor-auth-secret-add { grid-template-columns: minmax(0,1fr); } }

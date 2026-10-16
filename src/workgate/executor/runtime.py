@@ -330,84 +330,15 @@ class ExecutorRuntime:
             from .diagnostics import executor_diagnostics
 
             return await asyncio.to_thread(executor_diagnostics, self.config)
-        if command.op == "ui.mcp.manage":
-            if command.session_id is not None:
-                raise ValueError("Executor MCP management is not session-bound")
-            from ..agent_bridge.management import (
-                ManagedMcpConfig,
-                manage_mcp_manifest,
-            )
-
-            args = command.args
-            action = args.get("action")
-            name = args.get("name")
-            raw_config = args.get("config")
-            revision = args.get("expected_revision")
-            if not isinstance(action, str) or (
-                name is not None and not isinstance(name, str)
-            ):
-                raise ValueError("Invalid Executor MCP management arguments")
-            config = (
-                ManagedMcpConfig.model_validate(raw_config)
-                if isinstance(raw_config, dict)
-                else None
-            )
-            if raw_config is not None and config is None:
-                raise ValueError("Invalid MCP config")
-            if revision is not None and not isinstance(revision, str):
-                raise ValueError("Invalid MCP revision")
-            result = await asyncio.to_thread(
-                manage_mcp_manifest,
-                self.config.agent_config_dir,
-                action,
-                name=name,
-                config=config,
-                owner_type="stdio",
-                auth_dir=self.config.agent_auth_dir,
-                expected_revision=revision,
-            )
-            if action == "get" and name is not None:
-                from ..agent_bridge.state import load_agent_manifest
-
-                current = load_agent_manifest(
-                    self.config.agent_config_dir
-                ).data.mcp_servers[name]
-                try:
-                    result["editable_config"] = ManagedMcpConfig.model_validate(
-                        current.model_dump(mode="json", by_alias=True)
-                    ).model_dump(mode="json", by_alias=True, exclude_none=True)
-                except ValueError:
-                    result["requires_replacement"] = True
-            return result
-        if command.op == "ui.skill.manage":
-            # Control-authorized management is Executor-owned, not coupled to
-            # any user Session. The HTTP administration endpoint will gate it.
+        if command.op in {"ui.mcp.auth", "ui.mcp.manage", "ui.skill.manage"}:
             if command.session_id is not None:
                 raise ValueError(
-                    "Executor Skill management is not session-bound"
+                    "Executor administration cannot be session-bound"
                 )
-            from ..agent_bridge.skill_management import manage_skill
+            from .integration_admin import manage_executor_integration
 
-            args = command.args
-            name = args.get("name")
-            content = args.get("content")
-            revision = args.get("expected_revision")
-            action = args.get("action")
-            if not isinstance(action, str):
-                raise ValueError("Invalid Executor Skill management action")
-            if name is not None and not isinstance(name, str):
-                raise ValueError("Invalid Executor Skill name")
-            if content is not None and not isinstance(content, str):
-                raise ValueError("Invalid Executor Skill content")
-            if revision is not None and not isinstance(revision, str):
-                raise ValueError("Invalid Executor Skill revision")
-            return await asyncio.to_thread(
-                manage_skill,
-                self.config.agent_config_dir,
-                action,
-                name=name,
-                content=content,
-                expected_revision=revision,
+            return await manage_executor_integration(
+                self.config, command.op, command.args
             )
         if command.op.startswith("ui.files."):
             if command.session_id is not None:

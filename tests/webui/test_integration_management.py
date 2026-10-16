@@ -44,6 +44,16 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
             },
         )
 
+    def change(client, owner, kind, action, name):
+        fetched = get(client, owner, kind, action="get", name=name)
+        assert fetched.status_code == 200, fetched.text
+        revision = fetched.json()["data"][
+            "server" if kind == "mcp" else "skill"
+        ]["revision"]
+        return post(
+            client, owner, kind, action, name=name, expected_revision=revision
+        )
+
     with TestClient(app, base_url=BASE) as client:
         assert get(client, "control", "mcp").status_code == 200
         assert get(client, "executor", "mcp").status_code == 200
@@ -63,6 +73,12 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
         assert control["servers"][0]["name"] == "remote"
         assert (
             post(client, "control", "mcp", "disable", name="remote").status_code
+            == 400
+        )
+        assert (
+            change(
+                client, "control", "mcp", "disable", name="remote"
+            ).status_code
             == 200
         )
         assert (
@@ -72,7 +88,9 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
             is False
         )
         assert (
-            post(client, "control", "mcp", "remove", name="remote").status_code
+            change(
+                client, "control", "mcp", "remove", name="remote"
+            ).status_code
             == 200
         )
         assert (
@@ -91,11 +109,15 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
             == "stdio"
         )
         assert (
-            post(client, "executor", "mcp", "disable", name="stdio").status_code
+            change(
+                client, "executor", "mcp", "disable", name="stdio"
+            ).status_code
             == 200
         )
         assert (
-            post(client, "executor", "mcp", "remove", name="stdio").status_code
+            change(
+                client, "executor", "mcp", "remove", name="stdio"
+            ).status_code
             == 200
         )
         created = post(
@@ -322,3 +344,197 @@ def test_oauth_management_requires_separate_write_scope(tmp_path):
                         headers=headers,
                     )
                     assert created.status_code == 200, created.text
+
+
+def test_mcp_auth_management_private_store_and_owner_authority(tmp_path):
+    """Control HTTP and remote stdio credentials never enter responses or Audit."""
+    from workgate.agent_bridge.auth_store import AgentAuthStore
+
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        base_url=BASE,
+        agent_bridge_enabled=True,
+    )
+    app, harness = build_paired_http_app(settings)
+    secret = "EXTREMELY_PRIVATE_AUTH_TOKEN_69405"
+
+    def post(client, *, owner, name, action, **kwargs):
+        return client.post(
+            "/api/ui/integrations/auth",
+            json={
+                "owner": owner,
+                "name": name,
+                "action": action,
+                "executor_id": harness.executor_id,
+                **kwargs,
+            },
+        )
+
+    def status(client, owner, name):
+        return client.get(
+            "/api/ui/integrations/auth",
+            params={
+                "owner": owner,
+                "name": name,
+                "executor_id": harness.executor_id,
+            },
+        )
+
+    with TestClient(app, base_url=BASE) as client:
+        for owner, name, config in (
+            (
+                "control",
+                "remote",
+                {"type": "http", "url": "https://example.org/mcp"},
+            ),
+            ("executor", "local", {"type": "stdio", "command": "echo"}),
+        ):
+            added = client.post(
+                "/api/ui/integrations",
+                json={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "action": "register",
+                    "executor_id": harness.executor_id,
+                    "name": name,
+                    "config": config,
+                },
+            )
+            assert added.status_code == 200, added.text
+            initial = status(client, owner, name)
+            assert initial.status_code == 200, initial.text
+            assert initial.json()["data"]["auth"]["status"] == "not_required"
+            changed = post(
+                client,
+                owner=owner,
+                name=name,
+                action="set_secret",
+                secret_name="api_key",
+                secret_value=secret,
+            )
+            assert changed.status_code == 200, changed.text
+            assert secret not in changed.text
+            assert changed.json()["data"]["secret_names"] == ["api_key"]
+            assert status(client, owner, name).json()["data"][
+                "secret_names"
+            ] == ["api_key"]
+            removed = post(
+                client,
+                owner=owner,
+                name=name,
+                action="delete_secret",
+                secret_name="api_key",
+            )
+            assert removed.status_code == 200
+            assert removed.json()["data"]["secret_names"] == []
+            assert secret not in removed.text
+        assert (
+            post(
+                client,
+                owner="executor",
+                name="remote",
+                action="set_secret",
+                secret_name="api_key",
+                secret_value=secret,
+            ).status_code
+            == 409
+        )
+        assert (
+            post(
+                client,
+                owner="control",
+                name="local",
+                action="set_secret",
+                secret_name="api_key",
+                secret_value=secret,
+            ).status_code
+            == 409
+        )
+        assert (
+            post(
+                client,
+                owner="control",
+                name="missing",
+                action="set_secret",
+                secret_name="api_key",
+                secret_value=secret,
+            ).status_code
+            == 409
+        )
+        assert (
+            post(
+                client, owner="control", name="remote", action="clear_oauth"
+            ).status_code
+            == 409
+        )
+        invalid = post(
+            client,
+            owner="control",
+            name="remote",
+            action="set_secret",
+            secret_name="api_key",
+            secret_value="",
+        )
+        assert invalid.status_code == 409
+        assert secret not in settings.audit_log_path.read_text()
+        assert not AgentAuthStore(settings.agent_auth_dir).list_secrets()
+
+
+def test_mcp_auth_endpoint_denied_without_management_scope(tmp_path):
+    from workgate.config.role_config import use_role_config
+    from workgate.oauth.core.scopes import SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE
+    from workgate.oauth.core.state import OAuthState, use_oauth_state
+    from workgate.oauth.protocol.token_codec import issue_access_token
+
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="oauth",
+        base_url=BASE,
+    )
+    with use_oauth_state(OAuthState(tmp_path / ".oauth-state")):
+        app, harness = build_paired_http_app(settings)
+        with (
+            TestClient(app, base_url=BASE) as client,
+            use_role_config(harness.control.config),
+        ):
+            for scope, expected in (
+                (SCOPE_EXECUTOR_USE, 403),
+                (SCOPE_SHELL_WRITE, 403),
+                (f"{SCOPE_EXECUTOR_USE} {SCOPE_SHELL_WRITE}", 409),
+            ):
+                token = issue_access_token(
+                    client_id="auth-test",
+                    scope=scope,
+                    resource=f"{BASE}/mcp",
+                    subject="owner",
+                )
+                headers = {"Authorization": f"Bearer {token}"}
+                response = client.get(
+                    "/api/ui/integrations/auth",
+                    params={
+                        "owner": "control",
+                        "name": "unknown",
+                    },
+                    headers=headers,
+                )
+                assert response.status_code == expected, response.text
+                mutation = client.post(
+                    "/api/ui/integrations/auth",
+                    json={
+                        "owner": "control",
+                        "name": "unknown",
+                        "action": "set_secret",
+                        "secret_name": "key",
+                        "secret_value": "CREDENTIAL_VALUE",
+                    },
+                    headers=headers,
+                )
+                assert mutation.status_code == expected, mutation.text
+                assert "CREDENTIAL_VALUE" not in mutation.text
