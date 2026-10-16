@@ -1644,7 +1644,7 @@
               }
             ]
           },
-          "Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically (the result explicitly identifies it); supply task_id to reuse an existing Task. A Task does not select the executor or workdir."
+          "Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically; use the returned task_id as Task context in later calls, and task_created to distinguish creation from reuse. No separate user-facing announcement is required. Supply task_id to reuse an existing Task. A Task does not select the executor or workdir."
         ]
       ]
     },
@@ -10901,7 +10901,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically (the result explicitly identifies it); supply task_id to reuse an existing Task. A Task does not select the executor or workdir.",
+      "description": "Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically; use the returned task_id as Task context in later calls, and task_created to distinguish creation from reuse. No separate user-facing announcement is required. Supply task_id to reuse an existing Task. A Task does not select the executor or workdir.",
       "inputSchema": {
         "properties": {
           "executor_id": {
