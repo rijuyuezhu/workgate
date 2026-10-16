@@ -35,10 +35,10 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text(
-        "Control · Network MCP"
+        "Control"
     )
     expect(page.locator("#executor-mcp-body")).to_contain_text(
-        "Executor · Local MCP"
+        "Executor"
     )
     page.locator('[data-executor-subtab="skills"]').click()
     expect(page.locator("#executor-skills-body")).to_contain_text(
@@ -49,7 +49,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         "Snapshot available"
     )
     expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Agent Bridge"
+        "Memory"
     )
     assert len(calls) == 1
     page.evaluate(

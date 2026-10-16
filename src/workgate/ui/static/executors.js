@@ -243,22 +243,7 @@ export function createExecutorsController({
       grid.append(card);
     }
     container.append(grid);
-    const section = document.createElement("section");
-    section.className = "executor-diagnostic-status";
-    const heading = document.createElement("h4");
-    heading.textContent = "Agent Bridge";
-    section.append(heading);
-    const status = document.createElement("div");
-    status.className = "executor-diagnostic-status-row";
-    const name = document.createElement("span");
-    name.textContent = "Manifest";
-    const chip = document.createElement("span");
-    chip.className = "executor-manage-pill";
-    chip.textContent = local?.bridge?.status || "Unavailable";
-    chip.dataset.state = local?.bridge?.status === "loaded" ? "enabled" : "disabled";
-    status.append(name, chip);
-    section.append(status);
-    container.append(section);
+
   }
 
   function renderDiagnostics() {
@@ -275,8 +260,8 @@ export function createExecutorsController({
     }
     const status = (message) => {
       elements.executorDiagnosticsState.textContent = message;
-      addGroup(mcp, "MCP configuration", [{title: message}]);
-      addGroup(skills, "Skill sources", [{title: message}]);
+      addGroup(mcp, "Control", [{title: message, empty: true}]);
+      addGroup(skills, "Executor-managed", [{title: message, empty: true}]);
     };
     if (state.diagnosticId !== state.selectedId) return status("Open this Executor to load its configuration.");
     if (state.diagnosticLoading) return status("Loading on-demand configuration…");
@@ -297,15 +282,15 @@ export function createExecutorsController({
       if (rows.length) return rows;
       return [{title: "No configured servers", empty: true}];
     }
-    addGroup(mcp, "Control · Network MCP", mcpRows(data.control_mcp));
-    addGroup(mcp, "Executor · Local MCP", mcpRows(data.executor?.bridge));
+    addGroup(mcp, "Control", mcpRows(data.control_mcp));
+    addGroup(mcp, "Executor", mcpRows(data.executor?.bridge));
     if (data.executor?.bridge?.errors || data.control_mcp?.errors) {
-      addGroup(mcp, "Configuration warnings", [{title: "Manifest needs attention", detail: "Invalid manifest"}]);
+      addGroup(mcp, "Configuration warnings", [{title: "MCP configuration invalid", warning: true}]);
     }
 
     const local = data.executor;
     if (!local) {
-      addGroup(skills, "Executor Skill sources", [{title: "Unavailable", empty: true}]);
+      addGroup(skills, "Executor-managed", [{title: "Unavailable", empty: true}]);
       renderDiagnosticCards(body, null);
       return;
     }
