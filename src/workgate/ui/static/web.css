@@ -2379,7 +2379,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 .file-browser .file-entry-name { display: flex; min-width: 0; align-items: center; gap: 7px; }
 .file-browser .file-entry-detail, .file-browser .file-entry-modified { color: #939cab; font-size: 11px; text-align: right; overflow-wrap: anywhere; }
 /* The Files rail is narrow even in a wide desktop window. */
-@container (max-width: 320px) {
+@container (max-width: 420px) {
   .file-column-heading { display: none; }
   .file-browser .file-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .file-browser .file-entry-name { grid-column: 1 / -1; }
@@ -2460,10 +2460,6 @@ input[type=checkbox] { accent-color: #6759e7; }
 @media (max-width: 480px) {
   .file-browser { padding: 10px; }
   .file-browser-heading { display: none; }
-  .file-column-heading { display: none; }
-  .file-browser .file-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .file-browser .file-entry-name { grid-column: 1 / -1; }
-  .file-browser .file-entry-detail { text-align: left; }
   .file-panel { padding: 12px; }
   .file-actions button:disabled { display: none; }
   .terminal-heading { flex-wrap: wrap; }
