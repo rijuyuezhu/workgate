@@ -566,6 +566,7 @@ export function createExecutorsController({
     const mode = elements.executorIntegrationAuthMode.value;
     if (mode === "oauth" && edit.owner !== "control") throw new Error("OAuth requires a network HTTP MCP server.");
     const config = { type: edit.owner === "control" ? "http" : "stdio", ...advanced,
+      enabled: edit.item ? edit.enabled : true,
       auth: {mode, scopes: mode === "oauth" ? [...new Set(elements.executorIntegrationOAuthScopes.value.trim().split(/\s+/).filter(Boolean))] : []} };
     if (edit.owner === "control") config.url = elements.executorIntegrationUrl.value.trim();
     else {
