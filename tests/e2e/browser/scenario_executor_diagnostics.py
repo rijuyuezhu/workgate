@@ -108,9 +108,12 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         incomplete_diagnostics(route)
 
     page.route(diagnostic_url, capture_diagnostics)
-    page.locator("#executor-list .executor-row").filter(
-        has_text="online"
-    ).first.click()
+    page.reload()
+    expect(
+        page.locator("#executor-list .executor-row")
+        .filter(has_text="online")
+        .first
+    ).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("type-omitted")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Unknown")

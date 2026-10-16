@@ -339,6 +339,7 @@ export function createExecutorsController({
 
   async function loadDiagnostics(force = false) {
     const executorId = state.selectedId;
+    if (elements.executorMcpBody.closest("[data-app-view]")?.hidden) return;
     if (!executorId || !selectedExecutor() || selectedExecutor().revoked_at) {
       state.diagnosticGeneration += 1;
       state.diagnosticId = "";
@@ -727,7 +728,14 @@ export function createExecutorsController({
     elements.executorPairDialog.addEventListener("close", clearPairReview);
   }
 
+  function activate() {
+    if (!selectedExecutor()) return;
+    void loadDiagnostics(true);
+    void refreshMetrics();
+  }
+
   return {
+    activate,
     bind,
     select,
     refresh,

@@ -486,6 +486,9 @@ void (async () => {
     }
     if (view !== "tasks") guiViewer.close();
     mobileNavigation.sync(view);
+    if (view === "executors" && (config.authMode !== "oauth" || authenticated)) {
+      executors.activate();
+    }
 
     if (syncHash && location.hash !== `#${view}`) {
       const url = `${location.pathname}${location.search}#${view}`;
