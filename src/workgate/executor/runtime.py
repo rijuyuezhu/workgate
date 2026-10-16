@@ -322,6 +322,14 @@ class ExecutorRuntime:
             and command.session_id is not None
         ):
             raise ValueError("dashboard_snapshot must not carry session_id")
+        if command.op == "ui.executor_diagnostics":
+            if command.session_id is not None or command.args:
+                raise ValueError(
+                    "executor diagnostics accept no Session or arguments"
+                )
+            from .diagnostics import executor_diagnostics
+
+            return await asyncio.to_thread(executor_diagnostics, self.config)
         if command.op.startswith("ui.files."):
             if command.session_id is not None:
                 raise ValueError(

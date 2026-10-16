@@ -14,6 +14,11 @@ export function createExecutorsController({
     generation: 0,
     timer: null,
     pairing: null,
+    diagnosticId: "",
+    diagnostic: null,
+    diagnosticGeneration: 0,
+    diagnosticLoading: false,
+    diagnosticError: "",
   };
 
   function selectedExecutor() {
@@ -25,6 +30,7 @@ export function createExecutorsController({
     state.selectedId = executorId;
     renderList();
     renderDetails();
+    void loadDiagnostics();
   }
 
   function timestamp(value, fallback = "Never") {
@@ -90,9 +96,120 @@ export function createExecutorsController({
         state.selectedId = executor.executor_id;
         renderList();
         renderDetails();
+        void loadDiagnostics();
         onNavigate("detail");
       });
       elements.executorList.append(button);
+    }
+  }
+
+  function renderDiagnostics() {
+    const body = elements.executorDiagnosticsBody;
+    body.replaceChildren();
+    elements.executorDiagnosticsRefresh.disabled = !selectedExecutor() || state.diagnosticLoading;
+    if (!selectedExecutor()) {
+      elements.executorDiagnosticsState.textContent = "Select an executor to inspect its diagnostics.";
+      return;
+    }
+    if (state.diagnosticId !== state.selectedId) {
+      elements.executorDiagnosticsState.textContent = "Diagnostics have not been requested.";
+      return;
+    }
+    if (state.diagnosticLoading) {
+      elements.executorDiagnosticsState.textContent = "Loading read-only diagnostics…";
+      return;
+    }
+    if (state.diagnosticError) {
+      elements.executorDiagnosticsState.textContent = state.diagnosticError;
+      return;
+    }
+    const data = state.diagnostic;
+    if (!data) return;
+    elements.executorDiagnosticsState.textContent =
+      data.status === "available" ? "On-demand snapshot · no MCP server probes" :
+      data.status === "offline" ? "Executor offline · local diagnostics unavailable" :
+      "Executor diagnostic RPC unavailable · retry when connected";
+
+    function group(title, lines) {
+      const section = document.createElement("section");
+      section.className = "executor-diagnostics-group";
+      const heading = document.createElement("h4");
+      heading.textContent = title;
+      section.append(heading);
+      for (const line of lines) {
+        const p = document.createElement("p");
+        p.textContent = line;
+        section.append(p);
+      }
+      body.append(section);
+    }
+    function serverLines(snapshot) {
+      if (!snapshot) return ["Unavailable"];
+      const explanations = {
+        missing_config: "No manifest found on this host",
+        invalid_config: "Manifest validation failed; inspect local logs (details withheld)",
+        unavailable: "Manifest cannot be read on this host",
+      };
+      const rows = (snapshot.servers || []).map((server) =>
+        `${server.name} · ${server.enabled ? "enabled" : "disabled"} (${server.type})`);
+      return [
+        `Manifest: ${snapshot.status || "unavailable"}${snapshot.enabled === false ? " · disabled by Control" : ""}`,
+        ...(explanations[snapshot.status] ? [explanations[snapshot.status]] : []),
+        ...(snapshot.errors ? [`Configuration errors: ${snapshot.errors} (details withheld)`] : []),
+        ...(rows.length ? rows : ["No configured servers for this owner"]),
+        ...(snapshot.truncated ? ["Additional servers omitted"] : []),
+      ];
+    }
+    group("Control-owned network MCP", serverLines(data.control_mcp));
+    if (!data.executor) {
+      group("Executor Agent / Bridge / Skills", ["Unavailable until this Executor reconnects and supports diagnostics."]);
+      return;
+    }
+    const local = data.executor;
+    group("Agent runtime", ["Independent Agent runtime status: not reported", "Agent and Agent Bridge are separate concerns."]);
+    group("Executor Agent Bridge", [
+      `Manifest: ${local.bridge?.status || "unavailable"}`,
+      ...(local.bridge?.errors ? [`Configuration errors: ${local.bridge.errors} (details withheld)`] : []),
+    ]);
+    group("Executor-local stdio MCP", serverLines(local.bridge));
+    const skills = local.skills || {};
+    const names = (skills.selected || []).map((skill) => `${skill.name} · ${skill.source}`);
+    group("Executor Skill sources", [
+      skills.enabled ? "Enabled" : "Disabled or unavailable",
+      ...(skills.sources || []).map((source) => `${source.source}: ${source.available ? "present" : "missing"}`),
+      ...(names.length ? names : ["No selected Executor/global Skills"]),
+      `${skills.warnings || 0} source warnings · ${skills.duplicates || 0} duplicate overrides`,
+      "Project Skills resolve per Session; Control-wide precedence follows in #354.",
+    ]);
+    const health = local.health || {};
+    const metrics = ["cpu_percent", "memory_percent", "disk_percent"]
+      .filter((key) => typeof health[key] === "number")
+      .map((key) => `${key.replace("_percent", "").toUpperCase()}: ${health[key].toFixed(1)}%`);
+    group("Resource health", metrics.length ? metrics : ["Resource metrics unavailable"]);
+  }
+
+  async function loadDiagnostics(force = false) {
+    const executorId = state.selectedId;
+    if (!executorId || (state.diagnosticId === executorId && !force)) return;
+    const generation = ++state.diagnosticGeneration;
+    state.diagnosticId = executorId;
+    state.diagnostic = null;
+    state.diagnosticLoading = true;
+    state.diagnosticError = "";
+    renderDiagnostics();
+    try {
+      const data = await request(`/executors/diagnostics?executor_id=${encodeURIComponent(executorId)}`);
+      if (generation !== state.diagnosticGeneration || executorId !== state.selectedId) return;
+      state.diagnostic = data;
+    } catch (error) {
+      if (generation !== state.diagnosticGeneration || executorId !== state.selectedId) return;
+      if (error.authenticationRequired) { void reloadApp(); return; }
+      state.diagnosticError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (generation === state.diagnosticGeneration) {
+        state.diagnosticLoading = false;
+        renderDiagnostics();
+      }
     }
   }
 
@@ -147,6 +264,7 @@ export function createExecutorsController({
   }
 
   function render(payload) {
+    const previousId = state.selectedId;
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
     if (!state.executors.some((item) => item.executor_id === state.selectedId)) {
       state.selectedId = state.executors[0]?.executor_id || "";
@@ -160,6 +278,14 @@ export function createExecutorsController({
     elements.executorState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     renderList();
     renderDetails();
+    if (state.selectedId !== previousId) {
+      state.diagnosticGeneration += 1;
+      state.diagnosticId = "";
+      state.diagnostic = null;
+      state.diagnosticLoading = false;
+      state.diagnosticError = "";
+      renderDiagnostics();
+    }
     onInventory(state.executors);
   }
 
@@ -265,6 +391,11 @@ export function createExecutorsController({
     state.loading = false;
     state.executors = [];
     state.selectedId = "";
+    state.diagnosticGeneration += 1;
+    state.diagnosticId = "";
+    state.diagnostic = null;
+    state.diagnosticError = "";
+    state.diagnosticLoading = false;
     closeDialog(elements.executorPairDialog);
     closeDialog(elements.executorRenameDialog);
     closeDialog(elements.executorRevokeDialog);
@@ -278,9 +409,11 @@ export function createExecutorsController({
     document.getElementById("executor-revoked-summary").hidden = true;
     renderList();
     renderDetails();
+    renderDiagnostics();
   }
 
   function bind() {
+    elements.executorDiagnosticsRefresh.addEventListener("click", () => { void loadDiagnostics(true); });
     elements.executorPairOpen.addEventListener("click", () => {
       clearPairReview();
       elements.executorPairForm.reset();
