@@ -390,6 +390,7 @@ export function createDashboardController({
     elements.dashboardHealthDetail.textContent = alerts.length
       ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
       : "No active alerts.";
+    const load = dashboardNumber(system.load_1m);
     renderResourceCards(document.querySelector("#dashboard-panel .dashboard-summary"), system, controllerState.history);
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed · last 24h`;

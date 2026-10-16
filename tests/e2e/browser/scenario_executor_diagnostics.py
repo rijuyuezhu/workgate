@@ -79,15 +79,27 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
             "#executor-diagnostics-body .dashboard-sparkline polyline"
         ).first
     ).to_be_attached(timeout=12000)
-    page.locator("#executor-list .executor-row").filter(
-        has_text="offline"
-    ).first.click()
+
+    def offline_inventory(route):
+        response = route.fetch()
+        payload = response.json()
+        for entry in payload.get("data", {}).get("executors", []):
+            if entry.get("executor_id") == harness.executor_id:
+                entry["online"] = False
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors", offline_inventory)
+    expect(page.locator("#executor-detail-status")).to_have_text(
+        "offline", timeout=12000
+    )
     expect(page.locator("#executor-diagnostics-body")).to_be_hidden()
     expect(page.locator("#executor-detail-id")).not_to_have_text("—")
+    page.unroute("**/api/ui/executors", offline_inventory)
+    expect(page.locator("#executor-detail-status")).to_have_text(
+        "online", timeout=12000
+    )
+    expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.set_viewport_size({"width": 390, "height": 844})
-    page.locator("#executor-list .executor-row").filter(
-        has_text="online"
-    ).first.click()
     page.locator('[data-executor-subtab="overview"]').click()
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
