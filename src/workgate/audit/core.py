@@ -1370,7 +1370,15 @@ def audit_tool_call_start(
         "call_id": call_id,
         "transport": transport,
         "tool": tool,
-        "input": input,
+        "input": (
+            {
+                key: input.get(key)
+                for key in ("session_id", "action", "name")
+                if key in input
+            }
+            if tool == "manage_agent_skill" and isinstance(input, dict)
+            else input
+        ),
     }
     session_ids = tool_input_session_ids(input)
     task_ids = _audit_tool_input_task_ids(input, session_ids)
@@ -1418,5 +1426,7 @@ def audit_tool_call_end(
     if error is not None:
         fields["error"] = error
     else:
-        fields["output"] = output
+        fields["output"] = (
+            {"redacted": True} if tool == "manage_agent_skill" else output
+        )
     audit("tool_call_end", **fields)

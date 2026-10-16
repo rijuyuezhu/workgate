@@ -226,6 +226,18 @@ def build_executor_tool_dispatcher(
                 args.get("config"),
             )
 
+    async def agent_skill_manage_handler(args: dict[str, Any]) -> Any:
+        session_id = str(args["session_id"])
+        async with session_lifecycle_lock(session_id):
+            return await asyncio.to_thread(
+                agent_bridge_service.manage_skill,
+                session_id,
+                str(args["action"]),
+                args.get("name"),
+                args.get("content"),
+                args.get("expected_revision"),
+            )
+
     async def agent_mcp_call_tool_handler(args: dict[str, Any]) -> Any:
         session_id = str(args["session_id"])
         async with session_lifecycle_lock(session_id):
@@ -408,6 +420,7 @@ def build_executor_tool_dispatcher(
             "agent_mcp.list_servers": agent_mcp_list_servers_handler,
             "agent_mcp.list_tools": agent_mcp_list_tools_handler,
             "agent_mcp.manage": agent_mcp_manage_handler,
+            "agent_skill.manage": agent_skill_manage_handler,
             "agent_mcp.call_tool": agent_mcp_call_tool_handler,
             "bash": bash_handler,
             "run_python_code": run_python_code_handler,

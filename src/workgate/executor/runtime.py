@@ -330,6 +330,36 @@ class ExecutorRuntime:
             from .diagnostics import executor_diagnostics
 
             return await asyncio.to_thread(executor_diagnostics, self.config)
+        if command.op == "ui.skill.manage":
+            # Control-authorized management is Executor-owned, not coupled to
+            # any user Session. The HTTP administration endpoint will gate it.
+            if command.session_id is not None:
+                raise ValueError(
+                    "Executor Skill management is not session-bound"
+                )
+            from ..agent_bridge.skill_management import manage_skill
+
+            args = command.args
+            name = args.get("name")
+            content = args.get("content")
+            revision = args.get("expected_revision")
+            action = args.get("action")
+            if not isinstance(action, str):
+                raise ValueError("Invalid Executor Skill management action")
+            if name is not None and not isinstance(name, str):
+                raise ValueError("Invalid Executor Skill name")
+            if content is not None and not isinstance(content, str):
+                raise ValueError("Invalid Executor Skill content")
+            if revision is not None and not isinstance(revision, str):
+                raise ValueError("Invalid Executor Skill revision")
+            return await asyncio.to_thread(
+                manage_skill,
+                self.config.agent_config_dir,
+                action,
+                name=name,
+                content=content,
+                expected_revision=revision,
+            )
         if command.op.startswith("ui.files."):
             if command.session_id is not None:
                 raise ValueError(

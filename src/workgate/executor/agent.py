@@ -47,6 +47,7 @@ def _local_skill_registry(
             max_scan_entries=config.max_skill_scan_entries,
             max_path_bytes=config.max_skill_path_bytes,
             max_entry_bytes=config.max_file_read_bytes,
+            disabled_managed=frozenset(manifest.data.skills.disabled),
         )
     return sources, scan.skills, scan.warnings
 
@@ -230,6 +231,26 @@ class ExecutorAgentBridgeService:
             config=parsed,
             owner_type="stdio",
             auth_dir=self._config.agent_auth_dir,
+        )
+
+    def manage_skill(
+        self,
+        session_id: str,
+        action: str,
+        name: str | None = None,
+        content: str | None = None,
+        expected_revision: str | None = None,
+    ) -> dict:
+        """Manage the owning Executor's Skill files, never global/project copies."""
+        from ..agent_bridge.skill_management import manage_skill
+
+        self._store.touch_session(session_id)
+        return manage_skill(
+            self._config.agent_config_dir,
+            action,
+            name=name,
+            content=content,
+            expected_revision=expected_revision,
         )
 
     async def call_tool(

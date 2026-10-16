@@ -195,6 +195,27 @@ async def call_agent_mcp_tool(
     )
 
 
+@agent_bridge_tool(enabled=_agent_bridge_enabled)
+async def manage_agent_skill(
+    session_id: AgentSessionIdArg,
+    action: Literal[
+        "list",
+        "get",
+        "create",
+        "update",
+        "enable",
+        "disable",
+        "delete",
+        "validate",
+    ],
+    name: str | None = None,
+    content: str | None = None,
+    expected_revision: str | None = None,
+) -> dict[str, Any]:
+    """Manage only the bound Executor's managed Skills (SKILL.md). Editing requires a current revision; global/project Skills remain read-only. Tool content is excluded from Audit."""
+    raise RuntimeError("Skill management requires control executor routing")
+
+
 @agent_bridge_tool(
     enabled=_agent_bridge_enabled,
 )

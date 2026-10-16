@@ -453,6 +453,7 @@ def scan_agent_skills(
     max_scan_entries: int = DEFAULT_MAX_SCAN_ENTRIES,
     max_path_bytes: int = DEFAULT_MAX_PATH_BYTES,
     max_entry_bytes: int = DEFAULT_MAX_ENTRY_BYTES,
+    excluded_names: frozenset[str] = frozenset(),
 ) -> SkillScanResult:
     """Discover bounded valid Markdown Skills and report malformed entries as warnings."""
     try:
@@ -505,7 +506,10 @@ def scan_agent_skills(
                         warnings, f"Skipping skill {entry.name!r}: {exc}"
                     )
                     continue
-                if not stat.S_ISDIR(entry_stat.st_mode):
+                if (
+                    not stat.S_ISDIR(entry_stat.st_mode)
+                    or entry.name in excluded_names
+                ):
                     continue
                 candidates.append(entry.name)
     except OSError as exc:

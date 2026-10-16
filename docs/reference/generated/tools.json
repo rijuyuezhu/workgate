@@ -1,11 +1,11 @@
 {
-  "count": 57,
+  "count": 58,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "57"
+          "code": "58"
         },
         "."
       ],
@@ -192,6 +192,51 @@
             ]
           },
           "Manage external MCP integrations with a whole-entry config (type, url or command/args, optional auth, and env/headers secret references only). Never pass raw credential values."
+        ],
+        [
+          {
+            "code": "manage_agent_skill"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "action"
+                },
+                "note": "(list / get / create / update / enable / disable / delete / validate, required)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "content"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "expected_revision"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "name"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Manage only the bound Executor's managed Skills (SKILL.md). Editing requires a current revision; global/project Skills remain read-only. Tool content is excluded from Audit."
         ],
         [
           {
@@ -8010,6 +8055,105 @@
       "outputSchema": {
         "additionalProperties": true,
         "title": "manage_agent_mcp_serverDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:write",
+              "shell:execute",
+              "git:write",
+              "file:share",
+              "executor:use",
+              "browser:use",
+              "gui:use",
+              "audit:read",
+              "audit:full"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Manage only the bound Executor's managed Skills (SKILL.md). Editing requires a current revision; global/project Skills remain read-only. Tool content is excluded from Audit.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "get",
+              "create",
+              "update",
+              "enable",
+              "disable",
+              "delete",
+              "validate"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "session_id": {
+            "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "action"
+        ],
+        "title": "manage_agent_skillArguments",
+        "type": "object"
+      },
+      "name": "manage_agent_skill",
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "manage_agent_skillDictOutput",
         "type": "object"
       }
     },
