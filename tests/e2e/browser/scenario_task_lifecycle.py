@@ -52,12 +52,24 @@ def run_task_lifecycle_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#task-status")).to_have_text("cancelled")
     expect(reopen).to_be_disabled()
     expect(delete).to_be_enabled()
+    # Mobile deletion should return to the task list, not a blank detail page.
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.locator(".tasks-workspace")).to_be_visible()
+    expect(delete).to_be_visible()
+    page.screenshot(
+        path=str(harness.artifacts / "task-lifecycle-actions-mobile.png")
+    )
     page.once("dialog", lambda dialog: dialog.dismiss())
     delete.click()
     expect(page.locator("#task-status")).to_have_text("cancelled")
     page.once("dialog", lambda dialog: dialog.accept())
     delete.click()
     expect(entry).to_have_count(0)
+    expect(page.locator("#tasks-panel")).to_have_attribute(
+        "data-mobile-step", "list"
+    )
+    expect(page.locator("#task-list")).to_be_visible()
+    page.set_viewport_size({"width": 1360, "height": 900})
     expect(page.locator("#task-state")).to_contain_text("Select a task")
     expect(page.locator("#task-list .task-entry").first).to_be_visible()
     assert page.evaluate(

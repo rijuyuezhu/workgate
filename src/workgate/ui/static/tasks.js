@@ -787,6 +787,8 @@ export function createTasksController({
         renderSessions([]);
         showTab("progress");
         syncDeepLink();
+        onNavigate("list", { replace: true });
+        elements.taskList.querySelector(".task-entry")?.focus({ preventScroll: true });
       } else if (result.task && taskId === selectedTaskId()) {
         controllerState.task = result.task;
         renderTaskState();
