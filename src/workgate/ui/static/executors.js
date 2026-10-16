@@ -246,7 +246,6 @@ export function createExecutorsController({
       bar.children[0].style.width = total > 0 ? `${100 * (rx || 0) / total}%` : "0%";
       bar.children[1].style.width = total > 0 ? `${100 * (tx || 0) / total}%` : "0%";
     }
-    renderDashboardSparkline(network.querySelector(".dashboard-sparkline"), history.map((value) => value.network_total));
     const footValues = [
       [`Load ${typeof health.load_1m === "number" ? health.load_1m.toFixed(2) : "—"}`, `${health.cpu_count ?? "—"} cores`],
       [`${dashboardBytes(health.memory_used_bytes)} used`, `${dashboardBytes(health.memory_total_bytes)} total`],
