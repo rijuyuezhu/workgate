@@ -3157,7 +3157,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-row { justify-content: flex-start; }
 .executor-manage-row > div { flex: 1; }
 .executor-manage-pill { margin-left: auto; font-weight: 700; }
-.executor-manage-pill[data-state="enabled"], .executor-manage-pill[data-state="effective"] { color: #18815d; background: #dff5e9; }
+.executor-manage-pill[data-state="enabled"] { color: #18815d; background: #dff5e9; }
 .executor-manage-pill[data-state="disabled"] { color: #667184; background: #e9edf3; }
 .executor-row-mark { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; color: var(--muted); }
 .executor-row-mark[data-kind="http"] { color: var(--blue); }
@@ -3177,9 +3177,6 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .executor-metric-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
 .executor-metric-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: #748095; font-size: 12px; font-weight: 650; }
-.executor-metric-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue); }
-.executor-metric-dot.violet { background: var(--accent); }
-.executor-metric-dot.green { background: var(--green); }
 .executor-metric-card > strong { display: block; margin: 15px 0; color: #30384a; font-size: 27px; letter-spacing: -.03em; }
 .executor-metric-card > strong.executor-metric-unavailable { color: #a1a8b5; font-weight: 500; }
 .executor-metric-track { height: 5px; border-radius: 10px; background: #edf0f4; overflow: hidden; }

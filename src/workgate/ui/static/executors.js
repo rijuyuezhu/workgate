@@ -182,14 +182,14 @@ export function createExecutorsController({
       name.textContent = row.title;
       const detail = document.createElement("span");
       detail.textContent = row.detail || "";
-      text.append(name, detail);
+      text.append(name);
+      if (row.detail) text.append(detail);
       item.append(text);
       if (row.status) {
         const badge = document.createElement("span");
         badge.className = "executor-manage-pill";
         if (row.status === 'Enabled') badge.dataset.state = 'enabled';
         if (row.status === 'Disabled') badge.dataset.state = 'disabled';
-        if (row.status === 'Effective') badge.dataset.state = 'effective';
         if (row.status === 'Overridden') badge.dataset.state = 'overridden';
         badge.textContent = row.status;
         item.append(badge);
@@ -288,19 +288,19 @@ export function createExecutorsController({
       : data.status === "offline" ? "Executor offline"
       : "Diagnostics unavailable";
 
-    function mcpRows(snapshot, owner) {
+    function mcpRows(snapshot) {
       if (!snapshot) return [{title: "Unavailable", empty: true}];
       const rows = (snapshot.servers || []).map((server) => ({
-        title: server.name, detail: `${server.type.toUpperCase()} · ${owner}`, icon: server.type,
+        title: server.name, detail: server.type.toUpperCase(), icon: server.type,
         status: server.enabled ? "Enabled" : "Disabled",
       }));
       if (rows.length) return rows;
       return [{title: "No configured servers", empty: true}];
     }
-    addGroup(mcp, "Control · Network MCP", mcpRows(data.control_mcp, "Control-owned HTTP"));
-    addGroup(mcp, "Executor · Local MCP", mcpRows(data.executor?.bridge, "Executor-owned stdio"));
+    addGroup(mcp, "Control · Network MCP", mcpRows(data.control_mcp));
+    addGroup(mcp, "Executor · Local MCP", mcpRows(data.executor?.bridge));
     if (data.executor?.bridge?.errors || data.control_mcp?.errors) {
-      addGroup(mcp, "Configuration warnings", [{title: "Manifest needs attention", detail: "See Diagnostics for status; private values are not displayed."}]);
+      addGroup(mcp, "Configuration warnings", [{title: "Manifest needs attention", detail: "Invalid manifest"}]);
     }
 
     const local = data.executor;
@@ -314,10 +314,10 @@ export function createExecutorsController({
     const overridden = skillData.overridden || [];
     for (const source of ["managed", "global"]) {
       const rows = selected.filter((skill) => skill.source === source).map((skill) => ({
-        title: skill.name, detail: source === "managed" ? "Executor-managed" : "User-global · Read only", icon: "skill",
+        title: skill.name, icon: "skill",
       }));
       rows.push(...overridden.filter((skill) => skill.source === source).map((skill) => ({
-        title: skill.name, detail: "Overridden", icon: "skill", status: "Overridden",
+        title: skill.name, icon: "skill", status: "Overridden",
       })));
       addGroup(skills, source === "managed" ? "Executor-managed" : "User-global · Read only",
         rows.length ? rows : [{title: "No Skills", empty: true}]);
