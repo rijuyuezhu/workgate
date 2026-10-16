@@ -80,6 +80,39 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         ).first
     ).to_be_attached(timeout=12000)
 
+    # A peer may omit allowlisted fields. One malformed MCP entry must not
+    # interrupt the rest of the Executor details or hide configured Control MCPs.
+    def incomplete_diagnostics(route):
+        response = route.fetch()
+        payload = response.json()
+        local = payload["data"]["executor"]
+        local["bridge"]["status"] = "loaded"
+        local["bridge"]["servers"] = [{"name": "type-omitted", "enabled": True}]
+        payload["data"]["control_mcp"] = {
+            "status": "loaded",
+            "enabled": False,
+            "servers": [
+                {"name": "control-configured", "type": "http", "enabled": True}
+            ],
+            "errors": 0,
+        }
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors/diagnostics?*", incomplete_diagnostics)
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-body")).to_contain_text("type-omitted")
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Unknown")
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-row").filter(
+            has_text="control-configured"
+        )
+    ).to_contain_text("Disabled")
+    page.unroute("**/api/ui/executors/diagnostics?*", incomplete_diagnostics)
+    page.locator('[data-executor-subtab="overview"]').click()
+
     def offline_inventory(route):
         response = route.fetch()
         payload = response.json()
@@ -100,6 +133,10 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.set_viewport_size({"width": 390, "height": 844})
+    # Mobile starts at the Executor list; enter the details subpage first.
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
     page.locator('[data-executor-subtab="overview"]').click()
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()

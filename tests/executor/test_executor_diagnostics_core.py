@@ -140,7 +140,8 @@ def test_skill_source_errors_are_safe_and_do_not_hide_manifest(
     monkeypatch.setattr(diagnostics, "scan_skill_sources", fail)
     result = diagnostics.executor_diagnostics(config)
     assert result["bridge"]["status"] == "loaded"
-    assert result["skills"]["enabled"] is False
+    assert result["skills"]["enabled"] is True
+    assert result["skills"]["unavailable"] is True
     assert result["skills"]["warnings"] == 1
     assert "unreadable" not in json.dumps(result)
     assert "invalid" not in json.dumps(result)

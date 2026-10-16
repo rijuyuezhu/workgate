@@ -16,6 +16,7 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
     warnings = 0
     duplicates = 0
     skills_enabled = False
+    scan_failed = False
     if bridge["status"] in {"loaded", "missing_config"}:
         try:
             manifest = load_agent_manifest(
@@ -48,12 +49,13 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
                 duplicates = len(result.overridden)
                 warnings = min(len(result.warnings), 100)
         except OSError, ValueError:
-            skills_enabled = False
+            scan_failed = True
             warnings += 1
     return {
         "bridge": bridge,
         "skills": {
             "enabled": skills_enabled,
+            "unavailable": scan_failed,
             "selected": selected,
             "overridden": overridden,
             "warnings": warnings,

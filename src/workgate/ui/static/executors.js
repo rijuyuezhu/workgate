@@ -260,7 +260,6 @@ export function createExecutorsController({
     if (!data) return status("Unavailable");
 
     function mcpRows(snapshot, globallyEnabled = true) {
-      if (!globallyEnabled) return [{title: "Agent Bridge disabled", empty: true}];
       if (!snapshot || snapshot.status === "invalid_config" || snapshot.status === "unavailable") {
         return [{title: "Configuration unavailable", empty: true}];
       }
@@ -268,10 +267,10 @@ export function createExecutorsController({
         title: server.name || "Unknown MCP",
         detail: typeof server.type === "string" ? server.type.toUpperCase() : "Unknown",
         icon: server.type,
-        status: server.enabled && globallyEnabled ? "Enabled" : "Disabled",
+        status: typeof server.enabled !== "boolean" ? "Unknown" : server.enabled && globallyEnabled ? "Enabled" : "Disabled",
       }));
       if (rows.length) return rows;
-      return [{title: "No configured servers", empty: true}];
+      return [{title: globallyEnabled ? "No configured servers" : "Agent Bridge disabled", empty: true}];
     }
     addGroup(mcp, "Executor", mcpRows(data.executor?.bridge));
     addGroup(mcp, "Control", mcpRows(data.control_mcp, data.control_mcp?.enabled !== false));
@@ -296,7 +295,7 @@ export function createExecutorsController({
         title: skill.name, icon: "skill", status: "Overridden",
       })));
       addGroup(skills, source === "managed" ? "Executor" : "Executor (User Global)",
-        rows.length ? rows : [{title: skillData.enabled === false ? "Skills disabled" : "No Skills", empty: true}]);
+        rows.length ? rows : [{title: local.bridge?.status === "invalid_config" ? "Configuration unavailable" : skillData.unavailable ? "Skills unavailable" : skillData.enabled === false ? "Skills disabled" : "No Skills", empty: true}]);
     }
     if (skillData.warnings > skillData.duplicates) {
       addGroup(skills, "Warnings", [{title: `${skillData.warnings - skillData.duplicates} Skill warnings`, icon: "info", warning: true}]);

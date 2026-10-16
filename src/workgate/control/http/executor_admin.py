@@ -258,6 +258,7 @@ def executor_admin_routes(
                 },
                 "skills": {
                     "enabled": skill.get("enabled") is True,
+                    "unavailable": skill.get("unavailable") is True,
                     "selected": rows(
                         skill.get("selected"), fields=("name", "source")
                     ),

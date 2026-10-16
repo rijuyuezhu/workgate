@@ -24,7 +24,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     colors = page.evaluate("""() => ({
         body: getComputedStyle(document.body).backgroundColor,
         header: getComputedStyle(document.querySelector('.app-header')).backgroundColor,
-        panel: getComputedStyle(document.querySelector('.dashboard-summary .dashboard-card')).backgroundColor,
+        panel: getComputedStyle(document.querySelector('#dashboard-panel .dashboard-summary .dashboard-card')).backgroundColor,
         hero: getComputedStyle(document.querySelector('.dashboard-health-banner')).backgroundColor,
     })""")
     assert colors["body"] == "rgb(245, 246, 250)"
@@ -83,7 +83,9 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(page.locator("#dashboard-health-card")).to_have_css(
         "background-color", "rgba(0, 0, 0, 0)"
     )
-    expect(page.locator(".dashboard-metric-icon svg")).to_have_count(4)
+    expect(
+        page.locator("#dashboard-panel .dashboard-metric-icon svg")
+    ).to_have_count(4)
     expect(page.locator(".dashboard-live").first).to_have_text("Live")
     expect(page.locator("#dashboard-network-down")).to_be_visible()
     expect(page.locator("#dashboard-network-up")).to_be_visible()
@@ -304,7 +306,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             # may overlap even in two-column phone layouts.
             assert page.evaluate("""() => {
                 const bounds = (node) => node.getBoundingClientRect();
-                for (const card of document.querySelectorAll('.dashboard-metric-card')) {
+                for (const card of document.querySelectorAll('#dashboard-panel .dashboard-metric-card')) {
                     const footer = card.querySelector('.dashboard-metric-foot');
                     const chart = card.querySelector('.dashboard-sparkline:not(.visually-hidden)');
                     if (chart && bounds(footer).top < bounds(chart).bottom - 1) return false;
