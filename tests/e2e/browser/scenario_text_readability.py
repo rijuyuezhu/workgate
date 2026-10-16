@@ -22,6 +22,7 @@ def assert_narrow_text_readable(page: Page) -> None:
                 ['Audit details', `<div class="audit-detail-header" style="width:130px"><span>${timestamp}</span></div>`, 'span'],
                 ['Dashboard system path', `<dl class="dashboard-details" style="width:130px;grid-template-columns:1fr"><div><dd>${longPath}</dd></div></dl>`, 'dd'],
                 ['Dashboard event', `<div class="dashboard-list-header" style="width:130px"><strong>Alarm</strong><span>${longId}</span></div>`, 'span'],
+                ['Network throughput', '<div class="dashboard-network-values" style="width:130px"><div><strong>1234.5 GB/s</strong></div><div><strong>1234.5 GB/s</strong></div></div>', 'strong'],
                 ['Executor name', `<div class="executor-band-main" style="width:130px"><strong>${longId}</strong></div>`, 'strong'],
                 ['Executor version', `<div class="executor-band-main" style="width:130px"><small>${longId}</small></div>`, 'small'],
                 ['File name', `<div class="file-browser" style="width:240px"><button class="file-entry"><span class="file-entry-name">${longPath}</span><span class="file-entry-detail">10 KB</span><span class="file-entry-modified">10/16/2026</span></button></div>`, '.file-entry-name'],
@@ -47,11 +48,13 @@ def assert_narrow_text_readable(page: Page) -> None:
                         rect => rect.width > 0 && (rect.right > bounds.right + 2 || rect.left < bounds.left - 2)
                     );
                     const hidden = style.display === 'none' || bounds.width < 1 || bounds.height < 1;
+                    const parentBounds = node.parentElement.getBoundingClientRect();
+                    const exceedsParent = bounds.right > parentBounds.right + 2;
                     if (hidden || style.textOverflow === 'ellipsis' || style.whiteSpace === 'nowrap' ||
-                        node.scrollWidth > node.clientWidth + 2 || overflow) {
+                        node.scrollWidth > node.clientWidth + 2 || overflow || exceedsParent) {
                         failures.push({label, hidden, textOverflow: style.textOverflow,
                             whiteSpace: style.whiteSpace, scrollWidth: node.scrollWidth,
-                            clientWidth: node.clientWidth, overflow});
+                            clientWidth: node.clientWidth, overflow, exceedsParent});
                     }
                     holder.remove();
                 }

@@ -2930,7 +2930,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   .dashboard-network-values > div > span { align-self: flex-start; font-size: 12px; line-height: 1; }
   .dashboard-network-values strong {
     font-size: clamp(12px, 3.5vw, 17px);
-    line-height: 1.3; white-space: nowrap;
+    line-height: 1.3; overflow-wrap: anywhere;
   }
   .dashboard-network-values small { font-size: 9px; }
   .file-list-options label:nth-child(2) { min-width: 0; }

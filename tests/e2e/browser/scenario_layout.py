@@ -392,7 +392,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             if page.locator("#nav-toggle").is_visible():
                 page.locator("#nav-toggle").click()
     # A nested pane may be ~130px even when the main viewport is wide.
-    for width in (390, 780, 1360):
+    for width in (320, 390, 780, 1360):
         page.set_viewport_size({"width": width, "height": 800})
         assert_narrow_text_readable(page)
     page.set_viewport_size({"width": 1280, "height": 720})
