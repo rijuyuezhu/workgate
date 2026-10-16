@@ -126,6 +126,29 @@ export function createExecutorsController({
     }
   }
 
+  function rowIcon(kind) {
+    if (!["http", "stdio", "skill", "project", "info"].includes(kind)) return null;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('executor-row-icon');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.8');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    const shapes = {
+      http: ['<circle cx="12" cy="12" r="9"/>', '<path d="M3 12h18M12 3c-5 5-5 13 0 18M12 3c5 5 5 13 0 18"/>'],
+      stdio: ['<path d="M5 7l5 5-5 5M12 17h7"/>'],
+      skill: ['<path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h4M9 13h6M9 17h6"/>'],
+      project: ['<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z"/>'],
+      info: ['<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'],
+    };
+    // Only hard-coded SVG paths are used; rows never contribute markup.
+    svg.innerHTML = shapes[kind].join('');
+    return svg;
+  }
+
   function addGroup(container, title, rows) {
     const group = document.createElement("section");
     group.className = "executor-manage-group";
@@ -135,6 +158,14 @@ export function createExecutorsController({
     for (const row of rows) {
       const item = document.createElement("div");
       item.className = "executor-manage-row";
+      const icon = rowIcon(row.icon);
+      if (icon) {
+        const mark = document.createElement('span');
+        mark.className = 'executor-row-mark';
+        mark.dataset.kind = row.icon;
+        mark.append(icon);
+        item.append(mark);
+      }
       const text = document.createElement("div");
       const name = document.createElement("strong");
       name.textContent = row.title;
@@ -145,6 +176,9 @@ export function createExecutorsController({
       if (row.status) {
         const badge = document.createElement("span");
         badge.className = "executor-manage-pill";
+        if (row.status === 'Enabled') badge.dataset.state = 'enabled';
+        if (row.status === 'Disabled') badge.dataset.state = 'disabled';
+        if (row.status === 'Effective') badge.dataset.state = 'effective';
         badge.textContent = row.status;
         item.append(badge);
       }
@@ -176,14 +210,14 @@ export function createExecutorsController({
     const data = state.diagnostic;
     if (!data) return status("Configuration not yet available.");
     elements.executorDiagnosticsState.textContent = data.status === "available"
-      ? "On-demand runtime snapshot · no background MCP probes"
-      : data.status === "offline" ? "Executor offline · local configuration unavailable"
-      : "Executor diagnostics unavailable · retry when connected";
+      ? "Snapshot available"
+      : data.status === "offline" ? "Executor offline"
+      : "Diagnostics unavailable";
 
     function mcpRows(snapshot, owner) {
       if (!snapshot) return [{title: "Not available while offline", detail: owner}];
       const rows = (snapshot.servers || []).map((server) => ({
-        title: server.name, detail: `${server.type} · ${owner}`,
+        title: server.name, detail: `${server.type.toUpperCase()} · ${owner}`, icon: server.type,
         status: server.enabled ? "Enabled" : "Disabled",
       }));
       if (rows.length) return rows;
@@ -197,7 +231,7 @@ export function createExecutorsController({
 
     const local = data.executor;
     if (!local) {
-      addGroup(skills, "Executor Skill sources", [{title: "Not available while offline", detail: "Project Skills depend on a specific Session."}]);
+      addGroup(skills, "Executor Skill sources", [{title: "Executor offline"}]);
       addGroup(body, "Executor runtime", [{title: "Offline or diagnostics unsupported", detail: "Control-side status is still available in Overview."}]);
       return;
     }
@@ -205,16 +239,15 @@ export function createExecutorsController({
     const selected = skillData.selected || [];
     for (const source of ["managed", "global"]) {
       const rows = selected.filter((skill) => skill.source === source).map((skill) => ({
-        title: skill.name, detail: source === "managed" ? "Executor-managed source" : "User-global source · read-only",
+        title: skill.name, detail: source === "managed" ? "Executor-managed" : "User-global · Read only", icon: "skill",
         status: "Effective",
       }));
       addGroup(skills, source === "managed" ? "Executor-managed" : "User-global · Read only",
         rows.length ? rows : [{title: "No selected Skills", detail: "No effective entry in this source"}]);
     }
     addGroup(skills, "Resolution", [
-      {title: "Project Skills", detail: "Resolved for each Session, not an Executor-wide setting", status: "Session scope"},
-      {title: `${skillData.duplicates || 0} duplicates · ${skillData.warnings || 0} warnings`,
-       detail: "Project > Executor > user-global; Control-wide layer follows #354"},
+      {title: "Project Skills", icon: "project", status: "Session scope"},
+      {title: `${skillData.duplicates || 0} duplicates · ${skillData.warnings || 0} warnings`, icon: "info"},
     ]);
     const system = local.health || {};
     const metrics = ["cpu_percent", "memory_percent", "disk_percent"]

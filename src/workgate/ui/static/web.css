@@ -3152,3 +3152,22 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 }
 
 #tasks-panel[data-task-filter="unattached"] .inventory-summary { display: none; }
+
+/* Small semantic cues for Executor-owned integrations and Skills. */
+.executor-manage-row { justify-content: flex-start; }
+.executor-manage-row > div { flex: 1; }
+.executor-manage-pill { margin-left: auto; font-weight: 650; }
+.executor-manage-pill[data-state="enabled"], .executor-manage-pill[data-state="effective"] { background: #e7f5ec; color: #246641; }
+.executor-manage-pill[data-state="disabled"] { background: #f0f1f3; color: #606875; }
+.executor-row-mark { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 7px; background: var(--surface, #f1f3f7); color: var(--muted); }
+.executor-row-mark[data-kind="http"] { background: #eaf0fc; color: #4264a3; }
+.executor-row-mark[data-kind="stdio"] { background: #f0ecf9; color: #7056a3; }
+.executor-row-mark[data-kind="skill"] { background: #edf3ee; color: #50785b; }
+.executor-row-icon { width: 17px; height: 17px; }
+@media (prefers-color-scheme: dark) {
+  .executor-manage-pill[data-state="enabled"], .executor-manage-pill[data-state="effective"] { background: #173a29; color: #9be3ba; }
+  .executor-manage-pill[data-state="disabled"] { background: #30343a; color: #c6cad0; }
+  .executor-row-mark[data-kind="http"] { background: #263850; color: #adc7f1; }
+  .executor-row-mark[data-kind="stdio"] { background: #352c47; color: #c6b0ed; }
+  .executor-row-mark[data-kind="skill"] { background: #283b30; color: #a9d7b4; }
+}

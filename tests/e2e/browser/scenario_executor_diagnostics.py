@@ -22,7 +22,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-list .executor-row")).to_be_visible()
     # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
     expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "On-demand runtime snapshot"
+        "Snapshot available"
     )
     assert len(calls) == 1
     page.locator("#executor-list .executor-row").filter(
@@ -46,7 +46,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     page.locator('[data-executor-subtab="diagnostics"]').click()
     expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "On-demand runtime snapshot"
+        "Snapshot available"
     )
     expect(page.locator("#executor-diagnostics-body")).to_contain_text(
         "Agent Bridge manifest"
@@ -64,7 +64,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     page.locator("#executor-diagnostics-refresh").click()
     expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "On-demand runtime snapshot"
+        "Snapshot available"
     )
     assert len(calls) == 2
     page.set_viewport_size({"width": 390, "height": 844})
