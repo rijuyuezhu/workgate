@@ -109,7 +109,7 @@ export function createExecutorsController({
   }
 
   function setSubtab(tab) {
-    if (!selectedExecutor() || !["overview", "mcp", "skills", "diagnostics"].includes(tab)) return;
+    if (!selectedExecutor() || !["overview", "mcp", "skills"].includes(tab)) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
   }
@@ -206,10 +206,10 @@ export function createExecutorsController({
       ["Disk", "disk_percent", "amber"],
     ];
     const grid = document.createElement("div");
-    grid.className = "executor-metric-grid";
+    grid.className = "executor-metric-grid dashboard-summary";
     for (const [label, key, tone] of metrics) {
       const card = document.createElement("section");
-      card.className = "executor-metric-card";
+      card.className = "executor-metric-card dashboard-card dashboard-metric-card";
       const head = document.createElement("div");
       head.className = "executor-metric-head";
       const title = document.createElement("span");
@@ -242,8 +242,16 @@ export function createExecutorsController({
       }
       grid.append(card);
     }
+    const network = document.createElement("section");
+    network.className = "executor-metric-card dashboard-card dashboard-metric-card dashboard-network-card";
+    network.innerHTML = '<div class="dashboard-metric-head"><span class="dashboard-metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 20V10M7 15l5 5 5-5M4 4h16"/></svg></span></div><span>Network throughput</span><div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong></strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong></strong><small>sent</small></div></div>';
+    for (const [i, key] of ["network_rx_bps", "network_tx_bps"].entries()) {
+      const rate = local?.health?.[key];
+      network.querySelectorAll(".dashboard-network-values strong")[i].textContent =
+        typeof rate === "number" ? `${(rate / 1024).toFixed(1)} KiB/s` : "—";
+    }
+    grid.append(network);
     container.append(grid);
-
   }
 
   function renderDiagnostics() {
@@ -254,24 +262,16 @@ export function createExecutorsController({
     mcp.replaceChildren();
     skills.replaceChildren();
     elements.executorDiagnosticsRefresh.disabled = !selectedExecutor() || state.diagnosticLoading;
-    if (!selectedExecutor()) {
-      elements.executorDiagnosticsState.textContent = "Select an executor to inspect it.";
-      return;
-    }
+    if (!selectedExecutor()) return;
     const status = (message) => {
-      elements.executorDiagnosticsState.textContent = message;
       addGroup(mcp, "Control", [{title: message, empty: true}]);
-      addGroup(skills, "Executor-managed", [{title: message, empty: true}]);
+      addGroup(skills, "Executor", [{title: message, empty: true}]);
     };
-    if (state.diagnosticId !== state.selectedId) return status("Open this Executor to load its configuration.");
-    if (state.diagnosticLoading) return status("Loading on-demand configuration…");
-    if (state.diagnosticError) return status(state.diagnosticError);
+    if (state.diagnosticId !== state.selectedId) return status("Unavailable");
+    if (state.diagnosticLoading) return;
+    if (state.diagnosticError) return status("Unavailable");
     const data = state.diagnostic;
-    if (!data) return status("Configuration not yet available.");
-    elements.executorDiagnosticsState.textContent = data.status === "available"
-      ? "Snapshot available"
-      : data.status === "offline" ? "Executor offline"
-      : "Diagnostics unavailable";
+    if (!data) return status("Unavailable");
 
     function mcpRows(snapshot) {
       if (!snapshot) return [{title: "Unavailable", empty: true}];
@@ -290,7 +290,7 @@ export function createExecutorsController({
 
     const local = data.executor;
     if (!local) {
-      addGroup(skills, "Executor-managed", [{title: "Unavailable", empty: true}]);
+      addGroup(skills, "Executor", [{title: "Unavailable", empty: true}]);
       renderDiagnosticCards(body, null);
       return;
     }
@@ -304,7 +304,7 @@ export function createExecutorsController({
       rows.push(...overridden.filter((skill) => skill.source === source).map((skill) => ({
         title: skill.name, icon: "skill", status: "Overridden",
       })));
-      addGroup(skills, source === "managed" ? "Executor-managed" : "User-global · Read only",
+      addGroup(skills, source === "managed" ? "Executor" : "User Global",
         rows.length ? rows : [{title: "No Skills", empty: true}]);
     }
     if (skillData.warnings > skillData.duplicates) {

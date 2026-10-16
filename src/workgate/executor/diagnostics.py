@@ -81,6 +81,8 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
                 "disk_percent",
                 "memory_total_bytes",
                 "disk_total_bytes",
+                "network_rx_bps",
+                "network_tx_bps",
             )
             if type(system.get(key)) in (float, int)
         }

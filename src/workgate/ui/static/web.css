@@ -3190,3 +3190,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
 .executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #b93e4d; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #b93e4d !important; }
 .executor-metric-head .dashboard-metric-icon { flex: none; }
+
+#executors-panel .executor-metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) { #executors-panel .executor-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { #executors-panel .executor-metric-grid { grid-template-columns: minmax(0, 1fr); } }

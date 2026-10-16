@@ -219,7 +219,6 @@
             <button type="button" role="tab" data-executor-subtab="overview" aria-selected="true">Overview</button>
             <button type="button" role="tab" data-executor-subtab="mcp" aria-selected="false">MCP</button>
             <button type="button" role="tab" data-executor-subtab="skills" aria-selected="false">Skills</button>
-            <button type="button" role="tab" data-executor-subtab="diagnostics" aria-selected="false">Diagnostics</button>
           </nav>
           <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Executor overview">
           <dl class="executor-detail-grid">
@@ -235,21 +234,14 @@
             <div><dt>Created</dt><dd id="executor-detail-created">—</dd></div>
             <div><dt>Last seen</dt><dd id="executor-detail-last-seen">—</dd></div>
           </dl>
+          <div class="executor-diagnostics-heading"><button id="executor-diagnostics-refresh" type="button">Refresh metrics</button></div>
+          <div id="executor-diagnostics-body" class="executor-diagnostics-body"></div>
           </section>
           <section class="executor-subtab-pane" data-executor-pane="mcp" aria-label="MCP integrations" hidden>
             <div id="executor-mcp-body" class="executor-subtab-content"></div>
           </section>
           <section class="executor-subtab-pane" data-executor-pane="skills" aria-label="Skill sources" hidden>
             <div id="executor-skills-body" class="executor-subtab-content"></div>
-          </section>
-          <section class="executor-subtab-pane" data-executor-pane="diagnostics" aria-label="Runtime diagnostics" hidden>
-          <section class="executor-diagnostics" aria-label="Executor diagnostics">
-            <div class="executor-diagnostics-heading">
-              <button id="executor-diagnostics-refresh" type="button">Refresh</button>
-            </div>
-            <p id="executor-diagnostics-state" class="muted" aria-live="polite">Select an executor to inspect its diagnostics.</p>
-            <div id="executor-diagnostics-body" class="executor-diagnostics-body"></div>
-          </section>
           </section>
         </article>
       </div>

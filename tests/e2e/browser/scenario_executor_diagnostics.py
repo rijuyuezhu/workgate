@@ -21,9 +21,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#executor-list .executor-row")).to_be_visible()
     # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
-    expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "Snapshot available"
-    )
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
     assert len(calls) == 1
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
@@ -42,12 +40,10 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     page.locator('[data-executor-subtab="skills"]').click()
     expect(page.locator("#executor-skills-body")).to_contain_text(
-        "Executor-managed"
+        "Executor"
     )
-    page.locator('[data-executor-subtab="diagnostics"]').click()
-    expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "Snapshot available"
-    )
+    page.locator('[data-executor-subtab="overview"]').click()
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
     expect(page.locator("#executor-diagnostics-body")).to_contain_text(
         "Memory"
     )
@@ -63,13 +59,11 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
     page.locator("#executor-diagnostics-refresh").click()
-    expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "Snapshot available"
-    )
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
     assert len(calls) == 2
     page.set_viewport_size({"width": 390, "height": 844})
     page.locator("#executor-list .executor-row").first.click()
-    page.locator('[data-executor-subtab="diagnostics"]').click()
+    page.locator('[data-executor-subtab="overview"]').click()
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_be_visible()
