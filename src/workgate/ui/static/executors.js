@@ -158,6 +158,7 @@ export function createExecutorsController({
     for (const row of rows) {
       const item = document.createElement("div");
       item.className = "executor-manage-row";
+      if (row.empty) item.classList.add("executor-manage-empty");
       const icon = rowIcon(row.icon);
       if (icon) {
         const mark = document.createElement('span');
@@ -215,13 +216,13 @@ export function createExecutorsController({
       : "Diagnostics unavailable";
 
     function mcpRows(snapshot, owner) {
-      if (!snapshot) return [{title: "Not available while offline", detail: owner}];
+      if (!snapshot) return [{title: "Unavailable", empty: true}];
       const rows = (snapshot.servers || []).map((server) => ({
         title: server.name, detail: `${server.type.toUpperCase()} · ${owner}`, icon: server.type,
         status: server.enabled ? "Enabled" : "Disabled",
       }));
       if (rows.length) return rows;
-      return [{title: "No configured servers", detail: `Manifest: ${snapshot.status || "unknown"}`}];
+      return [{title: "No configured servers", empty: true}];
     }
     addGroup(mcp, "Control · Network MCP", mcpRows(data.control_mcp, "Control-owned HTTP"));
     addGroup(mcp, "Executor · Local MCP", mcpRows(data.executor?.bridge, "Executor-owned stdio"));
@@ -231,7 +232,7 @@ export function createExecutorsController({
 
     const local = data.executor;
     if (!local) {
-      addGroup(skills, "Executor Skill sources", [{title: "Executor offline"}]);
+      addGroup(skills, "Executor Skill sources", [{title: "Unavailable", empty: true}]);
       addGroup(body, "Executor runtime", [{title: "Offline or diagnostics unsupported", detail: "Control-side status is still available in Overview."}]);
       return;
     }
@@ -243,7 +244,7 @@ export function createExecutorsController({
         status: "Effective",
       }));
       addGroup(skills, source === "managed" ? "Executor-managed" : "User-global · Read only",
-        rows.length ? rows : [{title: "No selected Skills", detail: "No effective entry in this source"}]);
+        rows.length ? rows : [{title: "No selected Skills", empty: true}]);
     }
     addGroup(skills, "Resolution", [
       {title: "Project Skills", icon: "project", status: "Session scope"},

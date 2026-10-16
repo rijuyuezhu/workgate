@@ -3164,3 +3164,8 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-row-mark[data-kind="stdio"] { color: var(--accent); }
 .executor-row-mark[data-kind="skill"] { color: var(--green); }
 .executor-row-icon { width: 17px; height: 17px; }
+
+.executor-manage-row.executor-manage-empty { justify-content: center; padding: 17px 13px; }
+.executor-manage-empty > div { flex: 0 1 auto; text-align: center; }
+.executor-manage-empty strong { color: #9aa3b1; font-size: 12px; font-weight: 500; }
+.executor-manage-empty span { display: none; }
