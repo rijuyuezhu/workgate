@@ -188,6 +188,58 @@ export function createExecutorsController({
     container.append(group);
   }
 
+  function renderDiagnosticCards(container, local) {
+    const metrics = [
+      ["CPU", "cpu_percent", "blue"],
+      ["Memory", "memory_percent", "violet"],
+      ["Disk", "disk_percent", "green"],
+    ];
+    const grid = document.createElement("div");
+    grid.className = "executor-metric-grid";
+    for (const [label, key, tone] of metrics) {
+      const card = document.createElement("section");
+      card.className = "executor-metric-card";
+      const head = document.createElement("div");
+      head.className = "executor-metric-head";
+      const title = document.createElement("span");
+      title.textContent = label;
+      const mark = document.createElement("span");
+      mark.className = `executor-metric-dot ${tone}`;
+      head.append(title, mark);
+      const value = document.createElement("strong");
+      const number = local?.health?.[key];
+      value.textContent = typeof number === "number" ? `${number.toFixed(1)}%` : "—";
+      if (typeof number !== "number") value.className = "executor-metric-unavailable";
+      card.append(head, value);
+      if (typeof number === "number") {
+        const track = document.createElement("div");
+        track.className = "executor-metric-track";
+        const fill = document.createElement("span");
+        fill.style.width = `${Math.max(0, Math.min(100, number))}%`;
+        track.append(fill);
+        card.append(track);
+      }
+      grid.append(card);
+    }
+    container.append(grid);
+    const section = document.createElement("section");
+    section.className = "executor-diagnostic-status";
+    const heading = document.createElement("h4");
+    heading.textContent = "Agent Bridge";
+    section.append(heading);
+    const status = document.createElement("div");
+    status.className = "executor-diagnostic-status-row";
+    const name = document.createElement("span");
+    name.textContent = "Manifest";
+    const chip = document.createElement("span");
+    chip.className = "executor-manage-pill";
+    chip.textContent = local?.bridge?.status || "Unavailable";
+    chip.dataset.state = local?.bridge?.status === "loaded" ? "enabled" : "disabled";
+    status.append(name, chip);
+    section.append(status);
+    container.append(section);
+  }
+
   function renderDiagnostics() {
     const body = elements.executorDiagnosticsBody;
     const mcp = elements.executorMcpBody;
@@ -233,7 +285,7 @@ export function createExecutorsController({
     const local = data.executor;
     if (!local) {
       addGroup(skills, "Executor Skill sources", [{title: "Unavailable", empty: true}]);
-      addGroup(body, "Executor runtime", [{title: "Offline or diagnostics unsupported", detail: "Control-side status is still available in Overview."}]);
+      renderDiagnosticCards(body, null);
       return;
     }
     const skillData = local.skills || {};
@@ -244,22 +296,13 @@ export function createExecutorsController({
         status: "Effective",
       }));
       addGroup(skills, source === "managed" ? "Executor-managed" : "User-global · Read only",
-        rows.length ? rows : [{title: "No selected Skills", empty: true}]);
+        rows.length ? rows : [{title: "No Skills", empty: true}]);
     }
     addGroup(skills, "Resolution", [
       {title: "Project Skills", icon: "project", status: "Session scope"},
       {title: `${skillData.duplicates || 0} duplicates · ${skillData.warnings || 0} warnings`, icon: "info"},
     ]);
-    const system = local.health || {};
-    const metrics = ["cpu_percent", "memory_percent", "disk_percent"]
-      .filter((key) => typeof system[key] === "number")
-      .map((key) => ({title: key.replace("_percent", "").toUpperCase(), detail: `${system[key].toFixed(1)}%`}));
-    addGroup(body, "Agent & Bridge", [
-      {title: "Agent runtime", detail: "Independent Agent health is not reported"},
-      {title: "Agent Bridge manifest", detail: local.bridge?.status || "unavailable",
-       status: local.bridge?.errors ? `${local.bridge.errors} errors` : ""},
-    ]);
-    addGroup(body, "Resource health", metrics.length ? metrics : [{title: "Unavailable", detail: "No resource readings reported"}]);
+    renderDiagnosticCards(body, local);
   }
 
   async function loadDiagnostics(force = false) {

@@ -49,7 +49,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         "Snapshot available"
     )
     expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Agent Bridge manifest"
+        "Agent Bridge"
     )
     assert len(calls) == 1
     page.evaluate(
