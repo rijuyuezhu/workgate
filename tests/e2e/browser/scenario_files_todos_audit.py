@@ -439,6 +439,13 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-status")).to_contain_text(
         "executor offline"
     )
+    expect(attached_entry.locator(".session-entry-meta")).to_contain_text(
+        "executor offline"
+    )
+    expect(unattached_entry.locator(".session-entry-meta")).to_contain_text(
+        "Executor offline"
+    )
+    expect(page.locator("#session-detail-executor-copy")).to_have_text("Copied")
     expect(attached_entry).to_be_focused()
     expect(attached_entry).to_have_attribute("aria-current", "true")
     page.unroute("**/api/ui/executors", rename_session_executor)
@@ -463,6 +470,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor")).to_have_text(
         "browser-loopback", timeout=12_000
     )
+    expect(attached_entry.locator(".session-entry-meta")).to_contain_text(
+        "available"
+    )
+    expect(page.locator("#session-detail-executor-copy")).to_have_text("Copied")
     expect(attached_entry).to_be_focused()
 
     expect(page.locator("#todo-summary")).to_contain_text("0 total")
