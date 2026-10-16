@@ -291,8 +291,8 @@ export function createExecutorsController({
       if (rows.length) return rows;
       return [{title: "No configured servers", empty: true}];
     }
-    addGroup(mcp, "Control", mcpRows(data.control_mcp));
     addGroup(mcp, "Executor", mcpRows(data.executor?.bridge));
+    addGroup(mcp, "Control", mcpRows(data.control_mcp));
     if (data.executor?.bridge?.errors || data.control_mcp?.errors) {
       addGroup(mcp, "Configuration warnings", [{title: "MCP configuration invalid", warning: true}]);
     }
