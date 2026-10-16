@@ -538,3 +538,98 @@ def test_mcp_auth_endpoint_denied_without_management_scope(tmp_path):
                 )
                 assert mutation.status_code == expected, mutation.text
                 assert "CREDENTIAL_VALUE" not in mutation.text
+
+
+def test_authenticated_mcp_registration_assigns_stable_identity(tmp_path):
+    """Users may select OAuth/Secret Auth without inventing a store identity."""
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        base_url=BASE,
+        agent_bridge_enabled=True,
+    )
+    app, harness = build_paired_http_app(settings)
+    with TestClient(app, base_url=BASE) as client:
+        cases = (
+            (
+                "control",
+                "remote-oauth",
+                {
+                    "type": "http",
+                    "url": "https://example.org/mcp",
+                    "auth": {"mode": "oauth", "scopes": ["read"]},
+                },
+            ),
+            (
+                "executor",
+                "local-secret",
+                {
+                    "type": "stdio",
+                    "command": "echo",
+                    "env": {"API_TOKEN": {"secret": "api_token"}},
+                    "auth": {"mode": "secret"},
+                },
+            ),
+        )
+        for owner, name, config in cases:
+            response = client.post(
+                "/api/ui/integrations",
+                json={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "action": "register",
+                    "executor_id": harness.executor_id,
+                    "name": name,
+                    "config": config,
+                },
+            )
+            assert response.status_code == 200, response.text
+            listed = client.get(
+                "/api/ui/integrations",
+                params={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "executor_id": harness.executor_id,
+                },
+            )
+            assert listed.status_code == 200, listed.text
+            server = next(
+                row
+                for row in listed.json()["data"]["servers"]
+                if row["name"] == name
+            )
+            identity = server["integrationId"]
+            assert isinstance(identity, str) and identity.startswith("ui-")
+            assert len(identity) <= 128
+            detail = client.get(
+                "/api/ui/integrations",
+                params={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "executor_id": harness.executor_id,
+                    "action": "get",
+                    "name": name,
+                },
+            )
+            assert detail.status_code == 200, detail.text
+            assert (
+                detail.json()["data"]["editable_config"]["integrationId"]
+                == identity
+            )
+            assert (
+                client.post(
+                    "/api/ui/integrations",
+                    json={
+                        "owner": owner,
+                        "kind": "mcp",
+                        "action": "remove",
+                        "executor_id": harness.executor_id,
+                        "name": name,
+                        "expected_revision": server["revision"],
+                    },
+                ).status_code
+                == 200
+            )

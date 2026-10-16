@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import uuid
 from typing import Any, Literal, cast
 
 from fastapi import HTTPException
@@ -456,6 +457,18 @@ def executor_admin_routes(
             )
             executor_id, config = body.executor_id, body.config
             content, revision = body.content, body.expected_revision
+            # The WebUI operator should not need to invent a credential-store
+            # identity. Assign an opaque stable one before the owner validates
+            # or persists a newly registered authenticated MCP server.
+            if (
+                kind == "mcp"
+                and action == "register"
+                and isinstance(config, dict)
+                and config.get("integrationId") is None
+                and isinstance(config.get("auth"), dict)
+                and config["auth"].get("mode") in {"secret", "oauth"}
+            ):
+                config = {**config, "integrationId": "ui-" + uuid.uuid4().hex}
         if owner not in {"control", "executor"} or kind not in {"mcp", "skill"}:
             return _json_error(
                 "InvalidOwner",

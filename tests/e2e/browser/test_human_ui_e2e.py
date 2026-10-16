@@ -103,6 +103,33 @@ def test_executor_mcp_auth_real_chromium(
     expect(page.locator("#executor-mcp-body")).not_to_contain_text(
         "browser-auth-local"
     )
+    # OAuth MCP registration must work without asking the operator to invent
+    # the internal credential-store integrationId. Authorization itself is #371.
+    page.locator("#executor-mcp-add").click()
+    page.locator("#executor-integration-owner").select_option("control")
+    page.locator("#executor-integration-name").fill("browser-oauth-http")
+    page.locator("#executor-integration-url").fill("https://example.org/mcp")
+    page.locator("#executor-integration-auth-mode").select_option("oauth")
+    page.locator("#executor-integration-oauth-scopes").fill("read")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    remote = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="browser-oauth-http"
+    )
+    expect(remote).to_be_visible()
+    remote.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-mcp-auth-status")).to_contain_text(
+        "unauthorized"
+    )
+    expect(page.locator("#executor-integration-auth-mode")).to_have_value(
+        "oauth"
+    )
+    page.once("dialog", lambda prompt: prompt.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    expect(page.locator("#executor-mcp-body")).not_to_contain_text(
+        "browser-oauth-http"
+    )
     browser_harness.assert_clean_browser()
 
 
