@@ -192,3 +192,34 @@ async def test_task_action_audit_is_emitted_by_canonical_service(
     ]
     assert recorded[-3:] == ["block", "resume", "finish"]
     assert any(event == "task_deleted" for event, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_deleting_task_detaches_but_does_not_end_retained_session(
+    tmp_path, monkeypatch
+):
+    _configure(monkeypatch, tmp_path)
+    (tmp_path / "project").mkdir()
+    app, harness = build_paired_http_app(get_settings())
+    task = await harness.control.task_service.create_task(label="keep session")
+    session = await harness.control.session_coordinator.start_session(
+        workdir="project",
+        executor_id=harness.executor_id,
+        task_id=task.task_id,
+    )
+    session_id = session["session_id"]
+    with TestClient(app, base_url=BASE_URL) as client:
+        assert _post(client, "cancel", task.task_id).status_code == 200
+        retained = harness.control.control_state.snapshot_sessions()[session_id]
+        assert retained.task_id == task.task_id
+        assert retained.status != "ended"
+        assert _post(client, "delete", task.task_id).status_code == 200
+        detached = harness.control.control_state.snapshot_sessions()[session_id]
+        assert detached.task_id is None
+        assert detached.status != "ended"
+        inventory = client.get("/api/ui/tasks")
+        assert inventory.status_code == 200
+        assert session_id in {
+            row["session_id"]
+            for row in inventory.json()["data"]["unattached_sessions"]
+        }

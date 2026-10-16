@@ -196,6 +196,7 @@ export function createTasksController({
     );
     for (const button of document.querySelectorAll("[data-task-action]")) {
       const action = button.dataset.taskAction;
+      if (action === "resume") button.textContent = taskStatus === "blocked" ? "Resume" : "Reopen";
       const allowed = action === "resume"
         ? taskStatus === "blocked" || taskCompleted
         : action === "delete"
