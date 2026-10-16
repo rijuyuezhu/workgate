@@ -17,6 +17,8 @@ export function createTasksController({
     taskId: text(initialTaskId, ""),
     sessionId: text(initialSessionId, ""),
     tasks: [],
+    selectedTaskRow: null,
+    selectedLegacySession: null,
     taskFilter: "active",
     taskCursor: "",
     taskCursorStack: [],
@@ -82,7 +84,9 @@ export function createTasksController({
   }
 
   function selectedTaskSummary() {
-    return controllerState.tasks.find((task) => task.task_id === controllerState.taskId) || null;
+    return controllerState.selectedTaskRow?.task_id === controllerState.taskId
+      ? controllerState.selectedTaskRow
+      : controllerState.tasks.find((task) => task.task_id === controllerState.taskId) || null;
   }
 
   function selectedSession() {
@@ -93,7 +97,8 @@ export function createTasksController({
       controllerState.unattachedSessions.find(
         (session) => session.session_id === controllerState.sessionId,
       ) ||
-      null
+      (controllerState.selectedLegacySession?.session_id === controllerState.sessionId
+        ? controllerState.selectedLegacySession : null)
     );
   }
 
@@ -304,6 +309,8 @@ export function createTasksController({
     controllerState.taskId = "";
     controllerState.sessionId = "";
     controllerState.tasks = [];
+    controllerState.selectedTaskRow = null;
+    controllerState.selectedLegacySession = null;
     controllerState.taskCursor = "";
     controllerState.taskCursorStack = [];
     controllerState.taskNextCursor = null;
@@ -462,7 +469,6 @@ export function createTasksController({
         "aria-current",
         task.task_id === controllerState.taskId ? "true" : "false",
       );
-      if (task.pinned) button.title = "Selected Task outside the current page or filter";
       const title = document.createElement("strong");
       title.textContent = taskOptionLabel(task);
       const heading = document.createElement("span");
@@ -474,7 +480,7 @@ export function createTasksController({
       heading.append(title, status);
       const meta = document.createElement("span");
       meta.className = "session-entry-meta";
-      meta.textContent = `${task.pinned ? "Selected outside filter · " : ""}${taskMeta(task)}`;
+      meta.textContent = taskMeta(task);
       button.append(heading, meta);
       button.addEventListener("click", () => {
         void selectTask(task.task_id);
@@ -540,21 +546,14 @@ export function createTasksController({
       : null;
     const focusedTask = focused?.dataset.taskId;
     const focusedSession = focused?.dataset.sessionId;
-    const page = Array.isArray(payload?.tasks) ? payload.tasks : [];
-    controllerState.tasks = [...page];
-    const selected = payload?.selected_task;
-    if (selected && selected.task_id === selectedTaskId()) {
-      const index = controllerState.tasks.findIndex((item) => item.task_id === selected.task_id);
-      if (index >= 0) controllerState.tasks[index] = selected;
-      else controllerState.tasks.unshift({ ...selected, pinned: true });
-    }
+    controllerState.tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
+    // Keep the selected detail independent of the filtered list. Never inject
+    // an out-of-filter Task or legacy Session into the visible page.
+    controllerState.selectedTaskRow = payload?.selected_task || null;
+    controllerState.selectedLegacySession = payload?.selected_session || null;
     onInventory(controllerState.tasks);
     controllerState.unattachedSessions = Array.isArray(payload?.unattached_sessions)
-      ? [...payload.unattached_sessions] : [];
-    if (payload?.selected_session && !controllerState.unattachedSessions.some(
-        (row) => row.session_id === payload.selected_session.session_id)) {
-      controllerState.unattachedSessions.unshift(payload.selected_session);
-    }
+      ? payload.unattached_sessions : [];
     controllerState.taskTotal = Number(payload?.total || 0);
     controllerState.taskPageCount = Number(payload?.count || 0);
     if (Number.isInteger(payload?.active_count)) controllerState.taskActiveTotal = payload.active_count;
@@ -635,6 +634,8 @@ export function createTasksController({
 
     controllerState.selectionRevision += 1;
     controllerState.taskId = next;
+    controllerState.selectedTaskRow = null;
+    controllerState.selectedLegacySession = null;
     showTab("progress");
     const task = selectedTaskSummary();
     controllerState.sessions = Array.isArray(task && task.sessions)
@@ -668,7 +669,11 @@ export function createTasksController({
 
     controllerState.selectionRevision += 1;
     controllerState.taskId = "";
+    controllerState.selectedTaskRow = null;
     controllerState.sessionId = next;
+    controllerState.selectedLegacySession = controllerState.unattachedSessions.find(
+      (session) => session.session_id === next,
+    ) || null;
     showTab("sessions");
     controllerState.sessions = [];
     clearTaskResources(
@@ -832,6 +837,8 @@ export function createTasksController({
         controllerState.selectionRevision += 1;
         controllerState.taskId = "";
         controllerState.sessionId = "";
+        controllerState.selectedTaskRow = null;
+        controllerState.selectedLegacySession = null;
         clearTaskResources("Task deleted");
         controllerState.tasks = controllerState.tasks.filter((task) => task.task_id !== taskId);
         controllerState.sessions = [];
