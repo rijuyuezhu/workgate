@@ -3,6 +3,9 @@
 from playwright.sync_api import expect
 
 from tests.e2e.browser.harness import BrowserHarness
+from tests.e2e.browser.scenario_text_readability import (
+    assert_narrow_text_readable,
+)
 
 VIEWS = ("overview", "tasks", "files", "terminals", "executors", "audit")
 
@@ -196,7 +199,11 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                     el.getBoundingClientRect().height];
         }"""
     )
-    assert file_location_style == terminal_location_style
+    # Shared colors/spacing must match; rail widths can legitimately give
+    # the same full Executor label different wrapped row heights.
+    assert file_location_style[:-1] == terminal_location_style[:-1]
+    assert file_location_style[-1] >= 28
+    assert terminal_location_style[-1] >= 28
     assert (
         page.evaluate(
             "getComputedStyle(document.querySelector('.dashboard-health-banner')).borderRadius"
@@ -384,5 +391,9 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             )
             if page.locator("#nav-toggle").is_visible():
                 page.locator("#nav-toggle").click()
+    # A nested pane may be ~130px even when the main viewport is wide.
+    for width in (320, 390, 780, 1360):
+        page.set_viewport_size({"width": width, "height": 800})
+        assert_narrow_text_readable(page)
     page.set_viewport_size({"width": 1280, "height": 720})
     harness.navigate("overview")
