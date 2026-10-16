@@ -291,8 +291,6 @@ def executor_admin_routes(
                     for key, value in health.items()
                     if key
                     in {
-                        "network_rx_bps",
-                        "network_tx_bps",
                         "cpu_percent",
                         "memory_percent",
                         "disk_percent",
