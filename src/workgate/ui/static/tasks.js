@@ -537,7 +537,8 @@ export function createTasksController({
   function applyInventory(payload) {
     const signature = JSON.stringify([payload?.tasks, payload?.unattached_sessions, payload?.selected_task,
       payload?.selected_session, payload?.total, payload?.all_count, payload?.active_count,
-      payload?.next_cursor, controllerState.taskFilter, controllerState.taskCursor]);
+      payload?.next_cursor, controllerState.taskFilter, controllerState.taskCursor,
+      selectedTaskId(), controllerState.sessionId]);
     if (signature === controllerState.inventorySignature) return;
     controllerState.inventorySignature = signature;
     const listScroll = [elements.taskList.scrollTop, elements.sessionList.scrollTop];

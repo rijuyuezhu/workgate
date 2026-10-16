@@ -1,5 +1,7 @@
 """Mobile lists navigate to full-width detail pages without affecting desktop UX."""
 
+import re
+
 from playwright.sync_api import expect
 
 from tests.e2e.browser.harness import BrowserHarness
@@ -24,9 +26,16 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     step("tasks", "list")
     expect(page.locator("#task-list")).to_be_visible()
     expect(page.locator(".tasks-workspace")).to_be_hidden()
+    # Every row contains "N sessions". Span textContent can concatenate
+    # "active" and "1 session" without whitespace, so avoid word boundaries.
     task = (
-        page.locator("#task-list .task-entry").filter(has_text="session").first
+        page.locator("#task-list .task-entry")
+        .filter(has_text=re.compile(r"[1-9]\d* sessions?"))
+        .first
     )
+    expect(task).to_be_visible()
+    task_id = task.get_attribute("data-task-id")
+    assert task_id
     task.click()
     step("tasks", "task")
     expect(page.locator(".tasks-workspace")).to_be_visible()
@@ -101,9 +110,7 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
     step("tasks", "list")
     # Returning to a list must still allow reopening the same selected item.
-    page.locator("#task-list .task-entry").filter(
-        has_text="session"
-    ).first.click()
+    page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]').click()
     step("tasks", "task")
     page.locator("#task-tab-sessions").click()
     page.locator("#session-list .session-entry").first.click()
