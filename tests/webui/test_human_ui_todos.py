@@ -317,17 +317,25 @@ async def test_task_inventory_groups_retained_and_unattached_sessions(
     data = response.json()["data"]
     by_id = {row["task_id"]: row for row in data["tasks"]}
     assert zero.task_id in by_id
-    assert by_id[zero.task_id]["sessions"] == []
-    assert [row["session_id"] for row in by_id[multi.task_id]["sessions"]] == [
-        first_id,
-        second_id,
-    ]
-    ended = by_id[multi.task_id]["sessions"][0]
-    assert ended["status"] == "ended"
-    assert ended["availability"] == "ended"
-    assert [row["session_id"] for row in data["unattached_sessions"]] == [
-        unattached_id
-    ]
+    assert by_id[zero.task_id]["session_count"] == 0
+    assert by_id[multi.task_id]["session_count"] == 2
+    assert all(
+        "sessions" not in row and "plan" not in row for row in data["tasks"]
+    )
+    detail = client.get(
+        "/api/ui/tasks/detail", params={"task_id": multi.task_id}
+    )
+    assert detail.status_code == 200
+    sessions = detail.json()["data"]["task"]["sessions"]
+    assert [row["session_id"] for row in sessions] == [first_id, second_id]
+    assert sessions[0]["status"] == "ended"
+    assert sessions[0]["availability"] == "ended"
+    legacy = client.get("/api/ui/tasks", params={"status": "unattached"})
+    assert legacy.status_code == 200
+    assert [
+        row["session_id"]
+        for row in legacy.json()["data"]["unattached_sessions"]
+    ] == [unattached_id]
 
 
 @pytest.mark.asyncio
@@ -348,5 +356,10 @@ async def test_task_inventory_keeps_task_visible_after_all_sessions_end(
         if row["task_id"] == task_id
     )
     assert task["status"] == "active"
-    assert task["sessions"][0]["session_id"] == session_id
-    assert task["sessions"][0]["status"] == "ended"
+    assert task["session_count"] == 1
+    detail = client.get("/api/ui/tasks/detail", params={"task_id": task_id})
+    assert detail.status_code == 200
+    assert (
+        detail.json()["data"]["task"]["sessions"][0]["session_id"] == session_id
+    )
+    assert detail.json()["data"]["task"]["sessions"][0]["status"] == "ended"

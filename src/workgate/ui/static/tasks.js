@@ -17,6 +17,14 @@ export function createTasksController({
     taskId: text(initialTaskId, ""),
     sessionId: text(initialSessionId, ""),
     tasks: [],
+    taskFilter: "active",
+    taskCursor: "",
+    taskCursorStack: [],
+    taskNextCursor: null,
+    taskTotal: 0,
+    taskOverallCount: 0,
+    taskActiveTotal: 0,
+    taskPageCount: 0,
     unattachedSessions: [],
     sessions: [],
     executorTargets: new Map(),
@@ -211,6 +219,9 @@ export function createTasksController({
         controllerState.todoMutationBusy || controllerState.todoDirty;
       button.title = action === "finish" && unfinished ? "Complete or skip all Plan steps first" : "";
     }
+    elements.tasksFilter.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy;
+    elements.tasksPrev.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || !controllerState.taskCursorStack.length;
+    elements.tasksNext.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || !controllerState.taskNextCursor;
     elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
       controllerState.workspaceLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
@@ -293,6 +304,14 @@ export function createTasksController({
     controllerState.taskId = "";
     controllerState.sessionId = "";
     controllerState.tasks = [];
+    controllerState.taskCursor = "";
+    controllerState.taskCursorStack = [];
+    controllerState.taskNextCursor = null;
+    controllerState.taskTotal = 0;
+    controllerState.taskOverallCount = 0;
+    controllerState.taskActiveTotal = 0;
+    controllerState.taskPageCount = 0;
+    elements.tasksFilter.value = controllerState.taskFilter;
     controllerState.unattachedSessions = [];
     controllerState.sessions = [];
     controllerState.workspaceLoading = false;
@@ -417,21 +436,20 @@ export function createTasksController({
 
   function taskMeta(task) {
     const sessions = Array.isArray(task && task.sessions) ? task.sessions : [];
-    const count = sessions.length;
+    const count = Number.isInteger(task?.session_count) ? task.session_count : sessions.length;
     return `${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
   }
 
   function renderTaskList() {
-    const active = controllerState.tasks.filter(
-      (task) => task.status !== "completed" && task.status !== "cancelled",
-    ).length;
-    document.getElementById("task-count-active").textContent = String(active);
-    document.getElementById("task-count-total").textContent = String(controllerState.tasks.length);
+    document.getElementById("task-count-active").textContent = String(controllerState.taskActiveTotal);
+    document.getElementById("task-count-total").textContent = String(controllerState.taskOverallCount);
+    elements.tasksPageState.textContent = `Page ${controllerState.taskCursorStack.length + 1} · ${controllerState.taskPageCount} of ${controllerState.taskTotal}`;
+    document.getElementById("tasks-panel").dataset.taskFilter = controllerState.taskFilter;
     elements.taskList.replaceChildren();
     if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = "No tasks yet.";
+      empty.textContent = "Nothing matches this filter.";
       elements.taskList.append(empty);
       return;
     }
@@ -444,6 +462,7 @@ export function createTasksController({
         "aria-current",
         task.task_id === controllerState.taskId ? "true" : "false",
       );
+      if (task.pinned) button.title = "Selected Task outside the current page or filter";
       const title = document.createElement("strong");
       title.textContent = taskOptionLabel(task);
       const heading = document.createElement("span");
@@ -455,7 +474,7 @@ export function createTasksController({
       heading.append(title, status);
       const meta = document.createElement("span");
       meta.className = "session-entry-meta";
-      meta.textContent = taskMeta(task);
+      meta.textContent = `${task.pinned ? "Selected outside filter · " : ""}${taskMeta(task)}`;
       button.append(heading, meta);
       button.addEventListener("click", () => {
         void selectTask(task.task_id);
@@ -510,7 +529,9 @@ export function createTasksController({
   }
 
   function applyInventory(payload) {
-    const signature = JSON.stringify([payload?.tasks, payload?.unattached_sessions]);
+    const signature = JSON.stringify([payload?.tasks, payload?.unattached_sessions, payload?.selected_task,
+      payload?.selected_session, payload?.total, payload?.all_count, payload?.active_count,
+      payload?.next_cursor, controllerState.taskFilter, controllerState.taskCursor]);
     if (signature === controllerState.inventorySignature) return;
     controllerState.inventorySignature = signature;
     const listScroll = [elements.taskList.scrollTop, elements.sessionList.scrollTop];
@@ -519,15 +540,26 @@ export function createTasksController({
       : null;
     const focusedTask = focused?.dataset.taskId;
     const focusedSession = focused?.dataset.sessionId;
-    controllerState.tasks = Array.isArray(payload && payload.tasks)
-      ? payload.tasks
-      : [];
+    const page = Array.isArray(payload?.tasks) ? payload.tasks : [];
+    controllerState.tasks = [...page];
+    const selected = payload?.selected_task;
+    if (selected && selected.task_id === selectedTaskId()) {
+      const index = controllerState.tasks.findIndex((item) => item.task_id === selected.task_id);
+      if (index >= 0) controllerState.tasks[index] = selected;
+      else controllerState.tasks.unshift({ ...selected, pinned: true });
+    }
     onInventory(controllerState.tasks);
-    controllerState.unattachedSessions = Array.isArray(
-      payload && payload.unattached_sessions,
-    )
-      ? payload.unattached_sessions
-      : [];
+    controllerState.unattachedSessions = Array.isArray(payload?.unattached_sessions)
+      ? [...payload.unattached_sessions] : [];
+    if (payload?.selected_session && !controllerState.unattachedSessions.some(
+        (row) => row.session_id === payload.selected_session.session_id)) {
+      controllerState.unattachedSessions.unshift(payload.selected_session);
+    }
+    controllerState.taskTotal = Number(payload?.total || 0);
+    controllerState.taskPageCount = Number(payload?.count || 0);
+    if (Number.isInteger(payload?.active_count)) controllerState.taskActiveTotal = payload.active_count;
+    if (Number.isInteger(payload?.all_count)) controllerState.taskOverallCount = payload.all_count;
+    controllerState.taskNextCursor = payload?.next_cursor || null;
 
     let selectedTask = selectedTaskSummary();
     if (!selectedTask && !controllerState.taskId && controllerState.sessionId) {
@@ -620,8 +652,7 @@ export function createTasksController({
     renderSessions(controllerState.sessions);
     syncDeepLink();
     onNavigate("task");
-    await refreshTodos({ force: true });
-    if (controllerState.sessionId) await refreshSessionAudit();
+    await refreshWorkspace();
   }
 
   async function selectUnattachedSession(next) {
@@ -648,7 +679,7 @@ export function createTasksController({
     renderSessions(controllerState.sessions);
     syncDeepLink();
     onNavigate("session");
-    await refreshSessionAudit();
+    await refreshWorkspace();
   }
 
   async function selectSession(next) {
@@ -682,8 +713,28 @@ export function createTasksController({
     const previousTask = selectedTaskId();
     const previousSession = controllerState.sessionId;
     try {
-      const payload = await request("/tasks");
+      const query = new URLSearchParams({ status: controllerState.taskFilter });
+      if (controllerState.taskCursor) query.set("cursor", controllerState.taskCursor);
+      const payload = await request(`/tasks?${query}`);
       if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
+      const lookup = selectedTaskId()
+        ? new URLSearchParams({ task_id: selectedTaskId() })
+        : controllerState.sessionId
+          ? new URLSearchParams({ session_id: controllerState.sessionId }) : null;
+      if (lookup) {
+        try {
+          const detail = await request(`/tasks/detail?${lookup}`);
+          if (generation !== controllerState.workspaceGeneration || revision !== controllerState.selectionRevision) return null;
+          if (detail.task && !selectedTaskId()) controllerState.taskId = detail.task.task_id;
+          payload.selected_task = detail.task;
+          payload.selected_session = detail.session;
+        } catch (error) {
+          // A Task/Session may have been deleted concurrently; drop only the stale selection.
+          if (error?.status !== 404) throw error;
+          controllerState.taskId = "";
+          controllerState.sessionId = "";
+        }
+      }
       applyInventory(payload);
       elements.tasksState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
@@ -1255,6 +1306,31 @@ export function createTasksController({
     }
     showTab(activeTab);
     updateTaskTabs();
+    elements.tasksFilter.addEventListener("change", () => {
+      if (controllerState.todoDirty && !globalThis.confirm("Discard unsaved Plan changes?")) {
+        elements.tasksFilter.value = controllerState.taskFilter;
+        return;
+      }
+      controllerState.todoDirty = false;
+      controllerState.taskFilter = elements.tasksFilter.value;
+      controllerState.taskCursor = "";
+      controllerState.taskCursorStack = [];
+      controllerState.selectionRevision += 1;
+      void refreshWorkspace();
+    });
+    elements.tasksNext.addEventListener("click", () => {
+      if (!controllerState.taskNextCursor || controllerState.workspaceLoading) return;
+      controllerState.taskCursorStack.push(controllerState.taskCursor);
+      controllerState.taskCursor = controllerState.taskNextCursor;
+      controllerState.selectionRevision += 1;
+      void refreshWorkspace();
+    });
+    elements.tasksPrev.addEventListener("click", () => {
+      if (!controllerState.taskCursorStack.length || controllerState.workspaceLoading) return;
+      controllerState.taskCursor = controllerState.taskCursorStack.pop();
+      controllerState.selectionRevision += 1;
+      void refreshWorkspace();
+    });
     elements.tasksRefresh.addEventListener("click", () => {
       if (controllerState.workspaceLoading || controllerState.sessionTerminating) return;
       void refreshWorkspace();

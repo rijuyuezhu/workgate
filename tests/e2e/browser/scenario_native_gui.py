@@ -48,7 +48,37 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
 
         def supply(route):
             path = route.request.url.split("/api/ui/", 1)[1].split("?", 1)[0]
-            if path == "tasks":
+            if path == "tasks/detail":
+                route.fulfill(
+                    json={
+                        "ok": True,
+                        "data": {
+                            "task": {
+                                "task_id": "task_gui_e2e",
+                                "label": "Synthetic GUI test task",
+                                "status": "active",
+                                "objective": "Check GUI manual input",
+                                "created_at": 1,
+                                "updated_at": 1,
+                                "progress": {},
+                                "sessions": [
+                                    {
+                                        "session_id": session_id,
+                                        "executor_id": harness.executor_id,
+                                        "label": "Synthetic GUI session",
+                                        "status": "active",
+                                        "availability": "available",
+                                        "workdir": "/demo",
+                                        "created_at": 1,
+                                        "updated_at": 1,
+                                    }
+                                ],
+                            },
+                            "session": None,
+                        },
+                    }
+                )
+            elif path == "tasks":
                 route.fulfill(
                     json={
                         "ok": True,
@@ -140,7 +170,8 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
             else:
                 route.continue_()
 
-        page.route("**/api/ui/tasks", supply)
+        page.route("**/api/ui/tasks?**", supply)
+        page.route("**/api/ui/tasks/detail?**", supply)
         page.route("**/api/ui/gui/**", supply)
         page.route("**/api/ui/todos?**", supply)
         page.route("**/api/ui/audit?**", supply)

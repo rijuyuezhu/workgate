@@ -435,6 +435,23 @@
           <span id="tasks-state" class="muted">Not loaded</span>
         </div>
       </div>
+      <div class="task-list-controls">
+        <label for="tasks-filter">Show
+          <select id="tasks-filter">
+            <option value="active">Active</option>
+            <option value="blocked">Blocked</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="all">All tasks</option>
+            <option value="unattached">Unattached sessions</option>
+          </select>
+        </label>
+        <span id="tasks-page-state" class="muted" aria-live="polite">Loading…</span>
+        <div class="task-page-buttons">
+          <button id="tasks-prev" type="button" disabled>Previous</button>
+          <button id="tasks-next" type="button" disabled>Next</button>
+        </div>
+      </div>
       <div class="tasks-layout">
         <nav id="task-list" class="session-list" aria-label="Semantic tasks" aria-live="polite">
           <div class="empty-state">Loading tasks…</div>

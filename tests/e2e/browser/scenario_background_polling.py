@@ -181,17 +181,17 @@ def run_background_polling(harness: BrowserHarness) -> None:
     def removed_session(route):
         response = route.fetch()
         payload = response.json()
-        for task in payload["data"]["tasks"]:
-            if task["task_id"] == selected_task:
-                task["sessions"] = [
-                    session
-                    for session in task["sessions"]
-                    if session["session_id"] != selected_session
-                ]
+        task = payload["data"].get("task")
+        if task and task["task_id"] == selected_task:
+            task["sessions"] = [
+                session
+                for session in task["sessions"]
+                if session["session_id"] != selected_session
+            ]
         route.fulfill(response=response, json=payload)
 
-    page.route("**/api/ui/tasks", removed_session)
-    with page.expect_response("**/api/ui/tasks"):
+    page.route("**/api/ui/tasks/detail?**", removed_session)
+    with page.expect_response("**/api/ui/tasks/detail?**"):
         page.wait_for_timeout(850)
     expect(page.locator("#session-detail-title")).to_have_text(
         "No session selected"
@@ -200,7 +200,7 @@ def run_background_polling(harness: BrowserHarness) -> None:
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel")
     ).to_have_count(0)
-    page.unroute("**/api/ui/tasks", removed_session)
+    page.unroute("**/api/ui/tasks/detail?**", removed_session)
 
     page.close()
     harness.page = original_page

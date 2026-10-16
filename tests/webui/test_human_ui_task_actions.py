@@ -219,7 +219,7 @@ async def test_deleting_task_detaches_but_does_not_end_retained_session(
         detached = harness.control.control_state.snapshot_sessions()[session_id]
         assert detached.task_id is None
         assert detached.status != "ended"
-        inventory = client.get("/api/ui/tasks")
+        inventory = client.get("/api/ui/tasks", params={"status": "unattached"})
         assert inventory.status_code == 200
         assert session_id in {
             row["session_id"]

@@ -2636,6 +2636,21 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .session-task .task-progress-next dd { color: #35365c; font-weight: 550; }
 .session-task .task-progress-blockers dd { color: #a4414e; }
 
+/* Task list paging never depends on global viewport width. */
+.task-list-controls {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 16px; border-bottom: 1px solid var(--line);
+}
+.task-list-controls label { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.task-list-controls select { min-width: 124px; max-width: 100%; padding: 5px 7px; }
+.task-list-controls #tasks-page-state { font-size: 11px; }
+.task-page-buttons { margin-left: auto; display: flex; gap: 5px; }
+.task-page-buttons button { padding: 5px 9px; font-size: 11px; }
+@media (max-width: 480px) {
+  .task-list-controls { padding: 9px 12px; }
+  .task-page-buttons { margin-left: 0; }
+}
+
 /* Task actions use the existing status machine; keep errors visible below controls. */
 .task-lifecycle-actions {
   display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
@@ -3093,3 +3108,9 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .session-gui-manual-controls input { min-width: 90px; max-width: 240px; }
 .session-gui-image.session-gui-interactive { cursor: crosshair; touch-action: none; }
 .session-gui-image.session-gui-interactive:focus { outline: 2px solid #5f55cd; outline-offset: 3px; }
+
+@media (max-width: 780px) {
+  #tasks-panel:not([data-mobile-step="list"]) .task-list-controls { display: none; }
+}
+
+#tasks-panel[data-task-filter="unattached"] .inventory-summary { display: none; }
