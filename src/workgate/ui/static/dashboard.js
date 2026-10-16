@@ -1,3 +1,65 @@
+function dashboardNumber(value) {
+    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+function dashboardPercent(value) {
+    const number = dashboardNumber(value);
+    return number === null ? "—" : `${number.toFixed(1)}%`;
+  }
+
+export function dashboardBytes(value) {
+    const number = dashboardNumber(value);
+    if (number === null || number < 0) return "—";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let scaled = number;
+    let unit = 0;
+    while (scaled >= 1024 && unit < units.length - 1) {
+      scaled /= 1024;
+      unit += 1;
+    }
+    const digits = scaled >= 100 || unit === 0 ? 0 : scaled >= 10 ? 1 : 2;
+    return `${scaled.toFixed(digits)} ${units[unit]}`;
+  }
+
+export function dashboardRate(value) {
+    const formatted = dashboardBytes(value);
+    return formatted === "—" ? formatted : `${formatted}/s`;
+  }
+
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
+  const values = Array.isArray(rawValues) ? rawValues : [];
+  element.replaceChildren();
+  const finite = values
+    .map((value, index) => ({ index, value: finiteNumber(value) }))
+    .filter((item) => item.value !== null);
+  if (finite.length < 2) return;
+  const normalizedMaximum = finiteNumber(fixedMaximum);
+  const maximum = normalizedMaximum !== null
+    ? Math.max(1, normalizedMaximum)
+    : Math.max(1, ...finite.map((item) => item.value));
+  const lastIndex = Math.max(1, values.length - 1);
+  const points = finite
+    .map((item) => {
+      const x = (item.index / lastIndex) * 100;
+      const y = 30 - Math.max(0, Math.min(1, item.value / maximum)) * 26;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", points);
+  line.setAttribute("fill", "none");
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  element.append(line);
+}
+
+
 export function createDashboardController({
   elements,
   request,
@@ -20,36 +82,6 @@ export function createDashboardController({
 
   function dashboardExecutorOnline(executorId = controllerState.executorId) {
     return Boolean(executorId) && controllerState.executorStates.get(executorId) === "online";
-  }
-
-  function dashboardNumber(value) {
-    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
-    const number = Number(value);
-    return Number.isFinite(number) ? number : null;
-  }
-
-  function dashboardPercent(value) {
-    const number = dashboardNumber(value);
-    return number === null ? "—" : `${number.toFixed(1)}%`;
-  }
-
-  function dashboardBytes(value) {
-    const number = dashboardNumber(value);
-    if (number === null || number < 0) return "—";
-    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let scaled = number;
-    let unit = 0;
-    while (scaled >= 1024 && unit < units.length - 1) {
-      scaled /= 1024;
-      unit += 1;
-    }
-    const digits = scaled >= 100 || unit === 0 ? 0 : scaled >= 10 ? 1 : 2;
-    return `${scaled.toFixed(digits)} ${units[unit]}`;
-  }
-
-  function dashboardRate(value) {
-    const formatted = dashboardBytes(value);
-    return formatted === "—" ? formatted : `${formatted}/s`;
   }
 
   function dashboardDuration(value) {
@@ -104,31 +136,6 @@ export function createDashboardController({
     container.append(empty);
   }
 
-  function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
-    const values = Array.isArray(rawValues) ? rawValues : [];
-    element.replaceChildren();
-    const finite = values
-      .map((value, index) => ({ index, value: dashboardNumber(value) }))
-      .filter((item) => item.value !== null);
-    if (finite.length < 2) return;
-    const normalizedMaximum = dashboardNumber(fixedMaximum);
-    const maximum = normalizedMaximum !== null
-      ? Math.max(1, normalizedMaximum)
-      : Math.max(1, ...finite.map((item) => item.value));
-    const lastIndex = Math.max(1, values.length - 1);
-    const points = finite
-      .map((item) => {
-        const x = (item.index / lastIndex) * 100;
-        const y = 30 - Math.max(0, Math.min(1, item.value / maximum)) * 26;
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-      })
-      .join(" ");
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    line.setAttribute("points", points);
-    line.setAttribute("fill", "none");
-    line.setAttribute("vector-effect", "non-scaling-stroke");
-    element.append(line);
-  }
 
   function setDashboardBar(element, value) {
     const number = dashboardNumber(value);

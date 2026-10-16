@@ -1,3 +1,5 @@
+import { dashboardBytes, renderDashboardSparkline } from "./dashboard.js";
+
 export function createExecutorsController({
   elements,
   request,
@@ -19,6 +21,9 @@ export function createExecutorsController({
     diagnosticGeneration: 0,
     diagnosticLoading: false,
     diagnosticError: "",
+    metricHistory: [],
+    metricExecutorId: "",
+    metricLoading: false,
     detailTabs: new Map(),
   };
 
@@ -29,9 +34,12 @@ export function createExecutorsController({
   function select(executorId) {
     if (!state.executors.some((item) => item.executor_id === executorId)) return;
     state.selectedId = executorId;
+    state.metricExecutorId = executorId;
+    state.metricHistory = [];
     renderList();
     renderDetails();
     void loadDiagnostics();
+    void refreshMetrics();
   }
 
   function timestamp(value, fallback = "Never") {
@@ -95,9 +103,12 @@ export function createExecutorsController({
       button.append(indicator, main, status);
       button.addEventListener("click", () => {
         state.selectedId = executor.executor_id;
+        state.metricExecutorId = executor.executor_id;
+        state.metricHistory = [];
         renderList();
         renderDetails();
         void loadDiagnostics();
+        void refreshMetrics();
         onNavigate("detail");
       });
       elements.executorList.append(button);
@@ -206,21 +217,42 @@ export function createExecutorsController({
     const cards = template.cloneNode(true);
     cards.removeAttribute("aria-label");
     for (const node of cards.querySelectorAll("[id]")) node.removeAttribute("id");
-    for (const node of cards.querySelectorAll(".dashboard-live, .dashboard-sparkline, .dashboard-metric-foot")) node.remove();
+    for (const node of cards.querySelectorAll(".dashboard-live")) node.remove();
     const health = local?.health || {};
+    const history = state.metricHistory;
     for (const [index, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
       const number = health[key];
       cards.children[index].querySelector("strong").textContent =
         typeof number === "number" ? `${number.toFixed(1)}%` : "—";
     }
+    for (const [index, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
+      renderDashboardSparkline(cards.children[index].querySelector(".dashboard-sparkline"), history.map((value) => value[key]), 100);
+    }
     const network = cards.children[3];
     const rates = network.querySelectorAll(".dashboard-network-values strong");
     for (const [index, key] of ["network_rx_bps", "network_tx_bps"].entries()) {
       const value = health[key];
-      rates[index].textContent = typeof value === "number"
-        ? `${(value / 1024).toFixed(1)} KiB/s` : "—";
+      rates[index].textContent = dashboardBytes(value);
     }
-    network.querySelector(".dashboard-network-bar")?.remove();
+    const rx = health.network_rx_bps;
+    const tx = health.network_tx_bps;
+    const total = (typeof rx === "number" ? rx : 0) + (typeof tx === "number" ? tx : 0);
+    const bar = network.querySelector(".dashboard-network-bar");
+    if (bar) {
+      bar.children[0].style.width = total > 0 ? `${100 * (rx || 0) / total}%` : "0%";
+      bar.children[1].style.width = total > 0 ? `${100 * (tx || 0) / total}%` : "0%";
+    }
+    renderDashboardSparkline(network.querySelector(".dashboard-sparkline"), history.map((value) => value.network_total));
+    const footValues = [
+      [`Load ${typeof health.load_1m === "number" ? health.load_1m.toFixed(2) : "—"}`, `${health.cpu_count ?? "—"} cores`],
+      [`${dashboardBytes(health.memory_used_bytes)} used`, `${dashboardBytes(health.memory_total_bytes)} total`],
+      [`${dashboardBytes(health.disk_used_bytes)} used`, `${dashboardBytes(health.disk_total_bytes)} total`],
+    ];
+    for (const [index, values] of footValues.entries()) {
+      const nodes = cards.children[index].querySelectorAll(".dashboard-metric-foot span");
+      nodes[0].textContent = values[0];
+      nodes[1].textContent = values[1];
+    }
     container.append(cards);
   }
 
@@ -231,7 +263,10 @@ export function createExecutorsController({
     body.replaceChildren();
     mcp.replaceChildren();
     skills.replaceChildren();
-    elements.executorDiagnosticsRefresh.disabled = !selectedExecutor() || state.diagnosticLoading;
+    const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+    elements.executorDiagnosticsRefresh.parentElement.hidden = !showMetrics;
+    body.hidden = !showMetrics;
+    elements.executorDiagnosticsRefresh.disabled = !showMetrics || state.diagnosticLoading;
     if (!selectedExecutor()) return;
     const status = (message) => {
       addGroup(mcp, "Control", [{title: message, empty: true}]);
@@ -280,7 +315,35 @@ export function createExecutorsController({
     if (skillData.warnings > skillData.duplicates) {
       addGroup(skills, "Warnings", [{title: `${skillData.warnings - skillData.duplicates} Skill warnings`, icon: "info", warning: true}]);
     }
-    renderDiagnosticCards(body, local);
+    if (showMetrics && state.metricExecutorId === state.selectedId) renderDiagnosticCards(body, {health: state.metricHistory.at(-1) || {}});
+  }
+
+  async function refreshMetrics() {
+    const executor = selectedExecutor();
+    if (!executor?.online || executor.revoked_at || state.metricLoading || !elements.executorDiagnosticsBody.closest(".app-view") || elements.executorDiagnosticsBody.closest(".app-view").hidden) return;
+    const executorId = executor.executor_id;
+    state.metricLoading = true;
+    try {
+      const data = await request(`/dashboard?executor_id=${encodeURIComponent(executorId)}`);
+      if (state.selectedId !== executorId || !selectedExecutor()?.online) return;
+      const system = data?.system || {};
+      const sample = {};
+      for (const key of ["cpu_percent", "memory_percent", "disk_percent", "network_rx_bps", "network_tx_bps", "load_1m", "cpu_count", "memory_used_bytes", "memory_total_bytes", "disk_used_bytes", "disk_total_bytes"]) {
+        sample[key] = typeof system[key] === "number" ? system[key] : null;
+      }
+      sample.network_total = sample.network_rx_bps !== null && sample.network_tx_bps !== null
+        ? sample.network_rx_bps + sample.network_tx_bps : null;
+      state.metricHistory.push(sample);
+      state.metricHistory = state.metricHistory.slice(-60);
+      const body = elements.executorDiagnosticsBody;
+      if (!selectedExecutor()?.online || executorId !== state.selectedId) return;
+      body.replaceChildren();
+      renderDiagnosticCards(body, {health: sample});
+    } catch (error) {
+      if (error.authenticationRequired) void reloadApp();
+    } finally {
+      state.metricLoading = false;
+    }
   }
 
   async function loadDiagnostics(force = false) {
@@ -381,7 +444,12 @@ export function createExecutorsController({
       state.diagnosticLoading = false;
       state.diagnosticError = "";
       renderDiagnostics();
-      if (state.selectedId) void loadDiagnostics();
+      if (state.selectedId) {
+        state.metricExecutorId = state.selectedId;
+        state.metricHistory = [];
+        void loadDiagnostics();
+        void refreshMetrics();
+      }
     }
     onInventory(state.executors);
   }
@@ -419,7 +487,10 @@ export function createExecutorsController({
   function startPolling() {
     stopPolling();
     state.timer = globalThis.setInterval(() => {
-      if (authMode !== "oauth" || isAuthenticated()) refreshInBackground();
+      if (authMode !== "oauth" || isAuthenticated()) {
+        refreshInBackground();
+        if (selectedExecutor()?.online) void refreshMetrics();
+      }
     }, 4000);
   }
 
@@ -513,7 +584,7 @@ export function createExecutorsController({
     for (const button of elements.executorSubtabs) {
       button.addEventListener("click", () => setSubtab(button.dataset.executorSubtab));
     }
-    elements.executorDiagnosticsRefresh.addEventListener("click", () => { void loadDiagnostics(true); });
+    elements.executorDiagnosticsRefresh.addEventListener("click", () => { void refreshMetrics(); });
     elements.executorPairOpen.addEventListener("click", () => {
       clearPairReview();
       elements.executorPairForm.reset();

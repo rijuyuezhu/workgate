@@ -60,9 +60,13 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     page.locator("#executor-diagnostics-refresh").click()
     expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
-    assert len(calls) == 2
+    assert len(calls) == 1  # Resource refresh uses Dashboard telemetry, not diagnostics.
+    expect(page.locator("#executor-diagnostics-body .dashboard-sparkline polyline").first).to_be_attached(timeout=12000)
+    page.locator("#executor-list .executor-row").filter(has_text="offline").first.click()
+    expect(page.locator("#executor-diagnostics-body")).to_be_hidden()
+    expect(page.locator("#executor-detail-id")).not_to_have_text("—")
     page.set_viewport_size({"width": 390, "height": 844})
-    page.locator("#executor-list .executor-row").first.click()
+    page.locator("#executor-list .executor-row").filter(has_text="online").first.click()
     page.locator('[data-executor-subtab="overview"]').click()
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
