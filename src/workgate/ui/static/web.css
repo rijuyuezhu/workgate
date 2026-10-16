@@ -279,8 +279,8 @@ h2 {
   width: 100%;
   overflow: hidden;
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .terminal-console {
@@ -462,6 +462,8 @@ h2 {
   margin-top: 0.9rem;
 }
 
+#file-state { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+
 .file-list,
 .file-preview {
   min-width: 0;
@@ -494,11 +496,11 @@ h2 {
 }
 
 .file-entry-name {
-  overflow: hidden;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 0.82rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .file-entry-detail {
@@ -517,9 +519,8 @@ h2 {
 
 .file-preview-header strong {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .file-preview-header .muted {
@@ -577,11 +578,10 @@ h2 {
 
 .file-preview-entry {
   width: 100%;
-  overflow: hidden;
   background: var(--panel);
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .file-editor {
@@ -696,9 +696,9 @@ h2 {
 
 .session-entry strong,
 .session-entry-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-entry strong { font-family: inherit; font-size: 13px; font-weight: 700; }
@@ -755,8 +755,8 @@ h2 {
   color: #394255;
   font-family: var(--font-mono);
   font-size: 0.75rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .session-resource {
@@ -1046,9 +1046,9 @@ h2 {
 .audit-entry-title,
 .audit-entry-meta,
 .audit-entry-session {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .audit-entry-title {
@@ -1092,9 +1092,8 @@ h2 {
 .audit-detail-header strong,
 .audit-detail-header span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .audit-detail-header span {
@@ -1175,12 +1174,12 @@ h2 {
 .dashboard-card > strong {
   display: block;
   margin-top: 0.5rem;
-  overflow: hidden;
+  min-width: 0;
   color: #30384a;
   font-size: clamp(1.1rem, 2vw, 1.55rem);
   line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dashboard-card > small {
@@ -1236,10 +1235,9 @@ h2 {
 .dashboard-section-heading h3 {
   min-width: 0;
   margin: 0;
-  overflow: hidden;
   font-size: 0.98rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dashboard-resource-list {
@@ -1309,13 +1307,12 @@ h2 {
 
 .dashboard-details dd {
   margin: 0.25rem 0 0;
-  overflow: hidden;
   color: #394255;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dashboard-list {
@@ -1369,13 +1366,12 @@ h2 {
 .dashboard-list-header span {
   flex: 0 1 auto;
   max-width: 48%;
-  overflow: hidden;
   color: #72899c;
   font-size: 0.64rem;
   line-height: 1.35;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .dashboard-list-item p {
@@ -1465,11 +1461,11 @@ h2 {
 }
 .executor-band-main { display: grid; min-width: 0; gap: 3px; }
 .executor-band-main strong {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow-wrap: anywhere; white-space: normal;
   color: #31394f; font-size: 13px; font-weight: 700;
 }
 .executor-band-main small, .executor-band-meta {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow-wrap: anywhere; white-space: normal;
   color: #7a869a; font-size: 11px;
 }
 .executor-band-state {
@@ -1648,13 +1644,7 @@ h2 {
   width: 100%;
 }
 
-#file-state {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+#file-state { display: block; max-width: 100%; }
 
 .todo-actions,
   .todo-control {
@@ -2235,7 +2225,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 }
 .dashboard-task-list { display: grid; align-content: start; gap: 4px; }
 .dashboard-task-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-width: 0; width: 100%; padding: 12px; border: 1px solid #e6e8ef; border-radius: 6px; background: white; box-shadow: none; text-align: left; cursor: pointer; }
-.dashboard-task-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.dashboard-task-row strong { min-width: 0; overflow: hidden; overflow-wrap: anywhere; white-space: normal; font-size: 12px; }
 .dashboard-task-row:hover { background: #f8f7ff; }
 .dashboard-task-state { padding: 4px 9px; border-radius: 99px; background: #e9f8f1; color: #16825b; font-size: 10px; text-transform: capitalize; }
 .dashboard-system-disclosure { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: white; }
@@ -2369,7 +2359,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 }
 :is(.file-location-row, .terminal-location-row):disabled { opacity: .65; }
 :is(.file-location-row, .terminal-location-row) span:last-child {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow-wrap: anywhere; white-space: normal;
 }
 :is(.file-location-dot, .terminal-location-dot) {
   display: block; flex: 0 0 7px; width: 7px; height: 7px;
@@ -2378,16 +2368,23 @@ input[type=checkbox] { accent-color: #6759e7; }
 :is(.file-location-dot, .terminal-location-dot).online { background: #28af7e; }
 .file-shortcuts { display: grid; gap: 7px; }
 .file-shortcuts button { display: flex; align-items: center; gap: 7px; }
-.file-browser { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+.file-browser { display: flex; flex-direction: column; border-right: 1px solid var(--line); container-type: inline-size; }
 .file-browser-heading { display: flex; justify-content: space-between; align-items: center; }
 .file-browser-heading h3 { margin: 0; }
 .file-breadcrumbs { margin: 9px 0; }
 .file-list-options { margin-bottom: 9px; }
-.file-column-heading { display: grid; grid-template-columns: minmax(0,1fr) 65px 85px; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); color: #858e9e; font-size: 10px; font-weight: 650; }
+.file-column-heading { display: grid; grid-template-columns: minmax(0,1fr) 65px minmax(0,95px); gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); color: #858e9e; font-size: 10px; font-weight: 650; }
 .file-column-heading span:not(:first-child) { text-align: right; }
-.file-browser .file-entry { display: grid; grid-template-columns: minmax(0,1fr) 65px 85px; gap: 10px; border-radius: 7px; text-align: left; }
+.file-browser .file-entry { display: grid; grid-template-columns: minmax(0,1fr) 65px minmax(0,95px); gap: 10px; border-radius: 7px; text-align: left; }
 .file-browser .file-entry-name { display: flex; min-width: 0; align-items: center; gap: 7px; }
-.file-browser .file-entry-detail, .file-browser .file-entry-modified { color: #939cab; font-size: 11px; text-align: right; white-space: nowrap; }
+.file-browser .file-entry-detail, .file-browser .file-entry-modified { color: #939cab; font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+/* The Files rail is narrow even in a wide desktop window. */
+@container (max-width: 320px) {
+  .file-column-heading { display: none; }
+  .file-browser .file-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .file-browser .file-entry-name { grid-column: 1 / -1; }
+  .file-browser .file-entry-detail { text-align: left; }
+}
 .file-browser .file-entry-icon { display: grid; place-items: center; flex: none; width: 23px; height: 23px; border-radius: 6px; color: #687589; background: #eff1f6; font-size: 15px; }
 .file-browser .file-entry-icon-dir { color: #a97e18; background: #fff5dd; }
 .file-browser .file-entry-icon-link { color: #6658e8; background: #eeecff; }
