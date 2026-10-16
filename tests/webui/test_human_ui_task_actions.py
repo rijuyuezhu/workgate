@@ -207,7 +207,9 @@ async def test_deleting_task_detaches_but_does_not_end_retained_session(
         executor_id=harness.executor_id,
         task_id=task.task_id,
     )
-    session_id = session["session_id"]
+    assert isinstance(session, dict)
+    session_id = session.get("session_id")
+    assert isinstance(session_id, str)
     with TestClient(app, base_url=BASE_URL) as client:
         assert _post(client, "cancel", task.task_id).status_code == 200
         retained = harness.control.control_state.snapshot_sessions()[session_id]
