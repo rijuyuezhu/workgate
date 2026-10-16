@@ -544,7 +544,7 @@ export function createExecutorsController({
       await request("/integrations/auth", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
       if (state.editor !== edit) return;
       elements.executorMcpSecretValue.value = "";
-      editorStatus(action === "clear_oauth" ? "Local OAuth credentials cleared (remote tokens not revoked)." : "Private credential updated. Values are never shown.");
+      editorStatus(action === "clear_oauth" ? "Local OAuth state cleared (remote tokens not revoked)." : "Private secret updated. Values are never shown.");
       await loadEditorAuth(edit);
     } catch (error) {
       if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error));
@@ -908,7 +908,7 @@ export function createExecutorsController({
       void mutateAuth("set_secret", {secret_name:key, secret_value:value});
     });
     elements.executorMcpOAuthClear.addEventListener("click", () => {
-      if (globalThis.confirm("Clear locally stored OAuth credentials? This does not revoke tokens at the provider."))
+      if (globalThis.confirm("Clear locally stored OAuth state? This does not revoke tokens at the provider."))
         void mutateAuth("clear_oauth");
     });
     elements.executorIntegrationClose.addEventListener("click", () => elements.executorIntegrationDialog.close());
