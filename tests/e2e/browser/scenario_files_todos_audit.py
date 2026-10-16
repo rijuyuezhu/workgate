@@ -311,11 +311,18 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             f'#task-list .task-entry[data-task-id="{zero_session_task_id}"]'
         )
     ).to_be_visible()
+    # Legacy history is now loaded only on demand, not with every Task page.
+    expect(page.locator("#tasks-filter")).to_have_value("active")
+    expect(page.locator("#task-list .unattached-session-entry")).to_have_count(
+        0
+    )
+    page.locator("#tasks-filter").select_option("unattached")
     expect(
         page.locator(
             f'#task-list .unattached-session-entry[data-session-id="{unattached_session_id}"]'
         )
     ).to_be_visible()
+    page.locator("#tasks-filter").select_option("active")
     expect(
         page.locator(
             f'#session-list .session-entry[data-session-id="{session_id}"]'
@@ -385,6 +392,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-audit-summary")).to_contain_text("records")
     audit_top = page.locator("#session-audit-filter-form").bounding_box()
     assert audit_top and audit_top["y"] < 820
+    page.locator("#tasks-filter").select_option("unattached")
     # #347: Executor identity is shared by attached and legacy unattached
     # Sessions. Inventory changes update it without re-creating focused rows.
     attached_entry = page.locator(
@@ -500,6 +508,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "available"
     )
     expect(attached_entry).to_be_focused()
+    page.locator("#tasks-filter").select_option("active")
 
     expect(page.locator("#todo-summary")).to_contain_text("0 total")
     _show_task_tab(page, "progress")
@@ -564,13 +573,15 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     def project_session_availability(route: Route) -> None:
         response = route.fetch()
         payload = response.json()
-        for task_row in payload.get("data", {}).get("tasks", []):
+        for task_row in [payload.get("data", {}).get("task")]:
+            if not task_row:
+                continue
             for row in task_row.get("sessions", []):
                 if row.get("session_id") == session_id:
                     row["availability"] = availability_override
         route.fulfill(response=response, json=payload)
 
-    page.route("**/api/ui/tasks", project_session_availability)
+    page.route("**/api/ui/tasks/detail?**", project_session_availability)
     page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_have_text(
         "Unavailable · missing on executor"
@@ -595,7 +606,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-audit-refresh")).to_be_enabled()
     expect(page.locator("#session-terminate")).to_be_disabled()
 
-    page.unroute("**/api/ui/tasks", project_session_availability)
+    page.unroute("**/api/ui/tasks/detail?**", project_session_availability)
     page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_contain_text(
         "Available · "
@@ -690,7 +701,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     def hide_deep_link_session(route: Route) -> None:
         response = route.fetch()
         payload = response.json()
-        for task_row in payload.get("data", {}).get("tasks", []):
+        for task_row in [payload.get("data", {}).get("task")]:
+            if not task_row:
+                continue
             task_row["sessions"] = [
                 row
                 for row in task_row.get("sessions", [])
@@ -698,7 +711,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             ]
         route.fulfill(response=response, json=payload)
 
-    page.route("**/api/ui/tasks", hide_deep_link_session)
+    page.route("**/api/ui/tasks/detail?**", hide_deep_link_session)
     page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-title")).to_have_text(
         "No session selected"
@@ -710,7 +723,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
     ).to_have_attribute("aria-current", "true")
     expect(page.locator("#task-status")).to_have_text("active")
-    page.unroute("**/api/ui/tasks", hide_deep_link_session)
+    page.unroute("**/api/ui/tasks/detail?**", hide_deep_link_session)
     page.locator("#tasks-refresh").click()
     expect(
         page.locator(

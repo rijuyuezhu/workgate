@@ -823,6 +823,23 @@ class ControlTaskService:
         )
         return [self._task_output(stored) for stored in tasks]
 
+    def _list_task_summaries_sync(self) -> list[dict[str, Any]]:
+        """List only metadata for UI paging; do not expand plans or sessions."""
+        return [
+            {
+                "task_id": str(stored.task_id),
+                "label": stored.document.label,
+                "objective": stored.document.objective,
+                "status": stored.document.status,
+                "created_at": stored.document.created_at,
+                "updated_at": stored.document.updated_at,
+            }
+            for stored in self._iter_subject_tasks(self._subject())
+        ]
+
+    async def list_task_summaries(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_task_summaries_sync)
+
     async def list_tasks(self) -> list[TaskOutput]:
         """Return retained semantic tasks owned by the current principal."""
         return await asyncio.to_thread(self._list_tasks_sync)

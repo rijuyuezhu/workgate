@@ -39,6 +39,7 @@ class ControlConfig(SharedRoleConfig):
     mcp_max_sessions: int
 
     ui_enabled: bool
+    ui_task_page_size: int
     ui_path: str
 
     executor_max_pending_commands: int
@@ -114,6 +115,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         mcp_session_idle_timeout_s=settings.mcp_session_idle_timeout_s,
         mcp_max_sessions=settings.mcp_max_sessions,
         ui_enabled=settings.ui_enabled,
+        ui_task_page_size=settings.ui_task_page_size,
         ui_path=settings.ui_path,
         ui_terminal_idle_timeout_s=settings.ui_terminal_idle_timeout_s,
         ui_terminal_max_connections=settings.ui_terminal_max_connections,

@@ -184,6 +184,26 @@
         ],
         [
           {
+            "code": "ui_task_page_size"
+          },
+          {
+            "lines": [
+              {
+                "code": "--ui-task-page-size"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_UI_TASK_PAGE_SIZE"
+          },
+          "integer",
+          {
+            "code": "50"
+          },
+          "Default WebUI Task page size; requests have a fixed safety cap of 100."
+        ],
+        [
+          {
             "code": "ui_terminal_idle_timeout_s"
           },
           {
@@ -2133,6 +2153,19 @@
       "nullable": false,
       "section": "WebUI",
       "type": "string",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--ui-task-page-size",
+      "default": 50,
+      "default_display": "50",
+      "description": "Default WebUI Task page size; requests have a fixed safety cap of 100.",
+      "env": "WORKGATE_UI_TASK_PAGE_SIZE",
+      "name": "ui_task_page_size",
+      "nullable": false,
+      "section": "WebUI",
+      "type": "integer",
       "unset_cli": null
     },
     {

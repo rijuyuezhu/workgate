@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     """Non-root URL path where the browser WebUI is mounted."""
     ui_terminal_idle_timeout_s: _NonNegativeInt = 3600
     """Idle timeout for authenticated WebUI terminal WebSockets; 0 disables idle expiry."""
+    ui_task_page_size: int = Field(default=50, ge=1, le=100)
+    """Default WebUI Task page size; requests have a fixed safety cap of 100."""
     ui_terminal_max_connections: int = Field(default=8, ge=1, le=128)
     """Maximum concurrent WebUI terminal WebSocket connections."""
 

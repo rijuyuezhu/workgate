@@ -148,6 +148,7 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("forwarded_allow_ips", "Server", metavar="IPS"),
     SettingSpec("ui_enabled", "WebUI"),
     SettingSpec("ui_path", "WebUI", metavar="PATH"),
+    SettingSpec("ui_task_page_size", "WebUI", metavar="COUNT"),
     SettingSpec(
         "ui_terminal_idle_timeout_s",
         "WebUI",

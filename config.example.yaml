@@ -20,6 +20,8 @@ forwarded_allow_ips: "127.0.0.1"
 ui_enabled: true
 # Non-root URL path where the browser WebUI is mounted.
 ui_path: "/ui"
+# Default WebUI Task page size; requests have a fixed safety cap of 100.
+ui_task_page_size: 50
 # Idle timeout for authenticated WebUI terminal WebSockets; 0 disables idle expiry.
 ui_terminal_idle_timeout_s: 3600
 # Maximum concurrent WebUI terminal WebSocket connections.
