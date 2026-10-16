@@ -46,9 +46,10 @@ def assert_narrow_text_readable(page: Page) -> None:
                     const overflow = [...range.getClientRects()].some(
                         rect => rect.width > 0 && (rect.right > bounds.right + 2 || rect.left < bounds.left - 2)
                     );
-                    if (style.textOverflow === 'ellipsis' || style.whiteSpace === 'nowrap' ||
+                    const hidden = style.display === 'none' || bounds.width < 1 || bounds.height < 1;
+                    if (hidden || style.textOverflow === 'ellipsis' || style.whiteSpace === 'nowrap' ||
                         node.scrollWidth > node.clientWidth + 2 || overflow) {
-                        failures.push({label, textOverflow: style.textOverflow,
+                        failures.push({label, hidden, textOverflow: style.textOverflow,
                             whiteSpace: style.whiteSpace, scrollWidth: node.scrollWidth,
                             clientWidth: node.clientWidth, overflow});
                     }

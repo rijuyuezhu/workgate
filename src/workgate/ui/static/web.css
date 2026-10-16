@@ -2460,8 +2460,10 @@ input[type=checkbox] { accent-color: #6759e7; }
 @media (max-width: 480px) {
   .file-browser { padding: 10px; }
   .file-browser-heading { display: none; }
-  .file-column-heading, .file-browser .file-entry { grid-template-columns: minmax(0,1fr) 65px; }
-  .file-column-heading span:last-child, .file-browser .file-entry-modified { display: none; }
+  .file-column-heading { display: none; }
+  .file-browser .file-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .file-browser .file-entry-name { grid-column: 1 / -1; }
+  .file-browser .file-entry-detail { text-align: left; }
   .file-panel { padding: 12px; }
   .file-actions button:disabled { display: none; }
   .terminal-heading { flex-wrap: wrap; }

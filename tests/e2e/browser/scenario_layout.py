@@ -199,7 +199,11 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                     el.getBoundingClientRect().height];
         }"""
     )
-    assert file_location_style == terminal_location_style
+    # Shared colors/spacing must match; rail widths can legitimately give
+    # the same full Executor label different wrapped row heights.
+    assert file_location_style[:-1] == terminal_location_style[:-1]
+    assert file_location_style[-1] >= 28
+    assert terminal_location_style[-1] >= 28
     assert (
         page.evaluate(
             "getComputedStyle(document.querySelector('.dashboard-health-banner')).borderRadius"
