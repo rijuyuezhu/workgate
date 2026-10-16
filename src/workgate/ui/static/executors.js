@@ -450,6 +450,11 @@ export function createExecutorsController({
         void loadDiagnostics();
         void refreshMetrics();
       }
+    } else {
+      // Status may change without changing selection; preserve the existing trend DOM.
+      const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+      elements.executorDiagnosticsBody.hidden = !showMetrics;
+      elements.executorDiagnosticsRefresh.parentElement.hidden = !showMetrics;
     }
     onInventory(state.executors);
   }
