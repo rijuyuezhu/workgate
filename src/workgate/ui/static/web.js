@@ -195,7 +195,6 @@ void (async () => {
     executorMcpBody: document.getElementById("executor-mcp-body"),
     executorSkillsBody: document.getElementById("executor-skills-body"),
     executorDiagnosticsBody: document.getElementById("executor-diagnostics-body"),
-    executorDiagnosticsRefresh: document.getElementById("executor-diagnostics-refresh"),
     executorList: document.getElementById("executor-list"),
     executorOnline: document.getElementById("executor-online"),
     executorPairApprove: document.getElementById("executor-pair-approve"),

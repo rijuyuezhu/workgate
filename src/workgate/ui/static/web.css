@@ -1555,9 +1555,7 @@ h2 {
 
 /* Read-only, selected-on-demand diagnostic detail; never a polling Dashboard clone. */
 .executor-diagnostics { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.9rem; }
-.executor-diagnostics-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
 
-.executor-diagnostics-heading button { font-size: 0.72rem; padding: 0.35rem 0.55rem; }
 .executor-diagnostics-state { font-size: 0.75rem; margin: 0.5rem 0; overflow-wrap: anywhere; }
 .executor-diagnostics-body { display: grid; gap: 0.65rem; }
 .executor-diagnostics-group { border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem; min-width: 0; }
@@ -3181,4 +3179,3 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-metric-head .dashboard-metric-icon { flex: none; }
 
 #executors-panel .executor-diagnostics-body[hidden],
-#executors-panel .executor-diagnostics-heading[hidden] { display: none; }

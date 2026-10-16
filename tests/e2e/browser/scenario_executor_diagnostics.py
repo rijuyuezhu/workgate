@@ -60,7 +60,6 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     assert len(calls) == 1, (
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
-    page.locator("#executor-diagnostics-refresh").click()
     expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
     assert len(calls) == 1  # Resource refresh uses Dashboard telemetry, not diagnostics.
     expect(page.locator("#executor-diagnostics-body .dashboard-sparkline polyline").first).to_be_attached(timeout=12000)

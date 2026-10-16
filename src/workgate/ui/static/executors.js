@@ -266,10 +266,8 @@ export function createExecutorsController({
     mcp.replaceChildren();
     skills.replaceChildren();
     const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
-    elements.executorDiagnosticsRefresh.parentElement.hidden = !showMetrics;
     body.hidden = !showMetrics;
     if (showMetrics && !body.childElementCount) renderDiagnosticCards(body, {health: state.metricHistory.at(-1) || {}});
-    elements.executorDiagnosticsRefresh.disabled = !showMetrics || state.diagnosticLoading;
     if (!selectedExecutor()) return;
     const status = (message) => {
       addGroup(mcp, "Control", [{title: message, empty: true}]);
@@ -457,7 +455,6 @@ export function createExecutorsController({
       // Status may change without changing selection; preserve the existing trend DOM.
       const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
       elements.executorDiagnosticsBody.hidden = !showMetrics;
-      elements.executorDiagnosticsRefresh.parentElement.hidden = !showMetrics;
     }
     onInventory(state.executors);
   }
@@ -592,7 +589,6 @@ export function createExecutorsController({
     for (const button of elements.executorSubtabs) {
       button.addEventListener("click", () => setSubtab(button.dataset.executorSubtab));
     }
-    elements.executorDiagnosticsRefresh.addEventListener("click", () => { void refreshMetrics(); });
     elements.executorPairOpen.addEventListener("click", () => {
       clearPairReview();
       elements.executorPairForm.reset();
