@@ -36,8 +36,10 @@ export function createExecutorsController({
     state.selectedId = executorId;
     state.metricExecutorId = executorId;
     state.metricHistory = [];
+    elements.executorDiagnosticsBody.replaceChildren();
     renderList();
     renderDetails();
+    renderDiagnostics();
     void loadDiagnostics();
     void refreshMetrics();
   }
@@ -105,8 +107,10 @@ export function createExecutorsController({
         state.selectedId = executor.executor_id;
         state.metricExecutorId = executor.executor_id;
         state.metricHistory = [];
+        elements.executorDiagnosticsBody.replaceChildren();
         renderList();
         renderDetails();
+        renderDiagnostics();
         void loadDiagnostics();
         void refreshMetrics();
         onNavigate("detail");
@@ -260,12 +264,12 @@ export function createExecutorsController({
     const body = elements.executorDiagnosticsBody;
     const mcp = elements.executorMcpBody;
     const skills = elements.executorSkillsBody;
-    body.replaceChildren();
     mcp.replaceChildren();
     skills.replaceChildren();
     const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     elements.executorDiagnosticsRefresh.parentElement.hidden = !showMetrics;
     body.hidden = !showMetrics;
+    if (showMetrics && !body.childElementCount) renderDiagnosticCards(body, {health: state.metricHistory.at(-1) || {}});
     elements.executorDiagnosticsRefresh.disabled = !showMetrics || state.diagnosticLoading;
     if (!selectedExecutor()) return;
     const status = (message) => {
@@ -315,7 +319,7 @@ export function createExecutorsController({
     if (skillData.warnings > skillData.duplicates) {
       addGroup(skills, "Warnings", [{title: `${skillData.warnings - skillData.duplicates} Skill warnings`, icon: "info", warning: true}]);
     }
-    if (showMetrics && state.metricExecutorId === state.selectedId) renderDiagnosticCards(body, {health: state.metricHistory.at(-1) || {}});
+
   }
 
   async function refreshMetrics() {
