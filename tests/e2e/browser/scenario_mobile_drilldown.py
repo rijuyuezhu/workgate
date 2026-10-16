@@ -70,6 +70,10 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor-id")).to_have_text(
         harness.executor_id
     )
+    expect(page.locator(".session-detail-executor-identity")).to_have_css(
+        "border-right-width", "1px"
+    )
+    expect(page.locator("#session-detail-executor-copy")).to_have_count(0)
     expect(
         page.locator(".mobile-subpage-bar:visible .mobile-subpage-back")
     ).to_have_text("← Task")

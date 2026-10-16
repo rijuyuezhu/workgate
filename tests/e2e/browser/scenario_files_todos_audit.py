@@ -411,6 +411,12 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     title_box = page.locator("#session-detail-title").bounding_box()
     assert executor_box and title_box
     assert executor_box["x"] + executor_box["width"] < title_box["x"]
+    expect(page.locator(".session-detail-executor-identity")).to_have_css(
+        "border-right-style", "solid"
+    )
+    expect(page.locator(".session-detail-executor-identity")).to_have_css(
+        "border-right-width", "1px"
+    )
     for mark in [
         page.locator("#session-detail-executor-avatar"),
         attached_entry.locator(".executor-band-mark"),
@@ -428,14 +434,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "el => getComputedStyle(el).color === "
         "getComputedStyle(document.querySelector('#session-detail-id')).color"
     )
-    expect(page.locator("#session-detail-executor-copy")).to_be_enabled()
-    harness.context.grant_permissions(
-        ["clipboard-read", "clipboard-write"], origin=harness.base_url
-    )
-    page.locator("#session-detail-executor-copy").click()
-    expect(page.locator("#session-detail-executor-copy")).to_have_text("Copied")
-    assert (
-        page.evaluate("navigator.clipboard.readText()") == harness.executor_id
+    expect(page.locator("#session-detail-executor-copy")).to_have_count(0)
+    assert page.locator("#session-detail-executor-id").evaluate(
+        "el => getComputedStyle(el).userSelect === 'text'"
     )
     page.screenshot(
         path=str(harness.artifacts / "session-executor-desktop.png")
@@ -470,7 +471,6 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(unattached_entry.locator(".session-entry-meta")).to_contain_text(
         "Executor offline"
     )
-    expect(page.locator("#session-detail-executor-copy")).to_have_text("Copied")
     expect(attached_entry).to_be_focused()
     expect(attached_entry).to_have_attribute("aria-current", "true")
     page.unroute("**/api/ui/executors", rename_session_executor)
@@ -499,7 +499,6 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(attached_entry.locator(".session-entry-meta")).to_contain_text(
         "available"
     )
-    expect(page.locator("#session-detail-executor-copy")).to_have_text("Copied")
     expect(attached_entry).to_be_focused()
 
     expect(page.locator("#todo-summary")).to_contain_text("0 total")

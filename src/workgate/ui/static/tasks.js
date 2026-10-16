@@ -311,8 +311,6 @@ export function createTasksController({
       elements.sessionDetailExecutor.textContent = "—";
       elements.sessionDetailExecutorAvatar.textContent = "—";
       elements.sessionDetailExecutorId.textContent = "—";
-      elements.sessionDetailExecutorCopy.disabled = true;
-      elements.sessionDetailExecutorCopy.textContent = "Copy";
       elements.sessionDetailWorkdir.textContent = "—";
       elements.sessionDetailCreated.textContent = "—";
       elements.sessionDetailUpdated.textContent = "—";
@@ -339,12 +337,7 @@ export function createTasksController({
     const name = executorName(session.executor_id);
     elements.sessionDetailExecutor.textContent = name;
     elements.sessionDetailExecutorAvatar.textContent = name.slice(0, 1).toUpperCase();
-    const executorId = text(session.executor_id);
-    if (elements.sessionDetailExecutorId.textContent !== executorId) {
-      elements.sessionDetailExecutorCopy.textContent = "Copy";
-    }
-    elements.sessionDetailExecutorId.textContent = executorId;
-    elements.sessionDetailExecutorCopy.disabled = !session.executor_id;
+    elements.sessionDetailExecutorId.textContent = text(session.executor_id);
     elements.sessionDetailWorkdir.textContent = text(session.workdir);
     elements.sessionDetailCreated.textContent = sessionTimestamp(session.created_at);
     elements.sessionDetailUpdated.textContent = sessionTimestamp(session.updated_at);
@@ -1196,19 +1189,6 @@ export function createTasksController({
       "click",
       () => void terminateSelectedSession(),
     );
-    elements.sessionDetailExecutorCopy.addEventListener("click", async () => {
-      const executorId = selectedSession()?.executor_id;
-      if (!executorId) return;
-      try {
-        await navigator.clipboard.writeText(executorId);
-        if (selectedSession()?.executor_id === executorId) {
-          elements.sessionDetailExecutorCopy.textContent = "Copied";
-        }
-      } catch {
-        elements.sessionDetailExecutorCopy.textContent = "Copy failed";
-      }
-    });
-
     elements.sessionAuditFilterForm.addEventListener("submit", (event) => {
       event.preventDefault();
       void refreshSessionAudit();
