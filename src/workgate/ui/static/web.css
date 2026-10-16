@@ -3167,21 +3167,10 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-empty strong { color: #9aa3b1; font-size: 12px; font-weight: 500; }
 .executor-manage-empty span { display: none; }
 
-/* Diagnostics follows the homepage metric-card composition. */
-.executor-diagnostics { border: 0; margin: 0; padding: 0; }
-.executor-diagnostics-body { gap: 14px; }
-.executor-diagnostics-state { font-size: 11px; color: #929aaa; }
-.executor-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.executor-metric-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
-.executor-metric-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: #748095; font-size: 12px; font-weight: 650; }
-.executor-metric-card > strong { display: block; margin: 15px 0; color: #30384a; font-size: 27px; letter-spacing: -.03em; }
-.executor-metric-card > strong.executor-metric-unavailable { color: #a1a8b5; font-weight: 500; }
-.executor-metric-track { height: 5px; border-radius: 10px; background: #edf0f4; overflow: hidden; }
-.executor-metric-track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
-.executor-metric-card:nth-child(2) .executor-metric-track > span { background: var(--blue); }
-.executor-metric-card:nth-child(3) .executor-metric-track > span { background: var(--amber); }
-@media (max-width: 780px) { .executor-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 420px) { .executor-metric-grid { grid-template-columns: 1fr; } }
+/* Same Dashboard cards inside the narrower Executor Overview. */
+#executors-panel .executor-diagnostics-body { margin-top: 14px; }
+#executors-panel .dashboard-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 520px) { #executors-panel .dashboard-summary { grid-template-columns: minmax(0, 1fr); } }
 
 .executor-manage-row[data-state="enabled"] { background: #f4fbf7; }
 .executor-manage-row[data-state="disabled"] { background: #f7f8fa; }
@@ -3190,7 +3179,3 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
 .executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #b93e4d; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #b93e4d !important; }
 .executor-metric-head .dashboard-metric-icon { flex: none; }
-
-#executors-panel .executor-metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-@media (max-width: 1100px) { #executors-panel .executor-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 520px) { #executors-panel .executor-metric-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -200,58 +200,28 @@ export function createExecutorsController({
   }
 
   function renderDiagnosticCards(container, local) {
-    const metrics = [
-      ["CPU", "cpu_percent", "violet"],
-      ["Memory", "memory_percent", "blue"],
-      ["Disk", "disk_percent", "amber"],
-    ];
-    const grid = document.createElement("div");
-    grid.className = "executor-metric-grid dashboard-summary";
-    for (const [label, key, tone] of metrics) {
-      const card = document.createElement("section");
-      card.className = "executor-metric-card dashboard-card dashboard-metric-card";
-      const head = document.createElement("div");
-      head.className = "executor-metric-head";
-      const title = document.createElement("span");
-      title.textContent = label;
-      const mark = document.createElement("span");
-      mark.className = `dashboard-metric-icon ${tone}`;
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("aria-hidden", "true");
-      const shapes = key === "cpu_percent"
-        ? ['<path d="M8 2v3M16 2v3M8 19v3M16 19v3M2 8h3M2 16h3M19 8h3M19 16h3"/>', '<rect x="6" y="6" width="12" height="12" rx="3"/>', '<path d="M9 9h6v6H9z"/>']
-        : key === "memory_percent"
-          ? ['<rect x="4" y="4" width="16" height="16" rx="3"/>', '<path d="M8 8h8M8 12h8M8 16h5"/>']
-          : ['<ellipse cx="12" cy="6" rx="7" ry="3"/>', '<path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"/>'];
-      svg.innerHTML = shapes.join("");
-      mark.append(svg);
-      head.append(title, mark);
-      const value = document.createElement("strong");
-      const number = local?.health?.[key];
-      value.textContent = typeof number === "number" ? `${number.toFixed(1)}%` : "—";
-      if (typeof number !== "number") value.className = "executor-metric-unavailable";
-      card.append(head, value);
-      if (typeof number === "number") {
-        const track = document.createElement("div");
-        track.className = "executor-metric-track";
-        const fill = document.createElement("span");
-        fill.style.width = `${Math.max(0, Math.min(100, number))}%`;
-        track.append(fill);
-        card.append(track);
-      }
-      grid.append(card);
+    // Reuse the actual Overview resource cards, not another card implementation.
+    const template = document.querySelector("#dashboard-panel .dashboard-summary");
+    if (!template) return;
+    const cards = template.cloneNode(true);
+    cards.removeAttribute("aria-label");
+    for (const node of cards.querySelectorAll("[id]")) node.removeAttribute("id");
+    for (const node of cards.querySelectorAll(".dashboard-live, .dashboard-sparkline, .dashboard-metric-foot")) node.remove();
+    const health = local?.health || {};
+    for (const [index, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
+      const number = health[key];
+      cards.children[index].querySelector("strong").textContent =
+        typeof number === "number" ? `${number.toFixed(1)}%` : "—";
     }
-    const network = document.createElement("section");
-    network.className = "executor-metric-card dashboard-card dashboard-metric-card dashboard-network-card";
-    network.innerHTML = '<div class="dashboard-metric-head"><span class="dashboard-metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 20V10M7 15l5 5 5-5M4 4h16"/></svg></span></div><span>Network throughput</span><div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong></strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong></strong><small>sent</small></div></div>';
-    for (const [i, key] of ["network_rx_bps", "network_tx_bps"].entries()) {
-      const rate = local?.health?.[key];
-      network.querySelectorAll(".dashboard-network-values strong")[i].textContent =
-        typeof rate === "number" ? `${(rate / 1024).toFixed(1)} KiB/s` : "—";
+    const network = cards.children[3];
+    const rates = network.querySelectorAll(".dashboard-network-values strong");
+    for (const [index, key] of ["network_rx_bps", "network_tx_bps"].entries()) {
+      const value = health[key];
+      rates[index].textContent = typeof value === "number"
+        ? `${(value / 1024).toFixed(1)} KiB/s` : "—";
     }
-    grid.append(network);
-    container.append(grid);
+    network.querySelector(".dashboard-network-bar")?.remove();
+    container.append(cards);
   }
 
   function renderDiagnostics() {
