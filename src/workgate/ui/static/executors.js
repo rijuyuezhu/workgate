@@ -159,6 +159,9 @@ export function createExecutorsController({
       const item = document.createElement("div");
       item.className = "executor-manage-row";
       if (row.empty) item.classList.add("executor-manage-empty");
+      if (row.status === "Disabled") item.dataset.state = "disabled";
+      if (row.status === "Enabled") item.dataset.state = "enabled";
+      if (row.status === "Overridden") item.dataset.state = "overridden";
       const icon = rowIcon(row.icon);
       if (icon) {
         const mark = document.createElement('span');
@@ -166,6 +169,13 @@ export function createExecutorsController({
         mark.dataset.kind = row.icon;
         mark.append(icon);
         item.append(mark);
+      }
+      if (row.status === "Overridden" || row.warning) {
+        const alert = document.createElement("span");
+        alert.className = "executor-row-warning";
+        alert.textContent = "!";
+        alert.setAttribute("aria-label", "Warning");
+        item.append(alert);
       }
       const text = document.createElement("div");
       const name = document.createElement("strong");
@@ -180,6 +190,7 @@ export function createExecutorsController({
         if (row.status === 'Enabled') badge.dataset.state = 'enabled';
         if (row.status === 'Disabled') badge.dataset.state = 'disabled';
         if (row.status === 'Effective') badge.dataset.state = 'effective';
+        if (row.status === 'Overridden') badge.dataset.state = 'overridden';
         badge.textContent = row.status;
         item.append(badge);
       }
@@ -204,7 +215,9 @@ export function createExecutorsController({
       const title = document.createElement("span");
       title.textContent = label;
       const mark = document.createElement("span");
-      mark.className = `executor-metric-dot ${tone}`;
+      mark.className = `dashboard-metric-icon ${tone}`;
+      const glyph = rowIcon(key === "cpu_percent" ? "stdio" : key === "memory_percent" ? "skill" : "project");
+      if (glyph) mark.append(glyph);
       head.append(title, mark);
       const value = document.createElement("strong");
       const number = local?.health?.[key];
@@ -290,18 +303,21 @@ export function createExecutorsController({
     }
     const skillData = local.skills || {};
     const selected = skillData.selected || [];
+    const overridden = skillData.overridden || [];
     for (const source of ["managed", "global"]) {
       const rows = selected.filter((skill) => skill.source === source).map((skill) => ({
         title: skill.name, detail: source === "managed" ? "Executor-managed" : "User-global · Read only", icon: "skill",
         status: "Effective",
       }));
+      rows.push(...overridden.filter((skill) => skill.source === source).map((skill) => ({
+        title: skill.name, detail: "Overridden", icon: "skill", status: "Overridden",
+      })));
       addGroup(skills, source === "managed" ? "Executor-managed" : "User-global · Read only",
         rows.length ? rows : [{title: "No Skills", empty: true}]);
     }
-    addGroup(skills, "Resolution", [
-      {title: "Project Skills", icon: "project", status: "Session scope"},
-      {title: `${skillData.duplicates || 0} duplicates · ${skillData.warnings || 0} warnings`, icon: "info"},
-    ]);
+    if (skillData.warnings > skillData.duplicates) {
+      addGroup(skills, "Warnings", [{title: `${skillData.warnings - skillData.duplicates} Skill warnings`, icon: "info", warning: true}]);
+    }
     renderDiagnosticCards(body, local);
   }
 

@@ -1,5 +1,6 @@
 """On-demand Executor-local diagnostic snapshot without external probes."""
 
+import re
 from typing import Any
 
 from ..agent_bridge.diagnostics import manifest_diagnostics
@@ -16,6 +17,7 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
     selected: list[dict[str, str]] = []
     warnings = 0
     duplicates = 0
+    overridden: list[dict[str, str]] = []
     if bridge["status"] == "loaded":
         try:
             manifest = load_agent_manifest(
@@ -49,6 +51,18 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
                     "skipped duplicate Skill" in note
                     for note in result.warnings
                 )
+                # Scanner warnings identify actual overshadowed entries; never
+                # expose paths, descriptions or unvalidated free-form warnings.
+                for note in result.warnings:
+                    match = re.fullmatch(
+                        r"(managed|global): skipped duplicate Skill '([A-Za-z0-9_-]{1,80})'; "
+                        r"a higher-priority source already provides it",
+                        note,
+                    )
+                    if match and match.group(2) in result.skills:
+                        overridden.append({"name": match.group(2), "source": match.group(1)})
+                    if len(overridden) >= 32:
+                        break
             skills_enabled = manifest.data.skills.enabled
         except OSError, ValueError:
             skills_enabled = False
@@ -82,6 +96,7 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
             "enabled": skills_enabled,
             "sources": sources,
             "selected": selected,
+            "overridden": overridden,
             "warnings": warnings,
             "duplicates": duplicates,
             "project_scope": "session_specific",

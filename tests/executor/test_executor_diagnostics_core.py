@@ -114,7 +114,7 @@ def test_skill_scan_names_warning_duplicates_and_budgets(tmp_path, monkeypatch):
                 )
             },
             warnings=[
-                "skipped duplicate Skill 'hello'; a higher-priority source already provides it",
+                "global: skipped duplicate Skill 'hello'; a higher-priority source already provides it",
                 "invalid entry",
             ],
         )
@@ -136,6 +136,7 @@ def test_skill_scan_names_warning_duplicates_and_budgets(tmp_path, monkeypatch):
         {"name": "hello", "source": "managed"}
     ]
     assert result["skills"]["duplicates"] == 1
+    assert result["skills"]["overridden"] == [{"name": "hello", "source": "global"}]
     assert result["skills"]["warnings"] == 2
     assert result["health"] == {"memory_percent": 23.5}
     assert "Secret contents" not in json.dumps(result)

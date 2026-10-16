@@ -272,6 +272,9 @@ def executor_admin_routes(
                     "selected": rows(
                         skill.get("selected"), fields=("name", "source")
                     ),
+                    "overridden": rows(
+                        skill.get("overridden"), fields=("name", "source")
+                    ),
                     "warnings": min(100, skill.get("warnings", 0))
                     if type(skill.get("warnings")) is int
                     and skill["warnings"] >= 0

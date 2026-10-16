@@ -3191,3 +3191,11 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-diagnostic-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
 @media (max-width: 780px) { .executor-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) { .executor-metric-grid { grid-template-columns: 1fr; } }
+
+.executor-manage-row[data-state="enabled"] { background: #f4fbf7; }
+.executor-manage-row[data-state="disabled"] { background: #f7f8fa; }
+.executor-manage-row[data-state="overridden"] { background: #fcf8f8; }
+.executor-manage-row[data-state="overridden"] strong { color: #858d9a; text-decoration: line-through; }
+.executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
+.executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #b93e4d; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #b93e4d !important; }
+.executor-metric-head .dashboard-metric-icon { flex: none; }
