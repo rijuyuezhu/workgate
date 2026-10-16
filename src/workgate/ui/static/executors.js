@@ -309,7 +309,7 @@ export function createExecutorsController({
       rows.push(...overridden.filter((skill) => skill.source === source).map((skill) => ({
         title: skill.name, icon: "skill", status: "Overridden",
       })));
-      addGroup(skills, source === "managed" ? "Executor" : "User Global",
+      addGroup(skills, source === "managed" ? "Executor" : "Executor (User Global)",
         rows.length ? rows : [{title: "No Skills", empty: true}]);
     }
     if (skillData.warnings > skillData.duplicates) {
