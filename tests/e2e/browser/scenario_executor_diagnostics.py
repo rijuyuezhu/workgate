@@ -38,7 +38,9 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-mcp-body")).to_contain_text(
         "Executor"
     )
+    assert page.locator("#executor-mcp-body .executor-manage-group h4").all_text_contents()[:2] == ["Executor", "Control"]
     page.locator('[data-executor-subtab="skills"]').click()
+    assert page.locator("#executor-skills-body .executor-manage-group h4").all_text_contents()[:2] == ["Executor", "Executor (User Global)"]
     expect(page.locator("#executor-skills-body")).to_contain_text(
         "Executor"
     )
