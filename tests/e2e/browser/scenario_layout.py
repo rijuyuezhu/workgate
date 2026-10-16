@@ -51,7 +51,12 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     )
     assert colors["panel"] == "rgb(255, 255, 255)"
     assert colors["hero"] != colors["panel"]
-    assert page.locator(".dashboard-summary .dashboard-card").count() == 4
+    assert (
+        page.locator(
+            "#dashboard-panel .dashboard-summary .dashboard-card"
+        ).count()
+        == 4
+    )
     expect(page.locator(".dashboard-activity-section")).to_have_count(0)
     assert (
         page.locator(".dashboard-executors-row > .dashboard-section").count()

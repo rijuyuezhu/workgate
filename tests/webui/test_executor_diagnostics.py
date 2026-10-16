@@ -109,8 +109,8 @@ def test_real_executor_diagnostics_is_bounded_separate_and_read_only(tmp_path):
         assert data["executor_id"] == harness.executor_id
         assert data["status"] == "available"
         assert data["control_mcp"]["enabled"] is True
-        assert data["executor"]["agent"]["status"] == "not_reported"
-        assert data["executor"]["skills"]["project_scope"] == "session_specific"
+        assert "agent" not in data["executor"]
+        assert "health" not in data["executor"]
         assert data["executor"]["bridge"]["status"] in {
             "loaded",
             "missing_config",
@@ -222,7 +222,7 @@ def test_untrusted_executor_payload_cannot_inject_secrets(
             "name": "skill-safe",
             "source": "managed",
         }
-        assert data["health"] == {"cpu_percent": 12.3}
+        assert "health" not in data
 
 
 def test_malformed_peer_diagnostics_fail_closed(tmp_path, monkeypatch):
@@ -264,7 +264,7 @@ def test_malformed_peer_diagnostics_fail_closed(tmp_path, monkeypatch):
         payload = response.json()["data"]["executor"]
         assert payload["bridge"]["status"] == "unavailable"
         assert payload["bridge"]["servers"][0] == {"name": "safe"}
-        assert payload["health"] == {}
+        assert "health" not in payload
 
 
 def test_diagnostics_require_executor_scope(tmp_path):

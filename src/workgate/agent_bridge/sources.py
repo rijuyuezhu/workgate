@@ -78,6 +78,7 @@ def scan_skill_sources(
     remaining_scan_entries = max(0, int(max_scan_entries))
     remaining_path_bytes = max(0, int(max_path_bytes))
     accepted: dict[str, SkillRecord] = {}
+    overridden: list[tuple[str, str]] = []
     warnings: list[str] = []
     scanned_entries = 0
 
@@ -116,6 +117,8 @@ def scan_skill_sources(
 
         for name, record in result.skills.items():
             if name in accepted:
+                if len(overridden) < MAX_SOURCE_WARNINGS:
+                    overridden.append((name, source.name))
                 _append_warning(
                     warnings,
                     f"{source.name}: skipped duplicate Skill {name!r}; "
@@ -129,6 +132,7 @@ def scan_skill_sources(
 
     return SkillScanResult(
         skills=accepted,
+        overridden=overridden,
         warnings=warnings,
         scanned_entries=scanned_entries,
         path_bytes=max(0, int(max_path_bytes) - remaining_path_bytes),

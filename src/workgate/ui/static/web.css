@@ -1553,14 +1553,8 @@ h2 {
 .executor-manage-pill { border-radius: 20px; font-size: 10px !important; padding: 4px 8px; flex-shrink: 0; background: var(--surface, #f2f3f6); }
 @media (max-width: 780px) { #executors-panel .executors-layout { grid-template-columns: minmax(0, 1fr); } .executor-subtabs { flex-wrap: nowrap; overflow-x: auto; } .executor-subtabs button { padding: 10px 11px; white-space: nowrap; } }
 
-/* Read-only, selected-on-demand diagnostic detail; never a polling Dashboard clone. */
-.executor-diagnostics { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.9rem; }
-
-.executor-diagnostics-state { font-size: 0.75rem; margin: 0.5rem 0; overflow-wrap: anywhere; }
 .executor-diagnostics-body { display: grid; gap: 0.65rem; }
-.executor-diagnostics-group { border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem; min-width: 0; }
-.executor-diagnostics-group h4 { margin: 0 0 0.4rem; font-size: 0.75rem; }
-.executor-diagnostics-group p { color: var(--muted); font-size: 0.73rem; line-height: 1.5; margin: 0.2rem 0; overflow-wrap: anywhere; }
+.executor-metric-error { color: var(--muted); font-size: 12px; text-align: center; }
 
 .danger-action {
   border-color: #e6acb4;
@@ -3176,6 +3170,5 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-row[data-state="overridden"] strong { color: #858d9a; text-decoration: line-through; }
 .executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
 .executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #b93e4d; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #b93e4d !important; }
-.executor-metric-head .dashboard-metric-icon { flex: none; }
 
 #executors-panel .executor-diagnostics-body[hidden],

@@ -1,39 +1,34 @@
 """On-demand Executor-local diagnostic snapshot without external probes."""
 
-import re
 from typing import Any
 
 from ..agent_bridge.diagnostics import manifest_diagnostics
 from ..agent_bridge.sources import scan_skill_sources, skill_sources
 from ..agent_bridge.state import load_agent_manifest
 from ..config.executor import ExecutorConfig
-from .dashboard import dashboard_snapshot
 
 
 def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
     """Read bounded filesystem source metadata and cached platform metrics."""
     bridge = manifest_diagnostics(config.agent_config_dir, owner="executor")
-    sources: list[dict[str, Any]] = []
     selected: list[dict[str, str]] = []
+    overridden: list[dict[str, str]] = []
     warnings = 0
     duplicates = 0
-    overridden: list[dict[str, str]] = []
-    if bridge["status"] == "loaded":
+    skills_enabled = False
+    if bridge["status"] in {"loaded", "missing_config"}:
         try:
             manifest = load_agent_manifest(
                 config.agent_config_dir, read_only=True
             )
-            candidates = skill_sources(
-                project_root=config.agent_config_dir,
-                managed_config_dir=config.agent_config_dir,
-                managed_directory=manifest.data.skills.directory,
-                include_project=False,
-            )
-            sources = [
-                {"source": source.name, "available": source.path.is_dir()}
-                for source in candidates
-            ]
-            if manifest.data.skills.enabled:
+            skills_enabled = manifest.data.skills.enabled
+            if skills_enabled:
+                candidates = skill_sources(
+                    project_root=config.agent_config_dir,
+                    managed_config_dir=config.agent_config_dir,
+                    managed_directory=manifest.data.skills.directory,
+                    include_project=False,
+                )
                 result = scan_skill_sources(
                     candidates,
                     max_skills=min(32, config.max_skills),
@@ -46,61 +41,22 @@ def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
                     {"name": skill.name[:80], "source": skill.source}
                     for skill in result.skills.values()
                 ][:32]
+                overridden = [
+                    {"name": name[:80], "source": source}
+                    for name, source in result.overridden[:32]
+                ]
+                duplicates = len(result.overridden)
                 warnings = min(len(result.warnings), 100)
-                duplicates = sum(
-                    "skipped duplicate Skill" in note
-                    for note in result.warnings
-                )
-                # Scanner warnings identify actual overshadowed entries; never
-                # expose paths, descriptions or unvalidated free-form warnings.
-                for note in result.warnings:
-                    match = re.fullmatch(
-                        r"(managed|global): skipped duplicate Skill '([A-Za-z0-9_-]{1,80})'; "
-                        r"a higher-priority source already provides it",
-                        note,
-                    )
-                    if match and match.group(2) in result.skills:
-                        overridden.append({"name": match.group(2), "source": match.group(1)})
-                    if len(overridden) >= 32:
-                        break
-            skills_enabled = manifest.data.skills.enabled
         except OSError, ValueError:
             skills_enabled = False
             warnings += 1
-    else:
-        skills_enabled = False
-    # Dashboard already owns resource sampling. A single on-demand call avoids
-    # duplicate polling, and only its non-sensitive scalar metrics are exposed.
-    try:
-        system = dashboard_snapshot(config).get("system", {})
-        health = {
-            key: system.get(key)
-            for key in (
-                "cpu_percent",
-                "memory_percent",
-                "disk_percent",
-                "memory_total_bytes",
-                "disk_total_bytes",
-            )
-            if type(system.get(key)) in (float, int)
-        }
-    except OSError, ValueError:
-        health = {}
     return {
-        "agent": {
-            "status": "not_reported",
-            "note": "No independent Agent runtime status is currently reported",
-        },
         "bridge": bridge,
         "skills": {
             "enabled": skills_enabled,
-            "sources": sources,
             "selected": selected,
             "overridden": overridden,
             "warnings": warnings,
             "duplicates": duplicates,
-            "project_scope": "session_specific",
-            "control_scope": "pending_354",
         },
-        "health": health,
     }

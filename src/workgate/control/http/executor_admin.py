@@ -1,7 +1,6 @@
 """Authenticated owner administration for final executors and pairing."""
 
 import asyncio
-import math
 from typing import Any, cast
 
 from fastapi import HTTPException
@@ -225,7 +224,6 @@ def executor_admin_routes(
 
             raw_bridge = payload.get("bridge")
             raw_skills = payload.get("skills")
-            raw_health = payload.get("health")
             bridge: dict[str, Any] = (
                 cast(dict[str, Any], raw_bridge)
                 if isinstance(raw_bridge, dict)
@@ -236,13 +234,7 @@ def executor_admin_routes(
                 if isinstance(raw_skills, dict)
                 else {}
             )
-            health: dict[str, Any] = (
-                cast(dict[str, Any], raw_health)
-                if isinstance(raw_health, dict)
-                else {}
-            )
             snapshot = {
-                "agent": {"status": "not_reported"},
                 "bridge": {
                     "status": bridge.get("status")
                     if isinstance(bridge.get("status"), str)
@@ -266,9 +258,6 @@ def executor_admin_routes(
                 },
                 "skills": {
                     "enabled": skill.get("enabled") is True,
-                    "sources": rows(
-                        skill.get("sources"), fields=("source", "available")
-                    ),
                     "selected": rows(
                         skill.get("selected"), fields=("name", "source")
                     ),
@@ -283,28 +272,6 @@ def executor_admin_routes(
                     if type(skill.get("duplicates")) is int
                     and skill["duplicates"] >= 0
                     else 0,
-                    "project_scope": "session_specific",
-                    "control_scope": "pending_354",
-                },
-                "health": {
-                    key: value
-                    for key, value in health.items()
-                    if key
-                    in {
-                        "cpu_percent",
-                        "memory_percent",
-                        "disk_percent",
-                        "memory_total_bytes",
-                        "disk_total_bytes",
-                    }
-                    and type(value) in (float, int)
-                    and 0 <= value <= 10**20
-                    and math.isfinite(value)
-                    and (
-                        key
-                        not in {"cpu_percent", "memory_percent", "disk_percent"}
-                        or value <= 100
-                    )
                 },
             }
             return _json_ok(

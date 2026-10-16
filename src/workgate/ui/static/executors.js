@@ -1,4 +1,4 @@
-import { dashboardBytes, renderDashboardSparkline } from "./dashboard.js";
+import { renderResourceCards } from "./dashboard.js";
 
 export function createExecutorsController({
   elements,
@@ -22,8 +22,9 @@ export function createExecutorsController({
     diagnosticLoading: false,
     diagnosticError: "",
     metricHistory: [],
-    metricExecutorId: "",
-    metricLoading: false,
+    metricGeneration: 0,
+    metricInFlightId: "",
+    metricOnline: false,
     detailTabs: new Map(),
   };
 
@@ -31,16 +32,22 @@ export function createExecutorsController({
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
   }
 
+  function resetMetrics() {
+    state.metricGeneration += 1;
+    state.metricInFlightId = "";
+    state.metricHistory = [];
+    state.metricOnline = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+    elements.executorDiagnosticsBody.replaceChildren();
+  }
+
   function select(executorId) {
     if (!state.executors.some((item) => item.executor_id === executorId)) return;
     state.selectedId = executorId;
-    state.metricExecutorId = executorId;
-    state.metricHistory = [];
-    elements.executorDiagnosticsBody.replaceChildren();
+    resetMetrics();
     renderList();
     renderDetails();
     renderDiagnostics();
-    void loadDiagnostics();
+    void loadDiagnostics(true);
     void refreshMetrics();
   }
 
@@ -105,9 +112,7 @@ export function createExecutorsController({
       button.append(indicator, main, status);
       button.addEventListener("click", () => {
         state.selectedId = executor.executor_id;
-        state.metricExecutorId = executor.executor_id;
-        state.metricHistory = [];
-        elements.executorDiagnosticsBody.replaceChildren();
+        resetMetrics();
         renderList();
         renderDetails();
         renderDiagnostics();
@@ -127,6 +132,7 @@ export function createExecutorsController({
     if (!selectedExecutor() || !["overview", "mcp", "skills"].includes(tab)) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
+    if (tab === "overview") void refreshMetrics();
   }
 
   function renderSubtabs() {
@@ -214,48 +220,17 @@ export function createExecutorsController({
     container.append(group);
   }
 
-  function renderDiagnosticCards(container, local) {
-    // Reuse the actual Overview resource cards, not another card implementation.
+  function renderDiagnosticCards(container, system) {
     const template = document.querySelector("#dashboard-panel .dashboard-summary");
     if (!template) return;
     const cards = template.cloneNode(true);
     cards.removeAttribute("aria-label");
-    for (const node of cards.querySelectorAll("[id]")) node.removeAttribute("id");
-    for (const node of cards.querySelectorAll(".dashboard-live")) node.remove();
-    const health = local?.health || {};
-    const history = state.metricHistory;
-    for (const [index, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
-      const number = health[key];
-      cards.children[index].querySelector("strong").textContent =
-        typeof number === "number" ? `${number.toFixed(1)}%` : "—";
-    }
-    for (const [index, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
-      renderDashboardSparkline(cards.children[index].querySelector(".dashboard-sparkline"), history.map((value) => value[key]), 100);
-    }
-    const network = cards.children[3];
-    const rates = network.querySelectorAll(".dashboard-network-values strong");
-    for (const [index, key] of ["network_rx_bps", "network_tx_bps"].entries()) {
-      const value = health[key];
-      rates[index].textContent = dashboardBytes(value);
-    }
-    const rx = health.network_rx_bps;
-    const tx = health.network_tx_bps;
-    const total = (typeof rx === "number" ? rx : 0) + (typeof tx === "number" ? tx : 0);
-    const bar = network.querySelector(".dashboard-network-bar");
-    if (bar) {
-      bar.children[0].style.width = total > 0 ? `${100 * (rx || 0) / total}%` : "0%";
-      bar.children[1].style.width = total > 0 ? `${100 * (tx || 0) / total}%` : "0%";
-    }
-    const footValues = [
-      [`Load ${typeof health.load_1m === "number" ? health.load_1m.toFixed(2) : "—"}`, `${health.cpu_count ?? "—"} cores`],
-      [`${dashboardBytes(health.memory_used_bytes)} used`, `${dashboardBytes(health.memory_total_bytes)} total`],
-      [`${dashboardBytes(health.disk_used_bytes)} used`, `${dashboardBytes(health.disk_total_bytes)} total`],
-    ];
-    for (const [index, values] of footValues.entries()) {
-      const nodes = cards.children[index].querySelectorAll(".dashboard-metric-foot span");
-      nodes[0].textContent = values[0];
-      nodes[1].textContent = values[1];
-    }
+    cards.querySelectorAll("[id]").forEach((item) => item.removeAttribute("id"));
+    cards.querySelectorAll(".dashboard-live").forEach((item) => item.remove());
+    const history = state.metricHistory.map((sample) => ({
+      cpu: sample.cpu_percent, memory: sample.memory_percent, disk: sample.disk_percent,
+    }));
+    renderResourceCards(cards, system, history);
     container.append(cards);
   }
 
@@ -267,29 +242,39 @@ export function createExecutorsController({
     skills.replaceChildren();
     const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     body.hidden = !showMetrics;
-    if (showMetrics && !body.childElementCount) renderDiagnosticCards(body, {health: state.metricHistory.at(-1) || {}});
+    if (showMetrics && !body.childElementCount) renderDiagnosticCards(body, state.metricHistory.at(-1) || {});
     if (!selectedExecutor()) return;
     const status = (message) => {
+      addGroup(mcp, "Executor", [{title: message, empty: true}]);
       addGroup(mcp, "Control", [{title: message, empty: true}]);
       addGroup(skills, "Executor", [{title: message, empty: true}]);
+      addGroup(skills, "Executor (User Global)", [{title: message, empty: true}]);
     };
     if (state.diagnosticId !== state.selectedId) return status("Unavailable");
-    if (state.diagnosticLoading) return;
+    if (state.diagnosticLoading) {
+      status("Loading");
+      return;
+    }
     if (state.diagnosticError) return status("Unavailable");
     const data = state.diagnostic;
     if (!data) return status("Unavailable");
 
-    function mcpRows(snapshot) {
-      if (!snapshot) return [{title: "Unavailable", empty: true}];
+    function mcpRows(snapshot, globallyEnabled = true) {
+      if (!globallyEnabled) return [{title: "Agent Bridge disabled", empty: true}];
+      if (!snapshot || snapshot.status === "invalid_config" || snapshot.status === "unavailable") {
+        return [{title: "Configuration unavailable", empty: true}];
+      }
       const rows = (snapshot.servers || []).map((server) => ({
-        title: server.name, detail: server.type.toUpperCase(), icon: server.type,
-        status: server.enabled ? "Enabled" : "Disabled",
+        title: server.name || "Unknown MCP",
+        detail: typeof server.type === "string" ? server.type.toUpperCase() : "Unknown",
+        icon: server.type,
+        status: server.enabled && globallyEnabled ? "Enabled" : "Disabled",
       }));
       if (rows.length) return rows;
       return [{title: "No configured servers", empty: true}];
     }
     addGroup(mcp, "Executor", mcpRows(data.executor?.bridge));
-    addGroup(mcp, "Control", mcpRows(data.control_mcp));
+    addGroup(mcp, "Control", mcpRows(data.control_mcp, data.control_mcp?.enabled !== false));
     if (data.executor?.bridge?.errors || data.control_mcp?.errors) {
       addGroup(mcp, "Configuration warnings", [{title: "MCP configuration invalid", warning: true}]);
     }
@@ -297,7 +282,7 @@ export function createExecutorsController({
     const local = data.executor;
     if (!local) {
       addGroup(skills, "Executor", [{title: "Unavailable", empty: true}]);
-      renderDiagnosticCards(body, null);
+      addGroup(skills, "Executor (User Global)", [{title: "Unavailable", empty: true}]);
       return;
     }
     const skillData = local.skills || {};
@@ -311,7 +296,7 @@ export function createExecutorsController({
         title: skill.name, icon: "skill", status: "Overridden",
       })));
       addGroup(skills, source === "managed" ? "Executor" : "Executor (User Global)",
-        rows.length ? rows : [{title: "No Skills", empty: true}]);
+        rows.length ? rows : [{title: skillData.enabled === false ? "Skills disabled" : "No Skills", empty: true}]);
     }
     if (skillData.warnings > skillData.duplicates) {
       addGroup(skills, "Warnings", [{title: `${skillData.warnings - skillData.duplicates} Skill warnings`, icon: "info", warning: true}]);
@@ -321,29 +306,35 @@ export function createExecutorsController({
 
   async function refreshMetrics() {
     const executor = selectedExecutor();
-    if (!executor?.online || executor.revoked_at || state.metricLoading || !elements.executorDiagnosticsBody.closest(".app-view") || elements.executorDiagnosticsBody.closest(".app-view").hidden) return;
+    const view = elements.executorDiagnosticsBody.closest("[data-app-view]");
+    if (!executor?.online || executor.revoked_at || activeSubtab() !== "overview" || view?.hidden) return;
     const executorId = executor.executor_id;
-    state.metricLoading = true;
+    if (state.metricInFlightId === executorId) return;
+    const generation = state.metricGeneration;
+    state.metricInFlightId = executorId;
     try {
       const data = await request(`/dashboard?executor_id=${encodeURIComponent(executorId)}`);
-      if (state.selectedId !== executorId || !selectedExecutor()?.online) return;
+      if (generation !== state.metricGeneration || state.selectedId !== executorId || !selectedExecutor()?.online) return;
       const system = data?.system || {};
       const sample = {};
       for (const key of ["cpu_percent", "memory_percent", "disk_percent", "network_rx_bps", "network_tx_bps", "load_1m", "cpu_count", "memory_used_bytes", "memory_total_bytes", "disk_used_bytes", "disk_total_bytes"]) {
-        sample[key] = typeof system[key] === "number" ? system[key] : null;
+        sample[key] = typeof system[key] === "number" && Number.isFinite(system[key]) ? system[key] : null;
       }
-      sample.network_total = sample.network_rx_bps !== null && sample.network_tx_bps !== null
-        ? sample.network_rx_bps + sample.network_tx_bps : null;
       state.metricHistory.push(sample);
       state.metricHistory = state.metricHistory.slice(-60);
       const body = elements.executorDiagnosticsBody;
-      if (!selectedExecutor()?.online || executorId !== state.selectedId) return;
       body.replaceChildren();
-      renderDiagnosticCards(body, {health: sample});
+      renderDiagnosticCards(body, sample);
     } catch (error) {
-      if (error.authenticationRequired) void reloadApp();
+      if (error.authenticationRequired) { void reloadApp(); return; }
+      if (generation !== state.metricGeneration || state.selectedId !== executorId) return;
+      const message = document.createElement("p");
+      message.className = "executor-metric-error";
+      message.textContent = error.status === 403 ? "Resource metrics require shell:read access." : "Resource metrics unavailable.";
+      elements.executorDiagnosticsBody.querySelector(".executor-metric-error")?.remove();
+      elements.executorDiagnosticsBody.append(message);
     } finally {
-      state.metricLoading = false;
+      if (generation === state.metricGeneration && state.metricInFlightId === executorId) state.metricInFlightId = "";
     }
   }
 
@@ -446,14 +437,21 @@ export function createExecutorsController({
       state.diagnosticError = "";
       renderDiagnostics();
       if (state.selectedId) {
-        state.metricExecutorId = state.selectedId;
-        state.metricHistory = [];
+        resetMetrics();
         void loadDiagnostics();
         void refreshMetrics();
       }
     } else {
-      // Status may change without changing selection; preserve the existing trend DOM.
       const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+      if (showMetrics !== state.metricOnline) {
+        resetMetrics();
+        state.metricOnline = showMetrics;
+        if (showMetrics) {
+          renderDiagnostics();
+          void loadDiagnostics(true);
+          void refreshMetrics();
+        }
+      }
       elements.executorDiagnosticsBody.hidden = !showMetrics;
     }
     onInventory(state.executors);
@@ -569,6 +567,9 @@ export function createExecutorsController({
     state.diagnostic = null;
     state.diagnosticError = "";
     state.diagnosticLoading = false;
+    resetMetrics();
+    state.metricOnline = false;
+    state.detailTabs.clear();
     closeDialog(elements.executorPairDialog);
     closeDialog(elements.executorRenameDialog);
     closeDialog(elements.executorRevokeDialog);

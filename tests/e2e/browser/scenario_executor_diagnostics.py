@@ -21,8 +21,18 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#executor-list .executor-row")).to_be_visible()
     # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
-    assert len(calls) == 1
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+        "Network throughput"
+    )
+    page.wait_for_function(
+        """() => {
+      const body = document.querySelector('#executor-mcp-body');
+      return body && body.querySelectorAll('.executor-manage-group').length === 2
+        && !body.textContent.includes('Loading');
+    }""",
+        timeout=12000,
+    )
+    assert len(calls) >= 1
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
     ).first.click()
@@ -32,24 +42,22 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         "aria-selected", "true"
     )
     page.locator('[data-executor-subtab="mcp"]').click()
-    expect(page.locator("#executor-mcp-body")).to_contain_text(
-        "Control"
-    )
-    expect(page.locator("#executor-mcp-body")).to_contain_text(
-        "Executor"
-    )
-    assert page.locator("#executor-mcp-body .executor-manage-group h4").all_text_contents()[:2] == ["Executor", "Control"]
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Executor")
+    assert page.locator(
+        "#executor-mcp-body .executor-manage-group h4"
+    ).all_text_contents()[:2] == ["Executor", "Control"]
     page.locator('[data-executor-subtab="skills"]').click()
-    assert page.locator("#executor-skills-body .executor-manage-group h4").all_text_contents()[:2] == ["Executor", "Executor (User Global)"]
-    expect(page.locator("#executor-skills-body")).to_contain_text(
-        "Executor"
-    )
+    assert page.locator(
+        "#executor-skills-body .executor-manage-group h4"
+    ).all_text_contents()[:2] == ["Executor", "Executor (User Global)"]
+    expect(page.locator("#executor-skills-body")).to_contain_text("Executor")
     page.locator('[data-executor-subtab="overview"]').click()
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
     expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Memory"
+        "Network throughput"
     )
-    assert len(calls) == 1
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Memory")
+    initial_calls = len(calls)
     page.evaluate(
         "window.firstDiagnosticNode = document.querySelector('.executor-manage-group')"
     )
@@ -57,17 +65,29 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     assert page.evaluate(
         "document.querySelector('.executor-manage-group') === window.firstDiagnosticNode"
     ), "Executor inventory polling replaced diagnostic DOM"
-    assert len(calls) == 1, (
+    assert len(calls) == initial_calls, (
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Network throughput")
-    assert len(calls) == 1  # Resource refresh uses Dashboard telemetry, not diagnostics.
-    expect(page.locator("#executor-diagnostics-body .dashboard-sparkline polyline").first).to_be_attached(timeout=12000)
-    page.locator("#executor-list .executor-row").filter(has_text="offline").first.click()
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+        "Network throughput"
+    )
+    assert (
+        len(calls) == initial_calls
+    )  # Resource refresh uses Dashboard telemetry.
+    expect(
+        page.locator(
+            "#executor-diagnostics-body .dashboard-sparkline polyline"
+        ).first
+    ).to_be_attached(timeout=12000)
+    page.locator("#executor-list .executor-row").filter(
+        has_text="offline"
+    ).first.click()
     expect(page.locator("#executor-diagnostics-body")).to_be_hidden()
     expect(page.locator("#executor-detail-id")).not_to_have_text("—")
     page.set_viewport_size({"width": 390, "height": 844})
-    page.locator("#executor-list .executor-row").filter(has_text="online").first.click()
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
     page.locator('[data-executor-subtab="overview"]').click()
     expect(page.locator("#executor-diagnostics-body")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()

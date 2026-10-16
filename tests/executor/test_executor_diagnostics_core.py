@@ -46,31 +46,20 @@ def write_manifest(config, *, skills=True):
     )
 
 
-def test_missing_manifest_and_degraded_resource_sampling(tmp_path, monkeypatch):
+def test_missing_manifest_still_scans_global_skills(tmp_path, monkeypatch):
     config = executor_config(tmp_path)
-    monkeypatch.setattr(
-        diagnostics,
-        "dashboard_snapshot",
-        lambda _config: {
-            "system": {
-                "cpu_percent": 1,
-                "memory_percent": None,
-                "disk_percent": "bad",
-                "disk_total_bytes": 200,
-            }
-        },
-    )
+    global_root = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(global_root))
+    skill = global_root / "agents" / "skills" / "my.skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# my.skill\n\nA global test Skill.\n")
     result = diagnostics.executor_diagnostics(config)
     assert result["bridge"]["status"] == "missing_config"
-    assert result["skills"]["enabled"] is False
-    assert result["skills"]["selected"] == []
-    assert result["health"] == {"cpu_percent": 1, "disk_total_bytes": 200}
-
-    def fail(_config):
-        raise OSError("collector disconnected")
-
-    monkeypatch.setattr(diagnostics, "dashboard_snapshot", fail)
-    assert diagnostics.executor_diagnostics(config)["health"] == {}
+    assert result["skills"]["enabled"] is True
+    assert result["skills"]["selected"] == [
+        {"name": "my.skill", "source": "global"}
+    ]
+    assert "health" not in result
 
 
 def test_disabled_skill_manifest_is_not_scanned(tmp_path, monkeypatch):
@@ -81,16 +70,12 @@ def test_disabled_skill_manifest_is_not_scanned(tmp_path, monkeypatch):
         raise AssertionError("disabled Skills must not be scanned")
 
     monkeypatch.setattr(diagnostics, "scan_skill_sources", not_called)
-    monkeypatch.setattr(
-        diagnostics, "dashboard_snapshot", lambda _config: {"system": {}}
-    )
     result = diagnostics.executor_diagnostics(config)
     assert result["bridge"]["status"] == "loaded"
     assert result["bridge"]["servers"] == [
         {"name": "stdio-local", "type": "stdio", "enabled": False}
     ]
     assert result["skills"]["enabled"] is False
-    assert len(result["skills"]["sources"]) == 2
     assert result["skills"]["selected"] == []
 
 
@@ -113,6 +98,7 @@ def test_skill_scan_names_warning_duplicates_and_budgets(tmp_path, monkeypatch):
                     related_files=["private-token-file"],
                 )
             },
+            overridden=[("hello", "global")],
             warnings=[
                 "global: skipped duplicate Skill 'hello'; a higher-priority source already provides it",
                 "invalid entry",
@@ -120,11 +106,6 @@ def test_skill_scan_names_warning_duplicates_and_budgets(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(diagnostics, "scan_skill_sources", scanned)
-    monkeypatch.setattr(
-        diagnostics,
-        "dashboard_snapshot",
-        lambda _config: {"system": {"memory_percent": 23.5}},
-    )
     result = diagnostics.executor_diagnostics(config)
     assert observed["max_skills"] == 32
     assert observed["max_related_files"] == 4
@@ -136,9 +117,10 @@ def test_skill_scan_names_warning_duplicates_and_budgets(tmp_path, monkeypatch):
         {"name": "hello", "source": "managed"}
     ]
     assert result["skills"]["duplicates"] == 1
-    assert result["skills"]["overridden"] == [{"name": "hello", "source": "global"}]
+    assert result["skills"]["overridden"] == [
+        {"name": "hello", "source": "global"}
+    ]
     assert result["skills"]["warnings"] == 2
-    assert result["health"] == {"memory_percent": 23.5}
     assert "Secret contents" not in json.dumps(result)
     assert "/secret/path" not in json.dumps(result)
 
@@ -156,12 +138,38 @@ def test_skill_source_errors_are_safe_and_do_not_hide_manifest(
         raise exception
 
     monkeypatch.setattr(diagnostics, "scan_skill_sources", fail)
-    monkeypatch.setattr(
-        diagnostics, "dashboard_snapshot", lambda _config: {"system": {}}
-    )
     result = diagnostics.executor_diagnostics(config)
     assert result["bridge"]["status"] == "loaded"
     assert result["skills"]["enabled"] is False
     assert result["skills"]["warnings"] == 1
     assert "unreadable" not in json.dumps(result)
     assert "invalid" not in json.dumps(result)
+
+
+def test_structured_overrides_accept_valid_non_alphanumeric_names(
+    tmp_path, monkeypatch
+):
+    config = executor_config(tmp_path)
+    write_manifest(config)
+    home = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+    for name in ("my.skill", "my skill", "测试技能"):
+        for root in (
+            config.agent_config_dir / "skills",
+            home / "agents" / "skills",
+        ):
+            directory = root / name
+            directory.mkdir(parents=True)
+            (directory / "SKILL.md").write_text(f"# {name}\n\nExample Skill.\n")
+    result = diagnostics.executor_diagnostics(config)["skills"]
+    assert {item["name"] for item in result["selected"]} == {
+        "my.skill",
+        "my skill",
+        "测试技能",
+    }
+    assert {item["name"] for item in result["overridden"]} == {
+        "my.skill",
+        "my skill",
+        "测试技能",
+    }
+    assert {item["source"] for item in result["overridden"]} == {"global"}
