@@ -2636,6 +2636,20 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .session-task .task-progress-next dd { color: #35365c; font-weight: 550; }
 .session-task .task-progress-blockers dd { color: #a4414e; }
 
+/* Task actions use the existing status machine; keep errors visible below controls. */
+.task-lifecycle-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  padding: 12px 20px 0;
+}
+.task-lifecycle-actions button { padding: 6px 10px; font-size: 11px; }
+.task-lifecycle-actions [data-task-action="delete"] { color: #a4414e; }
+.task-lifecycle-actions #task-action-state { flex-basis: 100%; font-size: 11px; overflow-wrap: anywhere; }
+.task-lifecycle-actions #task-action-state:empty { display: none; }
+@media (max-width: 780px) { .task-lifecycle-actions { padding: 12px 14px 0; } }
+@media (max-width: 480px) {
+  .task-lifecycle-actions button { flex: 1 1 calc((100% - 14px) / 3); min-height: 34px; font-size: 12px; }
+}
+
 /* Task titles are prose; status is a compact, semantic visual marker. */
 .tasks-layout > .session-list { gap: 8px; }
 .task-entry {

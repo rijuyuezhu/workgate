@@ -641,6 +641,16 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
         },
     )
     assert csrf_rejected.status_code == 403
+    task_csrf_rejected = client.post(
+        "/api/ui/tasks/block",
+        json={"task_id": "task_abcdefghijklmnopqrstuv"},
+        headers={
+            "Cookie": cookie_header,
+            UI_SESSION_BINDING_HEADER: UI_SESSION_BINDING,
+        },
+    )
+    assert task_csrf_rejected.status_code == 403
+    assert task_csrf_rejected.json()["detail"] == "WebUI CSRF validation failed"
     assert csrf_rejected.json()["detail"] == "WebUI CSRF validation failed"
 
     unrelated = client.post("/tools/list_persistent_shells", json={})

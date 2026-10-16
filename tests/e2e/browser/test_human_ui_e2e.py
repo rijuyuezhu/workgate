@@ -20,6 +20,7 @@ from tests.e2e.browser.scenario_remote_terminals import (
     run_terminal_action_races,
     run_terminal_switch_races,
 )
+from tests.e2e.browser.scenario_task_lifecycle import run_task_lifecycle_ui
 from tests.e2e.browser.scenario_terminals import run_terminals
 
 pytestmark = [pytest.mark.browser, pytest.mark.timeout(240)]
@@ -31,6 +32,7 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_live_workspace(browser_harness)
     run_executor_admin(browser_harness)
     run_files_todos_audit(browser_harness)
+    run_task_lifecycle_ui(browser_harness)
     run_background_polling(browser_harness)
     run_terminals(browser_harness)
     run_mobile_drilldown(browser_harness)

@@ -272,6 +272,7 @@ void (async () => {
     taskObjective: document.getElementById("task-objective"),
     taskState: document.getElementById("task-state"),
     taskStatus: document.getElementById("task-status"),
+    taskActionState: document.getElementById("task-action-state"),
     taskSummary: document.getElementById("task-summary"),
     todoAdd: document.getElementById("todo-add"),
     todoFilter: document.getElementById("todo-filter"),
