@@ -144,7 +144,7 @@ export function createExecutorsController({
       project: ['<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z"/>'],
       info: ['<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'],
     };
-    // Only hard-coded SVG paths are used; rows never contribute markup.
+    // All icon paths are static, independent of configuration content.
     svg.innerHTML = shapes[kind].join('');
     return svg;
   }
