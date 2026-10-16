@@ -26,6 +26,7 @@ export function createTasksController({
     selectionRevision: 0,
     inventorySignature: "",
     sessionTerminating: false,
+    taskMutationBusy: false,
     task: null,
     todoItems: [],
     todoGeneration: 0,
@@ -190,21 +191,40 @@ export function createTasksController({
     const taskTerminal = taskStatus === "cancelled";
     const taskCompleted = taskStatus === "completed";
     const taskMutable = taskReady && !taskTerminal && !taskCompleted;
-    elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.sessionTerminating;
+    const unfinished = (controllerState.task?.plan?.steps || []).some(
+      (step) => step.status !== "completed" && step.status !== "skipped",
+    );
+    for (const button of document.querySelectorAll("[data-task-action]")) {
+      const action = button.dataset.taskAction;
+      const allowed = action === "resume"
+        ? taskStatus === "blocked" || taskCompleted
+        : action === "delete"
+          ? taskCompleted || taskTerminal
+          : action === "block"
+            ? taskStatus === "active"
+            : action === "finish"
+              ? (taskStatus === "active" || taskStatus === "blocked") && !unfinished
+              : action === "cancel" && (taskStatus === "active" || taskStatus === "blocked");
+      button.disabled = !taskReady || !controllerState.task || !allowed ||
+        controllerState.taskMutationBusy || controllerState.workspaceLoading ||
+        controllerState.todoMutationBusy || controllerState.todoDirty;
+      button.title = action === "finish" && unfinished ? "Complete or skip all Plan steps first" : "";
+    }
+    elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
       controllerState.workspaceLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
-    elements.todoRefresh.disabled = controllerState.todoMutationBusy || !taskReady;
-    elements.todoAdd.disabled = controllerState.todoMutationBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
-    elements.todoSave.disabled = controllerState.todoMutationBusy || !taskMutable || !controllerState.todoDirty;
+    elements.todoRefresh.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskReady;
+    elements.todoAdd.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
+    elements.todoSave.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable || !controllerState.todoDirty;
     elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !sessionReady;
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
       control.disabled = controllerState.sessionAuditLoading || !sessionReady;
     }
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
-      control.disabled = controllerState.todoMutationBusy || !taskMutable;
+      control.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable;
     }
     for (const row of elements.todoList.querySelectorAll(".todo-row")) {
-      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || !taskMutable ? "true" : "false");
+      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable ? "true" : "false");
     }
   }
 
@@ -256,6 +276,7 @@ export function createTasksController({
     controllerState.todoItems = [];
     controllerState.todoDirty = false;
     controllerState.todoGeneration += 1;
+    elements.taskActionState.textContent = "";
     renderTaskState();
     renderTodos();
     elements.taskState.textContent = message;
@@ -275,6 +296,7 @@ export function createTasksController({
     controllerState.sessions = [];
     controllerState.workspaceLoading = false;
     controllerState.sessionTerminating = false;
+    controllerState.taskMutationBusy = false;
     elements.taskList.replaceChildren();
     const taskEmpty = document.createElement("div");
     taskEmpty.className = "empty-state";
@@ -566,7 +588,7 @@ export function createTasksController({
   async function selectTask(next) {
     if (
       !next ||
-      controllerState.todoMutationBusy ||
+      controllerState.todoMutationBusy || controllerState.taskMutationBusy ||
       controllerState.workspaceLoading
     ) return;
     if (next === controllerState.taskId && !controllerState.sessionId) {
@@ -604,7 +626,7 @@ export function createTasksController({
   async function selectUnattachedSession(next) {
     if (
       !next ||
-      controllerState.todoMutationBusy ||
+      controllerState.todoMutationBusy || controllerState.taskMutationBusy ||
       controllerState.workspaceLoading
     ) return;
     if (
@@ -647,7 +669,7 @@ export function createTasksController({
   }
 
   async function refreshWorkspace({ background = false } = {}) {
-    if (controllerState.workspaceLoading || (background && controllerState.workspaceRefreshing)) return null;
+    if (controllerState.workspaceLoading || (background && (controllerState.workspaceRefreshing || controllerState.taskMutationBusy))) return null;
     const revision = controllerState.selectionRevision;
     const generation = ++controllerState.workspaceGeneration;
     controllerState.workspaceRefreshing = true;
@@ -728,6 +750,55 @@ export function createTasksController({
         error instanceof Error ? error.message : String(error);
     } finally {
       controllerState.sessionTerminating = false;
+      syncControls();
+    }
+  }
+
+  async function mutateSelectedTask(action) {
+    const taskId = selectedTaskId();
+    if (!taskId || !controllerState.task || controllerState.taskMutationBusy ||
+        controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.todoDirty) return;
+    const button = document.querySelector(`[data-task-action="${action}"]`);
+    if (!button || button.disabled) return;
+    if (action === "delete" && !globalThis.confirm(
+      `Permanently delete Task ${taskId}? Its document cannot be restored; retained Sessions will become unattached.`,
+    )) return;
+    if (action === "cancel" && !globalThis.confirm(
+      `Cancel Task ${taskId}? It cannot be reopened, and running Sessions will not be terminated.`,
+    )) return;
+    controllerState.taskMutationBusy = true;
+    controllerState.selectionRevision += 1; // Invalidate any in-flight inventory refresh.
+    elements.taskActionState.textContent = `Applying ${action}…`;
+    syncControls();
+    try {
+      const result = await request(`/tasks/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: taskId }),
+      });
+      if (action === "delete") {
+        controllerState.selectionRevision += 1;
+        controllerState.taskId = "";
+        controllerState.sessionId = "";
+        clearTaskResources("Task deleted");
+        controllerState.tasks = controllerState.tasks.filter((task) => task.task_id !== taskId);
+        controllerState.sessions = [];
+        renderTaskList();
+        renderSessions([]);
+        showTab("progress");
+        syncDeepLink();
+      } else if (result.task && taskId === selectedTaskId()) {
+        controllerState.task = result.task;
+        renderTaskState();
+      }
+      await refreshWorkspace();
+      const completed = { finish: "completed", resume: "reopened", block: "blocked", cancel: "cancelled" };
+      elements.taskActionState.textContent = action === "delete" ? "" : `Task ${completed[action]}`;
+      if (action === "delete") elements.tasksState.textContent = `Deleted ${taskId}`;
+    } catch (error) {
+      elements.taskActionState.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      controllerState.taskMutationBusy = false;
       syncControls();
     }
   }
@@ -1185,6 +1256,9 @@ export function createTasksController({
       if (controllerState.workspaceLoading || controllerState.sessionTerminating) return;
       void refreshWorkspace();
     });
+    for (const button of document.querySelectorAll("[data-task-action]")) {
+      button.addEventListener("click", () => void mutateSelectedTask(button.dataset.taskAction));
+    }
     elements.sessionTerminate.addEventListener(
       "click",
       () => void terminateSelectedSession(),
@@ -1205,7 +1279,7 @@ export function createTasksController({
     elements.todoAdd.addEventListener("click", addTodo);
     elements.todoSave.addEventListener("click", () => void saveTodos());
     elements.todoRefresh.addEventListener("click", () => {
-      if (controllerState.todoMutationBusy || !selectedTaskId()) return;
+      if (controllerState.todoMutationBusy || controllerState.taskMutationBusy || !selectedTaskId()) return;
       if (
         controllerState.todoDirty &&
         !globalThis.confirm(`Discard unsaved changes in ${selectedTaskId()}?`)

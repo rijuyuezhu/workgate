@@ -456,6 +456,14 @@
               <span id="task-status" class="task-status-pill">—</span>
               <span id="task-state" class="visually-hidden">Select a task</span>
             </div>
+            <div class="task-lifecycle-actions" aria-label="Task lifecycle actions">
+              <button type="button" data-task-action="finish">Complete</button>
+              <button type="button" data-task-action="resume">Reopen</button>
+              <button type="button" data-task-action="block">Block</button>
+              <button type="button" data-task-action="cancel">Cancel</button>
+              <button type="button" data-task-action="delete">Delete</button>
+              <span id="task-action-state" class="muted" role="status" aria-live="polite"></span>
+            </div>
             <dl class="session-task-grid">
               <div class="task-progress-summary"><dt>Summary</dt><dd id="task-summary">—</dd></div>
               <div class="task-progress-next"><dt>Next action</dt><dd id="task-next-action">—</dd></div>

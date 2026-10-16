@@ -31,6 +31,9 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     step("tasks", "task")
     expect(page.locator(".tasks-workspace")).to_be_visible()
     expect(page.locator("#task-list")).to_be_hidden()
+    expect(page.locator('[data-task-action="block"]')).to_be_visible()
+    expect(page.locator('[data-task-action="delete"]')).to_be_disabled()
+    expect(page.locator("#task-action-state")).to_have_count(1)
     expect(
         page.locator(".mobile-subpage-bar:visible .mobile-subpage-back")
     ).to_have_text("← All tasks")
