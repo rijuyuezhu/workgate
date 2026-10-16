@@ -309,6 +309,7 @@ export function createTasksController({
       elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
       elements.sessionDetailId.textContent = "—";
       elements.sessionDetailExecutor.textContent = "—";
+      elements.sessionDetailExecutorAvatar.textContent = "—";
       elements.sessionDetailExecutorId.textContent = "—";
       elements.sessionDetailExecutorCopy.disabled = true;
       elements.sessionDetailExecutorCopy.textContent = "Copy";
@@ -335,7 +336,9 @@ export function createTasksController({
             ? "Unavailable · executor offline"
             : `Available · ${sessionActivityTimestamp(session)}`;
     elements.sessionDetailId.textContent = text(session.session_id);
-    elements.sessionDetailExecutor.textContent = executorName(session.executor_id);
+    const name = executorName(session.executor_id);
+    elements.sessionDetailExecutor.textContent = name;
+    elements.sessionDetailExecutorAvatar.textContent = name.slice(0, 1).toUpperCase();
     const executorId = text(session.executor_id);
     if (elements.sessionDetailExecutorId.textContent !== executorId) {
       elements.sessionDetailExecutorCopy.textContent = "Copy";

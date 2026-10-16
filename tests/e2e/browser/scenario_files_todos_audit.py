@@ -399,6 +399,22 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor")).to_have_text(
         "browser-loopback"
     )
+    # The friendly name is a permanent, bold identity in the Session header,
+    # not tucked into the collapsed metadata panel.
+    expect(page.locator("#session-detail-executor")).to_be_visible()
+    assert not page.locator(".task-session-metadata").evaluate("el => el.open")
+    assert page.locator("#session-detail-executor").evaluate(
+        "el => Number(getComputedStyle(el).fontWeight) >= 700"
+    )
+    expect(page.locator("#session-detail-executor-avatar")).to_have_text("B")
+    for mark in [
+        page.locator("#session-detail-executor-avatar"),
+        attached_entry.locator(".executor-band-mark"),
+        unattached_entry.locator(".executor-band-mark"),
+        page.locator("#executor-list .executor-band-mark").first,
+        page.locator("#dashboard-machine-list .executor-band-mark").first,
+    ]:
+        expect(mark).to_have_css("border-radius", "50%")
     expect(page.locator("#session-detail-executor-id")).to_have_text(
         harness.executor_id
     )
@@ -433,6 +449,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor")).to_have_text(
         "Renamed Executor", timeout=12_000
     )
+    expect(page.locator("#session-detail-executor-avatar")).to_have_text("R")
     for entry in (attached_entry, unattached_entry):
         expect(entry.locator(".executor-band-mark")).to_have_text("R")
         assert (entry.get_attribute("title") or "").endswith("Renamed Executor")
@@ -464,6 +481,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor")).to_have_text(
         harness.executor_id, timeout=12_000
     )
+    expect(page.locator("#session-detail-executor-avatar")).to_have_text("E")
     expect(attached_entry.locator(".executor-band-mark")).to_have_text("E")
     expect(unattached_entry.locator(".executor-band-mark")).to_have_text("E")
     page.unroute("**/api/ui/executors", omit_session_executor)

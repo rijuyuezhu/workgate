@@ -55,6 +55,11 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor")).to_have_text(
         "browser-loopback"
     )
+    expect(page.locator("#session-detail-executor")).to_be_visible()
+    expect(page.locator("#session-detail-executor-avatar")).to_have_text("B")
+    expect(page.locator("#session-detail-executor-avatar")).to_have_css(
+        "border-radius", "50%"
+    )
     expect(page.locator("#session-detail-executor-id")).to_have_text(
         harness.executor_id
     )
