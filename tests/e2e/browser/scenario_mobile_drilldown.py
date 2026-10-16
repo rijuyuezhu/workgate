@@ -45,10 +45,35 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     page.locator("#task-tab-sessions").click()
     expect(page.locator("#session-list .session-entry").first).to_be_visible()
     expect(page.locator(".task-sessions-main")).to_be_hidden()
+    expect(
+        page.locator("#session-list .session-entry .executor-band-mark").first
+    ).to_have_text("B")
     page.locator("#session-list .session-entry").first.click()
     step("tasks", "session")
     expect(page.locator("#session-list")).to_be_hidden()
     expect(page.locator("#session-audit-list")).to_be_visible()
+    expect(page.locator("#session-detail-executor")).to_have_text(
+        "browser-loopback"
+    )
+    expect(page.locator("#session-detail-executor")).to_be_visible()
+    expect(page.locator("#session-detail-executor-avatar")).to_have_text("B")
+    expect(page.locator("#session-detail-executor-avatar")).to_have_css(
+        "border-radius", "50%"
+    )
+    executor_box = page.locator("#session-detail-executor").bounding_box()
+    title_box = page.locator("#session-detail-title").bounding_box()
+    assert executor_box and title_box
+    assert executor_box["x"] + executor_box["width"] < title_box["x"]
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= innerWidth + 1"
+    )
+    expect(page.locator("#session-detail-executor-id")).to_have_text(
+        harness.executor_id
+    )
+    expect(page.locator(".session-detail-executor-identity")).to_have_css(
+        "border-right-width", "1px"
+    )
+    expect(page.locator("#session-detail-executor-copy")).to_have_count(0)
     expect(
         page.locator(".mobile-subpage-bar:visible .mobile-subpage-back")
     ).to_have_text("← Task")

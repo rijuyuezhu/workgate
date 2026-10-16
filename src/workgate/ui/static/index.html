@@ -503,9 +503,15 @@
             <p class="task-session-empty">Select a session to view its Audit.</p>
           <section class="session-resource session-execution-detail">
             <div class="session-detail-header">
-              <div>
-                <strong id="session-detail-title">No session selected</strong>
-                <span id="session-detail-status" class="muted">Select a retained execution session to inspect it</span>
+              <div class="session-detail-heading">
+                <div class="session-detail-executor-identity">
+                  <span id="session-detail-executor-avatar" class="executor-band-mark" aria-hidden="true">—</span>
+                  <strong id="session-detail-executor">—</strong>
+                </div>
+                <div class="session-detail-label">
+                  <strong id="session-detail-title">No session selected</strong>
+                  <span id="session-detail-status" class="muted">Select a retained execution session to inspect it</span>
+                </div>
               </div>
               <div class="session-detail-actions">
                 <button id="session-gui-open" type="button" disabled>Open GUI</button>
@@ -516,7 +522,7 @@
               <summary>Session metadata</summary>
             <dl class="session-detail-grid">
               <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
-              <div><dt>Executor ID</dt><dd id="session-detail-executor">—</dd></div>
+              <div><dt>Executor ID</dt><dd id="session-detail-executor-id">—</dd></div>
               <div><dt>Workdir</dt><dd id="session-detail-workdir">—</dd></div>
               <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
               <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>

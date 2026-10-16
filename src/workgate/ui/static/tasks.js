@@ -19,7 +19,7 @@ export function createTasksController({
     tasks: [],
     unattachedSessions: [],
     sessions: [],
-    executorStates: new Map(),
+    executorTargets: new Map(),
     workspaceLoading: false,
     workspaceRefreshing: false,
     workspaceGeneration: 0,
@@ -100,17 +100,52 @@ export function createTasksController({
   }
 
   function sessionAvailability(session = selectedSession()) {
-    if (session && controllerState.executorStates.get(session.executor_id) !== "online") {
+    if (session && controllerState.executorTargets.get(session.executor_id)?.status !== "online") {
       return "executor_offline";
     }
     return text(session && session.availability, "");
   }
 
+  function executorName(executorId) {
+    return text(controllerState.executorTargets.get(executorId)?.name, text(executorId, "Unknown executor"));
+  }
+
+  function updateSessionEntryExecutor(button, session) {
+    const name = executorName(session.executor_id);
+    button.querySelector(".executor-band-mark").textContent = name.slice(0, 1).toUpperCase();
+    button.querySelector(".session-entry-meta").textContent = sessionEntryMetaText(
+      session, button.classList.contains("unattached-session-entry"),
+    );
+    button.title = `${sessionOptionLabel(session)} · ${name}`;
+  }
+
+  function appendSessionEntryContent(button, session, title, meta) {
+    const avatar = document.createElement("span");
+    avatar.className = "executor-band-mark";
+    avatar.setAttribute("aria-hidden", "true");
+    const main = document.createElement("span");
+    main.className = "session-entry-main";
+    main.append(title, meta);
+    button.append(avatar, main);
+    updateSessionEntryExecutor(button, session);
+  }
+
   function renderExecutors(targets) {
     const previous = sessionAvailability();
-    controllerState.executorStates = new Map(
-      targets.map((item) => [item.executor_id, item.status]),
+    controllerState.executorTargets = new Map(
+      targets.map((item) => [item.executor_id, item]),
     );
+    // Refresh identity in place: renamed/offline executors must not reset list focus or scroll.
+    const sessions = new Map(
+      [...controllerState.sessions, ...controllerState.unattachedSessions]
+        .map((session) => [session.session_id, session]),
+    );
+    for (const list of [elements.sessionList, elements.taskList]) {
+      for (const button of list.querySelectorAll(".session-entry[data-session-id]")) {
+        const session = sessions.get(button.dataset.sessionId);
+        if (session) updateSessionEntryExecutor(button, session);
+      }
+    }
     renderSessionDetail();
     if (previous === "executor_offline" && sessionAvailability() !== "executor_offline") {
       void refreshWorkspace();
@@ -123,6 +158,19 @@ export function createTasksController({
     if (availability === "executor_offline") return "Executor offline";
     if (availability && availability !== "available") return text(availability, "Unavailable");
     return "";
+  }
+
+  function sessionEntryMetaText(session, legacy = false) {
+    const updated = sessionTimestamp(session.updated_at);
+    if (session.status === "ended") return `ended · ${updated}`;
+    if (legacy) {
+      return `${sessionUnavailableLabel(session) || text(session.status, "session")} · ${updated}`;
+    }
+    if (session.status === "terminating") return `terminating · ${updated}`;
+    const unavailable = sessionUnavailableLabel(session);
+    return unavailable
+      ? `${unavailable.toLowerCase()} · ${updated}`
+      : `available · ${sessionActivityTimestamp(session)}`;
   }
 
   function sessionActivityTimestamp(session = selectedSession()) {
@@ -261,6 +309,8 @@ export function createTasksController({
       elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
       elements.sessionDetailId.textContent = "—";
       elements.sessionDetailExecutor.textContent = "—";
+      elements.sessionDetailExecutorAvatar.textContent = "—";
+      elements.sessionDetailExecutorId.textContent = "—";
       elements.sessionDetailWorkdir.textContent = "—";
       elements.sessionDetailCreated.textContent = "—";
       elements.sessionDetailUpdated.textContent = "—";
@@ -284,7 +334,10 @@ export function createTasksController({
             ? "Unavailable · executor offline"
             : `Available · ${sessionActivityTimestamp(session)}`;
     elements.sessionDetailId.textContent = text(session.session_id);
-    elements.sessionDetailExecutor.textContent = text(session.executor_id);
+    const name = executorName(session.executor_id);
+    elements.sessionDetailExecutor.textContent = name;
+    elements.sessionDetailExecutorAvatar.textContent = name.slice(0, 1).toUpperCase();
+    elements.sessionDetailExecutorId.textContent = text(session.executor_id);
     elements.sessionDetailWorkdir.textContent = text(session.workdir);
     elements.sessionDetailCreated.textContent = sessionTimestamp(session.created_at);
     elements.sessionDetailUpdated.textContent = sessionTimestamp(session.updated_at);
@@ -315,20 +368,12 @@ export function createTasksController({
         );
         const title = document.createElement("strong");
         title.textContent = text(session.label, text(session.workdir, "Session"));
-        button.title = sessionOptionLabel(session);
         const meta = document.createElement("span");
         meta.className = sessionTerminated(session)
           ? "session-entry-meta session-entry-terminated"
           : "session-entry-meta";
-        const unavailable = sessionUnavailableLabel(session);
-        meta.textContent = session.status === "ended"
-          ? `ended · ${sessionTimestamp(session.updated_at)}`
-          : session.status === "terminating"
-            ? `terminating · ${sessionTimestamp(session.updated_at)}`
-            : unavailable
-              ? `${unavailable.toLowerCase()} · ${sessionTimestamp(session.updated_at)}`
-              : `available · ${sessionActivityTimestamp(session)}`;
-        button.append(title, meta);
+        meta.textContent = sessionEntryMetaText(session);
+        appendSessionEntryContent(button, session, title, meta);
         button.addEventListener("click", () => {
           if (session.session_id === controllerState.sessionId) onNavigate("session");
           else void selectSession(session.session_id);
@@ -414,10 +459,8 @@ export function createTasksController({
       title.textContent = sessionOptionLabel(session);
       const meta = document.createElement("span");
       meta.className = "session-entry-meta";
-      meta.textContent = session.status === "ended"
-        ? `ended · ${sessionTimestamp(session.updated_at)}`
-        : `${sessionUnavailableLabel(session) || text(session.status, "session")} · ${sessionTimestamp(session.updated_at)}`;
-      button.append(title, meta);
+      meta.textContent = sessionEntryMetaText(session, true);
+      appendSessionEntryContent(button, session, title, meta);
       button.addEventListener(
         "click",
         () => void selectUnattachedSession(session.session_id),
@@ -1146,7 +1189,6 @@ export function createTasksController({
       "click",
       () => void terminateSelectedSession(),
     );
-
     elements.sessionAuditFilterForm.addEventListener("submit", (event) => {
       event.preventDefault();
       void refreshSessionAudit();
