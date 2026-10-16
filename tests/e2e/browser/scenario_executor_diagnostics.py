@@ -1,5 +1,7 @@
 """Executor details are requested on selection, not repeated on inventory polls."""
 
+import re
+
 from playwright.sync_api import expect
 
 from tests.e2e.browser.harness import BrowserHarness
@@ -98,7 +100,14 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         }
         route.fulfill(response=response, json=payload)
 
-    page.route("**/api/ui/executors/diagnostics?*", incomplete_diagnostics)
+    diagnostic_url = re.compile(r"/api/ui/executors/diagnostics(?:\?|$)")
+    intercepted: list[str] = []
+
+    def capture_diagnostics(route):
+        intercepted.append(route.request.url)
+        incomplete_diagnostics(route)
+
+    page.route(diagnostic_url, capture_diagnostics)
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
     ).first.click()
@@ -110,7 +119,8 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
             has_text="control-configured"
         )
     ).to_contain_text("Disabled")
-    page.unroute("**/api/ui/executors/diagnostics?*", incomplete_diagnostics)
+    assert intercepted, "malformed MCP response interception did not run"
+    page.unroute(diagnostic_url, capture_diagnostics)
     page.locator('[data-executor-subtab="overview"]').click()
 
     def offline_inventory(route):

@@ -339,7 +339,16 @@ export function createExecutorsController({
 
   async function loadDiagnostics(force = false) {
     const executorId = state.selectedId;
-    if (!executorId || (state.diagnosticId === executorId && !force)) return;
+    if (!executorId || !selectedExecutor() || selectedExecutor().revoked_at) {
+      state.diagnosticGeneration += 1;
+      state.diagnosticId = "";
+      state.diagnostic = null;
+      state.diagnosticLoading = false;
+      state.diagnosticError = "";
+      renderDiagnostics();
+      return;
+    }
+    if (state.diagnosticId === executorId && !force) return;
     const generation = ++state.diagnosticGeneration;
     state.diagnosticId = executorId;
     state.diagnostic = null;
@@ -417,7 +426,7 @@ export function createExecutorsController({
     const previousId = state.selectedId;
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
     if (!state.executors.some((item) => item.executor_id === state.selectedId)) {
-      state.selectedId = state.executors[0]?.executor_id || "";
+      state.selectedId = (state.executors.find((entry) => !entry.revoked_at) || state.executors[0])?.executor_id || "";
     }
     const online = state.executors.filter((item) => !item.revoked_at && item.online).length;
     const revoked = state.executors.filter((item) => item.revoked_at).length;
@@ -441,6 +450,14 @@ export function createExecutorsController({
         void refreshMetrics();
       }
     } else {
+      if (selectedExecutor()?.revoked_at && state.diagnosticId === state.selectedId) {
+        state.diagnosticGeneration += 1;
+        state.diagnosticId = "";
+        state.diagnostic = null;
+        state.diagnosticLoading = false;
+        state.diagnosticError = "";
+        renderDiagnostics();
+      }
       const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
       if (showMetrics !== state.metricOnline) {
         resetMetrics();
