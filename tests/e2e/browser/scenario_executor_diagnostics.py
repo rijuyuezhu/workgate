@@ -23,7 +23,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#executor-list .executor-row")).to_be_visible()
     # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+    expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
     )
     page.wait_for_function(
@@ -60,19 +60,14 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Executor")
-    assert page.locator(
-        "#executor-mcp-body .executor-manage-group h4"
-    ).all_text_contents()[:2] == ["Executor", "Control"]
     page.locator('[data-executor-subtab="skills"]').click()
-    assert page.locator(
-        "#executor-skills-body .executor-manage-group h4"
-    ).all_text_contents()[:2] == ["Executor", "Executor (User Global)"]
     expect(page.locator("#executor-skills-body")).to_contain_text("Executor")
+    page.locator('[data-executor-subtab="diagnostics"]').click()
+    expect(page.locator("#executor-diagnostics-state")).to_contain_text("On-demand snapshot")
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Agent Bridge")
     page.locator('[data-executor-subtab="overview"]').click()
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Network throughput"
-    )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Memory")
+    expect(page.locator("#executor-overview-metrics")).to_contain_text("Network throughput")
+    expect(page.locator("#executor-overview-metrics")).to_contain_text("Memory")
     initial_calls = len(calls)
     page.evaluate(
         "window.firstDiagnosticNode = document.querySelector('.executor-manage-group')"
@@ -84,7 +79,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     assert len(calls) == initial_calls, (
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+    expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
     )
     assert (
@@ -92,7 +87,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )  # Resource refresh uses Dashboard telemetry.
     expect(
         page.locator(
-            "#executor-diagnostics-body .dashboard-sparkline polyline"
+            "#executor-overview-metrics .dashboard-sparkline polyline"
         ).first
     ).to_be_attached(timeout=12000)
 

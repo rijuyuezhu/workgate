@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from tests.e2e.browser.harness import BrowserHarness
 from tests.e2e.browser.scenario_auth_dashboard import run_auth_dashboard
@@ -45,6 +45,87 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_terminals(browser_harness)
     run_mobile_drilldown(browser_harness)
     run_native_gui_manual(browser_harness)
+    browser_harness.assert_clean_browser()
+
+
+def test_executor_integration_management_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Real Browser → authenticated Control → Executor Skill CRUD; no page resets."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    page = browser_harness.page
+    page.set_viewport_size({"width": 1360, "height": 900})
+    page.goto(f"{browser_harness.base_url}/ui#executors")
+    expect(page.locator("#executor-list .executor-row").first).to_be_visible()
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-add")).to_be_enabled(timeout=10000)
+    page.locator("#executor-skills-add").click()
+    expect(page.locator("#executor-integration-mcp-fields")).to_be_hidden()
+    page.locator("#executor-integration-name").fill("browser-managed")
+    body = "---\ndescription: Browser test\n---\n# Instructions\n"
+    page.locator("#executor-integration-content").fill(body)
+    page.locator("#executor-integration-validate").click()
+    expect(page.locator("#executor-integration-status")).to_contain_text(
+        "valid"
+    )
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    row = page.locator("#executor-skills-body .executor-manage-row").filter(
+        has_text="browser-managed"
+    )
+    expect(row).to_be_visible()
+    row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_have_value(body)
+    page.locator("#executor-integration-toggle").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    expect(row).to_contain_text("Disabled")
+    page.wait_for_timeout(4200)
+    expect(page.locator('[data-executor-subtab="skills"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
+    row.get_by_role("button", name="Manage").click()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    expect(page.locator("#executor-skills-body")).not_to_contain_text(
+        "browser-managed"
+    )
+    page.locator('[data-executor-subtab="mcp"]').click()
+    page.locator("#executor-mcp-add").click()
+    page.locator("#executor-integration-owner").select_option("executor")
+    expect(page.locator("#executor-integration-command")).to_be_visible()
+    expect(page.locator("#executor-integration-url")).to_be_hidden()
+    page.locator("#executor-integration-name").fill("browser-local")
+    page.locator("#executor-integration-command").fill("echo")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    local = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="browser-local"
+    )
+    expect(local).to_be_visible()
+    local.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-command")).to_have_value("echo")
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(page.locator("#executor-mcp-body")).not_to_contain_text(
+        "browser-local"
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-body")).to_be_visible()
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= innerWidth + 1"
+    )
+    page.screenshot(
+        path=str(browser_harness.artifacts / "executor-management-mobile.png")
+    )
     browser_harness.assert_clean_browser()
 
 

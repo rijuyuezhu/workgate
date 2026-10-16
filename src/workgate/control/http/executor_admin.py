@@ -10,9 +10,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
 from ...agent_bridge.diagnostics import manifest_diagnostics
+from ...agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
+from ...agent_bridge.state import load_agent_manifest
 from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
-from ...oauth.core.scopes import SCOPE_EXECUTOR_USE
+from ...oauth.core.scopes import SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE
 from ...protocol.pairing import PairApprovalRequest
 from ..executors import ControlExecutorFleetService, ExecutorNotFoundError
 from ..pairing import (
@@ -20,6 +22,21 @@ from ..pairing import (
     ExecutorPairingService,
     PairingAttemptView,
 )
+
+
+class _IntegrationMutationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    owner: str
+    kind: str
+    action: str
+    executor_id: str | None = Field(default=None, max_length=128)
+    name: str | None = Field(default=None, max_length=128)
+    config: dict[str, Any] | None = None
+    content: str | None = Field(default=None, max_length=131_072)
+    expected_revision: str | None = Field(
+        default=None, min_length=64, max_length=64
+    )
 
 
 class _RenameExecutorBody(BaseModel):
@@ -293,6 +310,199 @@ def executor_admin_routes(
                 }
             )
 
+    async def integrations(request: Request) -> Response:
+        """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
+        _require_executor_admin_scope()
+        if request.method == "GET":
+            owner = request.query_params.get("owner", "executor")
+            kind = request.query_params.get("kind", "")
+            action = request.query_params.get("action", "list")
+            name = request.query_params.get("name")
+            executor_id = request.query_params.get("executor_id")
+            config = None
+            content = None
+            revision = None
+        else:
+            try:
+                body = _IntegrationMutationBody.model_validate(
+                    await request.json()
+                )
+            except ValidationError, ValueError, TypeError:
+                return _json_error(
+                    "InvalidIntegrationRequest",
+                    "Invalid management fields",
+                    status_code=400,
+                )
+            owner, kind, action, name = (
+                body.owner,
+                body.kind,
+                body.action,
+                body.name,
+            )
+            executor_id, config = body.executor_id, body.config
+            content, revision = body.content, body.expected_revision
+        if owner not in {"control", "executor"} or kind not in {"mcp", "skill"}:
+            return _json_error(
+                "InvalidOwner",
+                "Unknown integration owner or kind",
+                status_code=400,
+            )
+        if owner == "control" and kind == "skill":
+            return _json_error(
+                "UnsupportedScope",
+                "Control-wide Skill management follows #354",
+                status_code=400,
+            )
+        if not isinstance(action, str) or action not in (
+            {"list", "get", "register", "update", "enable", "disable", "remove"}
+            if kind == "mcp"
+            else {
+                "list",
+                "get",
+                "create",
+                "update",
+                "enable",
+                "disable",
+                "delete",
+                "validate",
+            }
+        ):
+            return _json_error(
+                "InvalidAction",
+                "Unsupported management action",
+                status_code=400,
+            )
+        if action != "list" and (not name or len(name) > 128):
+            return _json_error(
+                "InvalidName", "A bounded name is required", status_code=400
+            )
+        if action != "list":
+            # Reading a complete editable Skill or MCP config also requires
+            # management authorization, not just Executor listing permission.
+            try:
+                require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+            except MissingOAuthScopeError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if request.method == "GET" and action not in {"list", "get"}:
+            return _json_error(
+                "InvalidMethod", "Mutations require POST", status_code=405
+            )
+        if request.method == "POST" and action in {"list", "get"}:
+            return _json_error(
+                "InvalidMethod", "Use GET to read integrations", status_code=405
+            )
+
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control is unavailable", status_code=503
+            )
+        if owner == "executor":
+            if not executor_id or len(executor_id) > 128:
+                return _json_error(
+                    "InvalidExecutor", "Select an Executor", status_code=400
+                )
+            record = runtime.control_state.snapshot_executors().get(executor_id)
+            if record is None or record.revoked_at is not None:
+                return _json_error(
+                    "UnknownExecutor", "Unknown Executor", status_code=404
+                )
+            if not await runtime.executor_transport.is_online(executor_id):
+                return _json_error(
+                    "OfflineExecutor", "Executor is offline", status_code=503
+                )
+
+        try:
+            if owner == "control":
+                if kind != "mcp":
+                    raise ValueError("Invalid integration scope")
+                mcp_config = (
+                    ManagedMcpConfig.model_validate(config)
+                    if config is not None
+                    else None
+                )
+                result = await asyncio.to_thread(
+                    manage_mcp_manifest,
+                    runtime.config.agent_config_dir,
+                    action,
+                    name=name,
+                    config=mcp_config,
+                    owner_type="network",
+                    auth_dir=runtime.config.agent_auth_dir,
+                    expected_revision=revision,
+                )
+                if action == "get" and isinstance(name, str):
+                    manifest = load_agent_manifest(
+                        runtime.config.agent_config_dir
+                    )
+                    current = manifest.data.mcp_servers[name]
+                    try:
+                        result["editable_config"] = (
+                            ManagedMcpConfig.model_validate(
+                                current.model_dump(mode="json", by_alias=True)
+                            ).model_dump(
+                                mode="json", by_alias=True, exclude_none=True
+                            )
+                        )
+                    except ValidationError:
+                        result["requires_replacement"] = True
+            else:
+                args: dict[str, Any] = {"action": action}
+                if name is not None:
+                    args["name"] = name
+                if kind == "skill":
+                    if content is not None:
+                        args["content"] = content
+                    if revision is not None:
+                        args["expected_revision"] = revision
+                else:
+                    if config is not None:
+                        args["config"] = config
+                    if revision is not None:
+                        args["expected_revision"] = revision
+                response = await runtime.executor_transport.call(
+                    executor_id,
+                    "ui.skill.manage" if kind == "skill" else "ui.mcp.manage",
+                    args,
+                    timeout_s=12,
+                )
+                if not response.ok or not isinstance(response.result, dict):
+                    raise ValueError(
+                        "Executor rejected the integration operation"
+                    )
+                result = response.result
+            if action == "list" and isinstance(result, dict):
+                try:
+                    require_oauth_scopes(
+                        (SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE)
+                    )
+                    result = {**result, "can_manage": True}
+                except MissingOAuthScopeError:
+                    result = {**result, "can_manage": False}
+            if request.method == "POST":
+                audit(
+                    "integration_management",
+                    owner=owner,
+                    executor_id=executor_id,
+                    kind=kind,
+                    action=action,
+                    name=name,
+                    ok=True,
+                )
+            return _json_ok(result)
+        except ValidationError, KeyError, ValueError, OSError:
+            return _json_error(
+                "ManagementRejected",
+                "Invalid or conflicting integration change; reload and check the fields",
+                status_code=409,
+            )
+        except RuntimeError, TimeoutError, ConnectionError:
+            return _json_error(
+                "ManagementUnavailable",
+                "Executor management unavailable",
+                status_code=503,
+            )
+
     async def executor_action(request: Request) -> Response:
         _require_executor_admin_scope()
         action = str(request.path_params.get("action") or "")
@@ -348,6 +558,9 @@ def executor_admin_routes(
     return [
         Route(api_prefix + "/pair", pair, methods=["GET", "POST"]),
         Route(api_prefix + "/executors", executors, methods=["GET"]),
+        Route(
+            api_prefix + "/integrations", integrations, methods=["GET", "POST"]
+        ),
         Route(
             api_prefix + "/executors/diagnostics", diagnostics, methods=["GET"]
         ),

@@ -1,5 +1,6 @@
 """Atomic management of the existing Agent Bridge manifest, without a second registry."""
 
+import hashlib
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -66,12 +67,21 @@ class ManagedMcpConfig(BaseModel):
         return self
 
 
+def _config_revision(config: AgentMcpServerConfig) -> str:
+    """Stable optimistic-concurrency token without including raw secrets in output."""
+    payload = config.model_dump(mode="json", by_alias=True)
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
+
+
 def _safe_row(name: str, config: AgentMcpServerConfig) -> dict[str, Any]:
     """Never echo legacy literal credentials or command arguments into model logs."""
     return {
         "name": name,
         "type": config.type,
         "enabled": config.enabled,
+        "revision": _config_revision(config),
         "integrationId": config.integration_id,
         "auth": config.auth.model_dump(),
         "env": {
@@ -98,6 +108,7 @@ def manage_mcp_manifest(
     config: ManagedMcpConfig | None = None,
     owner_type: Literal["network", "stdio"],
     auth_dir: Path | None = None,
+    expected_revision: str | None = None,
 ) -> dict[str, Any]:
     """Read or atomically mutate one owner's existing config.json."""
     if action not in {
@@ -157,6 +168,21 @@ def manage_mcp_manifest(
             }
         assert name is not None
         current = servers.get(name)
+        if (
+            expected_revision is not None
+            and action
+            in {
+                "update",
+                "enable",
+                "disable",
+                "remove",
+            }
+            and (
+                current is None
+                or _config_revision(current) != expected_revision
+            )
+        ):
+            raise ValueError("MCP config changed; reload before editing")
         if action == "register":
             if current is not None:
                 raise ValueError(f"MCP server already exists: {name}")
