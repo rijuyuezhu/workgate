@@ -60,6 +60,13 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     expect(page.locator("#session-detail-executor-avatar")).to_have_css(
         "border-radius", "50%"
     )
+    executor_box = page.locator("#session-detail-executor").bounding_box()
+    title_box = page.locator("#session-detail-title").bounding_box()
+    assert executor_box and title_box
+    assert executor_box["x"] + executor_box["width"] < title_box["x"]
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= innerWidth + 1"
+    )
     expect(page.locator("#session-detail-executor-id")).to_have_text(
         harness.executor_id
     )

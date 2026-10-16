@@ -407,6 +407,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         "el => Number(getComputedStyle(el).fontWeight) >= 700"
     )
     expect(page.locator("#session-detail-executor-avatar")).to_have_text("B")
+    executor_box = page.locator("#session-detail-executor").bounding_box()
+    title_box = page.locator("#session-detail-title").bounding_box()
+    assert executor_box and title_box
+    assert executor_box["x"] + executor_box["width"] < title_box["x"]
     for mark in [
         page.locator("#session-detail-executor-avatar"),
         attached_entry.locator(".executor-band-mark"),
@@ -420,6 +424,10 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     details = page.locator(".task-session-metadata")
     details.locator("summary").click()
+    assert page.locator("#session-detail-executor-id").evaluate(
+        "el => getComputedStyle(el).color === "
+        "getComputedStyle(document.querySelector('#session-detail-id')).color"
+    )
     expect(page.locator("#session-detail-executor-copy")).to_be_enabled()
     harness.context.grant_permissions(
         ["clipboard-read", "clipboard-write"], origin=harness.base_url

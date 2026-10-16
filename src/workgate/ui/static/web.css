@@ -2563,10 +2563,13 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .task-session-metadata { margin-top: 8px; }
 .task-session-metadata summary { color: #778196; font-size: 11px; cursor: pointer; }
 .task-session-metadata .session-detail-grid { margin-top: 10px; }
-.session-detail-header > div:first-child { min-width: 0; }
+.session-detail-heading {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+}
+.session-detail-label { min-width: 0; }
 .session-detail-executor-identity {
   display: flex; align-items: center; gap: 9px; min-width: 0;
-  margin-top: 9px;
+  max-width: 45%;
 }
 .session-detail-header .session-detail-executor-identity .executor-band-mark {
   display: grid; flex: none; margin-top: 0;
@@ -2575,7 +2578,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   font-size: 15px; font-weight: 750; overflow-wrap: anywhere;
 }
 .session-detail-executor-id-row { display: flex; align-items: start; gap: 6px; margin-top: 4px; min-width: 0; }
-#session-detail-executor-id { flex: 1; min-width: 0; font-size: 11px; color: #7b8495; white-space: normal; overflow-wrap: anywhere; user-select: text; }
+#session-detail-executor-id { flex: 1; min-width: 0; font-size: inherit; color: inherit; white-space: normal; overflow-wrap: anywhere; user-select: text; }
 #session-detail-executor-copy { flex: none; padding: 2px 5px; font-size: 10px; }
 .task-sessions-main .session-audit-layout { grid-template-columns: minmax(145px, .85fr) minmax(0, 1.15fr); min-height: 360px; }
 .task-sessions-main .session-audit-toolbar {
