@@ -68,6 +68,11 @@ class ControlSessionCoordinator:
         agent_session_retention_s: int = 0,
         task_session_admitter: Callable[[ControlSessionRecord], None]
         | None = None,
+        implicit_task_creator: Callable[
+            [ControlSessionRecord], ControlSessionRecord
+        ]
+        | None = None,
+        implicit_task_discarder: Callable[[str], None] | None = None,
         clock=time.time,
     ) -> None:
         self._state = state
@@ -81,6 +86,8 @@ class ControlSessionCoordinator:
         self._missing_by_executor: dict[str, dict[str, float]] = {}
         self._activity_by_session: dict[str, float] = {}
         self._task_session_admitter = task_session_admitter
+        self._implicit_task_creator = implicit_task_creator
+        self._implicit_task_discarder = implicit_task_discarder
         self._auto_cleanup_blocked: Callable[[str], Awaitable[bool]] | None = (
             None
         )
@@ -215,7 +222,9 @@ class ControlSessionCoordinator:
                 updated_at=now,
             )
             if record.task_id is None:
-                self._state.put_session(record)
+                if self._implicit_task_creator is None:
+                    raise ValueError("implicit task creation is unavailable")
+                record = self._implicit_task_creator(record)
             elif self._task_session_admitter is None:
                 raise ValueError("semantic task attachment is unavailable")
             else:
@@ -231,13 +240,13 @@ class ControlSessionCoordinator:
                 )
             except (asyncio.CancelledError, TimeoutError) as exc:
                 if not abandoned_command_was_offered(exc):
-                    self._state.remove_session(session_id)
+                    self._discard_failed_create(record)
                 else:
                     await self._reconcile_ambiguous_create(record)
                 raise
             except ExecutorTransportError as exc:
                 if not abandoned_command_was_offered(exc):
-                    self._state.remove_session(session_id)
+                    self._discard_failed_create(record)
                 else:
                     await self._reconcile_ambiguous_create(record)
                 raise
@@ -700,13 +709,18 @@ class ControlSessionCoordinator:
             return
         self._activity_by_session[session_id] = float(observed_at)
 
+    def _discard_failed_create(self, record: ControlSessionRecord) -> None:
+        self._state.remove_session(str(record.session_id))
+        if record.task_created and self._implicit_task_discarder is not None:
+            self._implicit_task_discarder(str(record.task_id))
+
     def _finish_create(
         self, record: ControlSessionRecord, result: ExecutorResult
     ) -> JsonValue:
         if not result.ok:
             assert result.error is not None
             if result.error.code != _CREATE_UNCONFIRMED:
-                self._state.remove_session(str(record.session_id))
+                self._discard_failed_create(record)
             raise RuntimeError(
                 f"executor session.create failed: {result.error.code}: {result.error.message}"
             )
@@ -720,7 +734,14 @@ class ControlSessionCoordinator:
             updated_at=now,
         )
         self.observe_session_activity(str(record.session_id), observed_at=now)
-        return self._with_executor_binding(record, payload)
+        response = self._with_executor_binding(record, payload)
+        response["task_created"] = record.task_created
+        if record.task_created:
+            notice = f"Created Task {record.task_id} automatically and attached this Session."
+            response["message"] = (
+                f"{notice} {response.get('message', '')}".strip()
+            )
+        return response
 
     async def _reconcile_ambiguous_create(
         self, record: ControlSessionRecord

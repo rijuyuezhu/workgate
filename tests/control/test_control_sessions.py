@@ -36,6 +36,7 @@ from workgate.protocol.ids import (
     new_command_id,
     new_executor_id,
     new_session_id,
+    new_task_id,
 )
 
 
@@ -119,6 +120,25 @@ class FakeTransport:
         return _ok({"session_id": session_id, "workdir": "/workspace/project"})
 
 
+def _coordinator(state, transport, **kwargs):
+    """Low-level Session-only fixture: stub the semantic Task admission seam."""
+
+    def attach(record):
+        linked = record.model_copy(
+            update={"task_id": new_task_id(), "task_created": True}
+        )
+        state.put_session(linked)
+        return linked
+
+    return ControlSessionCoordinator(
+        state,
+        transport,
+        implicit_task_creator=attach,
+        implicit_task_discarder=lambda task_id: None,
+        **kwargs,
+    )
+
+
 @pytest.mark.asyncio
 async def test_start_persists_creating_before_executor_call(
     tmp_path: Path,
@@ -129,7 +149,7 @@ async def test_start_persists_creating_before_executor_call(
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello()
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     async def observe(_executor_id, _op, _args, session_id, _timeout):
         assert session_id is not None
@@ -157,7 +177,7 @@ async def test_start_allows_executor_default_workdir(
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello()
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     result = await coordinator.start_session()
 
@@ -179,7 +199,7 @@ async def test_start_requires_exactly_one_eligible_executor(
         _trust(state, executor_id)
         transport.online.add(executor_id)
         transport.hellos[executor_id] = _hello()
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     with pytest.raises(RuntimeError, match="exactly one eligible executor"):
         await coordinator.start_session(workdir="project")
@@ -193,7 +213,7 @@ async def test_queued_create_timeout_removes_checkpoint(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello()
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     async def queued_timeout(*_args):
         exc = TimeoutError("queued")
@@ -216,7 +236,7 @@ async def test_offered_create_timeout_uses_positive_lookup_without_replay(
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello()
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
     create_session_id: str | None = None
 
     async def offered_then_lookup(
@@ -264,7 +284,7 @@ async def test_offered_create_interrupted_by_trust_change_keeps_checkpoint(
     transport = ExecutorTransport(state, max_pending_commands=4)
     transport.start()
     await transport.hello(credential, _hello())
-    coordinator = ControlSessionCoordinator(state, transport)
+    coordinator = _coordinator(state, transport)
 
     start = asyncio.create_task(coordinator.start_session(workdir="project"))
     command = await transport.poll(credential)
@@ -323,7 +343,7 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello((creating, "/workspace/project"))
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     await coordinator.reconcile_hello(executor_id)
 
@@ -364,7 +384,7 @@ async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
         shells=(),
         jobs=(),
     )
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     await coordinator.reconcile_hello(executor_id)
     (
@@ -423,7 +443,7 @@ async def test_newer_hello_repairs_activity_after_offered_command_abandon(
     state.put_session(_active_record(executor_id, session_id))
     transport = ExecutorTransport(state, max_pending_commands=4)
     transport.start()
-    coordinator = ControlSessionCoordinator(state, transport)
+    coordinator = _coordinator(state, transport)
     initial_hello = ExecutorHelloRequest(
         runtime=ExecutorRuntimeSummary(workgate_version=__version__),
         capabilities=(EXECUTOR_CAPABILITY_SESSIONS,),
@@ -507,7 +527,7 @@ async def test_transport_uncertainty_does_not_refresh_activity(
         raise RuntimeError("transport down")
 
     transport.call_impl = fail_transport
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
     coordinator.observe_session_activity(session_id, observed_at=10.0)
 
     with pytest.raises(RuntimeError, match="transport down"):
@@ -535,7 +555,7 @@ async def test_browser_tools_require_bound_executor_capability(
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello((session_id, "/workspace/project"))
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     with pytest.raises(
         BrowserUnavailableError, match="browser automation is unavailable"
@@ -578,7 +598,7 @@ async def test_gui_tools_require_bound_executor_capability(
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello((session_id, "/workspace/project"))
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     with pytest.raises(
         GuiUnavailableError, match="GUI automation is unavailable"
@@ -617,7 +637,7 @@ async def test_hello_reports_orphan_and_cross_executor_session_diagnostics(
         (orphan, "/workspace/orphan"),
         (misbound, "/workspace/misbound"),
     )
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     with caplog.at_level("WARNING", logger="workgate.control.sessions"):
         await coordinator.reconcile_hello(executor_id)
@@ -651,7 +671,7 @@ async def test_end_persists_terminating_before_command(tmp_path: Path) -> None:
     transport = FakeTransport()
     transport.online.add(executor_id)
     transport.hellos[executor_id] = _hello((session_id, "/workspace/project"))
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
 
     async def observe(_executor_id, op, _args, observed_session_id, _timeout):
         assert op == "session.terminate"
@@ -716,7 +736,7 @@ async def test_start_reaps_stale_creating_session_through_desired_absence(
         return _ok({"session_id": session_id, "workdir": "/workspace/new"})
 
     transport.call_impl = execute
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -769,7 +789,7 @@ async def test_start_reaps_expired_session_through_confirmed_absence(
         return _ok({"session_id": session_id, "workdir": "/workspace/new"})
 
     transport.call_impl = execute
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -810,7 +830,7 @@ async def test_explicit_cleanup_lookup_confirms_missing_availability(
         return _ok(None)
 
     transport.call_impl = execute
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -852,7 +872,7 @@ async def test_missing_observation_reaps_after_retention_without_durable_state(
         return _ok({"session_id": session_id, "workdir": "/workspace/new"})
 
     transport.call_impl = execute
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -916,7 +936,7 @@ async def test_overflow_does_not_reap_session_with_owned_resources(
         )
 
     transport.call_impl = lookup
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -960,7 +980,7 @@ async def test_overflow_revalidates_activity_before_termination(
         )
 
     transport.call_impl = lookup
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -1009,7 +1029,7 @@ async def test_overflow_respects_control_managed_resource_hook(
         return []
 
     transport.call_impl = lookup
-    coordinator = ControlSessionCoordinator(
+    coordinator = _coordinator(
         state,
         transport,  # type: ignore[arg-type]
         max_agent_sessions=1,
@@ -1065,7 +1085,7 @@ async def test_end_stops_control_resources_after_terminating(
         )
 
     transport.call_impl = terminate
-    coordinator = ControlSessionCoordinator(state, transport)  # type: ignore[arg-type]
+    coordinator = _coordinator(state, transport)  # type: ignore[arg-type]
     coordinator.set_control_resource_hooks(
         auto_cleanup_blocked=not_blocked,
         before_terminate=stop_control_resources,

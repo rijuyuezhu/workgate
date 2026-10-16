@@ -192,6 +192,8 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_agent_sessions=config.max_agent_sessions,
         agent_session_retention_s=config.agent_session_retention_s,
         task_session_admitter=task_service.admit_session_attachment,
+        implicit_task_creator=task_service.create_for_session,
+        implicit_task_discarder=task_service.discard_implicit_task,
     )
     executor_fleet = ControlExecutorFleetService(
         control_state,

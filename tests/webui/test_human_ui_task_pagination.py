@@ -179,6 +179,11 @@ async def test_unattached_paging_and_deep_link_reachability(
         and isinstance(attached_id, str)
     )
 
+    service = harness.control.task_service
+    for result in (one, two):
+        implicit_id = str(result["task_id"])
+        await service.cancel_task(implicit_id)
+        await service.delete_task(implicit_id)
     default = client.get("/api/ui/tasks").json()["data"]
     assert default["unattached_sessions"] == []
     first = client.get("/api/ui/tasks", params={"status": "unattached"}).json()[

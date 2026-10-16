@@ -172,7 +172,11 @@ class SessionStartOutput(BaseModel):
     )
     task_id: str | None = Field(
         default=None,
-        description="Optional semantic task explicitly attached to this execution session.",
+        description="Durable semantic Task attached to this execution session.",
+    )
+    task_created: bool = Field(
+        default=False,
+        description="Whether session_start implicitly created and attached the Task.",
     )
     workdir: str = Field(description="Canonical workdir bound to this session.")
     created_at: float = Field(

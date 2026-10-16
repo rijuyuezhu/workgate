@@ -2562,6 +2562,10 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   display: flex; align-items: center; gap: 12px; min-width: 0;
 }
 .session-detail-label { min-width: 0; }
+#session-detail-task-created:not([hidden]) {
+  display: block; margin-top: 4px;
+  overflow-wrap: anywhere;
+}
 .session-detail-executor-identity {
   display: flex; align-items: center; gap: 9px; min-width: 0;
   max-width: 45%; padding-right: 12px;

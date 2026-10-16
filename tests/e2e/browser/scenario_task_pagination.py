@@ -35,6 +35,14 @@ def run_task_pagination_ui(harness: BrowserHarness) -> None:
     assert legacy["status"] == 200 and not legacy["payload"].get("isError"), (
         legacy
     )
+    auto_id = legacy["payload"]["structuredContent"]["task_id"]
+    for action in ("cancel", "delete"):
+        result = harness.api(
+            "POST", "/tools/task", body={"action": action, "task_id": auto_id}
+        )
+        assert result["status"] == 200 and not result["payload"].get(
+            "isError"
+        ), result
     legacy_data = harness.api("GET", "/api/ui/tasks?status=unattached&limit=10")
     assert legacy_data["status"] == 200, legacy_data
     assert legacy_data["payload"]["data"]["total"] >= 1, (legacy, legacy_data)
@@ -169,3 +177,51 @@ def run_task_reselection_ui(harness: BrowserHarness) -> None:
     expect(entry).to_be_visible()
     expect(page.locator("#task-status")).to_have_text("active")
     page.set_viewport_size({"width": 1360, "height": 900})
+
+
+def run_task_implicit_notice_ui(harness: BrowserHarness) -> None:
+    """Implicit Task provenance remains visible in Session details and survives reload."""
+    page = harness.page
+    page.set_viewport_size({"width": 1360, "height": 900})
+    started = harness.api(
+        "POST",
+        "/tools/session_start",
+        body={
+            "executor_id": harness.executor_id,
+            "label": "implicitly-bound",
+            "workdir": ".",
+        },
+    )
+    assert started["status"] == 200 and not started["payload"].get("isError"), (
+        started
+    )
+    info = started["payload"]["structuredContent"]
+    task_id = info["task_id"]
+    session_id = info["session_id"]
+    assert info["task_created"] is True
+    assert f"Created Task {task_id}" in info["message"]
+    page.goto(
+        f"{harness.base_url}/ui?task_id={task_id}&session_id={session_id}#tasks"
+    )
+    notice = page.locator("#session-detail-task-created")
+    expect(notice).to_be_visible()
+    expect(notice).to_contain_text(f"Created Task {task_id} automatically")
+    page.reload(wait_until="domcontentloaded")
+    expect(notice).to_be_visible()
+    expect(notice).to_contain_text(task_id)
+    # Historic unattached Sessions remain browseable but no longer claim
+    # to be linked to a Task after that Task is legitimately deleted.
+    for action in ("cancel", "delete"):
+        outcome = harness.api(
+            "POST", "/tools/task", body={"action": action, "task_id": task_id}
+        )
+        assert outcome["status"] == 200 and not outcome["payload"].get(
+            "isError"
+        ), outcome
+    page.goto(f"{harness.base_url}/ui?session_id={session_id}#tasks")
+    expect(page.locator("#tasks-filter")).to_have_value("active")
+    expect(notice).to_be_hidden()
+    page.locator("#tasks-filter").select_option("unattached")
+    expect(
+        page.locator(f'#task-list [data-session-id="{session_id}"]')
+    ).to_be_visible()

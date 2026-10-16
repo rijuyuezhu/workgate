@@ -261,6 +261,18 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     unattached_session_id = unattached["payload"]["structuredContent"][
         "session_id"
     ]
+    # #350: every new Session starts attached. A retained historical Session
+    # becomes unattached when its cancelled Task is deleted.
+    implicit_task_id = unattached["payload"]["structuredContent"]["task_id"]
+    for action in ("cancel", "delete"):
+        changed = harness.api(
+            "POST",
+            "/tools/task",
+            body={"action": action, "task_id": implicit_task_id},
+        )
+        assert changed["status"] == 200 and not changed["payload"].get(
+            "isError"
+        ), changed
 
     session = harness.api(
         "POST",

@@ -1644,7 +1644,7 @@
               }
             ]
           },
-          "Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir."
+          "Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically; use the returned task_id as Task context in later calls, and task_created to distinguish creation from reuse. No separate user-facing announcement is required. Supply task_id to reuse an existing Task. A Task does not select the executor or workdir."
         ]
       ]
     },
@@ -10227,6 +10227,12 @@
             "title": "Session Id",
             "type": "string"
           },
+          "task_created": {
+            "default": false,
+            "description": "Whether session_start implicitly created and attached the Task.",
+            "title": "Task Created",
+            "type": "boolean"
+          },
           "task_id": {
             "anyOf": [
               {
@@ -10237,7 +10243,7 @@
               }
             ],
             "default": null,
-            "description": "Optional semantic task explicitly attached to this execution session.",
+            "description": "Durable semantic Task attached to this execution session.",
             "title": "Task Id"
           },
           "updated_at": {
@@ -10895,7 +10901,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir.",
+      "description": "Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically; use the returned task_id as Task context in later calls, and task_created to distinguish creation from reuse. No separate user-facing announcement is required. Supply task_id to reuse an existing Task. A Task does not select the executor or workdir.",
       "inputSchema": {
         "properties": {
           "executor_id": {
@@ -11411,6 +11417,12 @@
             "title": "Session Id",
             "type": "string"
           },
+          "task_created": {
+            "default": false,
+            "description": "Whether session_start implicitly created and attached the Task.",
+            "title": "Task Created",
+            "type": "boolean"
+          },
           "task_id": {
             "anyOf": [
               {
@@ -11421,7 +11433,7 @@
               }
             ],
             "default": null,
-            "description": "Optional semantic task explicitly attached to this execution session.",
+            "description": "Durable semantic Task attached to this execution session.",
             "title": "Task Id"
           },
           "updated_at": {

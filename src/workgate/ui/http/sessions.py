@@ -38,6 +38,7 @@ def _final_session_payload(
         "session_id": str(record.session_id),
         "executor_id": str(record.executor_id),
         "task_id": str(record.task_id) if record.task_id is not None else None,
+        "task_created": record.task_created,
         "workdir": record.workdir,
         "label": record.label,
         "status": status,
