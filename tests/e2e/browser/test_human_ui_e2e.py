@@ -22,6 +22,7 @@ from tests.e2e.browser.scenario_remote_terminals import (
 )
 from tests.e2e.browser.scenario_task_lifecycle import run_task_lifecycle_ui
 from tests.e2e.browser.scenario_task_pagination import (
+    run_task_implicit_notice_ui,
     run_task_pagination_ui,
     run_task_reselection_ui,
 )
@@ -57,6 +58,15 @@ def test_task_reselection_real_chromium(
     browser_harness.login()
     browser_harness.wait_executor_online()
     run_task_reselection_ui(browser_harness)
+    browser_harness.assert_clean_browser()
+
+
+def test_implicit_task_notice_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    run_task_implicit_notice_ui(browser_harness)
     browser_harness.assert_clean_browser()
 
 

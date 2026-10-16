@@ -840,6 +840,40 @@ class ControlTaskService:
     async def list_task_summaries(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._list_task_summaries_sync)
 
+    def create_for_session(
+        self, record: ControlSessionRecord
+    ) -> ControlSessionRecord:
+        """Create the semantic Task and publish its Session before Executor admission."""
+        # Session labels permit 256 characters; Task labels permit 256 UTF-8
+        # bytes. Do not reject an otherwise valid Session because of this.
+        label = record.label
+        if label is not None and len(label.encode("utf-8")) > _LABEL_MAX_BYTES:
+            label = None
+        task = self._create_sync(label=label, objective=None)
+        attached = record.model_copy(
+            update={"task_id": task.task_id, "task_created": True}
+        )
+        try:
+            self.admit_session_attachment(attached)
+        except BaseException:
+            self.discard_implicit_task(task.task_id)
+            raise
+        return attached
+
+    def discard_implicit_task(self, task_id: str) -> None:
+        """Roll back a *definitely failed* implicit create, never a live binding."""
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            self._read_stored_unlocked(task_id)
+            if any(
+                str(item.task_id or "") == task_id
+                for item in self._state.snapshot_sessions().values()
+            ):
+                raise RuntimeError(
+                    "cannot discard a Task with retained Sessions"
+                )
+            self._store.remove(path)
+
     async def list_tasks(self) -> list[TaskOutput]:
         """Return retained semantic tasks owned by the current principal."""
         return await asyncio.to_thread(self._list_tasks_sync)
@@ -974,6 +1008,15 @@ class ControlTaskService:
             if current.document.status not in {"completed", "cancelled"}:
                 raise ValueError(
                     "only completed or cancelled tasks may be deleted"
+                )
+            if any(
+                str(session.task_id or "") == task_id
+                and session.task_created
+                and session.status == "creating"
+                for session in self._state.snapshot_sessions().values()
+            ):
+                raise ValueError(
+                    "cannot delete automatically created Task while its Session is creating"
                 )
             self._state.detach_task(task_id)
             self._store.remove(path)

@@ -308,6 +308,9 @@ async def test_task_inventory_groups_retained_and_unattached_sessions(
     first_id = str(first["session_id"])
     second_id = str(second["session_id"])
     unattached_id = str(unattached["session_id"])
+    implicit_task = str(unattached["task_id"])
+    await service.cancel_task(implicit_task)
+    await service.delete_task(implicit_task)
     await harness.control.session_coordinator.end_session(first_id)
 
     client = TestClient(app, base_url=BASE_URL, client=("203.0.113.14", 50005))

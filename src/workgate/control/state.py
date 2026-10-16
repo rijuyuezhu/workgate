@@ -54,6 +54,7 @@ class ControlSessionRecord(BaseModel):
     session_id: SessionId
     executor_id: ExecutorId
     task_id: TaskId | None = None
+    task_created: bool = False
     workdir: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
     status: Literal["creating", "active", "terminating", "ended"]
@@ -232,7 +233,9 @@ class ControlState:
                 if str(current.task_id or "") != task_id:
                     continue
                 candidate[session_id] = ControlSessionRecord.model_validate(
-                    current.model_copy(update={"task_id": None}).model_dump()
+                    current.model_copy(
+                        update={"task_id": None, "task_created": False}
+                    ).model_dump()
                 )
                 changed = True
             if changed:

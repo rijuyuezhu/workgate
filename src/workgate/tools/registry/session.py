@@ -41,7 +41,7 @@ session_tool = SessionToolRegistry.get_tool_decorator()
 
 
 def _session_start_description(_context: McpToolContext) -> str:
-    return """Start a session bound to an eligible executor and workdir. Supply task_id to attach an existing durable task; a task does not select the executor or workdir."""
+    return """Start a session bound to an eligible executor and workdir. Omit task_id to create and attach a durable Task automatically (the result explicitly identifies it); supply task_id to reuse an existing Task. A Task does not select the executor or workdir."""
 
 
 def _session_change_workdir_description(_context: McpToolContext) -> str:
