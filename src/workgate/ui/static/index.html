@@ -199,7 +199,7 @@
       </div>
       <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control MCP management">
         <div class="executor-section-heading">
-          <div><h3>Control · Network MCP</h3><p>Manage Control-owned MCP servers without a paired Executor.</p></div>
+          <h3>Control MCP</h3>
           <button type="button" id="executor-control-mcp-add" disabled>+ Add MCP</button>
         </div>
         <div id="executor-control-mcp-body" class="executor-subtab-content"></div>
@@ -225,10 +225,9 @@
             <button type="button" role="tab" data-executor-subtab="overview" aria-selected="true">Overview</button>
             <button type="button" role="tab" data-executor-subtab="mcp" aria-selected="false">MCP</button>
             <button type="button" role="tab" data-executor-subtab="skills" aria-selected="false">Skills</button>
-            <button type="button" role="tab" data-executor-subtab="diagnostics" aria-selected="false">Diagnostics</button>
           </nav>
           <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Executor overview">
-            <div id="executor-overview-metrics" class="executor-diagnostics-body"></div>
+            <div id="executor-overview-metrics" class="executor-overview-body"></div>
           <dl class="executor-detail-grid">
             <div><dt>Executor ID</dt><dd id="executor-detail-id">—</dd></div>
             <div><dt>Workgate version</dt><dd id="executor-detail-version">—</dd></div>
@@ -244,19 +243,12 @@
           </dl>
           </section>
           <section class="executor-subtab-pane" data-executor-pane="mcp" aria-label="MCP integrations" hidden>
-            <div class="executor-section-heading"><div><h3>MCP integrations</h3><p>Network MCP belongs to Control; local stdio MCP belongs to this Executor.</p></div><button type="button" id="executor-mcp-add">+ Add MCP</button></div>
+            <div class="executor-section-heading executor-manage-toolbar"><button type="button" id="executor-mcp-add">+ Add MCP</button></div>
             <div id="executor-mcp-body" class="executor-subtab-content"></div>
           </section>
           <section class="executor-subtab-pane" data-executor-pane="skills" aria-label="Skill sources" hidden>
-            <div class="executor-section-heading"><div><h3>Skills</h3><p>Only Executor-managed Skills can be edited here. Project and user-global Skills stay read-only.</p></div><button type="button" id="executor-skills-add">+ Add Skill</button></div>
+            <div class="executor-section-heading executor-manage-toolbar"><button type="button" id="executor-skills-add">+ Add Skill</button></div>
             <div id="executor-skills-body" class="executor-subtab-content"></div>
-          </section>
-          <section class="executor-subtab-pane" data-executor-pane="diagnostics" aria-label="Runtime diagnostics" hidden>
-            <section class="executor-diagnostics" aria-label="Executor diagnostics">
-              <div class="executor-diagnostics-heading"><h3>Diagnostics</h3><button id="executor-diagnostics-refresh" type="button">Refresh</button></div>
-              <p id="executor-diagnostics-state" class="muted" aria-live="polite">Select an executor to inspect its diagnostics.</p>
-              <div id="executor-diagnostics-body" class="executor-diagnostics-body"></div>
-            </section>
           </section>
         </article>
       </div>
@@ -264,7 +256,7 @@
 
     <dialog id="executor-integration-dialog" class="executor-dialog executor-integration-dialog">
       <form id="executor-integration-form">
-        <div class="dialog-heading"><div><p class="eyebrow">Executor management</p><h2 id="executor-integration-title">Add integration</h2></div><button class="dialog-close" type="button" id="executor-integration-close" aria-label="Close integration editor">×</button></div>
+        <div class="dialog-heading"><div><h2 id="executor-integration-title">Add integration</h2></div><button class="dialog-close" type="button" id="executor-integration-close" aria-label="Close integration editor">×</button></div>
         <p id="executor-integration-status" class="muted" role="status"></p>
         <label>Name <input id="executor-integration-name" maxlength="128" required spellcheck="false" autocomplete="off" placeholder="integration-name"></label>
         <div id="executor-integration-mcp-fields">
@@ -287,19 +279,18 @@
                 <button id="executor-mcp-secret-set" type="button">Store secret</button>
               </div>
               <div id="executor-mcp-oauth-actions" hidden>
-                <p class="muted">Interactive OAuth authorization currently uses the CLI on the owning host: <code>workgate mcp auth SERVER</code>. Web authorization follows in a separate issue.</p>
+                <p class="muted">Authorize on host: <code>workgate mcp auth SERVER</code></p>
                 <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth credentials</button>
               </div>
             </div>
           </fieldset>
-          <details class="executor-integration-advanced"><summary>Credential references and advanced settings</summary>
-            <p class="muted">Use only named references to stored secrets. Never put raw tokens in this JSON field.</p>
+          <details class="executor-integration-advanced"><summary>Advanced · Secret references only</summary>
             <label>Advanced settings (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
           </details>
           <label id="executor-integration-args-wrap">Arguments (JSON array) <textarea id="executor-integration-args" rows="3" spellcheck="false">[]</textarea></label>
           <div id="executor-integration-test-wrap" hidden>
             <button type="button" id="executor-integration-test">Test / Discover</button>
-            <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite">Tests the saved server only when requested; does not call tools.</div>
+            <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite"></div>
           </div>
         </div>
         <label id="executor-integration-skill-wrap" hidden>SKILL.md (Markdown) <textarea id="executor-integration-content" rows="12" spellcheck="false" placeholder="---

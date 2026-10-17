@@ -1565,13 +1565,7 @@ h2 {
 #executor-integration-mcp-fields { display: grid; gap: 12px; }
 @media (max-width: 780px) { .executor-integration-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; padding: 20px; } }
 
-/* Read-only, selected-on-demand diagnostic detail; never a polling Dashboard clone. */
-.executor-diagnostics { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.9rem; }
-.executor-diagnostics-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
-.executor-diagnostics-heading h3 { font-size: 0.88rem; margin: 0; }
-.executor-diagnostics-heading button { font-size: 0.72rem; padding: 0.35rem 0.55rem; }
-.executor-diagnostics-state { font-size: 0.75rem; margin: 0.5rem 0; overflow-wrap: anywhere; }
-.executor-diagnostics-body { display: grid; gap: 0.65rem; }
+.executor-overview-body { display: grid; gap: 0.65rem; }
 .executor-metric-error { color: var(--muted); font-size: 12px; text-align: center; }
 
 .danger-action {
@@ -3175,7 +3169,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-empty span { display: none; }
 
 /* Same Dashboard cards inside the narrower Executor Overview. */
-#executors-panel .executor-diagnostics-body { margin-top: 14px; }
+#executors-panel .executor-overview-body { margin-top: 14px; }
 #executors-panel .dashboard-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 520px) { #executors-panel .dashboard-summary { grid-template-columns: minmax(0, 1fr); } }
 
@@ -3186,7 +3180,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
 .executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #b93e4d; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #b93e4d !important; }
 
-#executors-panel .executor-diagnostics-body[hidden] { display: none !important; }
+#executors-panel .executor-overview-body[hidden] { display: none !important; }
 /* Executor management workspace: a quiet selector + one readable work area. */
 #executors-panel .executor-control-standalone { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
 #executors-panel .executor-control-standalone[hidden] { display: none !important; }
@@ -3228,8 +3222,8 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-detail-grid dd { font-size: 12px; color: #384355; }
 #executors-panel .executor-section-heading { align-items: center; margin-bottom: 15px; gap: 16px; }
 #executors-panel .executor-section-heading h3 { font-size: 15px; font-weight: 720; }
-#executors-panel .executor-section-heading p { font-size: 11px; line-height: 1.5; color: #818b9c; }
 #executors-panel .executor-section-heading > button { padding: 7px 11px; }
+#executors-panel .executor-manage-toolbar { justify-content: flex-end; }
 #executors-panel .executor-subtab-content { gap: 15px; }
 #executors-panel .executor-manage-group { border: 1px solid #e7eaf0; background: #fff; border-radius: 8px; }
 #executors-panel .executor-manage-group > h4 {
@@ -3249,12 +3243,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-manage-pill[data-enabled="true"]::before { background: #299b75; }
 #executors-panel .executor-manage-edit { border: 1px solid #e3e5ee; border-radius: 5px; padding: 5px 10px; background: #fff; font-size: 11px; }
 #executors-panel .executor-manage-edit:hover { background: #f5f4ff; border-color: #cbc7ed; }
-#executors-panel .executor-scope-note { margin: 0; color: #8892a4; font-size: 11px; line-height: 1.5; }
-#executors-panel .executor-diagnostics { padding: 0; margin: 0; border: 0; }
-#executors-panel .executor-diagnostics-heading { margin: 0 0 8px; }
-#executors-panel .executor-diagnostics-heading h3 { font-size: 14px; }
-#executors-panel #executor-diagnostics-state { font-size: 11px; color: #8993a2; margin: 0 0 17px; }
-#executors-panel .executor-diagnostics-body { gap: 14px; }
+#executors-panel .executor-overview-body { gap: 14px; }
 .executor-integration-dialog { padding: 22px 24px; border-radius: 10px; border: 1px solid #e3e7f0; }
 .executor-integration-dialog .dialog-heading { margin-bottom: 0; }
 .executor-integration-dialog .dialog-heading h2 { font-size: 18px; }
@@ -3291,9 +3280,12 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 /* MCP management rows remain neutral when enabled; disabled rows are muted. */
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="enabled"],
+#executors-panel #executor-control-mcp-body .executor-manage-row[data-state="enabled"],
 #executors-panel #executor-mcp-body .executor-manage-pill[data-state="enabled"] { background: #fff; }
-#executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
+#executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"],
+#executors-panel #executor-control-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] strong,
+#executors-panel #executor-control-mcp-body .executor-manage-row[data-state="disabled"] strong,
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] .executor-row-mark { color: #858d9a; }
 .executor-mcp-auth-settings { border: 1px solid #e8ebf1; border-radius: 6px; padding: 11px 13px; display: grid; gap: 12px; min-width: 0; }
 .executor-mcp-auth-settings legend { color: #566178; font-size: 12px; font-weight: 700; padding: 0 5px; }

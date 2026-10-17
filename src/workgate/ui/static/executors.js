@@ -16,11 +16,9 @@ export function createExecutorsController({
     generation: 0,
     timer: null,
     pairing: null,
-    diagnosticId: "",
-    diagnostic: null,
-    diagnosticGeneration: 0,
-    diagnosticLoading: false,
-    diagnosticError: "",
+    skillSourceId: "",
+    skillSources: null,
+    skillSourceGeneration: 0,
     metricHistory: [],
     metricGeneration: 0,
     metricInFlightId: "",
@@ -53,11 +51,9 @@ export function createExecutorsController({
     }
     state.selectedId = executorId;
     if (changed) {
-      state.diagnosticGeneration += 1;
-      state.diagnosticId = "";
-      state.diagnostic = null;
-      state.diagnosticLoading = false;
-      state.diagnosticError = "";
+      state.skillSourceGeneration += 1;
+      state.skillSourceId = "";
+      state.skillSources = null;
       state.managementGeneration += 1;
       state.managementId = "";
       state.management = null;
@@ -65,9 +61,8 @@ export function createExecutorsController({
     if (changed) resetMetrics();
     renderList();
     renderDetails();
-    renderDiagnostics();
     renderManagement();
-    void loadDiagnostics(true);
+    void loadSkillSources(true);
     void refreshMetrics();
     if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
   }
@@ -145,7 +140,7 @@ export function createExecutorsController({
   }
 
   function setSubtab(tab) {
-    if (!selectedExecutor() || !["overview", "mcp", "skills", "diagnostics"].includes(tab)) return;
+    if (!selectedExecutor() || !["overview", "mcp", "skills"].includes(tab)) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
     if (tab === "overview") void refreshMetrics();
@@ -263,40 +258,6 @@ export function createExecutorsController({
     container.append(cards);
   }
 
-  function renderDiagnostics() {
-    const body = elements.executorDiagnosticsBody;
-    body.replaceChildren();
-    elements.executorDiagnosticsRefresh.disabled = !selectedExecutor() || state.diagnosticLoading;
-    if (!selectedExecutor()) {
-      elements.executorDiagnosticsState.textContent = "Select an Executor to inspect it.";
-      return;
-    }
-    if (state.diagnosticLoading) {
-      elements.executorDiagnosticsState.textContent = "Loading runtime snapshot…";
-      return;
-    }
-    if (state.diagnosticError) {
-      elements.executorDiagnosticsState.textContent = state.diagnosticError;
-      return;
-    }
-    const data = state.diagnostic;
-    if (!data || state.diagnosticId !== state.selectedId) {
-      elements.executorDiagnosticsState.textContent = "Select an Executor to load diagnostics.";
-      return;
-    }
-    const local = data.executor;
-    elements.executorDiagnosticsState.textContent = data.status === "available"
-      ? "On-demand snapshot · does not probe MCP servers"
-      : "Executor offline or diagnostics unavailable";
-    if (!local || !selectedExecutor()?.online) return;
-    const scan = local.skills || {};
-    addGroup(body, "Agent Bridge", [
-      {title: "Executor manifest", detail: local.bridge?.status || "Unavailable"},
-      {title: "Control manifest", detail: data.control_mcp?.status || "Unavailable"},
-      {title: "Skills scan", detail: scan.unavailable ? "Unavailable" : `${scan.warnings || 0} warnings · ${scan.duplicates || 0} overridden`},
-    ]);
-  }
-
   function managementQuery(owner, kind, action = "list", name = "") {
     const params = new URLSearchParams({ owner, kind, action });
     if (owner === "executor") params.set("executor_id", state.selectedId);
@@ -315,7 +276,7 @@ export function createExecutorsController({
     const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"]];
     const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     const results = await Promise.all(sources.map(async ([owner, kind]) => {
-      if (owner === "executor" && !online) return { error: "Executor offline · local management unavailable" };
+      if (owner === "executor" && !online) return { error: "Offline" };
       try { return await request(managementQuery(owner, kind)); }
       catch (error) {
         if (error.authenticationRequired) { void reloadApp(); return { error: "Authentication required" }; }
@@ -342,36 +303,32 @@ export function createExecutorsController({
       const items = kind === "mcp" ? result.servers : result.skills;
       const rows = (Array.isArray(items) ? items : []).map((item) => ({
         title: item.name,
-        detail: kind === "mcp" ? `${item.type === "stdio" ? "Local process" : "Network HTTP"} · ${owner === "control" ? "Control" : "Executor"}` : "SKILL.md · Executor-managed",
+        detail: kind === "mcp" ? item.type : "SKILL.md",
         status: item.enabled ? "Enabled" : "Disabled",
         manage: result.can_manage ? () => void openEditor({owner, kind, item}) : null,
       }));
-      addGroup(container, title, rows.length ? rows : stateRows("No entries configured"));
+      addGroup(container, title, rows.length ? rows : stateRows("None"));
     };
-    renderGroup(mcp, "Executor · Local", snap?.executorMcp, "executor", "mcp");
-    renderGroup(mcp, "Control · Network", snap?.control, "control", "mcp");
+    renderGroup(mcp, "Executor", snap?.executorMcp, "executor", "mcp");
+    renderGroup(mcp, "Control", snap?.control, "control", "mcp");
     elements.executorControlStandalone.hidden = Boolean(selectedExecutor());
     elements.executorControlMcpBody.replaceChildren();
     if (!selectedExecutor()) {
-      renderGroup(elements.executorControlMcpBody, "Control · Network", snap?.control, "control", "mcp");
+      renderGroup(elements.executorControlMcpBody, "Control", snap?.control, "control", "mcp");
     }
     elements.executorControlMcpAdd.disabled = !Boolean(snap?.control?.can_manage);
-    renderGroup(skills, "Executor-managed", snap?.skills, "executor", "skill");
-    const globalsAvailable = Boolean(selectedExecutor()?.online && state.diagnostic?.status === "available" && state.diagnosticId === state.selectedId);
-    const globalSkills = state.diagnostic?.executor?.skills;
+    renderGroup(skills, "Executor", snap?.skills, "executor", "skill");
+    const globalsAvailable = Boolean(selectedExecutor()?.online && state.skillSources?.status === "available" && state.skillSourceId === state.selectedId);
+    const globalSkills = state.skillSources?.executor?.skills;
     const readOnly = globalsAvailable ? [
       ...(globalSkills?.selected || []).filter((skill) => skill.source === "global")
-        .map((skill) => ({title: skill.name, detail: "User-global · read-only", status: "Effective"})),
+        .map((skill) => ({title: skill.name, detail: "", status: "Effective"})),
       ...(globalSkills?.overridden || []).filter((skill) => skill.source === "global")
-        .map((skill) => ({title: skill.name, detail: "User-global · read-only", status: "Overridden"})),
+        .map((skill) => ({title: skill.name, detail: "", status: "Overridden"})),
     ] : [];
-    const globalStatus = !selectedExecutor()?.online ? "Executor offline · global Skills unavailable"
-      : !globalsAvailable ? "Global Skills unavailable" : "No effective global Skills";
-    addGroup(skills, "User-global · Read only", readOnly.length ? readOnly : stateRows(globalStatus));
-    const explanation = document.createElement("p");
-    explanation.className = "executor-scope-note";
-    explanation.textContent = "Project Skills resolve per Session. Control-wide Skill management follows #354.";
-    skills.append(explanation);
+    const globalStatus = !selectedExecutor()?.online ? "Offline"
+      : !globalsAvailable ? "Unavailable" : "None";
+    addGroup(skills, "User Global", readOnly.length ? readOnly : stateRows(globalStatus));
     const active = Boolean(snap?.skills?.can_manage && selectedExecutor()?.online);
     elements.executorSkillsAdd.disabled = !active;
     elements.executorMcpAdd.disabled = !Boolean((snap?.control?.can_manage || snap?.executorMcp?.can_manage));
@@ -427,12 +384,12 @@ export function createExecutorsController({
     elements.executorMcpSecretValue.value = "";
     elements.executorMcpSecretList.replaceChildren();
     elements.executorMcpAuthStatus.textContent = "Loading auth status…";
-    elements.executorIntegrationTestResult.textContent = "Tests the saved server only when requested; does not call tools.";
+    elements.executorIntegrationTestResult.textContent = "";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
     elements.executorIntegrationToggle.textContent = edit.enabled ? "Disable" : "Enable";
     elements.executorIntegrationSave.textContent = item ? "Save changes" : "Create";
-    editorStatus(item ? "Loading current configuration…" : "Changes are saved without probing or restarting any server.");
+    editorStatus(item ? "Loading current configuration…" : "");
     setEditorType();
     elements.executorIntegrationDialog.showModal();
     if (!item) { elements.executorIntegrationName.focus(); return; }
@@ -457,7 +414,7 @@ export function createExecutorsController({
         setEditorType();
         void loadEditorAuth(edit);
       }
-      editorStatus("Review and save. Edits do not restart MCP servers.");
+      editorStatus("");
       elements.executorIntegrationSave.disabled = false;
     } catch (error) {
       editorStatus(error instanceof Error ? error.message : String(error));
@@ -484,7 +441,7 @@ export function createExecutorsController({
       elements.executorIntegrationDialog.close();
       state.editor = null;
       await loadManagement(true);
-      void loadDiagnostics(true);
+      void loadSkillSources(true);
       return result;
     } catch (error) {
       editorStatus(error instanceof Error ? error.message : String(error));
@@ -647,39 +604,29 @@ export function createExecutorsController({
     }
   }
 
-  async function loadDiagnostics(force = false) {
+  // Fetch user-global Skill provenance on selection, not on inventory polls.
+  async function loadSkillSources(force = false) {
     const executorId = state.selectedId;
     if (elements.executorMcpBody.closest("[data-app-view]")?.hidden) return;
     if (!executorId || !selectedExecutor() || selectedExecutor().revoked_at) {
-      state.diagnosticGeneration += 1;
-      state.diagnosticId = "";
-      state.diagnostic = null;
-      state.diagnosticLoading = false;
-      state.diagnosticError = "";
-      renderDiagnostics();
+      state.skillSourceGeneration += 1;
+      state.skillSourceId = "";
+      state.skillSources = null;
       return;
     }
-    if (state.diagnosticId === executorId && !force) return;
-    const generation = ++state.diagnosticGeneration;
-    state.diagnosticId = executorId;
-    state.diagnostic = null;
-    state.diagnosticLoading = true;
-    state.diagnosticError = "";
-    renderDiagnostics();
+    if (state.skillSourceId === executorId && !force) return;
+    const generation = ++state.skillSourceGeneration;
+    state.skillSourceId = executorId;
+    state.skillSources = null;
     try {
       const data = await request(`/executors/diagnostics?executor_id=${encodeURIComponent(executorId)}`);
-      if (generation !== state.diagnosticGeneration || executorId !== state.selectedId) return;
-      state.diagnostic = data;
+      if (generation !== state.skillSourceGeneration || executorId !== state.selectedId) return;
+      state.skillSources = data;
     } catch (error) {
-      if (generation !== state.diagnosticGeneration || executorId !== state.selectedId) return;
+      if (generation !== state.skillSourceGeneration || executorId !== state.selectedId) return;
       if (error.authenticationRequired) { void reloadApp(); return; }
-      state.diagnosticError = error instanceof Error ? error.message : String(error);
     } finally {
-      if (generation === state.diagnosticGeneration) {
-        state.diagnosticLoading = false;
-        renderDiagnostics();
-        if (state.management) renderManagement();
-      }
+      if (generation === state.skillSourceGeneration && state.management) renderManagement();
     }
   }
 
@@ -750,30 +697,24 @@ export function createExecutorsController({
     renderList();
     renderDetails();
     if (state.selectedId !== previousId) {
-      state.diagnosticGeneration += 1;
-      state.diagnosticId = "";
-      state.diagnostic = null;
-      state.diagnosticLoading = false;
-      state.diagnosticError = "";
+      state.skillSourceGeneration += 1;
+      state.skillSourceId = "";
+      state.skillSources = null;
       state.managementGeneration += 1;
       state.managementId = "";
       state.management = null;
-      renderDiagnostics();
       renderManagement();
       if (state.selectedId) {
         resetMetrics();
-        void loadDiagnostics();
+        void loadSkillSources();
         void refreshMetrics();
         if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
       }
     } else {
-      if (selectedExecutor()?.revoked_at && state.diagnosticId === state.selectedId) {
-        state.diagnosticGeneration += 1;
-        state.diagnosticId = "";
-        state.diagnostic = null;
-        state.diagnosticLoading = false;
-        state.diagnosticError = "";
-        renderDiagnostics();
+      if (selectedExecutor()?.revoked_at && state.skillSourceId === state.selectedId) {
+        state.skillSourceGeneration += 1;
+        state.skillSourceId = "";
+        state.skillSources = null;
         renderManagement();
       }
       const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
@@ -783,11 +724,10 @@ export function createExecutorsController({
         state.managementGeneration += 1;
         state.managementId = "";
         state.management = null;
-        renderDiagnostics();
         renderManagement();
         if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
         if (showMetrics) {
-          void loadDiagnostics(true);
+          void loadSkillSources(true);
           void refreshMetrics();
         }
       }
@@ -903,11 +843,9 @@ export function createExecutorsController({
     state.loading = false;
     state.executors = [];
     state.selectedId = "";
-    state.diagnosticGeneration += 1;
-    state.diagnosticId = "";
-    state.diagnostic = null;
-    state.diagnosticError = "";
-    state.diagnosticLoading = false;
+    state.skillSourceGeneration += 1;
+    state.skillSourceId = "";
+    state.skillSources = null;
     resetMetrics();
     state.metricOnline = false;
     state.detailTabs.clear();
@@ -929,7 +867,6 @@ export function createExecutorsController({
     document.getElementById("executor-revoked-summary").hidden = true;
     renderList();
     renderDetails();
-    renderDiagnostics();
     renderManagement();
   }
 
@@ -1112,7 +1049,7 @@ export function createExecutorsController({
 
   function activate() {
     if (!selectedExecutor()) return;
-    void loadDiagnostics(true);
+    void loadSkillSources(true);
     void refreshMetrics();
   }
 

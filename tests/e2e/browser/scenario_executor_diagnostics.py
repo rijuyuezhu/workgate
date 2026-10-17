@@ -42,9 +42,9 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         "aria-selected", "true"
     )
     page.keyboard.press("End")
-    expect(
-        page.locator('[data-executor-subtab="diagnostics"]')
-    ).to_have_attribute("aria-selected", "true")
+    expect(page.locator('[data-executor-subtab="skills"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
     page.keyboard.press("Home")
     expect(page.locator('[data-executor-subtab="overview"]')).to_have_attribute(
         "aria-selected", "true"
@@ -55,13 +55,6 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-mcp-body")).not_to_contain_text("Loading…")
     page.locator('[data-executor-subtab="skills"]').click()
     expect(page.locator("#executor-skills-body")).to_contain_text("Executor")
-    page.locator('[data-executor-subtab="diagnostics"]').click()
-    expect(page.locator("#executor-diagnostics-state")).to_contain_text(
-        "On-demand snapshot"
-    )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Agent Bridge"
-    )
     page.locator('[data-executor-subtab="overview"]').click()
     expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
@@ -74,7 +67,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.wait_for_timeout(4500)
     assert page.evaluate(
         "document.querySelector('.executor-manage-group') === window.firstDiagnosticNode"
-    ), "Executor inventory polling replaced diagnostic DOM"
+    ), "Executor inventory polling replaced management DOM"
     assert len(calls) == initial_calls, (
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
@@ -132,10 +125,6 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         .filter(has_text="online")
         .first
     ).to_be_visible()
-    page.locator('[data-executor-subtab="diagnostics"]').click()
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
-        "Agent Bridge"
-    )
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     page.locator('[data-executor-subtab="skills"]').click()
