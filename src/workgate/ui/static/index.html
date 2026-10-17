@@ -197,6 +197,7 @@
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
+      <p id="executor-action-status" role="status" aria-live="polite"></p>
       <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control integrations">
         <div class="executor-section-heading">
           <h3>Control MCP</h3>
@@ -314,6 +315,7 @@ description: My Skill
         <label>Pairing code <input id="executor-pair-code" name="code" maxlength="32" required autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH"></label>
         <div class="dialog-actions"><button type="button" data-close-executor-dialog="executor-pair-dialog">Cancel</button><button class="primary-action" type="submit">Inspect request</button></div>
       </form>
+      <p id="executor-pair-status" role="status" aria-live="polite"></p>
       <div id="executor-pair-review" hidden>
         <dl class="executor-detail-grid">
           <div><dt>Requested name</dt><dd id="executor-pair-requested-name">—</dd></div>

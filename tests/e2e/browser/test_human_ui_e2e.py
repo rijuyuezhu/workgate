@@ -99,6 +99,12 @@ def test_executor_mcp_auth_real_chromium(
     expect(page.locator("#executor-mcp-secret-list")).to_contain_text(
         "No private secrets"
     )
+    expect(page.locator("#executor-integration-status")).to_contain_text(
+        "Secret removed"
+    )
+    expect(page.locator("#executor-integration-status")).to_have_attribute(
+        "data-tone", "success"
+    )
     page.once("dialog", lambda prompt: prompt.accept())
     page.locator("#executor-integration-delete").click()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()

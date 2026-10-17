@@ -171,6 +171,12 @@ def test_cross_executor_skill_ui_and_collision(tmp_path):
                 has_text="cross-host-mcp"
             )
             expect(control_row).to_contain_text("Overridden")
+            expect(control_row).to_have_css(
+                "background-color", "rgb(255, 250, 240)"
+            )
+            expect(control_row.locator(".executor-row-warning")).to_have_css(
+                "color", "rgb(167, 113, 32)"
+            )
             target_mcp = h.api(
                 "POST",
                 "/api/ui/integrations",
