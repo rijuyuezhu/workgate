@@ -102,6 +102,12 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
             {"name": "local-enabled", "type": "stdio", "enabled": True},
             {"name": "local-disabled", "type": "stdio", "enabled": False},
         ]
+        local["skills"]["selected"] = [
+            {"name": "read-only-global", "source": "global"}
+        ]
+        local["skills"]["overridden"] = [
+            {"name": "shadowed-global", "source": "global"}
+        ]
         payload["data"]["control_mcp"] = {
             "status": "loaded",
             "enabled": False,
@@ -132,6 +138,18 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-body")).to_contain_text(
+        "read-only-global"
+    )
+    expect(page.locator("#executor-skills-body")).to_contain_text(
+        "shadowed-global"
+    )
+    expect(
+        page.locator("#executor-skills-body .executor-manage-row").filter(
+            has_text="shadowed-global"
+        )
+    ).to_contain_text("Overridden")
     assert intercepted, "malformed MCP response interception did not run"
     page.unroute(diagnostic_url, capture_diagnostics)
     page.locator('[data-executor-subtab="overview"]').click()
@@ -154,6 +172,9 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     # Do not show its previous MCP / Skills as if they were currently available.
     page.locator('[data-executor-subtab="skills"]').click()
     expect(page.locator("#executor-skills-body")).to_contain_text("offline")
+    expect(page.locator("#executor-skills-body")).not_to_contain_text(
+        "read-only-global"
+    )
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("offline")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")

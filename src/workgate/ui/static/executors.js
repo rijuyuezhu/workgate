@@ -46,15 +46,27 @@ export function createExecutorsController({
 
   function select(executorId) {
     if (!state.executors.some((item) => item.executor_id === executorId)) return;
-    if (state.selectedId !== executorId && elements.executorIntegrationDialog.open) {
+    const changed = state.selectedId !== executorId;
+    if (changed && elements.executorIntegrationDialog.open) {
       elements.executorIntegrationDialog.close();
       state.editor = null;
     }
     state.selectedId = executorId;
-    resetMetrics();
+    if (changed) {
+      state.diagnosticGeneration += 1;
+      state.diagnosticId = "";
+      state.diagnostic = null;
+      state.diagnosticLoading = false;
+      state.diagnosticError = "";
+      state.managementGeneration += 1;
+      state.managementId = "";
+      state.management = null;
+    }
+    if (changed) resetMetrics();
     renderList();
     renderDetails();
     renderDiagnostics();
+    renderManagement();
     void loadDiagnostics(true);
     void refreshMetrics();
     if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
@@ -121,18 +133,7 @@ export function createExecutorsController({
       status.dataset.status = status.textContent;
       button.append(indicator, main, status);
       button.addEventListener("click", () => {
-        if (state.selectedId !== executor.executor_id && elements.executorIntegrationDialog.open) {
-          elements.executorIntegrationDialog.close();
-          state.editor = null;
-        }
-        state.selectedId = executor.executor_id;
-        resetMetrics();
-        renderList();
-        renderDetails();
-        renderDiagnostics();
-        void loadDiagnostics();
-        void refreshMetrics();
-        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
+        select(executor.executor_id);
         onNavigate("detail");
       });
       elements.executorList.append(button);
@@ -347,10 +348,17 @@ export function createExecutorsController({
     renderGroup(mcp, "Executor · Local", snap?.executorMcp, "executor", "mcp");
     renderGroup(mcp, "Control · Network", snap?.control, "control", "mcp");
     renderGroup(skills, "Executor-managed", snap?.skills, "executor", "skill");
-    const readOnly = (state.diagnostic?.executor?.skills?.selected || [])
-      .filter((skill) => skill.source === "global")
-      .map((skill) => ({title: skill.name, detail: "User-global · read-only", status: "Effective"}));
-    addGroup(skills, "User-global · Read only", readOnly.length ? readOnly : stateRows("No effective global Skills"));
+    const globalsAvailable = Boolean(selectedExecutor()?.online && state.diagnostic?.status === "available" && state.diagnosticId === state.selectedId);
+    const globalSkills = state.diagnostic?.executor?.skills;
+    const readOnly = globalsAvailable ? [
+      ...(globalSkills?.selected || []).filter((skill) => skill.source === "global")
+        .map((skill) => ({title: skill.name, detail: "User-global · read-only", status: "Effective"})),
+      ...(globalSkills?.overridden || []).filter((skill) => skill.source === "global")
+        .map((skill) => ({title: skill.name, detail: "User-global · read-only", status: "Overridden"})),
+    ] : [];
+    const globalStatus = !selectedExecutor()?.online ? "Executor offline · global Skills unavailable"
+      : !globalsAvailable ? "Global Skills unavailable" : "No effective global Skills";
+    addGroup(skills, "User-global · Read only", readOnly.length ? readOnly : stateRows(globalStatus));
     const explanation = document.createElement("p");
     explanation.className = "executor-scope-note";
     explanation.textContent = "Project Skills resolve per Session. Control-wide Skill management follows #354.";
@@ -628,6 +636,7 @@ export function createExecutorsController({
       if (generation === state.diagnosticGeneration) {
         state.diagnosticLoading = false;
         renderDiagnostics();
+        if (state.management) renderManagement();
       }
     }
   }
@@ -878,6 +887,7 @@ export function createExecutorsController({
     renderList();
     renderDetails();
     renderDiagnostics();
+    renderManagement();
   }
 
   function bind() {
