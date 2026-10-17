@@ -127,10 +127,21 @@ def agent_registry_fingerprint(
     return digest.hexdigest()
 
 
-def load_agent_manifest(config_dir: Path) -> LoadedAgentManifest:
-    """Read and validate the bridge manifest while preserving structured errors for status reporting."""
+def load_agent_manifest(
+    config_dir: Path, *, read_only: bool = False
+) -> LoadedAgentManifest:
+    """Read/validate the manifest; diagnostics may not alter file permissions."""
     config_path = config_dir / "config.json"
-    if config_dir.exists():
+    if read_only:
+        # Never follow user-supplied manifest symlinks or fix file permissions
+        # merely because an observer opened a diagnostics subpage.
+        if config_dir.is_symlink() or config_path.is_symlink():
+            return LoadedAgentManifest(
+                config_path=config_path,
+                status="invalid_config",
+                errors=["symlink"],
+            )
+    elif config_dir.exists():
         ensure_private_directory(config_dir)
     if not config_path.exists():
         return LoadedAgentManifest(

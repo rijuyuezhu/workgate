@@ -242,6 +242,9 @@ class SkillScanResult:
     skills: dict[str, SkillRecord] = field(default_factory=dict)
     """Accepted skills keyed by skill name."""
 
+    overridden: list[tuple[str, str]] = field(default_factory=list)
+    """Duplicate (name, lower-priority source) pairs; never derived from warning text."""
+
     warnings: list[str] = field(default_factory=list)
     """Non-fatal skill discovery warnings for ignored or invalid entries."""
     scanned_entries: int = 0

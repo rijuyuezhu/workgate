@@ -1,3 +1,101 @@
+function dashboardNumber(value) {
+    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+function dashboardPercent(value) {
+    const number = dashboardNumber(value);
+    return number === null ? "—" : `${number.toFixed(1)}%`;
+  }
+
+function dashboardBytes(value) {
+    const number = dashboardNumber(value);
+    if (number === null || number < 0) return "—";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let scaled = number;
+    let unit = 0;
+    while (scaled >= 1024 && unit < units.length - 1) {
+      scaled /= 1024;
+      unit += 1;
+    }
+    const digits = scaled >= 100 || unit === 0 ? 0 : scaled >= 10 ? 1 : 2;
+    return `${scaled.toFixed(digits)} ${units[unit]}`;
+  }
+
+function dashboardRate(value) {
+    const formatted = dashboardBytes(value);
+    return formatted === "—" ? formatted : `${formatted}/s`;
+  }
+
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
+  const values = Array.isArray(rawValues) ? rawValues : [];
+  if (!element) return;
+  element.replaceChildren();
+  const finite = values
+    .map((value, index) => ({ index, value: finiteNumber(value) }))
+    .filter((item) => item.value !== null);
+  if (finite.length < 2) return;
+  const normalizedMaximum = finiteNumber(fixedMaximum);
+  const maximum = normalizedMaximum !== null
+    ? Math.max(1, normalizedMaximum)
+    : Math.max(1, ...finite.map((item) => item.value));
+  const lastIndex = Math.max(1, values.length - 1);
+  const points = finite
+    .map((item) => {
+      const x = (item.index / lastIndex) * 100;
+      const y = 30 - Math.max(0, Math.min(1, item.value / maximum)) * 26;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", points);
+  line.setAttribute("fill", "none");
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  element.append(line);
+}
+
+
+export function renderResourceCards(root, system = {}, history = []) {
+  if (!root) return;
+  const cards = ["cpu", "memory", "disk"].map((key) => root.querySelector(`[data-resource="${key}"]`));
+  for (const [i, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
+    const card = cards[i];
+    if (!card) continue;
+    const value = card.querySelector(":scope > strong");
+    if (value) value.textContent = dashboardPercent(system[key]);
+    renderDashboardSparkline(card.querySelector(".dashboard-sparkline"), history.map((v) => v[["cpu", "memory", "disk"][i]]), 100);
+  }
+  const foot = (card, values) => {
+    const spans = card?.querySelectorAll(".dashboard-metric-foot span") || [];
+    for (let i = 0; i < Math.min(spans.length, values.length); i++) spans[i].textContent = values[i];
+  };
+  const load = dashboardNumber(system.load_1m);
+  foot(cards[0], [load === null ? "Load —" : `Load ${load.toFixed(2)}`, `${system.cpu_count ?? "—"} cores`]);
+  foot(cards[1], [`${dashboardBytes(system.memory_used_bytes)} used`, `${dashboardBytes(system.memory_total_bytes)} total`]);
+  foot(cards[2], [`${dashboardBytes(system.disk_used_bytes)} used`, `${dashboardBytes(system.disk_total_bytes)} total`]);
+  const network = root.querySelector('[data-resource="network"]');
+  if (!network) return;
+  const rx = dashboardNumber(system.network_rx_bps);
+  const tx = dashboardNumber(system.network_tx_bps);
+  const total = rx === null || tx === null ? null : rx + tx;
+  const totalNode = network.querySelector(":scope > strong");
+  if (totalNode) totalNode.textContent = dashboardRate(total);
+  const rates = network.querySelectorAll(".dashboard-network-values strong");
+  if (rates[0]) rates[0].textContent = dashboardBytes(rx);
+  if (rates[1]) rates[1].textContent = dashboardBytes(tx);
+  const bars = network.querySelector(".dashboard-network-bar");
+  if (bars?.children.length === 2) {
+    bars.children[0].style.width = total > 0 ? `${100 * rx / total}%` : "0%";
+    bars.children[1].style.width = total > 0 ? `${100 * tx / total}%` : "0%";
+  }
+}
+
 export function createDashboardController({
   elements,
   request,
@@ -20,36 +118,6 @@ export function createDashboardController({
 
   function dashboardExecutorOnline(executorId = controllerState.executorId) {
     return Boolean(executorId) && controllerState.executorStates.get(executorId) === "online";
-  }
-
-  function dashboardNumber(value) {
-    if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
-    const number = Number(value);
-    return Number.isFinite(number) ? number : null;
-  }
-
-  function dashboardPercent(value) {
-    const number = dashboardNumber(value);
-    return number === null ? "—" : `${number.toFixed(1)}%`;
-  }
-
-  function dashboardBytes(value) {
-    const number = dashboardNumber(value);
-    if (number === null || number < 0) return "—";
-    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let scaled = number;
-    let unit = 0;
-    while (scaled >= 1024 && unit < units.length - 1) {
-      scaled /= 1024;
-      unit += 1;
-    }
-    const digits = scaled >= 100 || unit === 0 ? 0 : scaled >= 10 ? 1 : 2;
-    return `${scaled.toFixed(digits)} ${units[unit]}`;
-  }
-
-  function dashboardRate(value) {
-    const formatted = dashboardBytes(value);
-    return formatted === "—" ? formatted : `${formatted}/s`;
   }
 
   function dashboardDuration(value) {
@@ -104,31 +172,6 @@ export function createDashboardController({
     container.append(empty);
   }
 
-  function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
-    const values = Array.isArray(rawValues) ? rawValues : [];
-    element.replaceChildren();
-    const finite = values
-      .map((value, index) => ({ index, value: dashboardNumber(value) }))
-      .filter((item) => item.value !== null);
-    if (finite.length < 2) return;
-    const normalizedMaximum = dashboardNumber(fixedMaximum);
-    const maximum = normalizedMaximum !== null
-      ? Math.max(1, normalizedMaximum)
-      : Math.max(1, ...finite.map((item) => item.value));
-    const lastIndex = Math.max(1, values.length - 1);
-    const points = finite
-      .map((item) => {
-        const x = (item.index / lastIndex) * 100;
-        const y = 30 - Math.max(0, Math.min(1, item.value / maximum)) * 26;
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
-      })
-      .join(" ");
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    line.setAttribute("points", points);
-    line.setAttribute("fill", "none");
-    line.setAttribute("vector-effect", "non-scaling-stroke");
-    element.append(line);
-  }
 
   function setDashboardBar(element, value) {
     const number = dashboardNumber(value);
@@ -185,7 +228,6 @@ export function createDashboardController({
       elements.dashboardCpuTrend,
       elements.dashboardMemoryTrend,
       elements.dashboardDiskTrend,
-      elements.dashboardNetworkTrend,
     ]) trend.replaceChildren();
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
@@ -320,16 +362,10 @@ export function createDashboardController({
     const system = payload && payload.system && typeof payload.system === "object" ? payload.system : {};
     const version = payload && payload.version && typeof payload.version === "object" ? payload.version : {};
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
-    const networkRx = dashboardNumber(system.network_rx_bps);
-    const networkTx = dashboardNumber(system.network_tx_bps);
-    const networkTotal = networkRx !== null && networkTx !== null
-      ? networkRx + networkTx
-      : null;
     controllerState.history.push({
       cpu: dashboardNumber(system.cpu_percent),
       memory: dashboardNumber(system.memory_percent),
       disk: dashboardNumber(system.disk_percent),
-      network: networkTotal,
     });
     controllerState.history = controllerState.history.slice(-60);
 
@@ -347,22 +383,8 @@ export function createDashboardController({
     elements.dashboardHealthDetail.textContent = alerts.length
       ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
       : "No active alerts.";
-    elements.dashboardCpu.textContent = dashboardPercent(system.cpu_percent);
-    elements.dashboardMemory.textContent = dashboardPercent(system.memory_percent);
-    elements.dashboardDisk.textContent = dashboardPercent(system.disk_percent);
-    elements.dashboardNetwork.textContent = networkTotal === null ? "—" : dashboardRate(networkTotal);
-    document.getElementById("dashboard-network-down").textContent = dashboardBytes(networkRx);
-    document.getElementById("dashboard-network-up").textContent = dashboardBytes(networkTx);
-    const total = Math.max(0, networkRx || 0) + Math.max(0, networkTx || 0);
-    document.getElementById("dashboard-network-rx-bar").style.width = total > 0 ? `${100 * Math.max(0, networkRx || 0) / total}%` : "0%";
-    document.getElementById("dashboard-network-tx-bar").style.width = total > 0 ? `${100 * Math.max(0, networkTx || 0) / total}%` : "0%";
     const load = dashboardNumber(system.load_1m);
-    document.getElementById("dashboard-cpu-foot-load").textContent = load === null ? "Load —" : `Load ${load.toFixed(2)}`;
-    document.getElementById("dashboard-cpu-foot-cores").textContent = `${text(system.cpu_count)} cores`;
-    document.getElementById("dashboard-memory-foot-used").textContent = `${dashboardBytes(system.memory_used_bytes)} used`;
-    document.getElementById("dashboard-memory-foot-total").textContent = `${dashboardBytes(system.memory_total_bytes)} total`;
-    document.getElementById("dashboard-disk-foot-used").textContent = `${dashboardBytes(system.disk_used_bytes)} used`;
-    document.getElementById("dashboard-disk-foot-total").textContent = `${dashboardBytes(system.disk_total_bytes)} total`;
+    renderResourceCards(document.querySelector("#dashboard-panel .dashboard-summary"), system, controllerState.history);
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed · last 24h`;
     elements.dashboardGenerated.textContent = dashboardTimestamp(payload.generated_at, "Unknown sample time");
@@ -373,26 +395,6 @@ export function createDashboardController({
     setDashboardBar(elements.dashboardCpuBar, system.cpu_percent);
     setDashboardBar(elements.dashboardMemoryBar, system.memory_percent);
     setDashboardBar(elements.dashboardDiskBar, system.disk_percent);
-    renderDashboardSparkline(
-      elements.dashboardCpuTrend,
-      controllerState.history.map((sample) => sample.cpu),
-      100,
-    );
-    renderDashboardSparkline(
-      elements.dashboardMemoryTrend,
-      controllerState.history.map((sample) => sample.memory),
-      100,
-    );
-    renderDashboardSparkline(
-      elements.dashboardDiskTrend,
-      controllerState.history.map((sample) => sample.disk),
-      100,
-    );
-    renderDashboardSparkline(
-      elements.dashboardNetworkTrend,
-      controllerState.history.map((sample) => sample.network),
-    );
-
     elements.dashboardPlatform.textContent = text(version.platform);
     elements.dashboardPython.textContent = text(version.python);
     elements.dashboardCpuCount.textContent = text(system.cpu_count);

@@ -93,32 +93,31 @@
         </div>
       </div>
       <div class="dashboard-summary" aria-label="Resource usage">
-        <article class="dashboard-card dashboard-metric-card">
+        <article class="dashboard-card dashboard-metric-card" data-resource="cpu">
           <div class="dashboard-metric-head"><span class="dashboard-metric-icon violet"><svg viewBox="0 0 24 24"><path d="M8 2v3M16 2v3M8 19v3M16 19v3M2 8h3M2 16h3M19 8h3M19 16h3"/><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 9h6v6H9z"/></svg></span><span class="dashboard-live">Live</span></div>
           <span>CPU usage</span>
           <strong id="dashboard-cpu">—</strong>
           <svg id="dashboard-cpu-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent CPU trend"></svg>
           <div class="dashboard-metric-foot"><span id="dashboard-cpu-foot-load">—</span><span id="dashboard-cpu-foot-cores">—</span></div>
         </article>
-        <article class="dashboard-card dashboard-metric-card">
+        <article class="dashboard-card dashboard-metric-card" data-resource="memory">
           <div class="dashboard-metric-head"><span class="dashboard-metric-icon blue"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><span class="dashboard-live">Live</span></div>
           <span>Memory usage</span>
           <strong id="dashboard-memory">—</strong>
           <svg id="dashboard-memory-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent memory trend"></svg>
           <div class="dashboard-metric-foot"><span id="dashboard-memory-foot-used">—</span><span id="dashboard-memory-foot-total">—</span></div>
         </article>
-        <article class="dashboard-card dashboard-metric-card">
+        <article class="dashboard-card dashboard-metric-card" data-resource="disk">
           <div class="dashboard-metric-head"><span class="dashboard-metric-icon amber"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6"/></svg></span><span class="dashboard-live">Live</span></div>
           <span>Workspace disk</span>
           <strong id="dashboard-disk">—</strong>
           <svg id="dashboard-disk-trend" class="dashboard-sparkline" viewBox="0 0 100 32" role="img" aria-label="Recent disk trend"></svg>
           <div class="dashboard-metric-foot"><span id="dashboard-disk-foot-used">—</span><span id="dashboard-disk-foot-total">—</span></div>
         </article>
-        <article class="dashboard-card dashboard-metric-card dashboard-network-card">
+        <article class="dashboard-card dashboard-metric-card dashboard-network-card" data-resource="network">
           <div class="dashboard-metric-head"><span class="dashboard-metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 20V10M7 15l5 5 5-5M4 4h16"/></svg></span><span class="dashboard-live positive">Live</span></div>
           <span>Network throughput</span>
           <strong id="dashboard-network" class="visually-hidden">—</strong>
-          <svg id="dashboard-network-trend" class="visually-hidden" viewBox="0 0 100 32" aria-hidden="true"></svg>
           <div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong id="dashboard-network-down">—</strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong id="dashboard-network-up">—</strong><small>sent</small></div></div>
           <div class="dashboard-network-bar" aria-label="Relative incoming and outgoing traffic"><span id="dashboard-network-rx-bar"></span><i id="dashboard-network-tx-bar"></i></div>
           <div class="dashboard-metric-foot"><span>Downlink</span><span>Uplink</span></div>
@@ -215,6 +214,13 @@
               <button id="executor-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
             </div>
           </div>
+          <nav id="executor-subtabs" class="executor-subtabs" role="tablist" aria-label="Executor details">
+            <button type="button" role="tab" data-executor-subtab="overview" aria-selected="true">Overview</button>
+            <button type="button" role="tab" data-executor-subtab="mcp" aria-selected="false">MCP</button>
+            <button type="button" role="tab" data-executor-subtab="skills" aria-selected="false">Skills</button>
+          </nav>
+          <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Executor overview">
+          <div id="executor-diagnostics-body" class="executor-diagnostics-body"></div>
           <dl class="executor-detail-grid">
             <div><dt>Executor ID</dt><dd id="executor-detail-id">—</dd></div>
             <div><dt>Workgate version</dt><dd id="executor-detail-version">—</dd></div>
@@ -228,6 +234,13 @@
             <div><dt>Created</dt><dd id="executor-detail-created">—</dd></div>
             <div><dt>Last seen</dt><dd id="executor-detail-last-seen">—</dd></div>
           </dl>
+          </section>
+          <section class="executor-subtab-pane" data-executor-pane="mcp" aria-label="MCP integrations" hidden>
+            <div id="executor-mcp-body" class="executor-subtab-content"></div>
+          </section>
+          <section class="executor-subtab-pane" data-executor-pane="skills" aria-label="Skill sources" hidden>
+            <div id="executor-skills-body" class="executor-subtab-content"></div>
+          </section>
         </article>
       </div>
     </section>

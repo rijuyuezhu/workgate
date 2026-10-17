@@ -115,7 +115,6 @@ void (async () => {
     dashboardMemoryValue: document.getElementById("dashboard-memory-value"),
     dashboardNetwork: document.getElementById("dashboard-network"),
     dashboardNetworkRx: document.getElementById("dashboard-network-rx"),
-    dashboardNetworkTrend: document.getElementById("dashboard-network-trend"),
     dashboardNetworkTx: document.getElementById("dashboard-network-tx"),
     dashboardPlatform: document.getElementById("dashboard-platform"),
     dashboardPython: document.getElementById("dashboard-python"),
@@ -190,6 +189,11 @@ void (async () => {
     executorDetailSessions: document.getElementById("executor-detail-sessions"),
     executorDetailStatus: document.getElementById("executor-detail-status"),
     executorDetailVersion: document.getElementById("executor-detail-version"),
+    executorSubtabs: Array.from(document.querySelectorAll("#executor-subtabs [data-executor-subtab]")),
+    executorSubtabPanes: Array.from(document.querySelectorAll(".executor-subtab-pane[data-executor-pane]")),
+    executorMcpBody: document.getElementById("executor-mcp-body"),
+    executorSkillsBody: document.getElementById("executor-skills-body"),
+    executorDiagnosticsBody: document.getElementById("executor-diagnostics-body"),
     executorList: document.getElementById("executor-list"),
     executorOnline: document.getElementById("executor-online"),
     executorPairApprove: document.getElementById("executor-pair-approve"),
@@ -481,6 +485,9 @@ void (async () => {
     }
     if (view !== "tasks") guiViewer.close();
     mobileNavigation.sync(view);
+    if (view === "executors" && (config.authMode !== "oauth" || authenticated)) {
+      executors.activate();
+    }
 
     if (syncHash && location.hash !== `#${view}`) {
       const url = `${location.pathname}${location.search}#${view}`;

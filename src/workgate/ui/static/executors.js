@@ -1,3 +1,5 @@
+import { renderResourceCards } from "./dashboard.js";
+
 export function createExecutorsController({
   elements,
   request,
@@ -14,17 +16,39 @@ export function createExecutorsController({
     generation: 0,
     timer: null,
     pairing: null,
+    diagnosticId: "",
+    diagnostic: null,
+    diagnosticGeneration: 0,
+    diagnosticLoading: false,
+    diagnosticError: "",
+    metricHistory: [],
+    metricGeneration: 0,
+    metricInFlightId: "",
+    metricOnline: false,
+    detailTabs: new Map(),
   };
 
   function selectedExecutor() {
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
   }
 
+  function resetMetrics() {
+    state.metricGeneration += 1;
+    state.metricInFlightId = "";
+    state.metricHistory = [];
+    state.metricOnline = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+    elements.executorDiagnosticsBody.replaceChildren();
+  }
+
   function select(executorId) {
     if (!state.executors.some((item) => item.executor_id === executorId)) return;
     state.selectedId = executorId;
+    resetMetrics();
     renderList();
     renderDetails();
+    renderDiagnostics();
+    void loadDiagnostics(true);
+    void refreshMetrics();
   }
 
   function timestamp(value, fallback = "Never") {
@@ -88,15 +112,270 @@ export function createExecutorsController({
       button.append(indicator, main, status);
       button.addEventListener("click", () => {
         state.selectedId = executor.executor_id;
+        resetMetrics();
         renderList();
         renderDetails();
+        renderDiagnostics();
+        void loadDiagnostics();
+        void refreshMetrics();
         onNavigate("detail");
       });
       elements.executorList.append(button);
     }
   }
 
+  function activeSubtab() {
+    return state.detailTabs.get(state.selectedId) || "overview";
+  }
+
+  function setSubtab(tab) {
+    if (!selectedExecutor() || !["overview", "mcp", "skills"].includes(tab)) return;
+    state.detailTabs.set(state.selectedId, tab);
+    renderSubtabs();
+    if (tab === "overview") void refreshMetrics();
+  }
+
+  function renderSubtabs() {
+    const active = activeSubtab();
+    for (const button of elements.executorSubtabs) {
+      const selected = button.dataset.executorSubtab === active;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+    }
+    for (const pane of elements.executorSubtabPanes) {
+      pane.hidden = pane.dataset.executorPane !== active;
+    }
+  }
+
+  function rowIcon(kind) {
+    if (!["http", "stdio", "skill", "project", "info"].includes(kind)) return null;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('executor-row-icon');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.8');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    const shapes = {
+      http: ['<circle cx="12" cy="12" r="9"/>', '<path d="M3 12h18M12 3c-5 5-5 13 0 18M12 3c5 5 5 13 0 18"/>'],
+      stdio: ['<path d="M5 7l5 5-5 5M12 17h7"/>'],
+      skill: ['<path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h4M9 13h6M9 17h6"/>'],
+      project: ['<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z"/>'],
+      info: ['<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'],
+    };
+    // All icon paths are static, independent of configuration content.
+    svg.innerHTML = shapes[kind].join('');
+    return svg;
+  }
+
+  function addGroup(container, title, rows) {
+    const group = document.createElement("section");
+    group.className = "executor-manage-group";
+    const heading = document.createElement("h4");
+    heading.textContent = title;
+    group.append(heading);
+    for (const row of rows) {
+      const item = document.createElement("div");
+      item.className = "executor-manage-row";
+      if (row.empty) item.classList.add("executor-manage-empty");
+      if (row.status === "Disabled") item.dataset.state = "disabled";
+      if (row.status === "Enabled") item.dataset.state = "enabled";
+      if (row.status === "Overridden") item.dataset.state = "overridden";
+      const icon = rowIcon(row.icon);
+      if (icon) {
+        const mark = document.createElement('span');
+        mark.className = 'executor-row-mark';
+        mark.dataset.kind = row.icon;
+        mark.append(icon);
+        item.append(mark);
+      }
+      if (row.status === "Overridden" || row.warning) {
+        const alert = document.createElement("span");
+        alert.className = "executor-row-warning";
+        alert.textContent = "!";
+        alert.setAttribute("aria-label", "Warning");
+        item.append(alert);
+      }
+      const text = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = row.title;
+      const detail = document.createElement("span");
+      detail.textContent = row.detail || "";
+      text.append(name);
+      if (row.detail) text.append(detail);
+      item.append(text);
+      if (row.status) {
+        const badge = document.createElement("span");
+        badge.className = "executor-manage-pill";
+        if (row.status === 'Enabled') badge.dataset.state = 'enabled';
+        if (row.status === 'Disabled') badge.dataset.state = 'disabled';
+        if (row.status === 'Overridden') badge.dataset.state = 'overridden';
+        badge.textContent = row.status;
+        item.append(badge);
+      }
+      group.append(item);
+    }
+    container.append(group);
+  }
+
+  function renderDiagnosticCards(container, system) {
+    const template = document.querySelector("#dashboard-panel .dashboard-summary");
+    if (!template) return;
+    const cards = template.cloneNode(true);
+    cards.removeAttribute("aria-label");
+    cards.querySelectorAll("[id]").forEach((item) => item.removeAttribute("id"));
+    cards.querySelectorAll(".dashboard-live").forEach((item) => item.remove());
+    const history = state.metricHistory.map((sample) => ({
+      cpu: sample.cpu_percent, memory: sample.memory_percent, disk: sample.disk_percent,
+    }));
+    renderResourceCards(cards, system, history);
+    container.append(cards);
+  }
+
+  function renderDiagnostics() {
+    const body = elements.executorDiagnosticsBody;
+    const mcp = elements.executorMcpBody;
+    const skills = elements.executorSkillsBody;
+    mcp.replaceChildren();
+    skills.replaceChildren();
+    const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+    body.hidden = !showMetrics;
+    if (showMetrics && !body.childElementCount) renderDiagnosticCards(body, state.metricHistory.at(-1) || {});
+    if (!selectedExecutor()) return;
+    const status = (message) => {
+      addGroup(mcp, "Executor", [{title: message, empty: true}]);
+      addGroup(mcp, "Control", [{title: message, empty: true}]);
+      addGroup(skills, "Executor", [{title: message, empty: true}]);
+      addGroup(skills, "Executor (User Global)", [{title: message, empty: true}]);
+    };
+    if (state.diagnosticId !== state.selectedId) return status("Unavailable");
+    if (state.diagnosticLoading) {
+      status("Loading");
+      return;
+    }
+    if (state.diagnosticError) return status("Unavailable");
+    const data = state.diagnostic;
+    if (!data) return status("Unavailable");
+
+    function mcpRows(snapshot, globallyEnabled = true) {
+      if (!snapshot || snapshot.status === "invalid_config" || snapshot.status === "unavailable") {
+        return [{title: "Configuration unavailable", empty: true}];
+      }
+      const rows = (snapshot.servers || []).map((server) => ({
+        title: server.name || "Unknown MCP",
+        detail: typeof server.type === "string" ? server.type.toUpperCase() : "Unknown",
+        icon: server.type,
+        status: typeof server.enabled !== "boolean" ? "Unknown" : server.enabled && globallyEnabled ? "Enabled" : "Disabled",
+      }));
+      if (rows.length) return rows;
+      return [{title: globallyEnabled ? "No configured servers" : "Agent Bridge disabled", empty: true}];
+    }
+    const offline = !selectedExecutor()?.online || data.status === "offline";
+    const local = offline ? null : data.executor;
+    addGroup(mcp, "Executor", offline ? [{title: "Offline", empty: true}] : mcpRows(local?.bridge));
+    addGroup(mcp, "Control", mcpRows(data.control_mcp, data.control_mcp?.enabled !== false));
+    if (local?.bridge?.errors || data.control_mcp?.errors) {
+      addGroup(mcp, "Configuration warnings", [{title: "MCP configuration invalid", warning: true}]);
+    }
+
+    if (!local) {
+      const message = offline ? "Offline" : "Unavailable";
+      addGroup(skills, "Executor", [{title: message, empty: true}]);
+      addGroup(skills, "Executor (User Global)", [{title: message, empty: true}]);
+      return;
+    }
+    const skillData = local.skills || {};
+    const selected = skillData.selected || [];
+    const overridden = skillData.overridden || [];
+    for (const source of ["managed", "global"]) {
+      const rows = selected.filter((skill) => skill.source === source).map((skill) => ({
+        title: skill.name, icon: "skill",
+      }));
+      rows.push(...overridden.filter((skill) => skill.source === source).map((skill) => ({
+        title: skill.name, icon: "skill", status: "Overridden",
+      })));
+      addGroup(skills, source === "managed" ? "Executor" : "Executor (User Global)",
+        rows.length ? rows : [{title: local.bridge?.status === "invalid_config" ? "Configuration unavailable" : skillData.unavailable ? "Skills unavailable" : skillData.enabled === false ? "Skills disabled" : "No Skills", empty: true}]);
+    }
+    if (skillData.warnings > skillData.duplicates) {
+      addGroup(skills, "Warnings", [{title: `${skillData.warnings - skillData.duplicates} Skill warnings`, icon: "info", warning: true}]);
+    }
+
+  }
+
+  async function refreshMetrics() {
+    const executor = selectedExecutor();
+    const view = elements.executorDiagnosticsBody.closest("[data-app-view]");
+    if (!executor?.online || executor.revoked_at || activeSubtab() !== "overview" || view?.hidden) return;
+    const executorId = executor.executor_id;
+    if (state.metricInFlightId === executorId) return;
+    const generation = state.metricGeneration;
+    state.metricInFlightId = executorId;
+    try {
+      const data = await request(`/dashboard?executor_id=${encodeURIComponent(executorId)}`);
+      if (generation !== state.metricGeneration || state.selectedId !== executorId || !selectedExecutor()?.online) return;
+      const system = data?.system || {};
+      const sample = {};
+      for (const key of ["cpu_percent", "memory_percent", "disk_percent", "network_rx_bps", "network_tx_bps", "load_1m", "cpu_count", "memory_used_bytes", "memory_total_bytes", "disk_used_bytes", "disk_total_bytes"]) {
+        sample[key] = typeof system[key] === "number" && Number.isFinite(system[key]) ? system[key] : null;
+      }
+      state.metricHistory.push(sample);
+      state.metricHistory = state.metricHistory.slice(-60);
+      const body = elements.executorDiagnosticsBody;
+      body.replaceChildren();
+      renderDiagnosticCards(body, sample);
+    } catch (error) {
+      if (error.authenticationRequired) { void reloadApp(); return; }
+      if (generation !== state.metricGeneration || state.selectedId !== executorId) return;
+      const message = document.createElement("p");
+      message.className = "executor-metric-error";
+      message.textContent = error.status === 403 ? "Resource metrics require shell:read access." : "Resource metrics unavailable.";
+      elements.executorDiagnosticsBody.querySelector(".executor-metric-error")?.remove();
+      elements.executorDiagnosticsBody.append(message);
+    } finally {
+      if (generation === state.metricGeneration && state.metricInFlightId === executorId) state.metricInFlightId = "";
+    }
+  }
+
+  async function loadDiagnostics(force = false) {
+    const executorId = state.selectedId;
+    if (elements.executorMcpBody.closest("[data-app-view]")?.hidden) return;
+    if (!executorId || !selectedExecutor() || selectedExecutor().revoked_at) {
+      state.diagnosticGeneration += 1;
+      state.diagnosticId = "";
+      state.diagnostic = null;
+      state.diagnosticLoading = false;
+      state.diagnosticError = "";
+      renderDiagnostics();
+      return;
+    }
+    if (state.diagnosticId === executorId && !force) return;
+    const generation = ++state.diagnosticGeneration;
+    state.diagnosticId = executorId;
+    state.diagnostic = null;
+    state.diagnosticLoading = true;
+    state.diagnosticError = "";
+    renderDiagnostics();
+    try {
+      const data = await request(`/executors/diagnostics?executor_id=${encodeURIComponent(executorId)}`);
+      if (generation !== state.diagnosticGeneration || executorId !== state.selectedId) return;
+      state.diagnostic = data;
+    } catch (error) {
+      if (generation !== state.diagnosticGeneration || executorId !== state.selectedId) return;
+      if (error.authenticationRequired) { void reloadApp(); return; }
+      state.diagnosticError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (generation === state.diagnosticGeneration) {
+        state.diagnosticLoading = false;
+        renderDiagnostics();
+      }
+    }
+  }
+
   function renderDetails() {
+    renderSubtabs();
     const executor = selectedExecutor();
     if (!executor) {
       elements.executorDetailName.textContent = "No executor selected";
@@ -147,9 +426,10 @@ export function createExecutorsController({
   }
 
   function render(payload) {
+    const previousId = state.selectedId;
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
     if (!state.executors.some((item) => item.executor_id === state.selectedId)) {
-      state.selectedId = state.executors[0]?.executor_id || "";
+      state.selectedId = (state.executors.find((entry) => !entry.revoked_at) || state.executors[0])?.executor_id || "";
     }
     const online = state.executors.filter((item) => !item.revoked_at && item.online).length;
     const revoked = state.executors.filter((item) => item.revoked_at).length;
@@ -160,6 +440,39 @@ export function createExecutorsController({
     elements.executorState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     renderList();
     renderDetails();
+    if (state.selectedId !== previousId) {
+      state.diagnosticGeneration += 1;
+      state.diagnosticId = "";
+      state.diagnostic = null;
+      state.diagnosticLoading = false;
+      state.diagnosticError = "";
+      renderDiagnostics();
+      if (state.selectedId) {
+        resetMetrics();
+        void loadDiagnostics();
+        void refreshMetrics();
+      }
+    } else {
+      if (selectedExecutor()?.revoked_at && state.diagnosticId === state.selectedId) {
+        state.diagnosticGeneration += 1;
+        state.diagnosticId = "";
+        state.diagnostic = null;
+        state.diagnosticLoading = false;
+        state.diagnosticError = "";
+        renderDiagnostics();
+      }
+      const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+      if (showMetrics !== state.metricOnline) {
+        resetMetrics();
+        state.metricOnline = showMetrics;
+        renderDiagnostics();
+        if (showMetrics) {
+          void loadDiagnostics(true);
+          void refreshMetrics();
+        }
+      }
+      elements.executorDiagnosticsBody.hidden = !showMetrics;
+    }
     onInventory(state.executors);
   }
 
@@ -196,7 +509,10 @@ export function createExecutorsController({
   function startPolling() {
     stopPolling();
     state.timer = globalThis.setInterval(() => {
-      if (authMode !== "oauth" || isAuthenticated()) refreshInBackground();
+      if (authMode !== "oauth" || isAuthenticated()) {
+        refreshInBackground();
+        if (selectedExecutor()?.online) void refreshMetrics();
+      }
     }, 4000);
   }
 
@@ -265,6 +581,14 @@ export function createExecutorsController({
     state.loading = false;
     state.executors = [];
     state.selectedId = "";
+    state.diagnosticGeneration += 1;
+    state.diagnosticId = "";
+    state.diagnostic = null;
+    state.diagnosticError = "";
+    state.diagnosticLoading = false;
+    resetMetrics();
+    state.metricOnline = false;
+    state.detailTabs.clear();
     closeDialog(elements.executorPairDialog);
     closeDialog(elements.executorRenameDialog);
     closeDialog(elements.executorRevokeDialog);
@@ -278,9 +602,24 @@ export function createExecutorsController({
     document.getElementById("executor-revoked-summary").hidden = true;
     renderList();
     renderDetails();
+    renderDiagnostics();
   }
 
   function bind() {
+    const tabs = elements.executorSubtabs;
+    for (const [index, button] of tabs.entries()) {
+      button.addEventListener("click", () => setSubtab(button.dataset.executorSubtab));
+      button.addEventListener("keydown", (event) => {
+        const next = event.key === "ArrowRight" ? (index + 1) % tabs.length
+          : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
+          : event.key === "Home" ? 0
+          : event.key === "End" ? tabs.length - 1 : null;
+        if (next === null) return;
+        event.preventDefault();
+        setSubtab(tabs[next].dataset.executorSubtab);
+        tabs[next].focus();
+      });
+    }
     elements.executorPairOpen.addEventListener("click", () => {
       clearPairReview();
       elements.executorPairForm.reset();
@@ -402,7 +741,14 @@ export function createExecutorsController({
     elements.executorPairDialog.addEventListener("close", clearPairReview);
   }
 
+  function activate() {
+    if (!selectedExecutor()) return;
+    void loadDiagnostics(true);
+    void refreshMetrics();
+  }
+
   return {
+    activate,
     bind,
     select,
     refresh,
