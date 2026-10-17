@@ -385,8 +385,9 @@ export function createExecutorsController({
     elements.executorIntegrationCommandWrap.hidden = owner !== "executor";
     elements.executorIntegrationArgsWrap.hidden = owner !== "executor";
     if (moving) editorStatus(owner === editing.owner
-      ? "Apply will move this MCP to the selected Executor. Private credentials remain on the original host."
-      : "Apply will move this MCP and update its connection type. Reconfigure credentials at the new location.");
+      ? "Apply changes its Executor; private credentials stay at the original location."
+      : "Apply changes location and connection type; credentials must be reconfigured.");
+    else if (editing.item && elements.executorIntegrationStatus.textContent.startsWith("Apply changes")) editorStatus("");
   }
 
   function editorStatus(message) {
@@ -440,10 +441,10 @@ export function createExecutorsController({
         elements.executorIntegrationAdvanced.value = JSON.stringify(advanced, null, 2);
         elements.executorIntegrationAuthMode.value = config.auth?.mode || "none";
         elements.executorIntegrationOAuthScopes.value = (config.auth?.scopes || []).join(" ");
-        setEditorType();
         void loadEditorAuth(edit);
       }
       editorStatus("");
+      setEditorType();
       elements.executorIntegrationSave.disabled = false;
     } catch (error) {
       editorStatus(error instanceof Error ? error.message : String(error));
@@ -478,7 +479,7 @@ export function createExecutorsController({
       if (action === "validate") { editorStatus("SKILL.md is valid."); return; }
       elements.executorIntegrationDialog.close();
       state.editor = null;
-      if (moving && destination.owner === "executor" && destination.executorId !== state.selectedId) {
+      if ((moving || action === "register") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
         select(destination.executorId);
       }
       await loadManagement(true);

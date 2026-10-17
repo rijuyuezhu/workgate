@@ -315,7 +315,11 @@ def test_mcp_location_apply_real_chromium(
         has_text="browser-relocate"
     )
     expect(remote).to_be_visible()
-    expect(remote).to_contain_text("Control")
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-group").filter(
+            has_text="Control"
+        )
+    ).to_contain_text("browser-relocate")
     remote.get_by_role("button", name="Manage").click()
     page.locator("#executor-integration-owner").select_option("executor")
     expect(page.locator("#executor-integration-command")).to_be_visible()
@@ -325,7 +329,11 @@ def test_mcp_location_apply_real_chromium(
     local = page.locator("#executor-mcp-body .executor-manage-row").filter(
         has_text="browser-relocate"
     )
-    expect(local).to_contain_text("Executor")
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-group").filter(
+            has_text="Executor"
+        )
+    ).to_contain_text("browser-relocate")
     local.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-integration-command")).to_have_value(
         "printf"
