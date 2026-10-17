@@ -253,6 +253,11 @@ def test_public_control_skill_tools_across_real_paired_session(
             assert payload.get("isError") is not True, payload
             return payload["structuredContent"]
 
+        status = invoke("agent_config_status", {})
+        assert status["skills"]["count"] == 2
+        assert [row["source"] for row in status["skills"]["sources"]] == [
+            "control"
+        ]
         standalone = invoke("list_agent_skills", {})
         assert {row["name"] for row in standalone["skills"]} == {
             "tiered",

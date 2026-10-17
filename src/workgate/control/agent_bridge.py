@@ -13,6 +13,7 @@ from ..agent_bridge.models import (
     SkillSource,
 )
 from ..agent_bridge.service import (
+    agent_config_status_payload,
     build_network_agent_registry_from_settings,
     call_agent_mcp_tool_payload,
     list_agent_mcp_servers_payload,
@@ -29,6 +30,7 @@ from ..config.control import ControlConfig
 from ..errors import PublicToolValueError
 from ..schemas.result_models.agent import (
     ActivateAgentSkillOutput,
+    AgentConfigStatusOutput,
     CallAgentMcpToolOutput,
     ListAgentMcpServersOutput,
     ListAgentMcpToolsOutput,
@@ -71,6 +73,18 @@ class ControlAgentBridgeService:
             source_path=str(source.path),
             excluded_names=frozenset(manifest.data.skills.disabled),
         )
+
+    async def config_status(self) -> AgentConfigStatusOutput:
+        """Keep public Control Skill counts consistent with Control Skill listing."""
+        registry = await asyncio.to_thread(self._network_registry)
+        status = agent_config_status_payload(registry)
+        skills = await self.list_skills(None)
+        status.skills = {
+            "count": len(skills.skills),
+            "warnings": skills.warnings,
+            "sources": skills.sources,
+        }
+        return status
 
     async def list_skills(
         self, session_id: str | None
