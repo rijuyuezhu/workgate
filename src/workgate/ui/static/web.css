@@ -1546,11 +1546,11 @@ h2 {
 .executor-subtab-content { display: grid; gap: 8px; }
 .executor-manage-group { border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel); }
 .executor-manage-group > h4 { margin: 0; padding: 11px 13px; color: var(--muted); background: var(--surface, #f8f9fb); font-size: 11px; font-weight: 750; }
-.executor-manage-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-width: 0; border-top: 1px solid var(--line); padding: 11px 13px; }
-.executor-manage-row > div { min-width: 0; display: grid; gap: 4px; }
+.executor-manage-row { display: flex; justify-content: flex-start; align-items: center; gap: 10px; min-width: 0; border-top: 1px solid var(--line); padding: 11px 13px; }
+.executor-manage-row > div { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .executor-manage-row strong { font-size: 12px; overflow-wrap: anywhere; }
 .executor-manage-row span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.executor-manage-pill { border-radius: 20px; font-size: 10px !important; padding: 4px 8px; flex-shrink: 0; background: var(--surface, #f2f3f6); }
+.executor-manage-pill { margin-left: auto; border-radius: 20px; font-size: 10px !important; font-weight: 700; padding: 4px 8px; flex-shrink: 0; background: var(--surface, #f2f3f6); }
 @media (max-width: 780px) { #executors-panel .executors-layout { grid-template-columns: minmax(0, 1fr); } .executor-subtabs { flex-wrap: nowrap; overflow-x: auto; } .executor-subtabs button { padding: 10px 11px; white-space: nowrap; } }
 
 .executor-diagnostics-body { display: grid; gap: 0.65rem; }
@@ -3143,9 +3143,6 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #tasks-panel[data-task-filter="unattached"] .inventory-summary { display: none; }
 
 /* Executor rows use the same restrained status palette as Tasks and the shell. */
-.executor-manage-row { justify-content: flex-start; }
-.executor-manage-row > div { flex: 1; }
-.executor-manage-pill { margin-left: auto; font-weight: 700; }
 .executor-manage-pill[data-state="enabled"] { color: #18815d; background: #dff5e9; }
 .executor-manage-pill[data-state="disabled"] { color: #667184; background: #e9edf3; }
 .executor-row-mark { display: grid; place-items: center; flex: 0 0 26px; width: 26px; height: 26px; color: var(--muted); }
