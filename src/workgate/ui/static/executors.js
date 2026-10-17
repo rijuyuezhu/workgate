@@ -460,10 +460,6 @@ export function createExecutorsController({
       && (edit.owner !== destination.owner || (edit.owner === "executor" && destination.executorId !== edit.executorId)));
     const body = {owner: edit.owner, kind: edit.kind, action,
                   executor_id: edit.executorId, name: elements.executorIntegrationName.value.trim()};
-    if (moving) {
-      body.destination_owner = destination.owner;
-      body.destination_executor_id = destination.executorId;
-    }
     if (edit.kind === "skill") {
       if (["create", "update", "validate"].includes(action)) body.content = elements.executorIntegrationContent.value;
     } else if (config !== null) body.config = config;
@@ -472,8 +468,17 @@ export function createExecutorsController({
     elements.executorIntegrationToggle.disabled = true;
     elements.executorIntegrationDelete.disabled = true;
     try {
+      const payload = moving ? {
+        owner: edit.owner,
+        executor_id: edit.owner === "executor" ? edit.executorId : null,
+        destination_owner: destination.owner,
+        destination_executor_id: destination.executorId,
+        name: body.name,
+        expected_revision: edit.revision,
+        config,
+      } : body;
       const result = await request(moving ? "/integrations/move" : "/integrations", {
-        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
       });
       if (state.editor !== edit) return;
       if (action === "validate") { editorStatus("SKILL.md is valid."); return; }
