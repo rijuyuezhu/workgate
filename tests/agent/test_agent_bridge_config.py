@@ -129,6 +129,27 @@ def test_agent_manifest_rejects_symlink_config_directory(tmp_path):
         load_agent_manifest(config_dir)
 
 
+def test_read_only_manifest_rejects_symlinks_without_chmod(tmp_path):
+    actual = tmp_path / "actual"
+    actual.mkdir(mode=0o755)
+    actual.chmod(0o755)
+    (actual / "config.json").write_text("{}", encoding="utf-8")
+
+    assert load_agent_manifest(actual, read_only=True).status == "loaded"
+    assert actual.stat().st_mode & 0o777 == 0o755
+
+    linked_dir = tmp_path / "linked-dir"
+    linked_dir.symlink_to(actual, target_is_directory=True)
+    assert load_agent_manifest(linked_dir, read_only=True).errors == ["symlink"]
+
+    linked_file_dir = tmp_path / "linked-file-dir"
+    linked_file_dir.mkdir()
+    (linked_file_dir / "config.json").symlink_to(actual / "config.json")
+    assert load_agent_manifest(linked_file_dir, read_only=True).errors == [
+        "symlink"
+    ]
+
+
 def test_load_agent_manifest_invalid_json(tmp_path):
     (tmp_path / "config.json").write_text("{not-json", encoding="utf-8")
 
