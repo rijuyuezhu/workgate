@@ -1,6 +1,7 @@
 """Committed-but-unacknowledged Executor writes must not leave MCP discovery stale."""
 
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -186,7 +187,7 @@ def test_executor_remote_write_outcome_invalidates_only_when_necessary(
                     )
                 if outcome == "queued":
                     exc = TimeoutError("command never offered to Executor")
-                    exc._workgate_executor_delivery_state = "queued"
+                    cast(Any, exc)._workgate_executor_delivery_state = "queued"
                     raise exc
                 response = await live_call(executor_id, op, args, **kwargs)
                 assert response.ok
@@ -196,7 +197,7 @@ def test_executor_remote_write_outcome_invalidates_only_when_necessary(
                     )
                 exc = TimeoutError("durable write committed; reply lost")
                 if outcome == "offered":
-                    exc._workgate_executor_delivery_state = "offered"
+                    cast(Any, exc)._workgate_executor_delivery_state = "offered"
                 raise exc
             return await live_call(executor_id, op, args, **kwargs)
 
