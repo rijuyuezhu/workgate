@@ -325,3 +325,106 @@ def test_mcp_old_auth_request_cannot_erase_new_editor_input(browser_harness):
         "race-value-b"
     )
     h.assert_clean_browser()
+
+
+@pytest.mark.browser
+@pytest.mark.timeout(180)
+@pytest.mark.skipif(
+    os.environ.get("WORKGATE_BROWSER_E2E") != "1", reason="real Chromium"
+)
+def test_executor_selection_is_stable_during_apply_and_old_action_errors(
+    tmp_path,
+):
+    """A sidebar switch cannot detach Apply or replay old Executor errors."""
+    with sync_playwright() as playwright:
+        h = BrowserHarness.start(
+            tmp_path,
+            tmp_path / "artifacts",
+            playwright,
+            with_remote_executor=True,
+        )
+        failed = True
+        try:
+            h.login()
+            h.wait_executor_online()
+            assert h.remote_executor_id
+            created = h.api(
+                "POST",
+                "/api/ui/integrations",
+                body={
+                    "owner": "executor",
+                    "executor_id": h.executor_id,
+                    "kind": "skill",
+                    "action": "create",
+                    "name": "nav-lock-skill",
+                    "content": "# Navigation lock regression\n",
+                },
+            )
+            assert created["status"] == 200
+            page = h.page
+            page.goto(f"{h.base_url}/ui#executors")
+            local = page.locator("#executor-list .executor-row").filter(
+                has_text="browser-loopback"
+            )
+            remote = page.locator("#executor-list .executor-row").filter(
+                has_text="browser-remote"
+            )
+            expect(remote).to_contain_text("online", timeout=20000)
+            local.click()
+            page.locator('[data-executor-subtab="skills"]').click()
+            row = page.locator(
+                "#executor-skills-body .executor-manage-row"
+            ).filter(has_text="nav-lock-skill")
+            row.get_by_role("button", name="Manage").click()
+            expect(
+                page.locator("#executor-integration-content")
+            ).to_be_enabled()
+            page.locator("#executor-integration-owner").select_option(
+                f"executor:{h.remote_executor_id}"
+            )
+            page.evaluate("""() => {
+              const original = globalThis.fetch.bind(globalThis);
+              globalThis.fetch = (...args) =>
+                String(args[0]).includes('/integrations/skill-move')
+                ? new Promise(resolve => setTimeout(() => resolve(original(...args)), 850))
+                : original(...args);
+            }""")
+            page.locator("#executor-integration-save").click()
+            expect(
+                page.locator("#executor-integration-cancel")
+            ).to_be_disabled()
+            # Synthetic sidebar click bypasses the modal backdrop to exercise
+            # the select() guard itself (real pointer clicks hit the dialog).
+            remote.evaluate("(el) => el.click()")
+            expect(page.locator("#executor-detail-name")).to_contain_text(
+                "browser-loopback"
+            )
+            expect(page.locator("#executor-integration-dialog")).to_be_visible()
+            expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+            expect(page.locator("#executor-detail-name")).to_contain_text(
+                "browser-remote"
+            )
+            # Old action responses must not create an error for a new selection.
+            local.click()
+            page.evaluate("""() => {
+              const original = globalThis.fetch.bind(globalThis);
+              globalThis.fetch = (...args) =>
+                String(args[0]).includes('/executors/drain')
+                ? new Promise(resolve => setTimeout(() => resolve(
+                    new Response(JSON.stringify({ok:false,error:'Synthetic',message:'OLD ERROR'}),
+                      {status:409,headers:{'Content-Type':'application/json'}})), 850))
+                : original(...args);
+            }""")
+            page.locator("#executor-drain").click()
+            remote.click()
+            expect(page.locator("#executor-action-status")).to_be_empty()
+            page.wait_for_timeout(1050)
+            expect(page.locator("#executor-action-status")).to_be_empty()
+            assert all("409" in error for error in h.console_errors), (
+                h.console_errors
+            )
+            h.console_errors.clear()
+            h.assert_clean_browser()
+            failed = False
+        finally:
+            h.stop(failed=failed)

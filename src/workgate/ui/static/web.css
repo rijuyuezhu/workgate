@@ -3320,6 +3320,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+.executor-notice[hidden] { display: none !important; }
 .executor-notice::before {
   content: "i";
   position: absolute;

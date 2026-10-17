@@ -54,6 +54,8 @@ export function createExecutorsController({
   function select(executorId) {
     if (!state.executors.some((item) => item.executor_id === executorId)) return;
     const changed = state.selectedId !== executorId;
+    // Changing the selected Executor cannot cancel a committed remote Apply.
+    if (changed && state.editor?.busy && state.editor.applying) return;
     if (changed && elements.executorIntegrationDialog.open) {
       elements.executorIntegrationDialog.close();
       state.editor = null;
@@ -66,6 +68,7 @@ export function createExecutorsController({
       state.managementGeneration += 1;
       state.managementId = "";
       state.management = null;
+      notice(elements.executorActionStatus, "");
     }
     if (changed) resetMetrics();
     renderList();
@@ -406,7 +409,7 @@ export function createExecutorsController({
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
     const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
-    elements.executorIntegrationToggle.hidden = !editing.item || (skill && moving);
+    elements.executorIntegrationToggle.hidden = !editing.item || moving;
     // Delete always acts on the original owner. Hide it while the selector
     // points elsewhere, so a user cannot mistake it for deleting the target.
     elements.executorIntegrationDelete.hidden = !editing.item || moving;
@@ -442,6 +445,26 @@ export function createExecutorsController({
       field.readOnly = locked;
     }
     elements.executorIntegrationAuthMode.disabled = locked;
+    elements.executorIntegrationName.readOnly = locked || Boolean(state.editor?.item);
+    elements.executorMcpSecretName.readOnly = locked;
+    elements.executorMcpSecretValue.readOnly = locked;
+  }
+
+  // One editor operation at a time: Apply, validation, auth mutation, or MCP test.
+  function setEditorBusy(edit, busy) {
+    if (state.editor !== edit) return;
+    edit.busy = busy;
+    const ready = !busy && !edit.needsInspection;
+    for (const button of [elements.executorIntegrationSave, elements.executorIntegrationToggle,
+      elements.executorIntegrationDelete, elements.executorIntegrationValidate,
+      elements.executorIntegrationTest, elements.executorMcpSecretSet,
+      elements.executorMcpOAuthClear, ...elements.executorMcpSecretList.querySelectorAll("button")]) {
+      button.disabled = !ready;
+    }
+    elements.executorIntegrationOwner.disabled = !ready;
+    elements.executorIntegrationCancel.disabled = busy && edit.applying;
+    elements.executorIntegrationClose.disabled = busy && edit.applying;
+    lockEditorInputs(!ready);
   }
 
   async function openEditor({owner, kind, item = null}) {
@@ -528,7 +551,6 @@ export function createExecutorsController({
   async function mutateEditor(action, config = null) {
     const edit = state.editor;
     if (!edit || edit.busy) return;
-    edit.busy = true;
     const applying = action !== "validate";
     edit.applying = applying;
     const destination = chosenLocation();
@@ -540,13 +562,7 @@ export function createExecutorsController({
       if (["create", "update", "validate"].includes(action)) body.content = elements.executorIntegrationContent.value;
     } else if (config !== null) body.config = config;
     if (edit.revision && ["update", "enable", "disable", "delete", "remove"].includes(action)) body.expected_revision = edit.revision;
-    elements.executorIntegrationSave.disabled = true;
-    elements.executorIntegrationToggle.disabled = true;
-    elements.executorIntegrationDelete.disabled = true;
-    elements.executorIntegrationValidate.disabled = true;
-    // Content is snapshotted at submission; edits while a request is in
-    // flight would appear accepted but could never be included in that Apply.
-    lockEditorInputs(true);
+    setEditorBusy(edit, true);
     if (applying) {
       // A submitted cross-host mutation cannot reliably be cancelled. Keep
       // the dialog present until the server confirms its outcome and refresh.
@@ -571,10 +587,6 @@ export function createExecutorsController({
       });
       if (state.editor !== edit) return;
       if (action === "validate") { editorStatus("SKILL.md is valid.", "success"); return; }
-      elements.executorIntegrationCancel.disabled = false;
-      elements.executorIntegrationClose.disabled = false;
-      elements.executorIntegrationOwner.disabled = false;
-      lockEditorInputs(false);
       elements.executorIntegrationDialog.close();
       state.editor = null;
       if ((moving || action === "register" || action === "create") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
@@ -585,20 +597,31 @@ export function createExecutorsController({
       void loadSkillSources(true);
       return result;
     } catch (error) {
-      if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error), "error");
+      if (state.editor !== edit) return;
+      const code = error?.payload?.error;
+      if (moving && code === "MoveNeedsEnable") {
+        // Source was removed: do not offer Apply against a nonexistent source.
+        elements.executorIntegrationDialog.close();
+        state.editor = null;
+        if (destination.owner === "executor" && destination.executorId !== state.selectedId) {
+          state.detailTabs.set(destination.executorId, edit.kind === "skill" ? "skills" : "mcp");
+          select(destination.executorId);
+        }
+        void loadManagement(true);
+        void loadSkillSources(true);
+        notice(elements.executorActionStatus,
+          `${edit.kind === "skill" ? "Skill" : "MCP"} moved to ${destination.owner === "control" ? "Control" : "the destination Executor"}, but remains disabled. Manage it there to enable it${edit.kind === "skill" ? " (check destination-wide Skill settings if necessary)" : ""}.`, "warning");
+      } else {
+        if (moving && code === "MoveUncertain") edit.needsInspection = true;
+        editorStatus(edit.needsInspection
+          ? "Move outcome is uncertain. Inspect both locations before attempting another change; close this editor to refresh."
+          : error instanceof Error ? error.message : String(error), "error");
+      }
     } finally {
-      // A previous editor's request may finish after Cancel and a new Open.
-      // It must never unlock the new editor before its own GET completes.
+      // The old request must never unlock a newly opened editor.
       if (state.editor === edit) {
-        edit.busy = false;
-        elements.executorIntegrationSave.disabled = false;
-        elements.executorIntegrationToggle.disabled = false;
-        elements.executorIntegrationDelete.disabled = false;
-        elements.executorIntegrationValidate.disabled = false;
-        elements.executorIntegrationCancel.disabled = false;
-        elements.executorIntegrationClose.disabled = false;
-        elements.executorIntegrationOwner.disabled = false;
-        lockEditorInputs(false);
+        edit.applying = false;
+        setEditorBusy(edit, false);
       }
     }
   }
@@ -611,9 +634,10 @@ export function createExecutorsController({
 
   async function loadEditorAuth(edit) {
     if (edit.kind !== "mcp" || !edit.item) return;
+    const generation = edit.authGeneration = (edit.authGeneration || 0) + 1;
     try {
       const result = await request(authQuery(edit));
-      if (state.editor !== edit) return;
+      if (state.editor !== edit || edit.authGeneration !== generation) return;
       edit.authStatus = result;
       const status = result.auth || {};
       elements.executorMcpAuthStatus.hidden = status.status === "not_required";
@@ -634,6 +658,7 @@ export function createExecutorsController({
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "Remove";
+        remove.disabled = Boolean(edit.busy);
         remove.addEventListener("click", () => {
           if (globalThis.confirm(`Remove stored secret “${key}”?`)) void mutateAuth("delete_secret", {secret_name:key});
         });
@@ -647,7 +672,7 @@ export function createExecutorsController({
         list.append(empty);
       }
     } catch (error) {
-      if (state.editor === edit) {
+      if (state.editor === edit && edit.authGeneration === generation) {
         elements.executorMcpAuthStatus.hidden = false;
         notice(elements.executorMcpAuthStatus, error instanceof Error ? error.message : String(error), "error");
       }
@@ -656,10 +681,11 @@ export function createExecutorsController({
 
   async function mutateAuth(action, fields = {}) {
     const edit = state.editor;
-    if (!edit || edit.kind !== "mcp" || !edit.item) return;
+    if (!edit || edit.kind !== "mcp" || !edit.item || edit.busy) return;
     const body = {owner:edit.owner, executor_id:edit.executorId, name:edit.name, action, ...fields};
-    elements.executorMcpSecretSet.disabled = true;
-    elements.executorMcpOAuthClear.disabled = true;
+    // A previous auth read must not overwrite the mutation's new state.
+    edit.authGeneration = (edit.authGeneration || 0) + 1;
+    setEditorBusy(edit, true);
     try {
       const result = await request("/integrations/auth", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
       if (state.editor !== edit) return;
@@ -674,16 +700,15 @@ export function createExecutorsController({
     } finally {
       if (state.editor === edit) {
         elements.executorMcpSecretValue.value = "";
-        elements.executorMcpSecretSet.disabled = false;
-        elements.executorMcpOAuthClear.disabled = false;
+        setEditorBusy(edit, false);
       }
     }
   }
 
   async function testEditorMcp() {
     const edit = state.editor;
-    if (!edit || edit.kind !== "mcp" || !edit.item) return;
-    elements.executorIntegrationTest.disabled = true;
+    if (!edit || edit.kind !== "mcp" || !edit.item || edit.busy) return;
+    setEditorBusy(edit, true);
     notice(elements.executorIntegrationTestResult, "Testing saved MCP server…");
     try {
       const result = await request("/integrations/test", {
@@ -708,7 +733,7 @@ export function createExecutorsController({
     } catch (error) {
       if (state.editor === edit) notice(elements.executorIntegrationTestResult, error instanceof Error ? error.message : String(error), "error");
     } finally {
-      if (state.editor === edit) elements.executorIntegrationTest.disabled = false;
+      if (state.editor === edit) setEditorBusy(edit, false);
     }
   }
 
@@ -1081,7 +1106,7 @@ export function createExecutorsController({
     elements.executorIntegrationForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const edit = state.editor;
-      if (!edit) return;
+      if (!edit || edit.busy) return;
       try { void mutateEditor(edit.item ? "update" : (edit.kind === "skill" ? "create" : "register"), edit.kind === "mcp" ? editorConfig() : null); }
       catch (error) { editorStatus(error instanceof Error ? error.message : String(error), "error"); }
     });
@@ -1145,31 +1170,29 @@ export function createExecutorsController({
       });
     });
     async function executorAction(action) {
-      notice(elements.executorActionStatus, "");
       const executor = selectedExecutor();
       if (!executor || executor.revoked_at) return;
-      await request("/executors/" + action, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ executor_id: executor.executor_id }),
-      });
-      await refresh({ force: true });
+      const executorId = executor.executor_id;
       notice(elements.executorActionStatus, "");
-    }
-    elements.executorReset.addEventListener("click", () => {
-      void executorAction("reset").catch((error) => {
+      try {
+        await request("/executors/" + action, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ executor_id: executorId }),
+        });
+        await refresh({ force: true });
+        if (state.selectedId === executorId) notice(elements.executorActionStatus, "");
+      } catch (error) {
         if (error.authenticationRequired) void reloadApp();
-        else notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
-      });
-    });
+        else if (state.selectedId === executorId)
+          notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
+      }
+    }
+    elements.executorReset.addEventListener("click", () => void executorAction("reset"));
     elements.executorDrain.addEventListener("click", () => {
       const executor = selectedExecutor();
       if (!executor || executor.revoked_at) return;
-      const action = executor.draining ? "resume" : "drain";
-      void executorAction(action).catch((error) => {
-        if (error.authenticationRequired) void reloadApp();
-        else notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
-      });
+      void executorAction(executor.draining ? "resume" : "drain");
     });
     elements.executorRenameOpen.addEventListener("click", () => {
       const executor = selectedExecutor();
@@ -1195,7 +1218,8 @@ export function createExecutorsController({
         await refresh({ force: true });
       } catch (error) {
         if (error.authenticationRequired) void reloadApp();
-        else notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
+        else if (state.selectedId === executor.executor_id)
+          notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
       }
     });
     elements.executorRevokeOpen.addEventListener("click", () => {
@@ -1219,7 +1243,8 @@ export function createExecutorsController({
         await refresh({ force: true });
       } catch (error) {
         if (error.authenticationRequired) void reloadApp();
-        else notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
+        else if (state.selectedId === executor.executor_id)
+          notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
       }
     });
     for (const button of document.querySelectorAll("[data-close-executor-dialog]")) {

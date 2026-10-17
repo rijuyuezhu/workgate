@@ -246,3 +246,138 @@ def test_executor_offline_and_reconnect_notice_matrix(
     ).not_to_contain_text("Offline", timeout=20000)
     expect(page.locator("#executor-skills-body")).to_contain_text("Control")
     h.assert_clean_browser()
+
+
+def test_editor_operation_lock_and_partial_move_guidance(
+    browser_harness: BrowserHarness,
+):
+    """MCP Test/Auth/Apply never overlap; partial moves require explicit recovery."""
+    h = browser_harness
+    h.login()
+    h.wait_executor_online()
+    created = h.api(
+        "POST",
+        "/api/ui/integrations",
+        body={
+            "owner": "executor",
+            "executor_id": h.executor_id,
+            "kind": "mcp",
+            "action": "register",
+            "name": "locked-mcp",
+            "config": {"type": "stdio", "command": "echo"},
+        },
+    )
+    assert created["status"] == 200, created
+    page = h.page
+    page.goto(f"{h.base_url}/ui#executors")
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).click()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    row = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="locked-mcp"
+    )
+    row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-command")).to_have_value("echo")
+    owner = page.locator("#executor-integration-owner")
+    owner.select_option("control")
+    expect(page.locator("#executor-integration-toggle")).to_be_hidden()
+    owner.select_option("executor")
+    expect(page.locator("#executor-integration-toggle")).to_be_visible()
+    page.locator("#executor-mcp-secret-details summary").click()
+    page.evaluate("""() => {
+      const original = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (...args) => {
+        const path = String(args[0]);
+        const method = String(args[1]?.method || 'GET').toUpperCase();
+        return (path.includes('/integrations/test') ||
+          (path.includes('/integrations/auth') && method === 'POST'))
+          ? new Promise(resolve => setTimeout(() => resolve(original(...args)), 900))
+          : original(...args);
+      };
+    }""")
+    page.locator("#executor-integration-test").click()
+    for selector in [
+        "#executor-integration-save",
+        "#executor-integration-toggle",
+        "#executor-integration-delete",
+        "#executor-mcp-secret-set",
+        "#executor-integration-owner",
+    ]:
+        expect(page.locator(selector)).to_be_disabled()
+    expect(page.locator("#executor-integration-test-result")).to_contain_text(
+        "MCP unavailable", timeout=20000
+    )
+    expect(page.locator("#executor-integration-save")).to_be_enabled()
+    page.locator("#executor-mcp-secret-name").fill("test_key")
+    page.locator("#executor-mcp-secret-value").fill("test-value-private")
+    page.locator("#executor-mcp-secret-set").click()
+    for selector in [
+        "#executor-integration-save",
+        "#executor-integration-test",
+        "#executor-mcp-secret-set",
+        "#executor-integration-delete",
+    ]:
+        expect(page.locator(selector)).to_be_disabled()
+    expect(page.locator("#executor-integration-status")).to_contain_text(
+        "stored", timeout=15000
+    )
+    expect(page.locator("#executor-integration-save")).to_be_enabled()
+    # The custom display:block on a colored notice cannot override [hidden].
+    auth = page.locator("#executor-mcp-auth-status")
+    auth.evaluate("""el => {
+      el.classList.add('executor-notice'); el.textContent = 'should be hidden';
+      el.hidden = true;
+    }""")
+    expect(auth).to_be_hidden()
+    result_notice = page.locator("#executor-integration-test-result")
+    result_notice.evaluate("""el => {
+      el.hidden = true; el.classList.add('executor-notice');
+    }""")
+    expect(
+        result_notice
+    ).to_be_hidden()  # Also beats ID-specific display:block.
+
+    # The API has a structured partial-move code, not just a message string.
+    outcome = {"error": "MoveNeedsEnable"}
+
+    def mock_move(route):
+        route.fulfill(
+            status=503,
+            content_type="application/json",
+            body=__import__("json").dumps(
+                {
+                    "ok": False,
+                    "error": outcome["error"],
+                    "message": "Move needs manual inspection or enablement",
+                }
+            ),
+        )
+
+    page.route("**/api/ui/integrations/move", mock_move)
+    owner.select_option("control")
+    page.locator("#executor-integration-url").fill("https://example.org/mcp")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    assert_notice(page, "#executor-action-status", "warning", "!")
+    expect(page.locator("#executor-action-status")).to_contain_text(
+        "remains disabled"
+    )
+    # Unconfirmed source removal is different: block retries, retain Cancel.
+    row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-command")).to_have_value("echo")
+    owner.select_option("control")
+    page.locator("#executor-integration-url").fill("https://example.org/mcp")
+    outcome["error"] = "MoveUncertain"
+    page.locator("#executor-integration-save").click()
+    assert_notice(page, "#executor-integration-status", "error", "×")
+    expect(page.locator("#executor-integration-status")).to_contain_text(
+        "Inspect both locations"
+    )
+    expect(page.locator("#executor-integration-save")).to_be_disabled()
+    expect(page.locator("#executor-integration-url")).not_to_be_editable()
+    expect(page.locator("#executor-integration-cancel")).to_be_enabled()
+    page.locator("#executor-integration-cancel").click()
+    assert all("503" in error for error in h.console_errors), h.console_errors
+    h.console_errors.clear()
+    h.assert_clean_browser()
