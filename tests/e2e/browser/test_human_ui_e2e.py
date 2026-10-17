@@ -233,6 +233,59 @@ def test_executor_integration_management_real_chromium(
     browser_harness.assert_clean_browser()
 
 
+def test_control_skill_owner_in_existing_editor_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Control-wide SKILL.md CRUD uses the same Owner editor as Executor Skills."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    page = browser_harness.page
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{browser_harness.base_url}/ui#executors")
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
+    page.locator('[data-executor-subtab="skills"]').click()
+    page.locator("#executor-skills-add").click()
+    owner = page.locator("#executor-integration-owner")
+    expect(owner).to_be_enabled()
+    owner.select_option("control")
+    expect(page.locator("#executor-integration-mcp-fields")).to_be_hidden()
+    page.locator("#executor-integration-name").fill("browser-control-skill")
+    first = "---\ndescription: Shared Control helper\n---\n# Shared\n"
+    page.locator("#executor-integration-content").fill(first)
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    control_group = page.locator(
+        "#executor-skills-body .executor-manage-group"
+    ).filter(has=page.get_by_role("heading", name="Control", exact=True))
+    row = control_group.locator(".executor-manage-row").filter(
+        has_text="browser-control-skill"
+    )
+    expect(row).to_be_visible()
+    row.get_by_role("button", name="Manage").click()
+    expect(owner).to_have_value("control")
+    expect(owner).to_be_disabled()
+    expect(page.locator("#executor-integration-content")).to_have_value(first)
+    page.locator("#executor-integration-content").fill(first + "No copies.\n")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_have_value(
+        first + "No copies.\n"
+    )
+    page.locator("#executor-integration-toggle").click()
+    expect(row).to_contain_text("Disabled")
+    row.get_by_role("button", name="Manage").click()
+    page.locator("#executor-integration-toggle").click()
+    expect(row).to_contain_text("Enabled")
+    row.get_by_role("button", name="Manage").click()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(control_group).not_to_contain_text("browser-control-skill")
+    browser_harness.assert_clean_browser()
+
+
 def test_standalone_control_mcp_real_chromium(
     browser_harness: BrowserHarness,
 ) -> None:

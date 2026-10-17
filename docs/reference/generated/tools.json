@@ -35,15 +35,15 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "description": "Optional session id. Omit to list/activate Control-wide Skills without an Executor; pass it to resolve Project and Executor Skills first, then Control-wide fallback.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string, required)"
+                "note": "(string / null, optional)"
               }
             ]
           },
-          "Load one exact Skill from the executor-backed session registry used by list_agent_skills."
+          "Load the selected Skill from Control or a bound Session, respecting precedence."
         ],
         [
           {
@@ -145,15 +145,15 @@
           {
             "items": [
               {
-                "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "description": "Optional session id. Omit to list/activate Control-wide Skills without an Executor; pass it to resolve Project and Executor Skills first, then Control-wide fallback.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string, required)"
+                "note": "(string / null, optional)"
               }
             ]
           },
-          "List Skills in project/session, managed, then global priority order without loading instructions."
+          "List Control-wide Skills; with session, resolve Project and Executor sources first."
         ],
         [
           {
@@ -259,11 +259,11 @@
                 "note": "(string, required)"
               },
               {
-                "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
+                "description": "Optional session id. Omit to list/activate Control-wide Skills without an Executor; pass it to resolve Project and Executor Skills first, then Control-wide fallback.",
                 "head": {
                   "code": "session_id"
                 },
-                "note": "(string, required)"
+                "note": "(string / null, optional)"
               }
             ]
           },
@@ -2442,7 +2442,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Load one exact Skill from the executor-backed session registry used by list_agent_skills.",
+      "description": "Load the selected Skill from Control or a bound Session, respecting precedence.",
       "inputSchema": {
         "properties": {
           "name": {
@@ -2451,14 +2451,21 @@
             "type": "string"
           },
           "session_id": {
-            "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
-            "title": "Session Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional session id. Omit to list/activate Control-wide Skills without an Executor; pass it to resolve Project and Executor Skills first, then Control-wide fallback.",
+            "title": "Session Id"
           }
         },
         "required": [
-          "name",
-          "session_id"
+          "name"
         ],
         "title": "activate_agent_skillArguments",
         "type": "object"
@@ -7457,18 +7464,23 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "List Skills in project/session, managed, then global priority order without loading instructions.",
+      "description": "List Control-wide Skills; with session, resolve Project and Executor sources first.",
       "inputSchema": {
         "properties": {
           "session_id": {
-            "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
-            "title": "Session Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional session id. Omit to list/activate Control-wide Skills without an Executor; pass it to resolve Project and Executor Skills first, then Control-wide fallback.",
+            "title": "Session Id"
           }
         },
-        "required": [
-          "session_id"
-        ],
         "title": "list_agent_skillsArguments",
         "type": "object"
       },
@@ -8558,15 +8570,22 @@
             "type": "string"
           },
           "session_id": {
-            "description": "Required execution session id. The bound executor adds <workdir>/.agents/skills as the highest-priority source.",
-            "title": "Session Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional session id. Omit to list/activate Control-wide Skills without an Executor; pass it to resolve Project and Executor Skills first, then Control-wide fallback.",
+            "title": "Session Id"
           }
         },
         "required": [
           "name",
-          "path",
-          "session_id"
+          "path"
         ],
         "title": "read_agent_skill_fileArguments",
         "type": "object"

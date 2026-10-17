@@ -195,6 +195,8 @@ void (async () => {
     executorControlStandalone: document.getElementById("executor-control-standalone"),
     executorControlMcpAdd: document.getElementById("executor-control-mcp-add"),
     executorControlMcpBody: document.getElementById("executor-control-mcp-body"),
+    executorControlSkillsAdd: document.getElementById("executor-control-skills-add"),
+    executorControlSkillsBody: document.getElementById("executor-control-skills-body"),
     executorSkillsAdd: document.getElementById("executor-skills-add"),
     executorIntegrationDialog: document.getElementById("executor-integration-dialog"),
     executorIntegrationForm: document.getElementById("executor-integration-form"),

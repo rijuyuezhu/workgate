@@ -1,24 +1,39 @@
 """Control-owned Agent Bridge routing across network and executor-local transports."""
 
 import asyncio
+from dataclasses import asdict
 from typing import Any
 
 from ..agent_bridge.discovery import McpDiscovery
 from ..agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
 from ..agent_bridge.mcp import AgentMcpClientManager
-from ..agent_bridge.models import AgentCapabilityRegistry
+from ..agent_bridge.models import (
+    AgentCapabilityRegistry,
+    SkillScanResult,
+    SkillSource,
+)
 from ..agent_bridge.service import (
     build_network_agent_registry_from_settings,
     call_agent_mcp_tool_payload,
     list_agent_mcp_servers_payload,
     list_agent_mcp_tools_payload,
 )
+from ..agent_bridge.skills import (
+    DEFAULT_MAX_SKILLS,
+    activate_skill,
+    read_agent_skill_file,
+    scan_agent_skills,
+)
+from ..agent_bridge.state import load_agent_manifest
 from ..config.control import ControlConfig
 from ..errors import PublicToolValueError
 from ..schemas.result_models.agent import (
+    ActivateAgentSkillOutput,
     CallAgentMcpToolOutput,
     ListAgentMcpServersOutput,
     ListAgentMcpToolsOutput,
+    ListAgentSkillsOutput,
+    ReadAgentSkillFileOutput,
 )
 from .sessions import ControlSessionCoordinator
 
@@ -32,6 +47,119 @@ class ControlAgentBridgeService:
         self._settings = settings
         self._sessions = sessions
         self._discovery = McpDiscovery(self._discovery_rows)
+
+    def _control_skills(self) -> tuple[SkillSource, SkillScanResult]:
+        """Read only the Control-owned root, never an Executor's filesystem."""
+        manifest = load_agent_manifest(
+            self._settings.agent_config_dir, read_only=True
+        )
+        source = SkillSource(
+            "control",
+            self._settings.agent_config_dir,
+            manifest.data.skills.directory,
+        )
+        if manifest.status == "invalid_config":
+            return source, SkillScanResult(
+                warnings=["Control Skill manifest invalid"]
+            )
+        if not manifest.data.skills.enabled:
+            return source, SkillScanResult()
+        return source, scan_agent_skills(
+            source.config_dir,
+            source.directory,
+            source_name="control",
+            source_path=str(source.path),
+            excluded_names=frozenset(manifest.data.skills.disabled),
+        )
+
+    async def list_skills(
+        self, session_id: str | None
+    ) -> ListAgentSkillsOutput:
+        """Merge Session sources; support Control-only lookup without an Executor."""
+        executor = (
+            ListAgentSkillsOutput.model_validate(
+                await self._sessions.call_session_tool(
+                    "list_agent_skills", {"session_id": session_id}
+                )
+            )
+            if session_id is not None
+            else ListAgentSkillsOutput(sources=[], skills=[], warnings=[])
+        )
+        source, scan = await asyncio.to_thread(self._control_skills)
+        skills = list(executor.skills)
+        names = {row["name"] for row in skills}
+        warnings = list(executor.warnings)
+        for name, record in scan.skills.items():
+            if name in names:
+                if len(warnings) < 100:
+                    warnings.append(
+                        f"control: skipped duplicate Skill {name!r}; "
+                        "a higher-priority source already provides it"
+                    )
+            elif len(skills) < DEFAULT_MAX_SKILLS:
+                skills.append(asdict(record))
+            elif len(warnings) < 100:
+                warnings.append("Combined Skill list truncated")
+                break
+        warnings.extend(scan.warnings[: max(0, 100 - len(warnings))])
+        return ListAgentSkillsOutput(
+            sources=[*executor.sources, source.public_row()],
+            skills=skills,
+            warnings=warnings[:100],
+        )
+
+    async def _skill_owner(self, session_id: str | None, name: str):
+        """Resolve afresh under Session authority or Control-only scope."""
+        if session_id is not None:
+            executor = ListAgentSkillsOutput.model_validate(
+                await self._sessions.call_session_tool(
+                    "list_agent_skills", {"session_id": session_id}
+                )
+            )
+            if any(row["name"] == name for row in executor.skills):
+                return None
+        source, scan = await asyncio.to_thread(self._control_skills)
+        record = scan.skills.get(name)
+        if record is None:
+            raise ValueError(f"Unknown agent skill: {name}")
+        return source, record
+
+    async def activate_skill(
+        self, session_id: str | None, name: str
+    ) -> ActivateAgentSkillOutput:
+        selected = await self._skill_owner(session_id, name)
+        if selected is None:
+            payload = await self._sessions.call_session_tool(
+                "activate_agent_skill", {"session_id": session_id, "name": name}
+            )
+            return ActivateAgentSkillOutput.model_validate(payload)
+        source, record = selected
+        return ActivateAgentSkillOutput.model_validate(
+            await asyncio.to_thread(activate_skill, source.config_dir, record)
+        )
+
+    async def read_skill_file(
+        self, session_id: str | None, name: str, path: str
+    ) -> ReadAgentSkillFileOutput:
+        selected = await self._skill_owner(session_id, name)
+        if selected is None:
+            payload = await self._sessions.call_session_tool(
+                "read_agent_skill_file",
+                {"session_id": session_id, "name": name, "path": path},
+            )
+            return ReadAgentSkillFileOutput.model_validate(payload)
+        source, record = selected
+        return ReadAgentSkillFileOutput.model_validate(
+            await asyncio.to_thread(
+                read_agent_skill_file,
+                source.config_dir,
+                name,
+                path,
+                source.directory,
+                source_name="control",
+                source_path=str(source.path),
+            )
+        )
 
     def _network_registry(
         self,

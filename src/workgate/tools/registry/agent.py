@@ -23,6 +23,7 @@ from ...schemas.input_models.agent import (
     AgentSessionIdArg,
     AgentSkillFilePathArg,
     AgentSkillNameArg,
+    AgentSkillSessionIdArg,
     AgentToolArg,
     AgentToolArgsArg,
 )
@@ -73,9 +74,9 @@ async def agent_config_status() -> AgentConfigStatusOutput:
     annotations="read_only",
 )
 async def list_agent_skills(
-    session_id: AgentSessionIdArg,
+    session_id: AgentSkillSessionIdArg = None,
 ) -> ListAgentSkillsOutput:
-    """List Skills in project/session, managed, then global priority order without loading instructions."""
+    """List Control-wide Skills; with session, resolve Project and Executor sources first."""
     raise RuntimeError("list_agent_skills requires control executor routing")
 
 
@@ -85,9 +86,9 @@ async def list_agent_skills(
 )
 async def activate_agent_skill(
     name: AgentSkillNameArg,
-    session_id: AgentSessionIdArg,
+    session_id: AgentSkillSessionIdArg = None,
 ) -> ActivateAgentSkillOutput:
-    """Load one exact Skill from the executor-backed session registry used by list_agent_skills."""
+    """Load the selected Skill from Control or a bound Session, respecting precedence."""
     raise RuntimeError("activate_agent_skill requires control executor routing")
 
 
@@ -98,7 +99,7 @@ async def activate_agent_skill(
 async def read_agent_skill_file(
     name: AgentSkillNameArg,
     path: AgentSkillFilePathArg,
-    session_id: AgentSessionIdArg,
+    session_id: AgentSkillSessionIdArg = None,
 ) -> ReadAgentSkillFileOutput:
     """Read a bounded related file from the same selected Skill source; activate the Skill first."""
     raise RuntimeError(

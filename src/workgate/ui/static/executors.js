@@ -273,7 +273,7 @@ export function createExecutorsController({
     state.managementId = scope;
     state.management = null;
     renderManagement();
-    const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"]];
+    const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"], ["control", "skill"]];
     const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     const results = await Promise.all(sources.map(async ([owner, kind]) => {
       if (owner === "executor" && !online) return { error: "Offline" };
@@ -284,7 +284,7 @@ export function createExecutorsController({
       }
     }));
     if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
-    state.management = {control: results[0], executorMcp: results[1], skills: results[2]};
+    state.management = {control: results[0], executorMcp: results[1], skills: results[2], controlSkills: results[3]};
     renderManagement();
   }
 
@@ -295,7 +295,7 @@ export function createExecutorsController({
     skills.replaceChildren();
     const stateRows = (message) => [{ title: message, detail: "" }];
     const snap = state.management;
-    const renderGroup = (container, title, result, owner, kind) => {
+    const renderGroup = (container, title, result, owner, kind, shadowed = new Set()) => {
       if (!result || result.error) {
         addGroup(container, title, stateRows(result?.error || "Loading…"));
         return;
@@ -304,7 +304,7 @@ export function createExecutorsController({
       const rows = (Array.isArray(items) ? items : []).map((item) => ({
         title: item.name,
         detail: kind === "mcp" ? item.type : "SKILL.md",
-        status: item.enabled ? "Enabled" : "Disabled",
+        status: item.enabled ? (shadowed.has(item.name) ? "Overridden" : "Enabled") : "Disabled",
         manage: result.can_manage ? () => void openEditor({owner, kind, item}) : null,
       }));
       addGroup(container, title, rows.length ? rows : stateRows("None"));
@@ -329,8 +329,20 @@ export function createExecutorsController({
     const globalStatus = !selectedExecutor()?.online ? "Offline"
       : !globalsAvailable ? "Unavailable" : "None";
     addGroup(skills, "User Global", readOnly.length ? readOnly : stateRows(globalStatus));
+    // Control is the lowest-priority source; a same-name Executor or global
+    // Skill masks it. Project-specific overrides are resolved per Session.
+    const shadowed = new Set([
+      ...((snap?.skills?.skills || []).filter((skill) => skill.enabled).map((skill) => skill.name)),
+      ...(globalsAvailable ? (globalSkills?.selected || []).filter((skill) => skill.source === "global").map((skill) => skill.name) : []),
+    ]);
+    renderGroup(skills, "Control", snap?.controlSkills, "control", "skill", shadowed);
+    elements.executorControlSkillsBody.replaceChildren();
+    if (!selectedExecutor()) {
+      renderGroup(elements.executorControlSkillsBody, "Control", snap?.controlSkills, "control", "skill");
+    }
+    elements.executorControlSkillsAdd.disabled = !Boolean(snap?.controlSkills?.can_manage);
     const active = Boolean(snap?.skills?.can_manage && selectedExecutor()?.online);
-    elements.executorSkillsAdd.disabled = !active;
+    elements.executorSkillsAdd.disabled = !(active || snap?.controlSkills?.can_manage);
     elements.executorMcpAdd.disabled = !Boolean((snap?.control?.can_manage || snap?.executorMcp?.can_manage));
   }
 
@@ -351,7 +363,7 @@ export function createExecutorsController({
       option.disabled = disabled;
       field.append(option);
     };
-    add("control", "Control", edit.kind === "skill" || state.management?.control?.can_manage === false);
+    add("control", "Control", (edit.kind === "skill" ? state.management?.controlSkills : state.management?.control)?.can_manage === false);
     const current = state.selectedId;
     for (const executor of state.executors) {
       if (executor.revoked_at) continue;
@@ -360,7 +372,7 @@ export function createExecutorsController({
         !executor.online || (edit.kind !== "skill" && state.management?.executorMcp?.can_manage === false));
     }
     field.value = edit.owner === "control" ? "control" : (edit.executorId === current ? "executor" : `executor:${edit.executorId}`);
-    field.disabled = edit.kind === "skill";
+    field.disabled = edit.kind === "skill" && Boolean(edit.item);
   }
 
   function setEditorType() {
@@ -927,17 +939,21 @@ export function createExecutorsController({
 
   function bind() {
     elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
+    elements.executorControlSkillsAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "skill"}));
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
       const owner = selectedExecutor()?.online && state.management?.executorMcp?.can_manage
         ? "executor" : "control";
       void openEditor({owner, kind: "mcp"});
     });
-    elements.executorSkillsAdd.addEventListener("click", () => void openEditor({owner: "executor", kind: "skill"}));
+    elements.executorSkillsAdd.addEventListener("click", () => void openEditor({
+      owner: selectedExecutor()?.online && state.management?.skills?.can_manage ? "executor" : "control",
+      kind: "skill",
+    }));
     elements.executorIntegrationOwner.addEventListener("change", () => {
       // Existing entries retain their source owner until Apply completes.
       // New entries follow the selected location directly.
-      if (state.editor && !state.editor.item && state.editor.kind === "mcp") {
+      if (state.editor && !state.editor.item) {
         const destination = chosenLocation();
         state.editor.owner = destination.owner;
         state.editor.executorId = destination.executorId;

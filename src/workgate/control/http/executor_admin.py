@@ -17,6 +17,7 @@ from ...agent_bridge.management import (
     manage_mcp_manifest,
     test_mcp_connection,
 )
+from ...agent_bridge.skill_management import manage_skill
 from ...agent_bridge.state import load_agent_manifest
 from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
@@ -797,12 +798,6 @@ def executor_admin_routes(
                 "Unknown integration owner or kind",
                 status_code=400,
             )
-        if owner == "control" and kind == "skill":
-            return _json_error(
-                "UnsupportedScope",
-                "Control-wide Skill management follows #354",
-                status_code=400,
-            )
         if not isinstance(action, str) or action not in (
             {"list", "get", "register", "update", "enable", "disable", "remove"}
             if kind == "mcp"
@@ -874,38 +869,50 @@ def executor_admin_routes(
 
         try:
             if owner == "control":
-                if kind != "mcp":
-                    raise ValueError("Invalid integration scope")
-                mcp_config = (
-                    ManagedMcpConfig.model_validate(config)
-                    if config is not None
-                    else None
-                )
-                result = await asyncio.to_thread(
-                    manage_mcp_manifest,
-                    runtime.config.agent_config_dir,
-                    action,
-                    name=name,
-                    config=mcp_config,
-                    owner_type="network",
-                    auth_dir=runtime.config.agent_auth_dir,
-                    expected_revision=revision,
-                )
-                if action == "get" and isinstance(name, str):
-                    manifest = load_agent_manifest(
-                        runtime.config.agent_config_dir
+                if kind == "skill":
+                    result = await asyncio.to_thread(
+                        manage_skill,
+                        runtime.config.agent_config_dir,
+                        action,
+                        name=name,
+                        content=content,
+                        expected_revision=revision,
                     )
-                    current = manifest.data.mcp_servers[name]
-                    try:
-                        result["editable_config"] = (
-                            ManagedMcpConfig.model_validate(
-                                current.model_dump(mode="json", by_alias=True)
-                            ).model_dump(
-                                mode="json", by_alias=True, exclude_none=True
-                            )
+                else:
+                    mcp_config = (
+                        ManagedMcpConfig.model_validate(config)
+                        if config is not None
+                        else None
+                    )
+                    result = await asyncio.to_thread(
+                        manage_mcp_manifest,
+                        runtime.config.agent_config_dir,
+                        action,
+                        name=name,
+                        config=mcp_config,
+                        owner_type="network",
+                        auth_dir=runtime.config.agent_auth_dir,
+                        expected_revision=revision,
+                    )
+                    if action == "get" and isinstance(name, str):
+                        manifest = load_agent_manifest(
+                            runtime.config.agent_config_dir
                         )
-                    except ValidationError:
-                        result["requires_replacement"] = True
+                        current = manifest.data.mcp_servers[name]
+                        try:
+                            result["editable_config"] = (
+                                ManagedMcpConfig.model_validate(
+                                    current.model_dump(
+                                        mode="json", by_alias=True
+                                    )
+                                ).model_dump(
+                                    mode="json",
+                                    by_alias=True,
+                                    exclude_none=True,
+                                )
+                            )
+                        except ValidationError:
+                            result["requires_replacement"] = True
             else:
                 args: dict[str, Any] = {"action": action}
                 if name is not None:

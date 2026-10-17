@@ -22,6 +22,16 @@ AgentMcpSessionIdArg = Annotated[
         )
     ),
 ]
+AgentSkillSessionIdArg = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Optional session id. Omit to list/activate Control-wide Skills "
+            "without an Executor; pass it to resolve Project and Executor "
+            "Skills first, then Control-wide fallback."
+        )
+    ),
+]
 AgentSkillNameArg = Annotated[
     str, Field(description="Exact skill name returned by list_agent_skills.")
 ]

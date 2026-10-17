@@ -216,6 +216,16 @@ class ControlToolRouter:
                     args.get("include_full_payloads", False)
                 ),
             )
+        if tool_name == "list_agent_skills":
+            return await self._agent_bridge.list_skills(args.get("session_id"))
+        if tool_name == "activate_agent_skill":
+            return await self._agent_bridge.activate_skill(
+                args.get("session_id"), str(args["name"])
+            )
+        if tool_name == "read_agent_skill_file":
+            return await self._agent_bridge.read_skill_file(
+                args.get("session_id"), str(args["name"]), str(args["path"])
+            )
         if tool_name == "list_agent_mcp_servers":
             return await self._agent_bridge.list_servers(args.get("session_id"))
         if tool_name == "search_agent_mcp_tools":
