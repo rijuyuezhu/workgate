@@ -1,11 +1,24 @@
 """Moving MCP ownership from the existing editor in one Apply transaction."""
 
+from dataclasses import replace
+
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.support.paired import build_paired_http_app
 from workgate.config.settings import Settings
 
 BASE = "https://workgate.example"
+
+
+def isolate_agent_configs(harness, root):
+    """Never run a test against the developer's real Control/Executor MCP manifest."""
+    harness.control.config = replace(
+        harness.control.config, agent_config_dir=root / "control-agent"
+    )
+    harness.executor.config = replace(
+        harness.executor.config, agent_config_dir=root / "executor-agent"
+    )
 
 
 def test_mcp_location_apply_control_executor_roundtrip(tmp_path):
@@ -20,6 +33,7 @@ def test_mcp_location_apply_control_executor_roundtrip(tmp_path):
             agent_bridge_enabled=True,
         )
     )
+    isolate_agent_configs(harness, tmp_path)
 
     def get(client, owner, name):
         r = client.get(
@@ -191,7 +205,6 @@ def test_mcp_location_apply_control_executor_roundtrip(tmp_path):
 
 def test_move_between_two_executor_hosts(tmp_path):
     """Both sides execute their own manifest RPC, not a Control-side copy."""
-    from dataclasses import replace
     from typing import Any, cast
 
     from pydantic import JsonValue, TypeAdapter
@@ -218,6 +231,7 @@ def test_move_between_two_executor_hosts(tmp_path):
         base_url=BASE,
     )
     app, harness = build_paired_http_app(settings)
+    isolate_agent_configs(harness, tmp_path)
     second_settings = settings.model_copy(
         update={"state_dir": tmp_path / "second-executor"}
     )
@@ -344,8 +358,11 @@ def test_move_between_two_executor_hosts(tmp_path):
         ]
 
 
-def test_source_remove_conflict_rolls_back_target(tmp_path, monkeypatch):
-    """An actual source CAS failure must not leave a duplicate MCP active."""
+@pytest.mark.parametrize("destination_edited", [False, True])
+def test_source_remove_conflict_rolls_back_target(
+    tmp_path, monkeypatch, destination_edited
+):
+    """Rollback deletes only the original staged revision, not later edits."""
     from workgate.control.http import executor_admin
 
     project = tmp_path / "project"
@@ -357,6 +374,7 @@ def test_source_remove_conflict_rolls_back_target(tmp_path, monkeypatch):
         base_url=BASE,
     )
     app, harness = build_paired_http_app(settings)
+    isolate_agent_configs(harness, tmp_path)
     with TestClient(app, base_url=BASE) as client:
         registered = client.post(
             "/api/ui/integrations",
@@ -382,6 +400,28 @@ def test_source_remove_conflict_rolls_back_target(tmp_path, monkeypatch):
 
         def race(config_dir, action, *, name=None, **kwargs):
             if action == "remove" and name == "cas-failure":
+                if destination_edited:
+                    from workgate.agent_bridge.management import (
+                        ManagedMcpConfig,
+                    )
+
+                    destination = harness.executor.config.agent_config_dir
+                    row = original(
+                        destination, "get", name=name, owner_type="stdio"
+                    )["server"]
+                    original(
+                        destination,
+                        "update",
+                        name=name,
+                        owner_type="stdio",
+                        expected_revision=row["revision"],
+                        config=ManagedMcpConfig(
+                            type="stdio",
+                            command="printf",
+                            enabled=False,
+                            integrationId=row["integrationId"],
+                        ),
+                    )
                 raise ValueError("source revision changed")
             return original(config_dir, action, name=name, **kwargs)
 
@@ -397,19 +437,21 @@ def test_source_remove_conflict_rolls_back_target(tmp_path, monkeypatch):
                 "config": {"type": "stdio", "command": "echo"},
             },
         )
-        assert reply.status_code == 409, reply.text
-        assert reply.json()["message"].endswith("rolled back")
-        assert (
-            client.get(
-                "/api/ui/integrations",
-                params={
-                    "owner": "executor",
-                    "executor_id": harness.executor_id,
-                    "kind": "mcp",
-                },
-            ).json()["data"]["servers"]
-            == []
+        assert reply.status_code == (503 if destination_edited else 409), (
+            reply.text
         )
+        assert (
+            "manual cleanup" if destination_edited else "rolled back"
+        ) in reply.json()["message"]
+        rows = client.get(
+            "/api/ui/integrations",
+            params={
+                "owner": "executor",
+                "executor_id": harness.executor_id,
+                "kind": "mcp",
+            },
+        ).json()["data"]["servers"]
+        assert len(rows) == (1 if destination_edited else 0)
         assert (
             len(
                 client.get(

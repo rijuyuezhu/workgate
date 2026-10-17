@@ -630,20 +630,20 @@ def executor_admin_routes(
         # Fresh target identity prevents accidental reuse of owner-private OAuth
         # tokens or credentials when the original source is left behind.
         config_data = body.config.model_dump(mode="json", by_alias=True)
-        config_data["integrationId"] = (
-            "ui-" + uuid.uuid4().hex
-            if (body.config.integration_id or body.config.auth.mode == "oauth")
-            else None
-        )
+        config_data["integrationId"] = "ui-" + uuid.uuid4().hex
         enabled = bool(body.config.enabled)
         config_data["enabled"] = False
         staged = ManagedMcpConfig.model_validate(config_data)
 
+        staged_revision: str | None = None
+
         async def rollback() -> bool:
+            if staged_revision is None:
+                return False
             try:
-                row = await op(*target, "get")
-                revision = row["server"]["revision"]
-                await op(*target, "remove", revision=revision)
+                # Only delete our own untouched staged entry. Another admin may
+                # have edited or replaced the target while the move was running.
+                await op(*target, "remove", revision=staged_revision)
                 return True
             except (
                 ValueError,
@@ -664,6 +664,10 @@ def executor_admin_routes(
                     status_code=409,
                 )
             await op(*target, "register", config=staged)
+            staged_row = (await op(*target, "get"))["server"]
+            if staged_row["integrationId"] != staged.integration_id:
+                raise ConnectionError("Staged MCP identity changed")
+            staged_revision = staged_row["revision"]
         except ValueError, KeyError, ValidationError:
             return _json_error(
                 "MoveRejected",
