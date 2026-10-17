@@ -375,6 +375,8 @@ export function createExecutorsController({
     const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
     elements.executorMcpAuthManagement.hidden = skill || !editing.item || moving;
     elements.executorIntegrationTestWrap.hidden = skill || !editing.item || moving;
+    elements.executorIntegrationUrl.required = !skill && owner === "control";
+    elements.executorIntegrationCommand.required = !skill && owner === "executor";
     if (skill) return;
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
