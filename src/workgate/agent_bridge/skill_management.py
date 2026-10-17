@@ -12,7 +12,7 @@ import stat
 import uuid
 from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 
@@ -22,9 +22,6 @@ from .models import AgentBridgeManifest
 from .skills import validate_skill_name
 from .state import load_agent_manifest
 
-SkillAction = Literal[
-    "list", "get", "create", "update", "enable", "disable", "delete", "validate"
-]
 MAX_SKILL_CONTENT_BYTES = 128 * 1024
 MAX_MANAGED_SKILLS = 256
 
