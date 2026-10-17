@@ -23,10 +23,14 @@ def test_public_discovery_refreshes_after_webui_mcp_management(tmp_path):
         )
     )
     harness.control.config = replace(
-        harness.control.config, agent_config_dir=tmp_path / "control-agent"
+        harness.control.config,
+        agent_config_dir=tmp_path / "control-agent",
+        agent_auth_dir=tmp_path / "control-auth",
     )
     harness.executor.config = replace(
-        harness.executor.config, agent_config_dir=tmp_path / "executor-agent"
+        harness.executor.config,
+        agent_config_dir=tmp_path / "executor-agent",
+        agent_auth_dir=tmp_path / "executor-auth",
     )
     bridge = harness.control.agent_bridge
     bridge._settings = harness.control.config
