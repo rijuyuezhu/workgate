@@ -23,6 +23,8 @@ async def test_session_bound_public_entrypoints_require_control_routing() -> (
     with pytest.raises(RuntimeError, match="control executor routing"):
         await public_agent.activate_agent_skill.func("foo", session_id)
     with pytest.raises(RuntimeError, match="control executor routing"):
+        await public_agent.manage_agent_skill.func(session_id, "list")
+    with pytest.raises(RuntimeError, match="control executor routing"):
         await public_agent.read_agent_skill_file.func(
             "foo", "readme.md", session_id
         )

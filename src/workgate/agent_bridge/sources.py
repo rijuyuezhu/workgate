@@ -72,6 +72,7 @@ def scan_skill_sources(
     max_scan_entries: int,
     max_path_bytes: int,
     max_entry_bytes: int,
+    disabled_managed: frozenset[str] = frozenset(),
 ) -> SkillScanResult:
     """Merge ordered Skill sources under one shared set of registry budgets."""
     skill_limit = max(0, int(max_skills))
@@ -105,6 +106,9 @@ def scan_skill_sources(
             max_scan_entries=remaining_scan_entries,
             max_path_bytes=remaining_path_bytes,
             max_entry_bytes=max_entry_bytes,
+            excluded_names=disabled_managed
+            if source.name == "managed"
+            else frozenset(),
         )
 
         scanned_entries += result.scanned_entries

@@ -152,6 +152,7 @@ def build_agent_registry(
             max_scan_entries=max_skill_scan_entries,
             max_path_bytes=max_skill_path_bytes,
             max_entry_bytes=max_skill_entry_bytes,
+            disabled_managed=frozenset(manifest.data.skills.disabled),
         )
 
     mcp_servers: dict[str, AgentMcpServerRecord] = {}

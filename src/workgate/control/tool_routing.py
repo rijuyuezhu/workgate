@@ -40,6 +40,7 @@ _AGENT_MCP_CONTROL_TOOLS = frozenset(
         "inspect_agent_mcp_tool",
         "call_agent_mcp_tool",
         "manage_agent_mcp_server",
+        "manage_agent_skill",
     }
 )
 
@@ -237,6 +238,17 @@ class ControlToolRouter:
                 str(args["tool"]),
                 dict(args.get("args") or {}),
                 args.get("session_id"),
+            )
+        if tool_name == "manage_agent_skill":
+            return await self._sessions.call_session_tool(
+                "agent_skill.manage",
+                {
+                    "session_id": str(args["session_id"]),
+                    "action": str(args["action"]),
+                    "name": args.get("name"),
+                    "content": args.get("content"),
+                    "expected_revision": args.get("expected_revision"),
+                },
             )
         if tool_name == "manage_agent_mcp_server":
             try:

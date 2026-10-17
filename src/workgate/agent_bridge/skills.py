@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .models import SkillRecord, SkillScanResult
+from .models import SkillRecord, SkillScanResult, validate_skill_name
 
 DEFAULT_MAX_SKILLS = 256
 DEFAULT_MAX_RELATED_FILES = 1_000
@@ -30,29 +30,6 @@ def _relative_posix(base: Path, path: Path) -> str:
 def _is_relative_child_path(value: Path) -> bool:
     """Accept only relative child paths so skill references cannot escape their root."""
     return not value.is_absolute() and ".." not in value.parts
-
-
-def validate_skill_name(name: str) -> str:
-    """Validate a portable immediate-child directory name used as a Skill identifier."""
-    if not isinstance(name, str):
-        raise ValueError("Skill name must be a string")
-    if not name:
-        raise ValueError("Skill name must not be empty")
-    if name != name.strip():
-        raise ValueError(
-            "Skill name must not have leading or trailing whitespace"
-        )
-    if name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError("Skill name must be a single directory name")
-    if len(name) > 255:
-        raise ValueError("Skill name must be at most 255 characters")
-    if any(ord(character) < 32 or ord(character) == 127 for character in name):
-        raise ValueError("Skill name must not contain control characters")
-    try:
-        name.encode("utf-8")
-    except UnicodeEncodeError as exc:
-        raise ValueError("Skill name must be valid UTF-8") from exc
-    return name
 
 
 def validate_skill_file_path(path: str) -> Path:
@@ -453,6 +430,7 @@ def scan_agent_skills(
     max_scan_entries: int = DEFAULT_MAX_SCAN_ENTRIES,
     max_path_bytes: int = DEFAULT_MAX_PATH_BYTES,
     max_entry_bytes: int = DEFAULT_MAX_ENTRY_BYTES,
+    excluded_names: frozenset[str] = frozenset(),
 ) -> SkillScanResult:
     """Discover bounded valid Markdown Skills and report malformed entries as warnings."""
     try:
@@ -505,7 +483,10 @@ def scan_agent_skills(
                         warnings, f"Skipping skill {entry.name!r}: {exc}"
                     )
                     continue
-                if not stat.S_ISDIR(entry_stat.st_mode):
+                if (
+                    not stat.S_ISDIR(entry_stat.st_mode)
+                    or entry.name in excluded_names
+                ):
                     continue
                 candidates.append(entry.name)
     except OSError as exc:

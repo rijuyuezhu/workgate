@@ -20,6 +20,29 @@ SENSITIVE_KEY_PATTERN = (
 SENSITIVE_KEY_RE = re.compile(SENSITIVE_KEY_PATTERN, re.I)
 
 
+def validate_skill_name(name: str) -> str:
+    """Validate a portable immediate-child directory name used as a Skill identifier."""
+    if not isinstance(name, str):
+        raise ValueError("Skill name must be a string")
+    if not name:
+        raise ValueError("Skill name must not be empty")
+    if name != name.strip():
+        raise ValueError(
+            "Skill name must not have leading or trailing whitespace"
+        )
+    if name in {".", ".."} or "/" in name or "\\" in name:
+        raise ValueError("Skill name must be a single directory name")
+    if len(name) > 255:
+        raise ValueError("Skill name must be at most 255 characters")
+    if any(ord(character) < 32 or ord(character) == 127 for character in name):
+        raise ValueError("Skill name must not contain control characters")
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("Skill name must be valid UTF-8") from exc
+    return name
+
+
 class AgentSecretReference(BaseModel):
     """Reference to a value held in the private Agent Bridge credential store."""
 
@@ -154,6 +177,17 @@ class AgentSkillsConfig(BaseModel):
     """Whether Markdown skill discovery is enabled."""
     directory: str = "skills"
     """Directory, relative to the agent config directory, containing skills."""
+    disabled: list[str] = Field(default_factory=list)
+    """Names disabled only in the managed source, not across other scopes."""
+
+    @field_validator("disabled")
+    @classmethod
+    def valid_disabled_names(cls, names: list[str]) -> list[str]:
+        if len(names) > 256 or len(set(names)) != len(names):
+            raise ValueError("Disabled Skill names must be unique and bounded")
+        for name in names:
+            validate_skill_name(name)
+        return names
 
 
 class AgentBridgeManifest(BaseModel):
