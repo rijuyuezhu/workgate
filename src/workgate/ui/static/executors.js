@@ -385,8 +385,8 @@ export function createExecutorsController({
     elements.executorIntegrationCommandWrap.hidden = owner !== "executor";
     elements.executorIntegrationArgsWrap.hidden = owner !== "executor";
     if (moving) editorStatus(owner === editing.owner
-      ? "Apply changes its Executor; private credentials stay at the original location."
-      : "Apply changes location and connection type; credentials must be reconfigured.");
+      ? "Apply changes its Executor; secrets remain on the original host."
+      : "Apply changes location and connection type; auth must be reconfigured.");
     else if (editing.item && elements.executorIntegrationStatus.textContent.startsWith("Apply changes")) editorStatus("");
   }
 
