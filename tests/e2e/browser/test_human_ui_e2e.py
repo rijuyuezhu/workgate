@@ -63,6 +63,9 @@ def test_executor_mcp_auth_real_chromium(
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-add")).to_be_enabled()
     page.locator("#executor-mcp-add").click()
+    expect(page.locator("#executor-integration-owner")).to_have_value(
+        "executor"
+    )
     page.locator("#executor-integration-owner").select_option("executor")
     page.locator("#executor-integration-name").fill("browser-auth-local")
     page.locator("#executor-integration-command").fill("echo")
@@ -74,9 +77,8 @@ def test_executor_mcp_auth_real_chromium(
     expect(row).to_be_visible()
     row.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-mcp-auth-management")).to_be_visible()
-    expect(page.locator("#executor-mcp-auth-status")).to_contain_text(
-        "not_required"
-    )
+    expect(page.locator("#executor-mcp-auth-status")).to_be_hidden()
+    page.locator("#executor-mcp-secret-details summary").click()
     page.locator("#executor-mcp-secret-name").fill("api_token")
     page.locator("#executor-mcp-secret-value").fill(
         "DO_NOT_ECHO_BROWSER_293747"
@@ -279,6 +281,70 @@ def test_standalone_control_mcp_real_chromium(
         "document.documentElement.scrollWidth <= innerWidth + 1"
     )
     page.unroute("**/api/ui/executors", empty_inventory)
+    browser_harness.assert_clean_browser()
+
+
+def test_mcp_location_apply_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Editing Owner + Apply migrates one MCP; no separate Move dialog."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    page = browser_harness.page
+    page.set_viewport_size({"width": 1320, "height": 900})
+    page.goto(f"{browser_harness.base_url}/ui#executors")
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    page.locator("#executor-mcp-add").click()
+    page.locator("#executor-integration-owner").select_option("executor")
+    page.locator("#executor-integration-name").fill("browser-relocate")
+    page.locator("#executor-integration-command").fill("echo")
+    page.locator("#executor-integration-save").click()
+    local = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="browser-relocate"
+    )
+    expect(local).to_be_visible()
+    local.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-owner")).to_be_enabled()
+    page.locator("#executor-integration-owner").select_option("control")
+    expect(page.locator("#executor-integration-url")).to_be_visible()
+    page.locator("#executor-integration-url").fill("https://example.org/mcp")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    remote = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="browser-relocate"
+    )
+    expect(remote).to_be_visible()
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-group").filter(
+            has_text="Control"
+        )
+    ).to_contain_text("browser-relocate")
+    remote.get_by_role("button", name="Manage").click()
+    page.locator("#executor-integration-owner").select_option("executor")
+    expect(page.locator("#executor-integration-command")).to_be_visible()
+    page.locator("#executor-integration-command").fill("printf")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    local = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="browser-relocate"
+    )
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-group").filter(
+            has_text="Executor"
+        )
+    ).to_contain_text("browser-relocate")
+    local.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-command")).to_have_value(
+        "printf"
+    )
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(page.locator("#executor-mcp-body")).not_to_contain_text(
+        "browser-relocate"
+    )
     browser_harness.assert_clean_browser()
 
 

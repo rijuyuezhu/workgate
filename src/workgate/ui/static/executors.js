@@ -334,25 +334,60 @@ export function createExecutorsController({
     elements.executorMcpAdd.disabled = !Boolean((snap?.control?.can_manage || snap?.executorMcp?.can_manage));
   }
 
+  // Existing Location selector: Control, current Executor, and other online Executors.
+  function chosenLocation() {
+    const value = elements.executorIntegrationOwner.value;
+    return value === "control" ? {owner: "control", executorId: null}
+      : {owner: "executor", executorId: value.startsWith("executor:") ? value.slice(9) : state.selectedId};
+  }
+
+  function populateLocations(edit) {
+    const field = elements.executorIntegrationOwner;
+    field.replaceChildren();
+    const add = (value, label, disabled = false) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.disabled = disabled;
+      field.append(option);
+    };
+    add("control", "Control", edit.kind === "skill" || state.management?.control?.can_manage === false);
+    const current = state.selectedId;
+    for (const executor of state.executors) {
+      if (executor.revoked_at) continue;
+      const value = executor.executor_id === current ? "executor" : `executor:${executor.executor_id}`;
+      add(value, `Executor · ${executor.name || executor.executor_id}`,
+        !executor.online || (edit.kind !== "skill" && state.management?.executorMcp?.can_manage === false));
+    }
+    field.value = edit.owner === "control" ? "control" : (edit.executorId === current ? "executor" : `executor:${edit.executorId}`);
+    field.disabled = edit.kind === "skill";
+  }
+
   function setEditorType() {
     const editing = state.editor;
     if (!editing) return;
     const skill = editing.kind === "skill";
-    const owner = elements.executorIntegrationOwner.value;
+    const target = chosenLocation();
+    const owner = target.owner;
     elements.executorIntegrationMcpFields.hidden = skill;
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
-    elements.executorMcpAuthManagement.hidden = skill || !editing.item;
-    elements.executorIntegrationTestWrap.hidden = skill || !editing.item;
+    const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
+    elements.executorMcpAuthManagement.hidden = skill || !editing.item || moving;
+    elements.executorIntegrationTestWrap.hidden = skill || !editing.item || moving;
+    elements.executorIntegrationUrl.required = !skill && owner === "control";
+    elements.executorIntegrationCommand.required = !skill && owner === "executor";
     if (skill) return;
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
     elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
-    elements.executorIntegrationTransport.value = owner === "control" ? "http" : "stdio";
-    elements.executorIntegrationTransport.disabled = true;
     elements.executorIntegrationUrlWrap.hidden = owner !== "control";
     elements.executorIntegrationCommandWrap.hidden = owner !== "executor";
     elements.executorIntegrationArgsWrap.hidden = owner !== "executor";
+    if (moving) editorStatus(owner === editing.owner
+      ? "Move to another Executor; secrets stay at the source."
+      : "Move to a new location; configure auth on the target.");
+    else if (editing.item && elements.executorIntegrationStatus.textContent.startsWith("Apply changes")) editorStatus("");
   }
 
   function editorStatus(message) {
@@ -368,13 +403,8 @@ export function createExecutorsController({
     elements.executorIntegrationTitle.textContent = `${item ? "Edit" : "Add"} ${kind === "skill" ? "Skill" : "MCP server"}`;
     elements.executorIntegrationName.value = edit.name;
     elements.executorIntegrationSave.disabled = Boolean(item);
-    for (const option of elements.executorIntegrationOwner.options) {
-      option.disabled = kind === "mcp" && !Boolean(option.value === "control"
-        ? state.management?.control?.can_manage : state.management?.executorMcp?.can_manage);
-    }
+    populateLocations(edit);
     elements.executorIntegrationName.readOnly = Boolean(item);
-    elements.executorIntegrationOwner.value = owner;
-    elements.executorIntegrationOwner.disabled = Boolean(item) || kind === "skill";
     elements.executorIntegrationContent.value = "";
     elements.executorIntegrationArgs.value = "[]";
     elements.executorIntegrationAdvanced.value = "{}";
@@ -382,13 +412,15 @@ export function createExecutorsController({
     elements.executorIntegrationOAuthScopes.value = "";
     elements.executorMcpSecretName.value = "";
     elements.executorMcpSecretValue.value = "";
+    elements.executorMcpSecretDetails.open = false;
     elements.executorMcpSecretList.replaceChildren();
-    elements.executorMcpAuthStatus.textContent = "Loading auth status…";
+    elements.executorMcpAuthStatus.hidden = true;
+    elements.executorMcpAuthStatus.textContent = "";
     elements.executorIntegrationTestResult.textContent = "";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
     elements.executorIntegrationToggle.textContent = edit.enabled ? "Disable" : "Enable";
-    elements.executorIntegrationSave.textContent = item ? "Save changes" : "Create";
+    elements.executorIntegrationSave.textContent = item ? "Apply changes" : "Create";
     editorStatus(item ? "Loading current configuration…" : "");
     setEditorType();
     elements.executorIntegrationDialog.showModal();
@@ -411,10 +443,10 @@ export function createExecutorsController({
         elements.executorIntegrationAdvanced.value = JSON.stringify(advanced, null, 2);
         elements.executorIntegrationAuthMode.value = config.auth?.mode || "none";
         elements.executorIntegrationOAuthScopes.value = (config.auth?.scopes || []).join(" ");
-        setEditorType();
         void loadEditorAuth(edit);
       }
       editorStatus("");
+      setEditorType();
       elements.executorIntegrationSave.disabled = false;
     } catch (error) {
       editorStatus(error instanceof Error ? error.message : String(error));
@@ -425,6 +457,9 @@ export function createExecutorsController({
   async function mutateEditor(action, config = null) {
     const edit = state.editor;
     if (!edit) return;
+    const destination = chosenLocation();
+    const moving = Boolean(edit.item && edit.kind === "mcp" && action === "update"
+      && (edit.owner !== destination.owner || (edit.owner === "executor" && destination.executorId !== edit.executorId)));
     const body = {owner: edit.owner, kind: edit.kind, action,
                   executor_id: edit.executorId, name: elements.executorIntegrationName.value.trim()};
     if (edit.kind === "skill") {
@@ -435,11 +470,26 @@ export function createExecutorsController({
     elements.executorIntegrationToggle.disabled = true;
     elements.executorIntegrationDelete.disabled = true;
     try {
-      const result = await request("/integrations", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+      const payload = moving ? {
+        owner: edit.owner,
+        executor_id: edit.owner === "executor" ? edit.executorId : null,
+        destination_owner: destination.owner,
+        destination_executor_id: destination.executorId,
+        name: body.name,
+        expected_revision: edit.revision,
+        config,
+      } : body;
+      const result = await request(moving ? "/integrations/move" : "/integrations", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+      });
       if (state.editor !== edit) return;
       if (action === "validate") { editorStatus("SKILL.md is valid."); return; }
       elements.executorIntegrationDialog.close();
       state.editor = null;
+      if ((moving || action === "register") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
+        state.detailTabs.set(destination.executorId, "mcp");
+        select(destination.executorId);
+      }
       await loadManagement(true);
       void loadSkillSources(true);
       return result;
@@ -465,6 +515,7 @@ export function createExecutorsController({
       if (state.editor !== edit) return;
       edit.authStatus = result;
       const status = result.auth || {};
+      elements.executorMcpAuthStatus.hidden = status.status === "not_required";
       elements.executorMcpAuthStatus.textContent = `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` · expires ${new Date(status.expires_at * 1000).toLocaleString()}` : ""}`;
       const list = elements.executorMcpSecretList;
       list.replaceChildren();
@@ -491,7 +542,10 @@ export function createExecutorsController({
         list.append(empty);
       }
     } catch (error) {
-      if (state.editor === edit) elements.executorMcpAuthStatus.textContent = error instanceof Error ? error.message : String(error);
+      if (state.editor === edit) {
+        elements.executorMcpAuthStatus.hidden = false;
+        elements.executorMcpAuthStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
@@ -556,11 +610,12 @@ export function createExecutorsController({
     if (!advanced || Array.isArray(advanced) || typeof advanced !== "object") throw new Error("Advanced settings must be an object.");
     if (Object.keys(advanced).some((key) => !["env", "headers", "integrationId"].includes(key))) throw new Error("Advanced settings may contain only env, headers and integrationId.");
     const mode = elements.executorIntegrationAuthMode.value;
-    if (mode === "oauth" && edit.owner !== "control") throw new Error("OAuth requires a network HTTP MCP server.");
-    const config = { type: edit.owner === "control" ? "http" : "stdio", ...advanced,
+    const targetOwner = chosenLocation().owner;
+    if (mode === "oauth" && targetOwner !== "control") throw new Error("OAuth requires a network HTTP MCP server.");
+    const config = { type: targetOwner === "control" ? "http" : "stdio", ...advanced,
       enabled: edit.item ? edit.enabled : true,
       auth: {mode, scopes: mode === "oauth" ? [...new Set(elements.executorIntegrationOAuthScopes.value.trim().split(/\s+/).filter(Boolean))] : []} };
-    if (edit.owner === "control") config.url = elements.executorIntegrationUrl.value.trim();
+    if (targetOwner === "control") config.url = elements.executorIntegrationUrl.value.trim();
     else {
       config.command = elements.executorIntegrationCommand.value.trim();
       try { config.args = JSON.parse(elements.executorIntegrationArgs.value || "[]"); }
@@ -874,13 +929,18 @@ export function createExecutorsController({
     elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
-      const owner = state.management?.control?.can_manage ? "control" : "executor";
+      const owner = selectedExecutor()?.online && state.management?.executorMcp?.can_manage
+        ? "executor" : "control";
       void openEditor({owner, kind: "mcp"});
     });
     elements.executorSkillsAdd.addEventListener("click", () => void openEditor({owner: "executor", kind: "skill"}));
     elements.executorIntegrationOwner.addEventListener("change", () => {
+      // Existing entries retain their source owner until Apply completes.
+      // New entries follow the selected location directly.
       if (state.editor && !state.editor.item && state.editor.kind === "mcp") {
-        state.editor.owner = elements.executorIntegrationOwner.value;
+        const destination = chosenLocation();
+        state.editor.owner = destination.owner;
+        state.editor.executorId = destination.executorId;
       }
       setEditorType();
     });

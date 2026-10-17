@@ -30,6 +30,20 @@ from ..pairing import (
 )
 
 
+class _IntegrationMoveBody(BaseModel):
+    """Source identity stays fixed; edited config and target are applied together."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: Literal["control", "executor"]
+    executor_id: str | None = Field(default=None, max_length=128)
+    destination_owner: Literal["control", "executor"]
+    destination_executor_id: str | None = Field(default=None, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    expected_revision: str = Field(min_length=64, max_length=64)
+    config: ManagedMcpConfig
+
+
 class _IntegrationAuthBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -512,6 +526,228 @@ def executor_admin_routes(
                 status_code=503,
             )
 
+    async def integration_move(request: Request) -> Response:
+        """Apply edited MCP configuration and a new owner, then retire the source.
+
+        Different hosts do not share a filesystem or transaction coordinator.
+        A new entry is registered disabled; on a definite source conflict the
+        destination is rolled back. Uncertain outcomes are reported for recovery
+        rather than blindly deleting the only remaining copy.
+        """
+        try:
+            require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            body = _IntegrationMoveBody.model_validate(await request.json())
+        except ValidationError, ValueError, TypeError:
+            return _json_error(
+                "InvalidMove", "Invalid MCP movement fields", status_code=400
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+
+        async def op(
+            owner: str,
+            executor_id: str | None,
+            action: str,
+            *,
+            config: ManagedMcpConfig | None = None,
+            revision: str | None = None,
+        ) -> dict[str, Any]:
+            if owner == "executor":
+                record = runtime.control_state.snapshot_executors().get(
+                    executor_id or ""
+                )
+                if record is None or record.revoked_at is not None:
+                    raise ValueError("Unknown target or source Executor")
+                if not await runtime.executor_transport.is_online(
+                    record.executor_id
+                ):
+                    raise ConnectionError("Executor offline")
+                args: dict[str, Any] = {"action": action, "name": body.name}
+                if config is not None:
+                    args["config"] = config.model_dump(
+                        mode="json", by_alias=True, exclude_none=True
+                    )
+                if revision is not None:
+                    args["expected_revision"] = revision
+                response = await runtime.executor_transport.call(
+                    record.executor_id,
+                    "ui.mcp.manage",
+                    args,
+                    timeout_s=12,
+                )
+                if not response.ok or not isinstance(response.result, dict):
+                    raise ValueError(f"Executor rejected MCP {action}")
+                return response.result
+            return await asyncio.to_thread(
+                manage_mcp_manifest,
+                runtime.config.agent_config_dir,
+                action,
+                name=body.name,
+                config=config,
+                owner_type="network",
+                auth_dir=runtime.config.agent_auth_dir,
+                expected_revision=revision,
+            )
+
+        source = (
+            body.owner,
+            body.executor_id if body.owner == "executor" else None,
+        )
+        target = (
+            body.destination_owner,
+            body.destination_executor_id
+            if body.destination_owner == "executor"
+            else None,
+        )
+        if source == target:
+            return _json_error(
+                "SameLocation", "Use the ordinary Save action", status_code=400
+            )
+        if body.config.type != ("http" if target[0] == "control" else "stdio"):
+            return _json_error(
+                "InvalidTransport",
+                "MCP connection type must match the new location",
+                status_code=400,
+            )
+        # A server's secret references are local to its source owner. Do not
+        # silently ship secrets/tokens through Control, or install dead refs.
+        if (
+            body.config.auth.mode == "secret"
+            or body.config.env
+            or body.config.headers
+        ):
+            return _json_error(
+                "CredentialMoveUnsupported",
+                "Remove private credential references before moving; configure them on the destination after Apply",
+                status_code=409,
+            )
+        # Fresh target identity prevents accidental reuse of owner-private OAuth
+        # tokens or credentials when the original source is left behind.
+        config_data = body.config.model_dump(mode="json", by_alias=True)
+        config_data["integrationId"] = "ui-" + uuid.uuid4().hex
+        enabled = bool(body.config.enabled)
+        config_data["enabled"] = False
+        staged = ManagedMcpConfig.model_validate(config_data)
+
+        staged_revision: str | None = None
+
+        async def rollback() -> bool:
+            if staged_revision is None:
+                return False
+            try:
+                # Only delete our own untouched staged entry. Another admin may
+                # have edited or replaced the target while the move was running.
+                await op(*target, "remove", revision=staged_revision)
+                return True
+            except (
+                ValueError,
+                KeyError,
+                RuntimeError,
+                TimeoutError,
+                OSError,
+                ConnectionError,
+            ):
+                return False
+
+        try:
+            before = await op(*source, "get")
+            if before["server"]["revision"] != body.expected_revision:
+                return _json_error(
+                    "SourceChanged",
+                    "Source MCP changed; reload before Apply",
+                    status_code=409,
+                )
+            await op(*target, "register", config=staged)
+            staged_row = (await op(*target, "get"))["server"]
+            if staged_row["integrationId"] != staged.integration_id:
+                raise ConnectionError("Staged MCP identity changed")
+            staged_revision = staged_row["revision"]
+        except ValueError, KeyError, ValidationError:
+            return _json_error(
+                "MoveRejected",
+                "Source changed or target name already exists",
+                status_code=409,
+            )
+        except TimeoutError, OSError, RuntimeError, ConnectionError:
+            return _json_error(
+                "MoveUnavailable",
+                "Source or destination unavailable; reload both locations",
+                status_code=503,
+            )
+
+        try:
+            await op(*source, "remove", revision=body.expected_revision)
+        except ValueError, KeyError:
+            recovered = await rollback()
+            return _json_error(
+                "SourceChanged",
+                "Source changed; target rolled back"
+                if recovered
+                else "Source changed; target may require manual cleanup",
+                status_code=409 if recovered else 503,
+            )
+        except TimeoutError, OSError, RuntimeError, ConnectionError:
+            # A remote removal might have committed before losing its reply.
+            # Deleting the destination here could lose the MCP permanently.
+            audit(
+                "integration_move_uncertain",
+                name=body.name,
+                source=source[0],
+                destination=target[0],
+            )
+            return _json_error(
+                "MoveUncertain",
+                "Source removal unconfirmed; inspect both locations before retry",
+                status_code=503,
+            )
+
+        if enabled:
+            try:
+                staged_row = await op(*target, "get")
+                await op(
+                    *target, "enable", revision=staged_row["server"]["revision"]
+                )
+            except (
+                ValueError,
+                KeyError,
+                RuntimeError,
+                TimeoutError,
+                OSError,
+                ConnectionError,
+            ):
+                audit(
+                    "integration_move_partial",
+                    name=body.name,
+                    source=source[0],
+                    destination=target[0],
+                )
+                return _json_error(
+                    "MoveNeedsEnable",
+                    "MCP moved but remains disabled; enable it at the destination",
+                    status_code=503,
+                )
+        audit(
+            "integration_move",
+            name=body.name,
+            source=source[0],
+            destination=target[0],
+            source_executor_id=source[1],
+            destination_executor_id=target[1],
+        )
+        return _json_ok(
+            {
+                "name": body.name,
+                "moved": True,
+                "reauthorization_required": body.config.auth.mode != "none",
+            }
+        )
+
     async def integrations(request: Request) -> Response:
         """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
         _require_executor_admin_scope()
@@ -784,6 +1020,11 @@ def executor_admin_routes(
         Route(api_prefix + "/executors", executors, methods=["GET"]),
         Route(
             api_prefix + "/integrations", integrations, methods=["GET", "POST"]
+        ),
+        Route(
+            api_prefix + "/integrations/move",
+            integration_move,
+            methods=["POST"],
         ),
         Route(
             api_prefix + "/integrations/auth",
