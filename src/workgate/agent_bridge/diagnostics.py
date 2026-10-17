@@ -16,6 +16,10 @@ def manifest_diagnostics(
     """Report manifest validity and locally owned MCP entries only."""
     try:
         path = config_dir / "config.json"
+        # Reject symlinks before inspecting file metadata; a read-only status
+        # endpoint should not traverse an arbitrary target even for its size.
+        if config_dir.is_symlink() or path.is_symlink():
+            return {"status": "invalid_config", "errors": 1, "servers": []}
         if path.exists() and path.stat().st_size > 1_048_576:
             return {"status": "unavailable", "errors": 1, "servers": []}
         loaded = load_agent_manifest(config_dir, read_only=True)

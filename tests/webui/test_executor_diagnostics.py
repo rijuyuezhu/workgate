@@ -86,6 +86,12 @@ def test_diagnostic_reads_never_chmod_or_follow_symlink(tmp_path):
     result = manifest_diagnostics(source, owner="executor")
     assert result["status"] == "invalid_config"
     assert "PRIVATE_VALUE" not in json.dumps(result)
+    # Even a symlink to an oversized target is rejected before size checks.
+    secret_file.write_bytes(b"PRIVATE_VALUE" * 100_000)
+    assert (
+        manifest_diagnostics(source, owner="executor")["status"]
+        == "invalid_config"
+    )
     (source / "config.json").unlink()
     (source / "config.json").write_bytes(b"x" * 1_048_577)
     assert (

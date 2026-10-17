@@ -43,6 +43,20 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator('[data-executor-subtab="overview"]')).to_have_attribute(
         "aria-selected", "true"
     )
+    # ARIA tabs must also be operable with the keyboard, not only clicks.
+    page.locator('[data-executor-subtab="overview"]').focus()
+    page.keyboard.press("ArrowRight")
+    expect(page.locator('[data-executor-subtab="mcp"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
+    page.keyboard.press("End")
+    expect(page.locator('[data-executor-subtab="skills"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
+    page.keyboard.press("Home")
+    expect(page.locator('[data-executor-subtab="overview"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Executor")

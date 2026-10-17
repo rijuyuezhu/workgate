@@ -604,8 +604,19 @@ export function createExecutorsController({
   }
 
   function bind() {
-    for (const button of elements.executorSubtabs) {
+    const tabs = elements.executorSubtabs;
+    for (const [index, button] of tabs.entries()) {
       button.addEventListener("click", () => setSubtab(button.dataset.executorSubtab));
+      button.addEventListener("keydown", (event) => {
+        const next = event.key === "ArrowRight" ? (index + 1) % tabs.length
+          : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
+          : event.key === "Home" ? 0
+          : event.key === "End" ? tabs.length - 1 : null;
+        if (next === null) return;
+        event.preventDefault();
+        setSubtab(tabs[next].dataset.executorSubtab);
+        tabs[next].focus();
+      });
     }
     elements.executorPairOpen.addEventListener("click", () => {
       clearPairReview();
