@@ -379,14 +379,12 @@ export function createExecutorsController({
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
     elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
-    elements.executorIntegrationTransport.value = owner === "control" ? "http" : "stdio";
-    elements.executorIntegrationTransport.disabled = true;
     elements.executorIntegrationUrlWrap.hidden = owner !== "control";
     elements.executorIntegrationCommandWrap.hidden = owner !== "executor";
     elements.executorIntegrationArgsWrap.hidden = owner !== "executor";
     if (moving) editorStatus(owner === editing.owner
-      ? "Apply changes its Executor; secrets remain on the original host."
-      : "Apply changes location and connection type; auth must be reconfigured.");
+      ? "Move to another Executor; secrets stay at the source."
+      : "Move to a new location; configure auth on the target.");
     else if (editing.item && elements.executorIntegrationStatus.textContent.startsWith("Apply changes")) editorStatus("");
   }
 
@@ -412,8 +410,10 @@ export function createExecutorsController({
     elements.executorIntegrationOAuthScopes.value = "";
     elements.executorMcpSecretName.value = "";
     elements.executorMcpSecretValue.value = "";
+    elements.executorMcpSecretDetails.open = false;
     elements.executorMcpSecretList.replaceChildren();
-    elements.executorMcpAuthStatus.textContent = "Loading auth status…";
+    elements.executorMcpAuthStatus.hidden = true;
+    elements.executorMcpAuthStatus.textContent = "";
     elements.executorIntegrationTestResult.textContent = "";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
@@ -485,6 +485,7 @@ export function createExecutorsController({
       elements.executorIntegrationDialog.close();
       state.editor = null;
       if ((moving || action === "register") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
+        state.detailTabs.set(destination.executorId, "mcp");
         select(destination.executorId);
       }
       await loadManagement(true);
@@ -512,6 +513,7 @@ export function createExecutorsController({
       if (state.editor !== edit) return;
       edit.authStatus = result;
       const status = result.auth || {};
+      elements.executorMcpAuthStatus.hidden = status.status === "not_required";
       elements.executorMcpAuthStatus.textContent = `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` · expires ${new Date(status.expires_at * 1000).toLocaleString()}` : ""}`;
       const list = elements.executorMcpSecretList;
       list.replaceChildren();
@@ -538,7 +540,10 @@ export function createExecutorsController({
         list.append(empty);
       }
     } catch (error) {
-      if (state.editor === edit) elements.executorMcpAuthStatus.textContent = error instanceof Error ? error.message : String(error);
+      if (state.editor === edit) {
+        elements.executorMcpAuthStatus.hidden = false;
+        elements.executorMcpAuthStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
@@ -922,7 +927,8 @@ export function createExecutorsController({
     elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
-      const owner = state.management?.control?.can_manage ? "control" : "executor";
+      const owner = selectedExecutor()?.online && state.management?.executorMcp?.can_manage
+        ? "executor" : "control";
       void openEditor({owner, kind: "mcp"});
     });
     elements.executorSkillsAdd.addEventListener("click", () => void openEditor({owner: "executor", kind: "skill"}));

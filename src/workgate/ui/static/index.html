@@ -261,7 +261,6 @@
         <label>Name <input id="executor-integration-name" maxlength="128" required spellcheck="false" autocomplete="off" placeholder="integration-name"></label>
         <div id="executor-integration-mcp-fields">
           <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control · Network</option></select></label>
-          <label>Transport <select id="executor-integration-transport"><option value="stdio">stdio · Local process</option><option value="http">HTTP · Network</option></select></label>
           <label id="executor-integration-url-wrap">Server URL <input id="executor-integration-url" type="url" placeholder="https://example.org/mcp" autocomplete="off"></label>
           <label id="executor-integration-command-wrap">Command <input id="executor-integration-command" placeholder="/usr/bin/server" spellcheck="false"></label>
           <fieldset class="executor-mcp-auth-settings">
@@ -272,12 +271,15 @@
             </div>
             <div id="executor-mcp-auth-management" hidden>
               <p id="executor-mcp-auth-status" class="muted" role="status">Loading authentication status…</p>
-              <div id="executor-mcp-secret-list" class="executor-auth-secret-list"></div>
-              <div class="executor-auth-secret-add">
-                <label>Secret name <input id="executor-mcp-secret-name" autocomplete="off" spellcheck="false" placeholder="api_token" maxlength="128"></label>
-                <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Not displayed after saving"></label>
-                <button id="executor-mcp-secret-set" type="button">Store secret</button>
-              </div>
+              <details id="executor-mcp-secret-details" class="executor-integration-advanced">
+                <summary>Stored secrets</summary>
+                <div id="executor-mcp-secret-list" class="executor-auth-secret-list"></div>
+                <div class="executor-auth-secret-add">
+                  <label>Secret name <input id="executor-mcp-secret-name" autocomplete="off" spellcheck="false" placeholder="api_token" maxlength="128"></label>
+                  <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Not displayed after saving"></label>
+                  <button id="executor-mcp-secret-set" type="button">Store secret</button>
+                </div>
+              </details>
               <div id="executor-mcp-oauth-actions" hidden>
                 <p class="muted">Authorize on host: <code>workgate mcp auth SERVER</code></p>
                 <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth credentials</button>

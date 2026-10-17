@@ -63,6 +63,9 @@ def test_executor_mcp_auth_real_chromium(
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-add")).to_be_enabled()
     page.locator("#executor-mcp-add").click()
+    expect(page.locator("#executor-integration-owner")).to_have_value(
+        "executor"
+    )
     page.locator("#executor-integration-owner").select_option("executor")
     page.locator("#executor-integration-name").fill("browser-auth-local")
     page.locator("#executor-integration-command").fill("echo")
@@ -74,9 +77,8 @@ def test_executor_mcp_auth_real_chromium(
     expect(row).to_be_visible()
     row.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-mcp-auth-management")).to_be_visible()
-    expect(page.locator("#executor-mcp-auth-status")).to_contain_text(
-        "not_required"
-    )
+    expect(page.locator("#executor-mcp-auth-status")).to_be_hidden()
+    page.locator("#executor-mcp-secret-details summary").click()
     page.locator("#executor-mcp-secret-name").fill("api_token")
     page.locator("#executor-mcp-secret-value").fill(
         "DO_NOT_ECHO_BROWSER_293747"
