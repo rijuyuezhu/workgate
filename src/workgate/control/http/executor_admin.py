@@ -443,6 +443,8 @@ def executor_admin_routes(
                 if not response.ok or not isinstance(response.result, dict):
                     raise ValueError("Executor rejected MCP auth request")
                 result = response.result
+            if request.method == "POST" and result.get("changed") is True:
+                runtime.agent_bridge.invalidate_all_discovery()
             if request.method == "POST":
                 audit(
                     "integration_auth_management",
@@ -565,6 +567,8 @@ def executor_admin_routes(
                 "Unavailable", "Control unavailable", status_code=503
             )
 
+        attempted_write = False
+
         async def op(
             owner: str,
             executor_id: str | None,
@@ -573,6 +577,7 @@ def executor_admin_routes(
             config: ManagedMcpConfig | None = None,
             revision: str | None = None,
         ) -> dict[str, Any]:
+            nonlocal attempted_write
             if owner == "executor":
                 record = runtime.control_state.snapshot_executors().get(
                     executor_id or ""
@@ -590,6 +595,8 @@ def executor_admin_routes(
                     )
                 if revision is not None:
                     args["expected_revision"] = revision
+                if action != "get":
+                    attempted_write = True
                 response = await runtime.executor_transport.call(
                     record.executor_id,
                     "ui.mcp.manage",
@@ -598,17 +605,23 @@ def executor_admin_routes(
                 )
                 if not response.ok or not isinstance(response.result, dict):
                     raise ValueError(f"Executor rejected MCP {action}")
-                return response.result
-            return await asyncio.to_thread(
-                manage_mcp_manifest,
-                runtime.config.agent_config_dir,
-                action,
-                name=body.name,
-                config=config,
-                owner_type="network",
-                auth_dir=runtime.config.agent_auth_dir,
-                expected_revision=revision,
-            )
+                result = response.result
+            else:
+                if action != "get":
+                    attempted_write = True
+                result = await asyncio.to_thread(
+                    manage_mcp_manifest,
+                    runtime.config.agent_config_dir,
+                    action,
+                    name=body.name,
+                    config=config,
+                    owner_type="network",
+                    auth_dir=runtime.config.agent_auth_dir,
+                    expected_revision=revision,
+                )
+            if action != "get":
+                runtime.agent_bridge.invalidate_all_discovery()
+            return result
 
         source = (
             body.owner,
@@ -690,6 +703,10 @@ def executor_admin_routes(
                 status_code=409,
             )
         except TimeoutError, OSError, RuntimeError, ConnectionError:
+            # Reading an unavailable source changes nothing; a timed-out write
+            # may have committed remotely despite the missing acknowledgement.
+            if attempted_write:
+                runtime.agent_bridge.invalidate_all_discovery()
             return _json_error(
                 "MoveUnavailable",
                 "Source or destination unavailable; reload both locations",
@@ -710,6 +727,7 @@ def executor_admin_routes(
         except TimeoutError, OSError, RuntimeError, ConnectionError:
             # A remote removal might have committed before losing its reply.
             # Deleting the destination here could lose the MCP permanently.
+            runtime.agent_bridge.invalidate_all_discovery()
             audit(
                 "integration_move_uncertain",
                 name=body.name,
@@ -736,6 +754,7 @@ def executor_admin_routes(
                 OSError,
                 ConnectionError,
             ):
+                runtime.agent_bridge.invalidate_all_discovery()
                 audit(
                     "integration_move_partial",
                     name=body.name,
@@ -1145,6 +1164,8 @@ def executor_admin_routes(
                     result = {**result, "can_manage": True}
                 except MissingOAuthScopeError:
                     result = {**result, "can_manage": False}
+            if request.method == "POST" and kind == "mcp":
+                runtime.agent_bridge.invalidate_all_discovery()
             if request.method == "POST":
                 audit(
                     "integration_management",
