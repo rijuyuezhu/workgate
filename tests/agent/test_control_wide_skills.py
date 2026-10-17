@@ -214,3 +214,89 @@ async def test_control_skills_visible_to_multiple_session_executors(
     assert (
         await bridge2.activate_skill(SESSION, "control-only")
     ).source == "control"
+
+
+def test_public_control_skill_tools_across_real_paired_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HTTP/MCP ToolRouter → real session → Executor, then Control fallback."""
+    from fastapi.testclient import TestClient
+
+    from tests.support.paired import build_paired_http_app
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-home"))
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        agent_bridge_enabled=True,
+        base_url="https://workgate.example",
+    )
+    app, harness = build_paired_http_app(settings)
+    install(settings.agent_config_dir / "skills", "tiered", "control")
+    install(settings.agent_config_dir / "skills", "control-fallback", "control")
+    install(
+        harness.executor.config.agent_config_dir / "skills",
+        "tiered",
+        "executor",
+    )
+    install(project / ".agents" / "skills", "tiered", "project")
+
+    with TestClient(app, base_url="https://workgate.example") as client:
+
+        def invoke(tool: str, data: dict):
+            response = client.post(f"/tools/{tool}", json=data)
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert payload.get("isError") is not True, payload
+            return payload["structuredContent"]
+
+        standalone = invoke("list_agent_skills", {})
+        assert {row["name"] for row in standalone["skills"]} == {
+            "tiered",
+            "control-fallback",
+        }
+        assert {row["source"] for row in standalone["skills"]} == {"control"}
+        sid = invoke(
+            "session_start",
+            {"executor_id": harness.executor_id, "workdir": str(project)},
+        )["session_id"]
+        effective = invoke("list_agent_skills", {"session_id": sid})
+        assert {row["name"]: row["source"] for row in effective["skills"]} == {
+            "tiered": "project",
+            "control-fallback": "control",
+        }
+        selected = invoke(
+            "activate_agent_skill", {"name": "tiered", "session_id": sid}
+        )
+        assert selected["source"] == "project"
+        assert "# project" in selected["content"]
+        fallback = invoke(
+            "activate_agent_skill",
+            {"name": "control-fallback", "session_id": sid},
+        )
+        assert fallback["source"] == "control"
+        related = invoke(
+            "read_agent_skill_file",
+            {"name": "control-fallback", "path": "guide.md", "session_id": sid},
+        )
+        assert related["source"] == "control"
+        assert related["content"] == "Guide from control\n"
+        no_session = invoke("activate_agent_skill", {"name": "tiered"})
+        assert no_session["source"] == "control"
+        assert "# control" in no_session["content"]
+        # A provided but invalid Session must not silently drop to Control.
+        denied = client.post(
+            "/tools/activate_agent_skill",
+            json={"name": "control-fallback", "session_id": "sess_invalid"},
+        )
+        assert denied.status_code >= 400 or denied.json().get("isError") is True
+        outside = client.post(
+            "/tools/read_agent_skill_file",
+            json={"name": "control-fallback", "path": "../outside.md"},
+        )
+        assert (
+            outside.status_code >= 400 or outside.json().get("isError") is True
+        )
