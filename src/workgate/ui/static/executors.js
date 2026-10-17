@@ -1102,7 +1102,16 @@ export function createExecutorsController({
     elements.executorIntegrationDialog.addEventListener("cancel", (event) => {
       if (state.editor?.busy && state.editor.applying) event.preventDefault();
     });
-    elements.executorIntegrationDialog.addEventListener("close", () => { state.editor = null; elements.executorMcpSecretValue.value = ""; elements.executorIntegrationSave.disabled = false; });
+    elements.executorIntegrationDialog.addEventListener("close", () => {
+      const inspect = Boolean(state.editor?.needsInspection);
+      state.editor = null;
+      elements.executorMcpSecretValue.value = "";
+      elements.executorIntegrationSave.disabled = false;
+      if (inspect) {
+        void loadManagement(true);
+        void loadSkillSources(true);
+      }
+    });
     elements.executorIntegrationForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const edit = state.editor;

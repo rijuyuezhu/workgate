@@ -377,7 +377,16 @@ def test_editor_operation_lock_and_partial_move_guidance(
     expect(page.locator("#executor-integration-save")).to_be_disabled()
     expect(page.locator("#executor-integration-url")).not_to_be_editable()
     expect(page.locator("#executor-integration-cancel")).to_be_enabled()
+    page.evaluate("""() => {
+      globalThis.__postMoveReads = 0;
+      const previous = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (...args) => {
+        if (String(args[0]).includes('/integrations?')) globalThis.__postMoveReads++;
+        return previous(...args);
+      };
+    }""")
     page.locator("#executor-integration-cancel").click()
+    page.wait_for_function("globalThis.__postMoveReads > 0")
     assert all("503" in error for error in h.console_errors), h.console_errors
     h.console_errors.clear()
     h.assert_clean_browser()
