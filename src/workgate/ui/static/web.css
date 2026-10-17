@@ -3188,6 +3188,8 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 #executors-panel .executor-diagnostics-body[hidden] { display: none !important; }
 /* Executor management workspace: a quiet selector + one readable work area. */
+#executors-panel .executor-control-standalone { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+#executors-panel .executor-control-standalone[hidden] { display: none !important; }
 #executors-panel .executors-layout { min-height: 430px; }
 #executors-panel .executor-list { padding: 10px 8px; gap: 3px; background: #fafbfe; }
 #executors-panel .executor-band {

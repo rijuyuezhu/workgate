@@ -330,7 +330,12 @@ class ExecutorRuntime:
             from .diagnostics import executor_diagnostics
 
             return await asyncio.to_thread(executor_diagnostics, self.config)
-        if command.op in {"ui.mcp.auth", "ui.mcp.manage", "ui.skill.manage"}:
+        if command.op in {
+            "ui.mcp.auth",
+            "ui.mcp.manage",
+            "ui.mcp.test",
+            "ui.skill.manage",
+        }:
             if command.session_id is not None:
                 raise ValueError(
                     "Executor administration cannot be session-bound"

@@ -289,9 +289,11 @@ export function createExecutorsController({
       ? "On-demand snapshot · does not probe MCP servers"
       : "Executor offline or diagnostics unavailable";
     if (!local || !selectedExecutor()?.online) return;
+    const scan = local.skills || {};
     addGroup(body, "Agent Bridge", [
-      {title: "Manifest", detail: local.bridge?.status || "Unavailable"},
-      {title: "Agent runtime", detail: "Health not reported separately"},
+      {title: "Executor manifest", detail: local.bridge?.status || "Unavailable"},
+      {title: "Control manifest", detail: data.control_mcp?.status || "Unavailable"},
+      {title: "Skills scan", detail: scan.unavailable ? "Unavailable" : `${scan.warnings || 0} warnings · ${scan.duplicates || 0} overridden`},
     ]);
   }
 
@@ -304,9 +306,10 @@ export function createExecutorsController({
 
   async function loadManagement(force = false) {
     const executorId = state.selectedId;
-    if (!executorId || (state.managementId === executorId && !force)) return;
+    const scope = executorId || "__control__";
+    if (state.managementId === scope && !force) return;
     const generation = ++state.managementGeneration;
-    state.managementId = executorId;
+    state.managementId = scope;
     state.management = null;
     renderManagement();
     const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"]];
@@ -347,6 +350,12 @@ export function createExecutorsController({
     };
     renderGroup(mcp, "Executor · Local", snap?.executorMcp, "executor", "mcp");
     renderGroup(mcp, "Control · Network", snap?.control, "control", "mcp");
+    elements.executorControlStandalone.hidden = Boolean(selectedExecutor());
+    elements.executorControlMcpBody.replaceChildren();
+    if (!selectedExecutor()) {
+      renderGroup(elements.executorControlMcpBody, "Control · Network", snap?.control, "control", "mcp");
+    }
+    elements.executorControlMcpAdd.disabled = !Boolean(snap?.control?.can_manage);
     renderGroup(skills, "Executor-managed", snap?.skills, "executor", "skill");
     const globalsAvailable = Boolean(selectedExecutor()?.online && state.diagnostic?.status === "available" && state.diagnosticId === state.selectedId);
     const globalSkills = state.diagnostic?.executor?.skills;
@@ -377,6 +386,7 @@ export function createExecutorsController({
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
     elements.executorMcpAuthManagement.hidden = skill || !editing.item;
+    elements.executorIntegrationTestWrap.hidden = skill || !editing.item;
     if (skill) return;
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
@@ -393,7 +403,7 @@ export function createExecutorsController({
   }
 
   async function openEditor({owner, kind, item = null}) {
-    if (!selectedExecutor()) return;
+    if (!selectedExecutor() && owner !== "control") return;
     state.editor = { owner, kind, executorId: state.selectedId, name: item?.name || "", revision: item?.revision || "", item,
                      enabled: item?.enabled !== false };
     const edit = state.editor;
@@ -417,6 +427,7 @@ export function createExecutorsController({
     elements.executorMcpSecretValue.value = "";
     elements.executorMcpSecretList.replaceChildren();
     elements.executorMcpAuthStatus.textContent = "Loading auth status…";
+    elements.executorIntegrationTestResult.textContent = "Tests the saved server only when requested; does not call tools.";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
     elements.executorIntegrationToggle.textContent = edit.enabled ? "Disable" : "Enable";
@@ -545,6 +556,37 @@ export function createExecutorsController({
       elements.executorMcpSecretValue.value = "";
       elements.executorMcpSecretSet.disabled = false;
       elements.executorMcpOAuthClear.disabled = false;
+    }
+  }
+
+  async function testEditorMcp() {
+    const edit = state.editor;
+    if (!edit || edit.kind !== "mcp" || !edit.item) return;
+    elements.executorIntegrationTest.disabled = true;
+    elements.executorIntegrationTestResult.textContent = "Testing saved MCP server…";
+    try {
+      const result = await request("/integrations/test", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({owner: edit.owner, executor_id: edit.executorId, name: edit.name}),
+      });
+      if (state.editor !== edit) return;
+      const tools = Array.isArray(result.tools) ? result.tools : [];
+      elements.executorIntegrationTestResult.replaceChildren();
+      const summary = document.createElement("p");
+      summary.textContent = result.status === "available"
+        ? `Available · ${tools.length} discovered tools (none were called)`
+        : `MCP ${result.status || "unavailable"} · check the owning host`;
+      elements.executorIntegrationTestResult.append(summary);
+      for (const tool of tools) {
+        const line = document.createElement("div");
+        line.textContent = `${tool.name}${tool.description ? ` · ${tool.description}` : ""}`;
+        elements.executorIntegrationTestResult.append(line);
+      }
+    } catch (error) {
+      if (state.editor === edit) elements.executorIntegrationTestResult.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      elements.executorIntegrationTest.disabled = false;
     }
   }
 
@@ -753,6 +795,7 @@ export function createExecutorsController({
       if (metricsBody) metricsBody.hidden = !showMetrics;
     }
     onInventory(state.executors);
+    if (!state.selectedId && state.managementId !== "__control__") void loadManagement();
   }
 
   async function refresh({ force = false } = {}) {
@@ -891,6 +934,8 @@ export function createExecutorsController({
   }
 
   function bind() {
+    elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
+    elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
       const owner = state.management?.control?.can_manage ? "control" : "executor";
       void openEditor({owner, kind: "mcp"});

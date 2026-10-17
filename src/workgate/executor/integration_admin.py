@@ -8,7 +8,11 @@ import asyncio
 from typing import Any
 
 from ..agent_bridge.auth_management import manage_mcp_auth
-from ..agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
+from ..agent_bridge.management import (
+    ManagedMcpConfig,
+    manage_mcp_manifest,
+    test_mcp_connection,
+)
 from ..agent_bridge.skill_management import manage_skill
 from ..agent_bridge.state import load_agent_manifest
 from ..config.executor import ExecutorConfig
@@ -50,6 +54,19 @@ async def manage_executor_integration(
             owner_type="stdio",
             secret_name=_optional_string(args, "secret_name"),
             secret_value=_optional_string(args, "secret_value"),
+        )
+    if op == "ui.mcp.test":
+        if not name:
+            raise ValueError("MCP server name required")
+        return await asyncio.to_thread(
+            test_mcp_connection,
+            config.agent_config_dir,
+            config.agent_auth_dir,
+            name,
+            owner_type="stdio",
+            probe_timeout_s=config.agent_mcp_probe_timeout_s,
+            call_timeout_s=config.agent_mcp_call_timeout_s,
+            stdio_cwd=config.default_workdir,
         )
     if op != "ui.mcp.manage":
         raise ValueError("Unknown integration operation")

@@ -12,7 +12,11 @@ from starlette.routing import BaseRoute, Route
 
 from ...agent_bridge.auth_management import manage_mcp_auth
 from ...agent_bridge.diagnostics import manifest_diagnostics
-from ...agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
+from ...agent_bridge.management import (
+    ManagedMcpConfig,
+    manage_mcp_manifest,
+    test_mcp_connection,
+)
 from ...agent_bridge.state import load_agent_manifest
 from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
@@ -35,6 +39,14 @@ class _IntegrationAuthBody(BaseModel):
     executor_id: str | None = Field(default=None, max_length=128)
     secret_name: str | None = Field(default=None, max_length=128)
     secret_value: str | None = Field(default=None, max_length=65_536)
+
+
+class _IntegrationTestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    owner: Literal["control", "executor"]
+    name: str = Field(min_length=1, max_length=128)
+    executor_id: str | None = Field(default=None, max_length=128)
 
 
 class _IntegrationMutationBody(BaseModel):
@@ -425,6 +437,81 @@ def executor_admin_routes(
                 status_code=503,
             )
 
+    async def integration_test(request: Request) -> Response:
+        """Explicitly test only one configured MCP; no background probing."""
+        try:
+            require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            body = _IntegrationTestBody.model_validate(await request.json())
+        except ValidationError, ValueError, TypeError:
+            return _json_error(
+                "InvalidTestRequest", "Invalid MCP selection", status_code=400
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        if body.owner == "executor":
+            record = runtime.control_state.snapshot_executors().get(
+                body.executor_id or ""
+            )
+            if record is None or record.revoked_at is not None:
+                return _json_error(
+                    "UnknownExecutor", "Unknown Executor", status_code=404
+                )
+            if not await runtime.executor_transport.is_online(
+                record.executor_id
+            ):
+                return _json_error(
+                    "OfflineExecutor", "Executor offline", status_code=503
+                )
+        try:
+            if body.owner == "control":
+                result = await asyncio.to_thread(
+                    test_mcp_connection,
+                    runtime.config.agent_config_dir,
+                    runtime.config.agent_auth_dir,
+                    body.name,
+                    owner_type="network",
+                    probe_timeout_s=runtime.config.agent_mcp_probe_timeout_s,
+                    call_timeout_s=runtime.config.agent_mcp_call_timeout_s,
+                )
+            else:
+                response = await runtime.executor_transport.call(
+                    body.executor_id,
+                    "ui.mcp.test",
+                    {"name": body.name, "action": "test"},
+                    timeout_s=max(
+                        12, runtime.config.agent_mcp_probe_timeout_s + 3
+                    ),
+                )
+                if not response.ok or not isinstance(response.result, dict):
+                    raise ValueError("Executor MCP probe unavailable")
+                result = response.result
+            audit(
+                "integration_test",
+                owner=body.owner,
+                executor_id=body.executor_id,
+                name=body.name,
+                status=result.get("status"),
+            )
+            return _json_ok(result)
+        except ValidationError, KeyError, ValueError, OSError:
+            return _json_error(
+                "TestRejected",
+                "MCP test rejected or unavailable",
+                status_code=409,
+            )
+        except RuntimeError, TimeoutError, ConnectionError:
+            return _json_error(
+                "TestUnavailable",
+                "MCP test service unavailable",
+                status_code=503,
+            )
+
     async def integrations(request: Request) -> Response:
         """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
         _require_executor_admin_scope()
@@ -702,6 +789,11 @@ def executor_admin_routes(
             api_prefix + "/integrations/auth",
             integration_auth,
             methods=["GET", "POST"],
+        ),
+        Route(
+            api_prefix + "/integrations/test",
+            integration_test,
+            methods=["POST"],
         ),
         Route(
             api_prefix + "/executors/diagnostics", diagnostics, methods=["GET"]

@@ -197,6 +197,13 @@
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
+      <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control MCP management">
+        <div class="executor-section-heading">
+          <div><h3>Control · Network MCP</h3><p>Manage Control-owned MCP servers without a paired Executor.</p></div>
+          <button type="button" id="executor-control-mcp-add" disabled>+ Add MCP</button>
+        </div>
+        <div id="executor-control-mcp-body" class="executor-subtab-content"></div>
+      </section>
       <div class="executors-layout">
         <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
           <div class="empty-state">Loading executors…</div>
@@ -290,6 +297,10 @@
             <label>Advanced settings (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
           </details>
           <label id="executor-integration-args-wrap">Arguments (JSON array) <textarea id="executor-integration-args" rows="3" spellcheck="false">[]</textarea></label>
+          <div id="executor-integration-test-wrap" hidden>
+            <button type="button" id="executor-integration-test">Test / Discover</button>
+            <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite">Tests the saved server only when requested; does not call tools.</div>
+          </div>
         </div>
         <label id="executor-integration-skill-wrap" hidden>SKILL.md (Markdown) <textarea id="executor-integration-content" rows="12" spellcheck="false" placeholder="---
 description: My Skill

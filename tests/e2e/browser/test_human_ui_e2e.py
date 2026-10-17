@@ -231,6 +231,57 @@ def test_executor_integration_management_real_chromium(
     browser_harness.assert_clean_browser()
 
 
+def test_standalone_control_mcp_real_chromium(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Control MCP remains manageable with zero Executors in the UI inventory."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    page = browser_harness.page
+
+    def empty_inventory(route):
+        response = route.fetch()
+        payload = response.json()
+        payload["data"]["executors"] = []
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors", empty_inventory)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{browser_harness.base_url}/ui#executors")
+    expect(page.locator("#executor-list")).to_contain_text("No executors")
+    expect(page.locator("#executor-control-standalone")).to_be_visible()
+    expect(page.locator("#executor-control-mcp-add")).to_be_enabled()
+    page.locator("#executor-control-mcp-add").click()
+    expect(page.locator("#executor-integration-owner")).to_have_value("control")
+    page.locator("#executor-integration-name").fill("standalone-control")
+    page.locator("#executor-integration-url").fill("https://example.org/mcp")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    row = page.locator(
+        "#executor-control-mcp-body .executor-manage-row"
+    ).filter(has_text="standalone-control")
+    expect(row).to_be_visible()
+    row.get_by_role("button", name="Manage").click()
+    page.locator("#executor-integration-toggle").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    expect(row).to_contain_text("Disabled")
+    row.get_by_role("button", name="Manage").click()
+    page.locator("#executor-integration-test").click()
+    expect(page.locator("#executor-integration-test-result")).to_contain_text(
+        "disabled"
+    )
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(page.locator("#executor-control-mcp-body")).not_to_contain_text(
+        "standalone-control"
+    )
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= innerWidth + 1"
+    )
+    page.unroute("**/api/ui/executors", empty_inventory)
+    browser_harness.assert_clean_browser()
+
+
 def test_executor_diagnostics_real_chromium(
     browser_harness: BrowserHarness,
 ) -> None:

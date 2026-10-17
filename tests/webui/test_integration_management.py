@@ -306,6 +306,14 @@ def test_oauth_management_requires_separate_write_scope(tmp_path):
                     assert response.json()["data"]["can_manage"] is can_manage
                 if scope == SCOPE_EXECUTOR_USE:
                     assert (
+                        client.post(
+                            "/api/ui/integrations/test",
+                            json={"owner": "control", "name": "any"},
+                            headers=headers,
+                        ).status_code
+                        == 403
+                    )
+                    assert (
                         client.get(
                             "/api/ui/integrations",
                             params={
@@ -633,3 +641,85 @@ def test_authenticated_mcp_registration_assigns_stable_identity(tmp_path):
                 ).status_code
                 == 200
             )
+
+
+def test_explicit_mcp_probe_owner_and_disabled_without_connection(
+    tmp_path, monkeypatch
+):
+    """Testing is privileged, explicit, owner-scoped and does not probe disabled MCP."""
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        base_url=BASE,
+    )
+    app, harness = build_paired_http_app(settings)
+    with TestClient(app, base_url=BASE) as client:
+        created = client.post(
+            "/api/ui/integrations",
+            json={
+                "owner": "control",
+                "kind": "mcp",
+                "action": "register",
+                "name": "disabled-net",
+                "config": {
+                    "type": "http",
+                    "url": "https://example.org/mcp",
+                    "enabled": False,
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        probe = client.post(
+            "/api/ui/integrations/test",
+            json={"owner": "control", "name": "disabled-net"},
+        )
+        assert probe.status_code == 200, probe.text
+        assert probe.json()["data"] == {"status": "disabled", "tools": []}
+        assert client.get("/api/ui/integrations/test").status_code == 405
+        assert (
+            client.post(
+                "/api/ui/integrations/test",
+                json={"owner": "control", "name": "missing"},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/api/ui/integrations/test",
+                json={
+                    "owner": "executor",
+                    "name": "disabled-net",
+                    "executor_id": harness.executor_id,
+                },
+            ).status_code
+            == 409
+        )
+
+        async def offline(_id):
+            return False
+
+        monkeypatch.setattr(
+            harness.control.executor_transport, "is_online", offline
+        )
+        assert (
+            client.post(
+                "/api/ui/integrations/test",
+                json={
+                    "owner": "executor",
+                    "name": "local",
+                    "executor_id": harness.executor_id,
+                },
+            ).status_code
+            == 503
+        )
+        # Control works independently of Executor's presence.
+        assert (
+            client.post(
+                "/api/ui/integrations/test",
+                json={"owner": "control", "name": "disabled-net"},
+            ).status_code
+            == 200
+        )
