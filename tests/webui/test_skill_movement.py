@@ -154,6 +154,22 @@ def test_skill_owner_roundtrip_and_safety(tmp_path: Path):
         assert (bundle / "notes.md").read_text() == "Important auxiliary file"
         missing(client, "executor", "bundle")
 
+        # The target may globally disable Skills. Moving must not claim the
+        # original effective enabled state was restored when it was not.
+        target_manifest = tmp_path / "executor-agent" / "config.json"
+        target_manifest.write_text('{"version":1,"skills":{"enabled":false}}')
+        original = create(client, "control", "global-disabled-target")
+        partial = move(
+            client,
+            "control",
+            "executor",
+            "global-disabled-target",
+            original["revision"],
+        )
+        assert partial.status_code == 503
+        missing(client, "control", "global-disabled-target")
+        assert not read(client, "executor", "global-disabled-target")["enabled"]
+
 
 def test_skill_move_race_rollback_is_revision_guarded(tmp_path, monkeypatch):
     """Do not remove the only copy or delete a newer destination edit."""

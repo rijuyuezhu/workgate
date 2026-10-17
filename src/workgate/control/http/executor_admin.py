@@ -916,7 +916,9 @@ def executor_admin_routes(
 
         if enabled:
             try:
-                await op(target, "enable", revision=staged_revision)
+                activated = await op(target, "enable", revision=staged_revision)
+                if activated["skill"]["enabled"] is not True:
+                    raise ValueError("Destination Skills globally disabled")
             except (
                 ValueError,
                 KeyError,
@@ -933,7 +935,7 @@ def executor_admin_routes(
                 )
                 return _json_error(
                     "MoveNeedsEnable",
-                    "Skill moved but remains disabled; enable at destination",
+                    "Skill moved but remains disabled; check destination Skill settings",
                     status_code=503,
                 )
         audit(
