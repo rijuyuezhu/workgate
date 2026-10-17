@@ -2599,15 +2599,20 @@ async def test_agent_bridge_config_reload_via_fixed_tools(
 
 
 @pytest.mark.asyncio
-async def test_control_agent_bridge_rejects_same_name_across_owner_planes():
+async def test_control_agent_bridge_prefers_executor_on_same_name():
     class Sessions:
         async def call_session_tool(self, op, args):
-            assert op == "agent_mcp.list_servers"
-            assert args == {
-                "session_id": "sess_owner",
-                "probe_mcp_tools": False,
-            }
-            return {"same": {"available": True}}
+            if op == "agent_mcp.list_servers":
+                assert args == {
+                    "session_id": "sess_owner",
+                    "probe_mcp_tools": False,
+                }
+                return {"same": {"available": True}}
+            if op == "agent_mcp.list_tools":
+                return {"tools": [{"server": "same", "tool": "executor"}]}
+            if op == "agent_mcp.call_tool":
+                return {"owner": "executor", "tool": args["tool"]}
+            raise AssertionError(op)
 
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
@@ -2617,11 +2622,14 @@ async def test_control_agent_bridge_rejects_same_name_across_owner_planes():
             Any, SimpleNamespace(mcp_servers={"same": object()})
         )
     )
-
-    with pytest.raises(ValueError, match="ambiguous across control"):
-        await service.list_tools("same", "sess_owner")
-    with pytest.raises(ValueError, match="ambiguous across control"):
-        await service.call_tool("same", "ping", {}, "sess_owner")
+    assert (await service._resolve_server_owner("same", "sess_owner"))[
+        1
+    ] == "executor"
+    assert (await service.list_tools("same", "sess_owner")).tools[0][
+        "tool"
+    ] == "executor"
+    result = await service.call_tool("same", "ping", {}, "sess_owner")
+    assert result.model_dump() == {"owner": "executor", "tool": "ping"}
 
 
 @pytest.mark.asyncio
@@ -2693,11 +2701,13 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_control_agent_bridge_rejects_duplicate_rows_when_listing_all(
+async def test_control_agent_bridge_masks_shadowed_tools_when_listing_all(
     monkeypatch,
 ):
     class Sessions:
         async def call_session_tool(self, op, args):
+            if op == "agent_mcp.list_servers":
+                return {"same": {"enabled": True}}
             assert op == "agent_mcp.list_tools"
             assert args == {"session_id": "sess", "server": None}
             return {"tools": [{"server": "same", "tool": "executor"}]}
@@ -2720,8 +2730,70 @@ async def test_control_agent_bridge_rejects_duplicate_rows_when_listing_all(
         ),
     )
 
-    with pytest.raises(ValueError, match="duplicates: same"):
-        await service.list_tools(session_id="sess")
+    assert (await service.list_tools(session_id="sess")).tools == [
+        {"server": "same", "tool": "executor"}
+    ]
+    assert service._merge_server_rows(
+        {"same": {"source": "control"}}, {"same": {"source": "executor"}}
+    ) == {"same": {"source": "executor"}}
 
-    with pytest.raises(ValueError, match="duplicates: same"):
-        service._merge_server_rows({"same": {}}, {"same": {}})
+
+@pytest.mark.asyncio
+async def test_control_agent_bridge_disabled_executor_reveals_control(
+    monkeypatch,
+):
+    """Disabled higher-priority MCP should not hide the working Control entry."""
+
+    class Sessions:
+        async def call_session_tool(self, op, args):
+            if op == "agent_mcp.list_servers":
+                return {
+                    "same": {"enabled": False},
+                    "executor": {"enabled": True},
+                }
+            if op == "agent_mcp.list_tools":
+                return {"tools": [{"server": "executor", "tool": "local"}]}
+            raise AssertionError(op)
+
+    service = ControlAgentBridgeService(
+        cast(Any, object()), cast(Any, Sessions())
+    )
+    service._network_registry = (
+        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
+            Any,
+            SimpleNamespace(
+                mcp_servers={"same": object(), "control": object()}
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "list_agent_mcp_servers_payload",
+        lambda _registry: control_agent_bridge_module.ListAgentMcpServersOutput(
+            root={"same": {"enabled": True}, "control": {"enabled": True}}
+        ),
+    )
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "list_agent_mcp_tools_payload",
+        lambda _registry, server=None: (
+            control_agent_bridge_module.ListAgentMcpToolsOutput(
+                tools=[
+                    {"server": "same", "tool": "network"},
+                    {"server": "control", "tool": "network"},
+                ]
+            )
+        ),
+    )
+
+    assert (await service._resolve_server_owner("same", "sess"))[1] == "control"
+    assert (
+        await service._resolve_server_owner(
+            "same", "sess", include_disabled=True
+        )
+    )[1] == "executor"
+    servers = (await service.list_servers("sess")).root
+    assert servers["same"]["enabled"] is True
+    assert servers["executor"]["enabled"] is True
+    tools = (await service.list_tools(session_id="sess")).tools
+    assert {row["server"] for row in tools} == {"same", "control", "executor"}

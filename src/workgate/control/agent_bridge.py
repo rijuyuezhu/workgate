@@ -198,7 +198,11 @@ class ControlAgentBridgeService:
         return session_id
 
     async def _resolve_server_owner(
-        self, server: str, session_id: str | None
+        self,
+        server: str,
+        session_id: str | None,
+        *,
+        include_disabled: bool = False,
     ) -> tuple[AgentCapabilityRegistry, str]:
         registry = await asyncio.to_thread(
             self._network_registry, probe_mcp_tools=False
@@ -211,30 +215,32 @@ class ControlAgentBridgeService:
             {"session_id": session_id, "probe_mcp_tools": False},
         )
         executor_rows = ListAgentMcpServersOutput.model_validate(payload).root
-        executor_has = server in executor_rows
-        if control_has and executor_has:
-            raise ValueError(
-                "Agent MCP server name is ambiguous across control and the "
-                f"selected executor: {server}"
-            )
+        executor_row = executor_rows.get(server)
+        # Disabled entries do not mask lower-priority sources, as with Skills.
+        # Management still needs to address a disabled Executor entry.
+        if executor_row is not None and (
+            include_disabled
+            or not isinstance(executor_row, dict)
+            or executor_row.get("enabled") is not False
+        ):
+            return registry, "executor"
         if control_has:
             return registry, "control"
-        if executor_has:
-            return registry, "executor"
         return registry, "unknown"
 
     @staticmethod
     def _merge_server_rows(
         control_rows: dict[str, Any], executor_rows: dict[str, Any]
     ) -> dict[str, Any]:
-        duplicates = sorted(set(control_rows) & set(executor_rows))
-        if duplicates:
-            names = ", ".join(duplicates)
-            raise ValueError(
-                "Agent MCP server names must be unique across control and the "
-                f"selected executor; duplicates: {names}"
-            )
-        return {**control_rows, **executor_rows}
+        merged = dict(control_rows)
+        for name, row in executor_rows.items():
+            if (
+                name not in merged
+                or not isinstance(row, dict)
+                or row.get("enabled") is not False
+            ):
+                merged[name] = row
+        return merged
 
     async def list_servers(
         self, session_id: str | None = None
@@ -275,20 +281,33 @@ class ControlAgentBridgeService:
         control = list_agent_mcp_tools_payload(registry).tools
         if session_id is None:
             return ListAgentMcpToolsOutput(tools=control)
+        # Tool listing omits disabled/unavailable servers. Resolve masking
+        # from the configured Executor inventory, not discovered tool rows.
+        inventory = await self._sessions.call_session_tool(
+            "agent_mcp.list_servers",
+            {"session_id": session_id, "probe_mcp_tools": False},
+        )
+        executor_names = {
+            name
+            for name, row in ListAgentMcpServersOutput.model_validate(
+                inventory
+            ).root.items()
+            if not isinstance(row, dict) or row.get("enabled") is not False
+        }
         payload = await self._sessions.call_session_tool(
             "agent_mcp.list_tools", {"session_id": session_id, "server": None}
         )
         executor = ListAgentMcpToolsOutput.model_validate(payload).tools
-        control_servers = {str(row.get("server", "")) for row in control}
-        executor_servers = {str(row.get("server", "")) for row in executor}
-        duplicates = sorted(control_servers & executor_servers - {""})
-        if duplicates:
-            names = ", ".join(duplicates)
-            raise ValueError(
-                "Agent MCP server names must be unique across control and the "
-                f"selected executor; duplicates: {names}"
-            )
-        return ListAgentMcpToolsOutput(tools=[*control, *executor])
+        return ListAgentMcpToolsOutput(
+            tools=[
+                *(
+                    row
+                    for row in control
+                    if row.get("server") not in executor_names
+                ),
+                *executor,
+            ]
+        )
 
     async def _discovery_rows(
         self, session_id: str | None, server: str | None
@@ -323,7 +342,12 @@ class ControlAgentBridgeService:
                 owner_type="network",
             )
             if session_id is None:
-                return control
+                return {
+                    "servers": [
+                        {**row, "owner": "control"}
+                        for row in control["servers"]
+                    ]
+                }
             executor = await self._sessions.call_session_tool(
                 "agent_mcp.manage", {"session_id": session_id, "action": "list"}
             )
@@ -336,29 +360,40 @@ class ControlAgentBridgeService:
                 raise ValueError(
                     "executor returned invalid MCP management catalog"
                 )
-            names = {row["name"] for row in control["servers"]}
-            duplicates = names & {
-                str(row["name"])
-                for row in executor_servers
-                if isinstance(row, dict) and isinstance(row.get("name"), str)
+            # Management lists every configured owner, unlike effective
+            # discovery. Explicit owner labels disambiguate colliding names.
+            return {
+                "servers": [
+                    *(
+                        {**row, "owner": "control"}
+                        for row in control["servers"]
+                    ),
+                    *(
+                        {**row, "owner": "executor"}
+                        for row in executor_servers
+                        if isinstance(row, dict)
+                        and isinstance(row.get("name"), str)
+                    ),
+                ]
             }
-            if duplicates:
-                raise ValueError(
-                    f"MCP server names are ambiguous: {', '.join(sorted(duplicates))}"
-                )
-            return {"servers": [*control["servers"], *executor_servers]}
 
         if not name:
             raise ValueError(f"name is required for {action}")
         if action == "register":
             if config is None:
                 raise ValueError("config is required for register")
-            _, existing = await self._resolve_server_owner(name, session_id)
-            if existing != "unknown":
-                raise ValueError(f"MCP server already exists: {name}")
             owner = "executor" if config.type == "stdio" else "control"
+            _, existing = await self._resolve_server_owner(
+                name,
+                session_id if owner == "executor" else None,
+                include_disabled=True,
+            )
+            if existing == owner:
+                raise ValueError(f"MCP server already exists: {name}")
         else:
-            _, owner = await self._resolve_server_owner(name, session_id)
+            _, owner = await self._resolve_server_owner(
+                name, session_id, include_disabled=True
+            )
             if owner == "unknown":
                 raise ValueError(f"Unknown agent MCP server: {name}")
         if action == "refresh":

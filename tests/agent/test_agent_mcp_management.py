@@ -505,3 +505,102 @@ def test_outbound_sse_is_rejected_by_runtime_management(tmp_path: Path) -> None:
         json.loads((root / "config.json").read_text(encoding="utf-8"))
         == original
     )
+
+
+@pytest.mark.asyncio
+async def test_public_mcp_same_name_executor_precedence_and_disabled_fallback(
+    tmp_path: Path,
+) -> None:
+    """Actual paired Control/Executor manifests select the effective MCP by scope."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings = Settings(
+        default_workdir=workspace,
+        state_dir=tmp_path / "state",
+        agent_bridge_enabled=True,
+    )
+    mcp, harness = build_paired_mcp(settings)
+    try:
+        start = mcp_structured(
+            await mcp.call_tool("session_start", {"workdir": str(workspace)})
+        )
+        sid = start["session_id"]
+        control_register = mcp_structured(
+            await mcp.call_tool(
+                "manage_agent_mcp_server",
+                {
+                    "action": "register",
+                    "name": "shared",
+                    "config": {
+                        "type": "http",
+                        "url": "http://127.0.0.1:1/mcp",
+                        "enabled": True,
+                    },
+                },
+            )
+        )
+        assert control_register["updated"] is True
+        executor_register = mcp_structured(
+            await mcp.call_tool(
+                "manage_agent_mcp_server",
+                {
+                    "action": "register",
+                    "session_id": sid,
+                    "name": "shared",
+                    "config": {
+                        "type": "stdio",
+                        "command": sys.executable,
+                        "args": ["-c", "print('ok')"],
+                        "enabled": False,
+                    },
+                },
+            )
+        )
+        assert executor_register["updated"] is True
+        configured = mcp_structured(
+            await mcp.call_tool(
+                "manage_agent_mcp_server", {"action": "list", "session_id": sid}
+            )
+        )
+        assert {
+            (row["owner"], row["name"]) for row in configured["servers"]
+        } == {
+            ("control", "shared"),
+            ("executor", "shared"),
+        }
+        assert (
+            "shared"
+            in load_agent_manifest(
+                harness.control.config.agent_config_dir
+            ).data.mcp_servers
+        )
+        assert (
+            "shared"
+            in load_agent_manifest(
+                harness.executor.config.agent_config_dir
+            ).data.mcp_servers
+        )
+
+        async def visible(session_id):
+            args = {} if session_id is None else {"session_id": session_id}
+            return mcp_structured(
+                await mcp.call_tool("list_agent_mcp_servers", args)
+            )
+
+        assert (await visible(None))["shared"]["type"] == "http"
+        assert (await visible(sid))["shared"]["type"] == "http"
+        await mcp.call_tool(
+            "manage_agent_mcp_server",
+            {"action": "enable", "session_id": sid, "name": "shared"},
+        )
+        assert (await visible(sid))["shared"]["type"] == "stdio"
+        assert (await visible(None))["shared"]["type"] == "http"
+        await mcp.call_tool(
+            "manage_agent_mcp_server",
+            {"action": "disable", "session_id": sid, "name": "shared"},
+        )
+        assert (await visible(sid))["shared"]["type"] == "http"
+        await mcp.call_tool("session_end", {"session_id": sid})
+    finally:
+        await harness.executor.aclose()
+        await harness.control.aclose()

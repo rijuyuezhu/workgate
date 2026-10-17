@@ -234,6 +234,12 @@ class BrowserHarness:
                 )
                 assert remote_tmux_tmpdir is not None
                 remote_env["TMUX_TMPDIR"] = str(remote_tmux_tmpdir)
+                # A second Executor represents a separate machine. Its
+                # managed Skill/MCP configuration must not alias the first
+                # Executor's XDG configuration directory on this test host.
+                remote_config = root / "xdg-remote-config"
+                remote_config.mkdir(parents=True, exist_ok=True)
+                remote_env["XDG_CONFIG_HOME"] = str(remote_config)
                 remote_executor = _start_logged_process(
                     [sys.executable, "-m", "workgate.main", "executor", "run"],
                     cwd=PROJECT_ROOT,

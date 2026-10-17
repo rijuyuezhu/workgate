@@ -310,7 +310,9 @@ export function createExecutorsController({
       addGroup(container, title, rows.length ? rows : stateRows("None"));
     };
     renderGroup(mcp, "Executor", snap?.executorMcp, "executor", "mcp");
-    renderGroup(mcp, "Control", snap?.control, "control", "mcp");
+    const shadowedMcp = new Set((snap?.executorMcp?.servers || [])
+      .filter((server) => server.enabled).map((server) => server.name));
+    renderGroup(mcp, "Control", snap?.control, "control", "mcp", shadowedMcp);
     elements.executorControlStandalone.hidden = Boolean(selectedExecutor());
     elements.executorControlMcpBody.replaceChildren();
     if (!selectedExecutor()) {
@@ -448,6 +450,9 @@ export function createExecutorsController({
     elements.executorMcpSecretValue.value = "";
     elements.executorMcpSecretDetails.open = false;
     elements.executorMcpSecretList.replaceChildren();
+    elements.executorMcpSecretSet.disabled = Boolean(item);
+    elements.executorMcpOAuthClear.disabled = Boolean(item);
+    elements.executorIntegrationTest.disabled = Boolean(item);
     elements.executorMcpAuthStatus.hidden = true;
     elements.executorMcpAuthStatus.textContent = "";
     elements.executorIntegrationTestResult.textContent = "";
@@ -482,6 +487,9 @@ export function createExecutorsController({
         elements.executorIntegrationAdvanced.value = JSON.stringify(advanced, null, 2);
         elements.executorIntegrationAuthMode.value = config.auth?.mode || "none";
         elements.executorIntegrationOAuthScopes.value = (config.auth?.scopes || []).join(" ");
+        elements.executorMcpSecretSet.disabled = false;
+        elements.executorMcpOAuthClear.disabled = false;
+        elements.executorIntegrationTest.disabled = false;
         void loadEditorAuth(edit);
       }
       editorStatus("");
@@ -637,9 +645,11 @@ export function createExecutorsController({
     } catch (error) {
       if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      elements.executorMcpSecretValue.value = "";
-      elements.executorMcpSecretSet.disabled = false;
-      elements.executorMcpOAuthClear.disabled = false;
+      if (state.editor === edit) {
+        elements.executorMcpSecretValue.value = "";
+        elements.executorMcpSecretSet.disabled = false;
+        elements.executorMcpOAuthClear.disabled = false;
+      }
     }
   }
 
@@ -670,7 +680,7 @@ export function createExecutorsController({
     } catch (error) {
       if (state.editor === edit) elements.executorIntegrationTestResult.textContent = error instanceof Error ? error.message : String(error);
     } finally {
-      elements.executorIntegrationTest.disabled = false;
+      if (state.editor === edit) elements.executorIntegrationTest.disabled = false;
     }
   }
 
