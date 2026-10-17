@@ -42,9 +42,9 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         "aria-selected", "true"
     )
     page.keyboard.press("End")
-    expect(page.locator('[data-executor-subtab="skills"]')).to_have_attribute(
-        "aria-selected", "true"
-    )
+    expect(
+        page.locator('[data-executor-subtab="diagnostics"]')
+    ).to_have_attribute("aria-selected", "true")
     page.keyboard.press("Home")
     expect(page.locator('[data-executor-subtab="overview"]')).to_have_attribute(
         "aria-selected", "true"
