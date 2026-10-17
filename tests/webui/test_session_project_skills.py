@@ -115,7 +115,9 @@ def test_session_skills_resolve_per_project_without_private_paths(
         async def offline(executor_id: str) -> bool:
             return False
 
-        monkeypatch.setattr(harness.control.executor_transport, "is_online", offline)
+        monkeypatch.setattr(
+            harness.control.executor_transport, "is_online", offline
+        )
         assert (
             client.get(
                 "/api/ui/sessions/skills", params={"session_id": ids[0]}
