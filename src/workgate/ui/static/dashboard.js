@@ -228,7 +228,6 @@ export function createDashboardController({
       elements.dashboardCpuTrend,
       elements.dashboardMemoryTrend,
       elements.dashboardDiskTrend,
-      elements.dashboardNetworkTrend,
     ]) trend.replaceChildren();
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
@@ -363,16 +362,10 @@ export function createDashboardController({
     const system = payload && payload.system && typeof payload.system === "object" ? payload.system : {};
     const version = payload && payload.version && typeof payload.version === "object" ? payload.version : {};
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
-    const networkRx = dashboardNumber(system.network_rx_bps);
-    const networkTx = dashboardNumber(system.network_tx_bps);
-    const networkTotal = networkRx !== null && networkTx !== null
-      ? networkRx + networkTx
-      : null;
     controllerState.history.push({
       cpu: dashboardNumber(system.cpu_percent),
       memory: dashboardNumber(system.memory_percent),
       disk: dashboardNumber(system.disk_percent),
-      network: networkTotal,
     });
     controllerState.history = controllerState.history.slice(-60);
 

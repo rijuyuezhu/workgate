@@ -272,16 +272,18 @@ export function createExecutorsController({
       if (rows.length) return rows;
       return [{title: globallyEnabled ? "No configured servers" : "Agent Bridge disabled", empty: true}];
     }
-    addGroup(mcp, "Executor", mcpRows(data.executor?.bridge));
+    const offline = !selectedExecutor()?.online || data.status === "offline";
+    const local = offline ? null : data.executor;
+    addGroup(mcp, "Executor", offline ? [{title: "Offline", empty: true}] : mcpRows(local?.bridge));
     addGroup(mcp, "Control", mcpRows(data.control_mcp, data.control_mcp?.enabled !== false));
-    if (data.executor?.bridge?.errors || data.control_mcp?.errors) {
+    if (local?.bridge?.errors || data.control_mcp?.errors) {
       addGroup(mcp, "Configuration warnings", [{title: "MCP configuration invalid", warning: true}]);
     }
 
-    const local = data.executor;
     if (!local) {
-      addGroup(skills, "Executor", [{title: "Unavailable", empty: true}]);
-      addGroup(skills, "Executor (User Global)", [{title: "Unavailable", empty: true}]);
+      const message = offline ? "Offline" : "Unavailable";
+      addGroup(skills, "Executor", [{title: message, empty: true}]);
+      addGroup(skills, "Executor (User Global)", [{title: message, empty: true}]);
       return;
     }
     const skillData = local.skills || {};
@@ -463,8 +465,8 @@ export function createExecutorsController({
       if (showMetrics !== state.metricOnline) {
         resetMetrics();
         state.metricOnline = showMetrics;
+        renderDiagnostics();
         if (showMetrics) {
-          renderDiagnostics();
           void loadDiagnostics(true);
           void refreshMetrics();
         }

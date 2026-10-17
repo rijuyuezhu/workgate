@@ -115,7 +115,6 @@ void (async () => {
     dashboardMemoryValue: document.getElementById("dashboard-memory-value"),
     dashboardNetwork: document.getElementById("dashboard-network"),
     dashboardNetworkRx: document.getElementById("dashboard-network-rx"),
-    dashboardNetworkTrend: document.getElementById("dashboard-network-trend"),
     dashboardNetworkTx: document.getElementById("dashboard-network-tx"),
     dashboardPlatform: document.getElementById("dashboard-platform"),
     dashboardPython: document.getElementById("dashboard-python"),

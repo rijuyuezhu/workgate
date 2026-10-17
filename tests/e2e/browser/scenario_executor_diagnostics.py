@@ -154,6 +154,15 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )
     expect(page.locator("#executor-diagnostics-body")).to_be_hidden()
     expect(page.locator("#executor-detail-id")).not_to_have_text("—")
+    # Inventory can mark a peer offline before the cached diagnostics expire.
+    # Do not show its previous MCP / Skills as if they were currently available.
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-group").first
+    ).to_contain_text("Offline")
+    expect(
+        page.locator("#executor-skills-body .executor-manage-group").first
+    ).to_contain_text("Offline")
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     page.unroute("**/api/ui/executors", offline_inventory)
     expect(page.locator("#executor-detail-status")).to_have_text(
         "online", timeout=12000
