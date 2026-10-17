@@ -723,3 +723,66 @@ def test_explicit_mcp_probe_owner_and_disabled_without_connection(
             ).status_code
             == 200
         )
+
+
+def test_unpaired_control_manages_network_mcp_without_executor(tmp_path):
+    """Standalone Control works with no Executor runtime, pairing or RPC."""
+    from workgate.control.http.app import build_http_app
+    from workgate.control.runtime import build_control_runtime
+
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        base_url=BASE,
+        agent_bridge_enabled=True,
+    )
+    app = build_http_app(runtime=build_control_runtime(settings))
+    with TestClient(app, base_url=BASE) as client:
+        assert client.get("/api/ui/executors").json()["data"]["executors"] == []
+        params = {"owner": "control", "kind": "mcp"}
+        initial = client.get("/api/ui/integrations", params=params)
+        assert initial.status_code == 200, initial.text
+        created = client.post(
+            "/api/ui/integrations",
+            json={
+                **params,
+                "action": "register",
+                "name": "standalone",
+                "config": {
+                    "type": "http",
+                    "url": "https://example.org/mcp",
+                    "enabled": False,
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        rows = client.get("/api/ui/integrations", params=params).json()["data"][
+            "servers"
+        ]
+        assert [row["name"] for row in rows] == ["standalone"]
+        assert (
+            client.post(
+                "/api/ui/integrations/test",
+                json={"owner": "control", "name": "standalone"},
+            ).json()["data"]["status"]
+            == "disabled"
+        )
+        removed = client.post(
+            "/api/ui/integrations",
+            json={
+                **params,
+                "action": "remove",
+                "name": "standalone",
+                "expected_revision": rows[0]["revision"],
+            },
+        )
+        assert removed.status_code == 200, removed.text
+        assert (
+            client.get("/api/ui/integrations", params=params).json()["data"][
+                "servers"
+            ]
+            == []
+        )
