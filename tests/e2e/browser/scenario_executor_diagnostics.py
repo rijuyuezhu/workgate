@@ -103,7 +103,11 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         payload = response.json()
         local = payload["data"]["executor"]
         local["bridge"]["status"] = "loaded"
-        local["bridge"]["servers"] = [{"name": "type-omitted", "enabled": True}]
+        local["bridge"]["servers"] = [
+            {"name": "type-omitted", "enabled": True},
+            {"name": "local-enabled", "type": "stdio", "enabled": True},
+            {"name": "local-disabled", "type": "stdio", "enabled": False},
+        ]
         payload["data"]["control_mcp"] = {
             "status": "loaded",
             "enabled": False,
@@ -136,6 +140,22 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
             has_text="control-configured"
         )
     ).to_contain_text("Disabled")
+    # Enabled MCPs are neutral white; disabled MCPs read as muted gray.
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-row").filter(
+            has_text="local-enabled"
+        )
+    ).to_have_css("background-color", "rgb(255, 255, 255)")
+    expect(
+        page.locator(
+            "#executor-mcp-body .executor-manage-pill[data-state='enabled']"
+        ).first
+    ).to_have_css("background-color", "rgb(255, 255, 255)")
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-row").filter(
+            has_text="local-disabled"
+        )
+    ).to_have_css("background-color", "rgb(238, 240, 243)")
     assert intercepted, "malformed MCP response interception did not run"
     page.unroute(diagnostic_url, capture_diagnostics)
     page.locator('[data-executor-subtab="overview"]').click()

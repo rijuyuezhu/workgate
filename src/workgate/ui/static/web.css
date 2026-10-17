@@ -3163,6 +3163,12 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 .executor-manage-row[data-state="enabled"] { background: #f4fbf7; }
 .executor-manage-row[data-state="disabled"] { background: #f7f8fa; }
+/* MCP status is conveyed by the label; reserve row emphasis for disabled entries. */
+#executor-mcp-body .executor-manage-row[data-state="enabled"] { background: #fff; }
+#executor-mcp-body .executor-manage-pill[data-state="enabled"] { background: #fff; }
+#executor-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
+#executor-mcp-body .executor-manage-row[data-state="disabled"] strong,
+#executor-mcp-body .executor-manage-row[data-state="disabled"] .executor-row-mark { color: #858d9a; }
 .executor-manage-row[data-state="overridden"] { background: #fcf8f8; }
 .executor-manage-row[data-state="overridden"] strong { color: #858d9a; text-decoration: line-through; }
 .executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
