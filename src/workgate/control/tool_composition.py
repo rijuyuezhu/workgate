@@ -22,6 +22,7 @@ def build_control_tool_catalog(
     executors: ControlExecutorFleetService,
     tasks: ControlTaskService,
     audit: ControlAuditService,
+    agent_bridge: ControlAgentBridgeService,
 ) -> ToolCatalog:
     """Build public metadata locally while routing machine calls through executors."""
     catalog = build_tool_catalog(settings)
@@ -33,7 +34,7 @@ def build_control_tool_catalog(
         executors,
         tasks,
         audit,
-        ControlAgentBridgeService(settings, sessions),
+        agent_bridge,
     )
     return ToolCatalog(
         tuple(

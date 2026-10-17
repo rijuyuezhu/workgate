@@ -23,6 +23,10 @@ from ...audit import audit
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE
 from ...protocol.pairing import PairApprovalRequest
+from ..executor_transport import (
+    ExecutorTransportError,
+    abandoned_command_was_offered,
+)
 from ..executors import ControlExecutorFleetService, ExecutorNotFoundError
 from ..pairing import (
     ExecutorPairingError,
@@ -118,6 +122,19 @@ def _json_error(error: str, message: str, *, status_code: int) -> JSONResponse:
         {"ok": False, "error": error, "message": message},
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
+    )
+
+
+def _remote_write_may_have_run(exc: BaseException) -> bool:
+    """Treat an unknown RPC outcome as committed; only queued is definitely safe."""
+    if abandoned_command_was_offered(exc):
+        return True
+    # The transport can positively reject an operation before offering it.
+    if isinstance(exc, ExecutorTransportError):
+        return False
+    return (
+        getattr(exc, "delivery_state", None) != "queued"
+        and getattr(exc, "_workgate_executor_delivery_state", None) != "queued"
     )
 
 
@@ -434,15 +451,38 @@ def executor_admin_routes(
                     args["secret_name"] = secret_name
                 if secret_value is not None:
                     args["secret_value"] = secret_value
-                response = await runtime.executor_transport.call(
-                    executor_id,
-                    "ui.mcp.auth",
-                    args,
-                    timeout_s=12,
-                )
-                if not response.ok or not isinstance(response.result, dict):
+                try:
+                    response = await runtime.executor_transport.call(
+                        executor_id,
+                        "ui.mcp.auth",
+                        args,
+                        timeout_s=12,
+                    )
+                except asyncio.CancelledError as exc:
+                    if action != "status" and _remote_write_may_have_run(exc):
+                        runtime.agent_bridge.invalidate_all_discovery()
+                    raise
+                except (RuntimeError, OSError) as exc:
+                    if action != "status" and _remote_write_may_have_run(exc):
+                        runtime.agent_bridge.invalidate_all_discovery()
+                    return _json_error(
+                        "AuthUnavailable",
+                        "MCP auth service unavailable",
+                        status_code=503,
+                    )
+                if not response.ok:
                     raise ValueError("Executor rejected MCP auth request")
+                if not isinstance(response.result, dict):
+                    if action != "status":
+                        runtime.agent_bridge.invalidate_all_discovery()
+                    return _json_error(
+                        "AuthUnavailable",
+                        "MCP auth service unavailable",
+                        status_code=503,
+                    )
                 result = response.result
+            if request.method == "POST" and result.get("changed") is True:
+                runtime.agent_bridge.invalidate_all_discovery()
             if request.method == "POST":
                 audit(
                     "integration_auth_management",
@@ -453,17 +493,19 @@ def executor_admin_routes(
                     ok=True,
                 )
             return _json_ok(result)
+        except RuntimeError, TimeoutError, ConnectionError:
+            if request.method == "POST" and owner == "executor":
+                runtime.agent_bridge.invalidate_all_discovery()
+            return _json_error(
+                "AuthUnavailable",
+                "MCP auth service unavailable",
+                status_code=503,
+            )
         except ValidationError, KeyError, ValueError, OSError:
             return _json_error(
                 "AuthRejected",
                 "Invalid MCP auth operation; check server and references",
                 status_code=409,
-            )
-        except RuntimeError, TimeoutError, ConnectionError:
-            return _json_error(
-                "AuthUnavailable",
-                "MCP auth service unavailable",
-                status_code=503,
             )
 
     async def integration_test(request: Request) -> Response:
@@ -565,6 +607,8 @@ def executor_admin_routes(
                 "Unavailable", "Control unavailable", status_code=503
             )
 
+        attempted_write = False
+
         async def op(
             owner: str,
             executor_id: str | None,
@@ -573,6 +617,7 @@ def executor_admin_routes(
             config: ManagedMcpConfig | None = None,
             revision: str | None = None,
         ) -> dict[str, Any]:
+            nonlocal attempted_write
             if owner == "executor":
                 record = runtime.control_state.snapshot_executors().get(
                     executor_id or ""
@@ -590,6 +635,8 @@ def executor_admin_routes(
                     )
                 if revision is not None:
                     args["expected_revision"] = revision
+                if action != "get":
+                    attempted_write = True
                 response = await runtime.executor_transport.call(
                     record.executor_id,
                     "ui.mcp.manage",
@@ -598,17 +645,23 @@ def executor_admin_routes(
                 )
                 if not response.ok or not isinstance(response.result, dict):
                     raise ValueError(f"Executor rejected MCP {action}")
-                return response.result
-            return await asyncio.to_thread(
-                manage_mcp_manifest,
-                runtime.config.agent_config_dir,
-                action,
-                name=body.name,
-                config=config,
-                owner_type="network",
-                auth_dir=runtime.config.agent_auth_dir,
-                expected_revision=revision,
-            )
+                result = response.result
+            else:
+                if action != "get":
+                    attempted_write = True
+                result = await asyncio.to_thread(
+                    manage_mcp_manifest,
+                    runtime.config.agent_config_dir,
+                    action,
+                    name=body.name,
+                    config=config,
+                    owner_type="network",
+                    auth_dir=runtime.config.agent_auth_dir,
+                    expected_revision=revision,
+                )
+            if action != "get":
+                runtime.agent_bridge.invalidate_all_discovery()
+            return result
 
         source = (
             body.owner,
@@ -690,6 +743,10 @@ def executor_admin_routes(
                 status_code=409,
             )
         except TimeoutError, OSError, RuntimeError, ConnectionError:
+            # Reading an unavailable source changes nothing; a timed-out write
+            # may have committed remotely despite the missing acknowledgement.
+            if attempted_write:
+                runtime.agent_bridge.invalidate_all_discovery()
             return _json_error(
                 "MoveUnavailable",
                 "Source or destination unavailable; reload both locations",
@@ -710,6 +767,7 @@ def executor_admin_routes(
         except TimeoutError, OSError, RuntimeError, ConnectionError:
             # A remote removal might have committed before losing its reply.
             # Deleting the destination here could lose the MCP permanently.
+            runtime.agent_bridge.invalidate_all_discovery()
             audit(
                 "integration_move_uncertain",
                 name=body.name,
@@ -736,6 +794,7 @@ def executor_admin_routes(
                 OSError,
                 ConnectionError,
             ):
+                runtime.agent_bridge.invalidate_all_discovery()
                 audit(
                     "integration_move_partial",
                     name=body.name,
@@ -1126,15 +1185,46 @@ def executor_admin_routes(
                         args["config"] = config
                     if revision is not None:
                         args["expected_revision"] = revision
-                response = await runtime.executor_transport.call(
-                    executor_id,
-                    "ui.skill.manage" if kind == "skill" else "ui.mcp.manage",
-                    args,
-                    timeout_s=12,
-                )
-                if not response.ok or not isinstance(response.result, dict):
+                try:
+                    response = await runtime.executor_transport.call(
+                        executor_id,
+                        "ui.skill.manage"
+                        if kind == "skill"
+                        else "ui.mcp.manage",
+                        args,
+                        timeout_s=12,
+                    )
+                except asyncio.CancelledError as exc:
+                    if (
+                        kind == "mcp"
+                        and action not in {"list", "get"}
+                        and _remote_write_may_have_run(exc)
+                    ):
+                        runtime.agent_bridge.invalidate_all_discovery()
+                    raise
+                except (RuntimeError, OSError) as exc:
+                    if (
+                        kind == "mcp"
+                        and action not in {"list", "get"}
+                        and _remote_write_may_have_run(exc)
+                    ):
+                        runtime.agent_bridge.invalidate_all_discovery()
+                    return _json_error(
+                        "ManagementUnavailable",
+                        "Executor management unavailable",
+                        status_code=503,
+                    )
+                if not response.ok:
                     raise ValueError(
                         "Executor rejected the integration operation"
+                    )
+                if not isinstance(response.result, dict):
+                    if kind == "mcp" and action not in {"list", "get"}:
+                        runtime.agent_bridge.invalidate_all_discovery()
+                    return _json_error(
+                        "ManagementUnavailable",
+                        "Executor management unavailable",
+                        status_code=503,
                     )
                 result = response.result
             if action == "list" and isinstance(result, dict):
@@ -1145,6 +1235,8 @@ def executor_admin_routes(
                     result = {**result, "can_manage": True}
                 except MissingOAuthScopeError:
                     result = {**result, "can_manage": False}
+            if request.method == "POST" and kind == "mcp":
+                runtime.agent_bridge.invalidate_all_discovery()
             if request.method == "POST":
                 audit(
                     "integration_management",
@@ -1156,17 +1248,23 @@ def executor_admin_routes(
                     ok=True,
                 )
             return _json_ok(result)
+        except RuntimeError, TimeoutError, ConnectionError:
+            if (
+                request.method == "POST"
+                and owner == "executor"
+                and kind == "mcp"
+            ):
+                runtime.agent_bridge.invalidate_all_discovery()
+            return _json_error(
+                "ManagementUnavailable",
+                "Executor management unavailable",
+                status_code=503,
+            )
         except ValidationError, KeyError, ValueError, OSError:
             return _json_error(
                 "ManagementRejected",
                 "Invalid or conflicting integration change; reload and check the fields",
                 status_code=409,
-            )
-        except RuntimeError, TimeoutError, ConnectionError:
-            return _json_error(
-                "ManagementUnavailable",
-                "Executor management unavailable",
-                status_code=503,
             )
 
     async def executor_action(request: Request) -> Response:

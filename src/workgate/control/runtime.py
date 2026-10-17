@@ -11,6 +11,7 @@ from ..oauth.core.state import OAuthState, build_oauth_state
 from ..persistence import FileStateStore
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
+from .agent_bridge import ControlAgentBridgeService
 from .audit import ControlAuditService
 from .downloads import ControlDownloadService
 from .executor_transport import ExecutorTransport
@@ -68,6 +69,8 @@ class ControlRuntime:
     """Control-owned dynamic-client and authorization-code live state."""
     tool_catalog: ToolCatalog
     """Control-owned public tool catalog."""
+    agent_bridge: ControlAgentBridgeService
+    """Shared MCP discovery and management authority for tools and WebUI."""
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
@@ -269,6 +272,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         stream_hub.close_executor
     )
     oauth_state = build_oauth_state(config.state_dir, state_store=state_store)
+    agent_bridge = ControlAgentBridgeService(config, session_coordinator)
     return ControlRuntime(
         config=config,
         state_store=state_store,
@@ -287,6 +291,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         stream_hub=stream_hub,
         human_ui_runtime=human_ui_runtime,
         oauth_state=oauth_state,
+        agent_bridge=agent_bridge,
         tool_catalog=build_control_tool_catalog(
             config,
             session_coordinator,
@@ -296,5 +301,6 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
             executor_fleet,
             task_service,
             audit_service,
+            agent_bridge,
         ),
     )

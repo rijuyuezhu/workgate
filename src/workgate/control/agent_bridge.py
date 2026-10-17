@@ -319,6 +319,9 @@ class ControlAgentBridgeService:
     def invalidate_discovery(self, session_id: str) -> None:
         self._discovery.invalidate(session_id)
 
+    def invalidate_all_discovery(self) -> None:
+        self._discovery.invalidate_all()
+
     async def manage(
         self,
         action: str,
