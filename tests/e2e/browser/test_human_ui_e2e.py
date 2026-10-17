@@ -285,7 +285,20 @@ def test_control_skill_owner_in_existing_editor_real_chromium(
     row.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-integration-content")).to_be_enabled()
     owner.select_option("executor")
+    expect(page.locator("#executor-integration-delete")).to_be_hidden()
+    expect(page.locator("#executor-integration-toggle")).to_be_hidden()
+    page.evaluate("""() => {
+      const fetchOriginal = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (...args) => String(args[0]).includes('/integrations/skill-move')
+        ? new Promise((resolve) => setTimeout(() => resolve(fetchOriginal(...args)), 750))
+        : fetchOriginal(...args);
+    }""")
     page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-cancel")).to_be_disabled()
+    expect(page.locator("#executor-integration-close")).to_be_disabled()
+    expect(page.locator("#executor-integration-content")).not_to_be_editable()
+    page.keyboard.press("Escape")
+    expect(page.locator("#executor-integration-dialog")).to_be_visible()
     expect(page.locator("#executor-integration-dialog")).to_be_hidden()
     expect(control_group).not_to_contain_text("browser-control-skill")
     executor_group = page.locator(
@@ -309,6 +322,70 @@ def test_control_skill_owner_in_existing_editor_real_chromium(
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#executor-integration-delete").click()
     expect(control_group).not_to_contain_text("browser-control-skill")
+    browser_harness.assert_clean_browser()
+
+
+def test_skill_editor_old_request_cannot_unlock_new_editor(
+    browser_harness: BrowserHarness,
+) -> None:
+    """A cancelled async Validate cannot enable another Skill's unloaded controls."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    page = browser_harness.page
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"{browser_harness.base_url}/ui#executors")
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
+    page.locator('[data-executor-subtab="skills"]').click()
+
+    for name in ("async-editor-first", "async-editor-second"):
+        page.locator("#executor-skills-add").click()
+        page.locator("#executor-integration-owner").select_option("control")
+        page.locator("#executor-integration-name").fill(name)
+        page.locator("#executor-integration-content").fill("# Test Skill\n")
+        page.locator("#executor-integration-save").click()
+        expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+
+    group = page.locator("#executor-skills-body .executor-manage-group").filter(
+        has=page.get_by_role("heading", name="Control", exact=True)
+    )
+    first = group.locator(".executor-manage-row").filter(
+        has_text="async-editor-first"
+    )
+    second = group.locator(".executor-manage-row").filter(
+        has_text="async-editor-second"
+    )
+    first.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
+    page.evaluate("""() => {
+      const fetchOriginal = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (...args) => {
+        const url = String(args[0]);
+        const body = String(args[1]?.body || '');
+        const delay = body.includes('"action":"validate"') ? 900
+          : url.includes('action=get') && url.includes('name=async-editor-second') ? 2400 : 0;
+        return delay ? new Promise((resolve) => setTimeout(() => resolve(fetchOriginal(...args)), delay))
+          : fetchOriginal(...args);
+      };
+    }""")
+    page.locator("#executor-integration-validate").click()
+    page.locator("#executor-integration-cancel").click()
+    second.get_by_role("button", name="Manage").click()
+    page.wait_for_timeout(1300)
+    expect(page.locator("#executor-integration-save")).to_be_disabled()
+    expect(page.locator("#executor-integration-delete")).to_be_disabled()
+    expect(page.locator("#executor-integration-toggle")).to_be_disabled()
+    expect(page.locator("#executor-integration-content")).to_be_disabled()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
+    page.locator("#executor-integration-cancel").click()
+
+    for row in (first, second):
+        row.get_by_role("button", name="Manage").click()
+        expect(page.locator("#executor-integration-content")).to_be_enabled()
+        page.once("dialog", lambda dialog: dialog.accept())
+        page.locator("#executor-integration-delete").click()
+        expect(row).to_have_count(0)
     browser_harness.assert_clean_browser()
 
 
@@ -404,12 +481,30 @@ def test_mcp_location_apply_real_chromium(
         has_text="browser-relocate"
     )
     expect(local).to_be_visible()
+    page.evaluate("""() => {
+      const fetchOriginal = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (...args) => String(args[0]).includes('action=get')
+        && String(args[0]).includes('name=browser-relocate')
+        ? new Promise((resolve) => setTimeout(() => resolve(fetchOriginal(...args)), 700))
+        : fetchOriginal(...args);
+    }""")
     local.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-command")).not_to_be_editable()
+    expect(page.locator("#executor-integration-owner")).to_be_disabled()
     expect(page.locator("#executor-integration-owner")).to_be_enabled()
     page.locator("#executor-integration-owner").select_option("control")
     expect(page.locator("#executor-integration-url")).to_be_visible()
     page.locator("#executor-integration-url").fill("https://example.org/mcp")
+    page.evaluate("""() => {
+      const fetchOriginal = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (...args) => String(args[0]).includes('/integrations/move')
+        ? new Promise((resolve) => setTimeout(() => resolve(fetchOriginal(...args)), 750))
+        : fetchOriginal(...args);
+    }""")
     page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-url")).not_to_be_editable()
+    expect(page.locator("#executor-integration-args")).not_to_be_editable()
+    expect(page.locator("#executor-integration-auth-mode")).to_be_disabled()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
     remote = page.locator("#executor-mcp-body .executor-manage-row").filter(
         has_text="browser-relocate"

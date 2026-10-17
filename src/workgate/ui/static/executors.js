@@ -386,6 +386,9 @@ export function createExecutorsController({
     elements.executorIntegrationValidate.hidden = !skill;
     const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
     elements.executorIntegrationToggle.hidden = !editing.item || (skill && moving);
+    // Delete always acts on the original owner. Hide it while the selector
+    // points elsewhere, so a user cannot mistake it for deleting the target.
+    elements.executorIntegrationDelete.hidden = !editing.item || moving;
     elements.executorMcpAuthManagement.hidden = skill || !editing.item || moving;
     elements.executorIntegrationTestWrap.hidden = skill || !editing.item || moving;
     elements.executorIntegrationUrl.required = !skill && owner === "control";
@@ -411,6 +414,15 @@ export function createExecutorsController({
     elements.executorIntegrationStatus.textContent = message;
   }
 
+  function lockEditorInputs(locked) {
+    for (const field of [elements.executorIntegrationContent, elements.executorIntegrationUrl,
+      elements.executorIntegrationCommand, elements.executorIntegrationArgs,
+      elements.executorIntegrationAdvanced, elements.executorIntegrationOAuthScopes]) {
+      field.readOnly = locked;
+    }
+    elements.executorIntegrationAuthMode.disabled = locked;
+  }
+
   async function openEditor({owner, kind, item = null}) {
     if (!selectedExecutor() && owner !== "control") return;
     state.editor = { owner, kind, executorId: state.selectedId, name: item?.name || "", revision: item?.revision || "", item,
@@ -420,7 +432,9 @@ export function createExecutorsController({
     elements.executorIntegrationTitle.textContent = `${item ? "Edit" : "Add"} ${kind === "skill" ? "Skill" : "MCP server"}`;
     elements.executorIntegrationName.value = edit.name;
     elements.executorIntegrationSave.disabled = Boolean(item);
+    lockEditorInputs(Boolean(item));
     populateLocations(edit);
+    elements.executorIntegrationOwner.disabled = Boolean(item);
     elements.executorIntegrationName.readOnly = Boolean(item);
     elements.executorIntegrationContent.value = "";
     // Do not accept edits until the current revision/content has loaded;
@@ -472,6 +486,8 @@ export function createExecutorsController({
       }
       editorStatus("");
       setEditorType();
+      lockEditorInputs(false);
+      elements.executorIntegrationOwner.disabled = false;
       elements.executorIntegrationSave.disabled = false;
       elements.executorIntegrationToggle.disabled = false;
       elements.executorIntegrationDelete.disabled = false;
@@ -483,7 +499,10 @@ export function createExecutorsController({
 
   async function mutateEditor(action, config = null) {
     const edit = state.editor;
-    if (!edit) return;
+    if (!edit || edit.busy) return;
+    edit.busy = true;
+    const applying = action !== "validate";
+    edit.applying = applying;
     const destination = chosenLocation();
     const moving = Boolean(edit.item && action === "update"
       && (edit.owner !== destination.owner || (edit.owner === "executor" && destination.executorId !== edit.executorId)));
@@ -496,6 +515,18 @@ export function createExecutorsController({
     elements.executorIntegrationSave.disabled = true;
     elements.executorIntegrationToggle.disabled = true;
     elements.executorIntegrationDelete.disabled = true;
+    elements.executorIntegrationValidate.disabled = true;
+    // Content is snapshotted at submission; edits while a request is in
+    // flight would appear accepted but could never be included in that Apply.
+    lockEditorInputs(true);
+    if (applying) {
+      // A submitted cross-host mutation cannot reliably be cancelled. Keep
+      // the dialog present until the server confirms its outcome and refresh.
+      elements.executorIntegrationCancel.disabled = true;
+      elements.executorIntegrationClose.disabled = true;
+      elements.executorIntegrationOwner.disabled = true;
+      editorStatus("Applying changes…");
+    }
     try {
       const payload = moving ? {
         owner: edit.owner,
@@ -512,6 +543,10 @@ export function createExecutorsController({
       });
       if (state.editor !== edit) return;
       if (action === "validate") { editorStatus("SKILL.md is valid."); return; }
+      elements.executorIntegrationCancel.disabled = false;
+      elements.executorIntegrationClose.disabled = false;
+      elements.executorIntegrationOwner.disabled = false;
+      lockEditorInputs(false);
       elements.executorIntegrationDialog.close();
       state.editor = null;
       if ((moving || action === "register" || action === "create") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
@@ -524,9 +559,19 @@ export function createExecutorsController({
     } catch (error) {
       editorStatus(error instanceof Error ? error.message : String(error));
     } finally {
-      elements.executorIntegrationSave.disabled = false;
-      elements.executorIntegrationToggle.disabled = false;
-      elements.executorIntegrationDelete.disabled = false;
+      // A previous editor's request may finish after Cancel and a new Open.
+      // It must never unlock the new editor before its own GET completes.
+      if (state.editor === edit) {
+        edit.busy = false;
+        elements.executorIntegrationSave.disabled = false;
+        elements.executorIntegrationToggle.disabled = false;
+        elements.executorIntegrationDelete.disabled = false;
+        elements.executorIntegrationValidate.disabled = false;
+        elements.executorIntegrationCancel.disabled = false;
+        elements.executorIntegrationClose.disabled = false;
+        elements.executorIntegrationOwner.disabled = false;
+        lockEditorInputs(false);
+      }
     }
   }
 
@@ -989,6 +1034,9 @@ export function createExecutorsController({
     });
     elements.executorIntegrationClose.addEventListener("click", () => elements.executorIntegrationDialog.close());
     elements.executorIntegrationCancel.addEventListener("click", () => elements.executorIntegrationDialog.close());
+    elements.executorIntegrationDialog.addEventListener("cancel", (event) => {
+      if (state.editor?.busy && state.editor.applying) event.preventDefault();
+    });
     elements.executorIntegrationDialog.addEventListener("close", () => { state.editor = null; elements.executorMcpSecretValue.value = ""; elements.executorIntegrationSave.disabled = false; });
     elements.executorIntegrationForm.addEventListener("submit", (event) => {
       event.preventDefault();
