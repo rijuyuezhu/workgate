@@ -9,7 +9,7 @@ function dashboardPercent(value) {
     return number === null ? "—" : `${number.toFixed(1)}%`;
   }
 
-export function dashboardBytes(value) {
+function dashboardBytes(value) {
     const number = dashboardNumber(value);
     if (number === null || number < 0) return "—";
     const units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -23,7 +23,7 @@ export function dashboardBytes(value) {
     return `${scaled.toFixed(digits)} ${units[unit]}`;
   }
 
-export function dashboardRate(value) {
+function dashboardRate(value) {
     const formatted = dashboardBytes(value);
     return formatted === "—" ? formatted : `${formatted}/s`;
   }
@@ -33,7 +33,7 @@ function finiteNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
+function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
   const values = Array.isArray(rawValues) ? rawValues : [];
   if (!element) return;
   element.replaceChildren();

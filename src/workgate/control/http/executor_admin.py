@@ -200,7 +200,7 @@ def executor_admin_routes(
                     row = {}
                     for key in fields:
                         field = value.get(key)
-                        if key in {"enabled", "available"}:
+                        if key == "enabled":
                             if type(field) is bool:
                                 row[key] = field
                         elif key == "type":

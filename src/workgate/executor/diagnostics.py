@@ -9,7 +9,7 @@ from ..config.executor import ExecutorConfig
 
 
 def executor_diagnostics(config: ExecutorConfig) -> dict[str, Any]:
-    """Read bounded filesystem source metadata and cached platform metrics."""
+    """Read bounded local MCP and Skill source metadata without probing peers."""
     bridge = manifest_diagnostics(config.agent_config_dir, owner="executor")
     selected: list[dict[str, str]] = []
     overridden: list[dict[str, str]] = []
