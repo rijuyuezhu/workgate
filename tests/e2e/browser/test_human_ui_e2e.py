@@ -266,17 +266,20 @@ def test_control_skill_owner_in_existing_editor_real_chromium(
     row.get_by_role("button", name="Manage").click()
     expect(owner).to_have_value("control")
     expect(owner).to_be_disabled()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
     expect(page.locator("#executor-integration-content")).to_have_value(first)
     page.locator("#executor-integration-content").fill(first + "No copies.\n")
     page.locator("#executor-integration-save").click()
     expect(page.locator("#executor-integration-dialog")).to_be_hidden()
     row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
     expect(page.locator("#executor-integration-content")).to_have_value(
         first + "No copies.\n"
     )
     page.locator("#executor-integration-toggle").click()
     expect(row).to_contain_text("Disabled")
     row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-toggle")).to_be_enabled()
     page.locator("#executor-integration-toggle").click()
     expect(row).to_contain_text("Enabled")
     row.get_by_role("button", name="Manage").click()
@@ -330,6 +333,25 @@ def test_standalone_control_mcp_real_chromium(
     expect(page.locator("#executor-control-mcp-body")).not_to_contain_text(
         "standalone-control"
     )
+    expect(page.locator("#executor-control-skills-add")).to_be_enabled()
+    page.locator("#executor-control-skills-add").click()
+    expect(page.locator("#executor-integration-owner")).to_have_value("control")
+    page.locator("#executor-integration-name").fill("standalone-skill")
+    page.locator("#executor-integration-content").fill("# Control Skill\n")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    skill = page.locator(
+        "#executor-control-skills-body .executor-manage-row"
+    ).filter(has_text="standalone-skill")
+    expect(skill).to_be_visible()
+    skill.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
+    expect(page.locator("#executor-integration-content")).to_have_value(
+        "# Control Skill\n"
+    )
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#executor-integration-delete").click()
+    expect(skill).to_have_count(0)
     assert page.evaluate(
         "document.documentElement.scrollWidth <= innerWidth + 1"
     )

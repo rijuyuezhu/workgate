@@ -264,8 +264,8 @@
         <div class="dialog-heading"><div><h2 id="executor-integration-title">Add integration</h2></div><button class="dialog-close" type="button" id="executor-integration-close" aria-label="Close integration editor">×</button></div>
         <p id="executor-integration-status" class="muted" role="status"></p>
         <label>Name <input id="executor-integration-name" maxlength="128" required spellcheck="false" autocomplete="off" placeholder="integration-name"></label>
+        <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control</option></select></label>
         <div id="executor-integration-mcp-fields">
-          <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control · Network</option></select></label>
           <label id="executor-integration-url-wrap">Server URL <input id="executor-integration-url" type="url" placeholder="https://example.org/mcp" autocomplete="off"></label>
           <label id="executor-integration-command-wrap">Command <input id="executor-integration-command" placeholder="/usr/bin/server" spellcheck="false"></label>
           <fieldset class="executor-mcp-auth-settings">

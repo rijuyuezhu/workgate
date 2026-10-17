@@ -418,6 +418,9 @@ export function createExecutorsController({
     populateLocations(edit);
     elements.executorIntegrationName.readOnly = Boolean(item);
     elements.executorIntegrationContent.value = "";
+    // Do not accept edits until the current revision/content has loaded;
+    // otherwise a delayed GET can overwrite freshly typed changes.
+    elements.executorIntegrationContent.disabled = Boolean(item);
     elements.executorIntegrationArgs.value = "[]";
     elements.executorIntegrationAdvanced.value = "{}";
     elements.executorIntegrationAuthMode.value = "none";
@@ -431,6 +434,10 @@ export function createExecutorsController({
     elements.executorIntegrationTestResult.textContent = "";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
+    elements.executorIntegrationContent.disabled = Boolean(item);
+    elements.executorIntegrationToggle.disabled = Boolean(item);
+    elements.executorIntegrationDelete.disabled = Boolean(item);
+    elements.executorIntegrationValidate.disabled = Boolean(item);
     elements.executorIntegrationToggle.textContent = edit.enabled ? "Disable" : "Enable";
     elements.executorIntegrationSave.textContent = item ? "Apply changes" : "Create";
     editorStatus(item ? "Loading current configuration…" : "");
@@ -443,6 +450,9 @@ export function createExecutorsController({
       if (kind === "skill") {
         edit.revision = data.skill?.revision || edit.revision;
         elements.executorIntegrationContent.value = data.skill?.content || "";
+        elements.executorIntegrationContent.disabled = false;
+        elements.executorIntegrationValidate.disabled = false;
+        elements.executorIntegrationContent.disabled = false;
       } else {
         const config = data.editable_config;
         if (!config || data.requires_replacement) throw new Error("This legacy server requires replacement; it cannot be edited safely in the WebUI.");
@@ -460,6 +470,8 @@ export function createExecutorsController({
       editorStatus("");
       setEditorType();
       elements.executorIntegrationSave.disabled = false;
+      elements.executorIntegrationToggle.disabled = false;
+      elements.executorIntegrationDelete.disabled = false;
     } catch (error) {
       editorStatus(error instanceof Error ? error.message : String(error));
       elements.executorIntegrationSave.disabled = true;
@@ -498,8 +510,8 @@ export function createExecutorsController({
       if (action === "validate") { editorStatus("SKILL.md is valid."); return; }
       elements.executorIntegrationDialog.close();
       state.editor = null;
-      if ((moving || action === "register") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
-        state.detailTabs.set(destination.executorId, "mcp");
+      if ((moving || action === "register" || action === "create") && destination.owner === "executor" && destination.executorId !== state.selectedId) {
+        state.detailTabs.set(destination.executorId, edit.kind === "skill" ? "skills" : "mcp");
         select(destination.executorId);
       }
       await loadManagement(true);
