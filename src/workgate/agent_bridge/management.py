@@ -1,5 +1,6 @@
 """Atomic management of the existing Agent Bridge manifest, without a second registry."""
 
+import hashlib
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -66,12 +67,21 @@ class ManagedMcpConfig(BaseModel):
         return self
 
 
+def _config_revision(config: AgentMcpServerConfig) -> str:
+    """Stable optimistic-concurrency token without including raw secrets in output."""
+    payload = config.model_dump(mode="json", by_alias=True)
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
+
+
 def _safe_row(name: str, config: AgentMcpServerConfig) -> dict[str, Any]:
     """Never echo legacy literal credentials or command arguments into model logs."""
     return {
         "name": name,
         "type": config.type,
         "enabled": config.enabled,
+        "revision": _config_revision(config),
         "integrationId": config.integration_id,
         "auth": config.auth.model_dump(),
         "env": {
@@ -90,6 +100,58 @@ def _safe_row(name: str, config: AgentMcpServerConfig) -> dict[str, Any]:
     }
 
 
+def test_mcp_connection(
+    config_dir: Path,
+    auth_dir: Path,
+    name: str,
+    *,
+    owner_type: Literal["network", "stdio"],
+    probe_timeout_s: float,
+    call_timeout_s: float,
+    stdio_cwd: Path | None = None,
+) -> dict[str, Any]:
+    """Explicitly probe one owned MCP using the existing bounded, redacting registry."""
+    from .mcp import AgentMcpClientManager
+    from .registry import build_agent_registry
+    from .service import list_agent_mcp_tools_payload
+
+    manifest = load_agent_manifest(config_dir, read_only=True)
+    server = manifest.data.mcp_servers.get(name)
+    required_type = "http" if owner_type == "network" else "stdio"
+    if server is None or server.type != required_type:
+        raise ValueError("Unknown MCP server on selected owner")
+    if not server.enabled:
+        return {"status": "disabled", "tools": []}
+    manager = AgentMcpClientManager(
+        call_timeout_s,
+        AgentAuthStore(auth_dir),
+        allow_stdio=owner_type == "stdio",
+        stdio_cwd=str(stdio_cwd) if stdio_cwd is not None else None,
+    )
+    registry = build_agent_registry(
+        config_dir,
+        manager,
+        probe_timeout_s,
+        scan_skills=False,
+        mcp_server_types=frozenset({required_type}),
+        mcp_server_name=name,
+    )
+    record = registry.mcp_servers.get(name)
+    if record is None or not record.available:
+        return {"status": "unavailable", "tools": []}
+    rows = list_agent_mcp_tools_payload(registry, name).tools
+    return {
+        "status": "available",
+        "tools": [
+            {
+                "name": str(row["tool"])[:128],
+                "description": str(row.get("description") or "")[:160],
+            }
+            for row in rows[:100]
+        ],
+    }
+
+
 def manage_mcp_manifest(
     config_dir: Path,
     action: str,
@@ -98,6 +160,7 @@ def manage_mcp_manifest(
     config: ManagedMcpConfig | None = None,
     owner_type: Literal["network", "stdio"],
     auth_dir: Path | None = None,
+    expected_revision: str | None = None,
 ) -> dict[str, Any]:
     """Read or atomically mutate one owner's existing config.json."""
     if action not in {
@@ -157,6 +220,21 @@ def manage_mcp_manifest(
             }
         assert name is not None
         current = servers.get(name)
+        if (
+            expected_revision is not None
+            and action
+            in {
+                "update",
+                "enable",
+                "disable",
+                "remove",
+            }
+            and (
+                current is None
+                or _config_revision(current) != expected_revision
+            )
+        ):
+            raise ValueError("MCP config changed; reload before editing")
         if action == "register":
             if current is not None:
                 raise ValueError(f"MCP server already exists: {name}")

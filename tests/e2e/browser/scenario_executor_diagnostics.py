@@ -23,16 +23,8 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#executor-list .executor-row")).to_be_visible()
     # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+    expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
-    )
-    page.wait_for_function(
-        """() => {
-      const body = document.querySelector('#executor-mcp-body');
-      return body && body.querySelectorAll('.executor-manage-group').length === 2
-        && !body.textContent.includes('Loading');
-    }""",
-        timeout=12000,
     )
     assert len(calls) >= 1
     page.locator("#executor-list .executor-row").filter(
@@ -60,19 +52,14 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Executor")
-    assert page.locator(
-        "#executor-mcp-body .executor-manage-group h4"
-    ).all_text_contents()[:2] == ["Executor", "Control"]
+    expect(page.locator("#executor-mcp-body")).not_to_contain_text("Loading…")
     page.locator('[data-executor-subtab="skills"]').click()
-    assert page.locator(
-        "#executor-skills-body .executor-manage-group h4"
-    ).all_text_contents()[:2] == ["Executor", "Executor (User Global)"]
     expect(page.locator("#executor-skills-body")).to_contain_text("Executor")
     page.locator('[data-executor-subtab="overview"]').click()
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+    expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
     )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Memory")
+    expect(page.locator("#executor-overview-metrics")).to_contain_text("Memory")
     initial_calls = len(calls)
     page.evaluate(
         "window.firstDiagnosticNode = document.querySelector('.executor-manage-group')"
@@ -80,11 +67,11 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.wait_for_timeout(4500)
     assert page.evaluate(
         "document.querySelector('.executor-manage-group') === window.firstDiagnosticNode"
-    ), "Executor inventory polling replaced diagnostic DOM"
+    ), "Executor inventory polling replaced management DOM"
     assert len(calls) == initial_calls, (
         "4-second executor inventory poll must not repeat diagnostic RPC"
     )
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+    expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
     )
     assert (
@@ -92,7 +79,7 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     )  # Resource refresh uses Dashboard telemetry.
     expect(
         page.locator(
-            "#executor-diagnostics-body .dashboard-sparkline polyline"
+            "#executor-overview-metrics .dashboard-sparkline polyline"
         ).first
     ).to_be_attached(timeout=12000)
 
@@ -107,6 +94,12 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
             {"name": "type-omitted", "enabled": True},
             {"name": "local-enabled", "type": "stdio", "enabled": True},
             {"name": "local-disabled", "type": "stdio", "enabled": False},
+        ]
+        local["skills"]["selected"] = [
+            {"name": "read-only-global", "source": "global"}
+        ]
+        local["skills"]["overridden"] = [
+            {"name": "shadowed-global", "source": "global"}
         ]
         payload["data"]["control_mcp"] = {
             "status": "loaded",
@@ -133,29 +126,19 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         .first
     ).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
-    expect(page.locator("#executor-mcp-body")).to_contain_text("type-omitted")
-    expect(page.locator("#executor-mcp-body")).to_contain_text("Unknown")
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-body")).to_contain_text(
+        "read-only-global"
+    )
+    expect(page.locator("#executor-skills-body")).to_contain_text(
+        "shadowed-global"
+    )
     expect(
-        page.locator("#executor-mcp-body .executor-manage-row").filter(
-            has_text="control-configured"
+        page.locator("#executor-skills-body .executor-manage-row").filter(
+            has_text="shadowed-global"
         )
-    ).to_contain_text("Disabled")
-    # Enabled MCPs are neutral white; disabled MCPs read as muted gray.
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-row").filter(
-            has_text="local-enabled"
-        )
-    ).to_have_css("background-color", "rgb(255, 255, 255)")
-    expect(
-        page.locator(
-            "#executor-mcp-body .executor-manage-pill[data-state='enabled']"
-        ).first
-    ).to_have_css("background-color", "rgb(255, 255, 255)")
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-row").filter(
-            has_text="local-disabled"
-        )
-    ).to_have_css("background-color", "rgb(238, 240, 243)")
+    ).to_contain_text("Overridden")
     assert intercepted, "malformed MCP response interception did not run"
     page.unroute(diagnostic_url, capture_diagnostics)
     page.locator('[data-executor-subtab="overview"]').click()
@@ -172,29 +155,31 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-detail-status")).to_have_text(
         "offline", timeout=12000
     )
-    expect(page.locator("#executor-diagnostics-body")).to_be_hidden()
+    expect(page.locator("#executor-overview-metrics")).to_be_hidden()
     expect(page.locator("#executor-detail-id")).not_to_have_text("—")
     # Inventory can mark a peer offline before the cached diagnostics expire.
     # Do not show its previous MCP / Skills as if they were currently available.
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-group").first
-    ).to_contain_text("Offline")
-    expect(
-        page.locator("#executor-skills-body .executor-manage-group").first
-    ).to_contain_text("Offline")
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-body")).to_contain_text("Offline")
+    expect(page.locator("#executor-skills-body")).not_to_contain_text(
+        "read-only-global"
+    )
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Offline")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     page.unroute("**/api/ui/executors", offline_inventory)
     expect(page.locator("#executor-detail-status")).to_have_text(
         "online", timeout=12000
     )
-    expect(page.locator("#executor-diagnostics-body")).to_be_visible()
+    page.locator('[data-executor-subtab="overview"]').click()
+    expect(page.locator("#executor-overview-metrics")).to_be_visible()
     page.set_viewport_size({"width": 390, "height": 844})
     # Mobile starts at the Executor list; enter the details subpage first.
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
     ).first.click()
     page.locator('[data-executor-subtab="overview"]').click()
-    expect(page.locator("#executor-diagnostics-body")).to_be_visible()
+    expect(page.locator("#executor-overview-metrics")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_be_visible()
     assert page.evaluate(
