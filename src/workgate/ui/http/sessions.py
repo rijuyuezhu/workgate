@@ -142,3 +142,49 @@ async def api_session_action(request: Request) -> Response:
         return json_error(exc, status_code=502)
     except Exception as exc:
         return json_error(exc)
+
+
+_SKILL_PRIORITY = ("project", "managed", "global", "control")
+
+
+async def api_session_skills(request: Request) -> Response:
+    """Read effective Skills for an existing active Session, never a browser-supplied path."""
+    _require_scopes()
+    try:
+        session_id = bounded_text(
+            request.query_params.get("session_id"),
+            field="session_id",
+            max_bytes=32,
+            allow_empty=False,
+        )
+    except ValueError as exc:
+        return json_error(exc, status_code=400)
+    runtime = _control_runtime(request)
+    record = runtime.control_state.snapshot_sessions().get(session_id)
+    if record is None:
+        return json_error(ValueError("Unknown Session"), status_code=404)
+    if record.status != "active":
+        return json_error(ValueError("Session is not active"), status_code=409)
+    try:
+        # The canonical coordinator resolves the Session's Executor/workdir and
+        # refuses offline or ended Sessions; no browser-selected filesystem roots.
+        result = await runtime.agent_bridge.list_skills(session_id)
+    except ConnectionError, RuntimeError, TimeoutError, ValueError:
+        return json_error(
+            ValueError("Session Skills are unavailable"), status_code=503
+        )
+    skills = []
+    for row in result.skills[:100]:
+        name = row.get("name")
+        source = row.get("source")
+        if not isinstance(name, str) or source not in _SKILL_PRIORITY:
+            continue
+        skills.append(
+            {
+                "name": name[:128],
+                "source": source,
+                "priority": _SKILL_PRIORITY.index(source) + 1,
+            }
+        )
+    skills.sort(key=lambda item: (item["priority"], item["name"]))
+    return _json_ok({"session_id": session_id, "skills": skills})

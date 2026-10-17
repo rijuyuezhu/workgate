@@ -3371,3 +3371,13 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-manage-row[data-state="overridden"] strong { color: #7e8694; }
 #executors-panel .executor-manage-pill[data-state="overridden"] { color: #936017; }
 #executors-panel .executor-manage-pill[data-state="overridden"]::before { background: #c99231; }
+
+/* Session-bound Skill discovery is explicit; background task refresh never scans projects. */
+.task-session-skills { border-top: 1px solid var(--border, #e6e9ee); padding: 10px 0; }
+.task-session-skills summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+.session-skills-content { padding-top: 10px; }
+.session-skills-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.session-skills-toolbar .muted { font-size: 11px; }
+.session-skills-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.session-skills-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 12px; }
+.session-skills-list li strong { overflow-wrap: anywhere; }

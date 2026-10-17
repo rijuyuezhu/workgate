@@ -59,6 +59,83 @@ export function createTasksController({
     sessionAuditRefreshing: false,
     sessionAuditListSignature: "",
   };
+  const skillDetails = document.getElementById("session-skills");
+  const skillStatus = document.getElementById("session-skills-status");
+  const skillList = document.getElementById("session-skills-list");
+  const skillRefresh = document.getElementById("session-skills-refresh");
+  const skillSourceLabels = {
+    project: "Project", managed: "Executor",
+    global: "Executor (User Global)", control: "Control",
+  };
+  let skillSessionId = "";
+  let skillWorkdir = "";
+  let skillWasAvailable = false;
+  let skillRequestToken = 0;
+  let skillLoaded = false;
+  let skillLoading = false;
+
+  async function loadSessionSkills() {
+    const session = selectedSession();
+    if (!session || session.status !== "active" || session.availability !== "available") return;
+    const sessionId = session.session_id;
+    const token = ++skillRequestToken;
+    skillLoading = true;
+    skillRefresh.disabled = true;
+    skillStatus.textContent = "Loading Session Skills…";
+    skillList.replaceChildren();
+    try {
+      const payload = await request(`/sessions/skills?session_id=${encodeURIComponent(sessionId)}`);
+      if (token !== skillRequestToken || selectedSession()?.session_id !== sessionId) return;
+      const rows = Array.isArray(payload.skills) ? payload.skills : [];
+      for (const item of rows) {
+        if (!Object.hasOwn(skillSourceLabels, item.source) || typeof item.name !== "string") continue;
+        const li = document.createElement("li");
+        const name = document.createElement("strong");
+        name.textContent = item.name;
+        const source = document.createElement("span");
+        source.className = "muted";
+        source.textContent = `${skillSourceLabels[item.source]} · priority ${item.priority}`;
+        li.append(name, source);
+        skillList.append(li);
+      }
+      skillStatus.textContent = skillList.childElementCount
+        ? `${skillList.childElementCount} effective Skills in this Session`
+        : "No effective Skills for this Session.";
+      skillLoaded = true;
+    } catch (error) {
+      if (token === skillRequestToken) {
+        skillStatus.textContent = error instanceof Error ? `Cannot load Session Skills: ${error.message}` : "Session Skills unavailable";
+      }
+    } finally {
+      if (token === skillRequestToken) {
+        skillLoading = false;
+        skillRefresh.disabled = false;
+      }
+    }
+  }
+
+  function syncSessionSkills(session) {
+    const id = session?.session_id || "";
+    const available = session && session.status === "active" && session.availability === "available";
+    if (id !== skillSessionId || (session?.workdir || "") !== skillWorkdir || (!available && skillWasAvailable)) {
+      skillRequestToken += 1;
+      skillSessionId = id;
+      skillWorkdir = session?.workdir || "";
+      skillLoaded = false;
+      skillLoading = false;
+      skillDetails.open = false;
+      skillList.replaceChildren();
+    }
+    skillWasAvailable = Boolean(available);
+    skillDetails.hidden = !session;
+    skillRefresh.disabled = !available || skillLoading;
+    if (!available) {
+      skillStatus.textContent = session ? "Skills unavailable for ended or offline Sessions." : "Select a Session.";
+    } else if (!skillLoaded && !skillLoading) {
+      skillStatus.textContent = "Expand to inspect effective Skills.";
+    }
+  }
+
   let activeTab = initialSessionId ? "sessions" : "progress";
 
   function showTab(tab) {
@@ -354,6 +431,7 @@ export function createTasksController({
     createdNotice.hidden = !session?.task_created;
     createdNotice.textContent = session?.task_created
       ? `Created Task ${session.task_id} automatically and attached this Session.` : "";
+    syncSessionSkills(session);
     onSessionChange(session && { ...session, availability: sessionAvailability(session) });
     document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
     if (!session) {
@@ -1351,6 +1429,10 @@ export function createTasksController({
     for (const button of document.querySelectorAll("[data-task-action]")) {
       button.addEventListener("click", () => void mutateSelectedTask(button.dataset.taskAction));
     }
+    skillDetails.addEventListener("toggle", () => {
+      if (skillDetails.open && !skillLoaded && !skillLoading) void loadSessionSkills();
+    });
+    skillRefresh.addEventListener("click", () => void loadSessionSkills());
     elements.sessionTerminate.addEventListener(
       "click",
       () => void terminateSelectedSession(),

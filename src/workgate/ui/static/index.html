@@ -632,6 +632,17 @@ description: My Skill
               <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
             </dl>
             </details>
+            <details id="session-skills" class="task-session-skills" hidden>
+              <summary>Session Skills</summary>
+              <div class="session-skills-content">
+                <div class="session-skills-toolbar">
+                  <span class="muted">Project → Executor → Executor (User Global) → Control</span>
+                  <button id="session-skills-refresh" type="button">Refresh</button>
+                </div>
+                <p id="session-skills-status" class="muted" role="status">Expand to inspect effective Skills.</p>
+                <ul id="session-skills-list" class="session-skills-list"></ul>
+              </div>
+            </details>
           </section>
 
           <section id="session-gui" class="session-resource session-gui" hidden>
