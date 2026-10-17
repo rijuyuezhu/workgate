@@ -197,12 +197,18 @@
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
-      <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control MCP management">
+      <p id="executor-action-status" role="status" aria-live="polite"></p>
+      <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control integrations">
         <div class="executor-section-heading">
           <h3>Control MCP</h3>
           <button type="button" id="executor-control-mcp-add" disabled>+ Add MCP</button>
         </div>
         <div id="executor-control-mcp-body" class="executor-subtab-content"></div>
+        <div class="executor-section-heading">
+          <h3>Control Skills</h3>
+          <button type="button" id="executor-control-skills-add" disabled>+ Add Skill</button>
+        </div>
+        <div id="executor-control-skills-body" class="executor-subtab-content"></div>
       </section>
       <div class="executors-layout">
         <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
@@ -259,8 +265,8 @@
         <div class="dialog-heading"><div><h2 id="executor-integration-title">Add integration</h2></div><button class="dialog-close" type="button" id="executor-integration-close" aria-label="Close integration editor">×</button></div>
         <p id="executor-integration-status" class="muted" role="status"></p>
         <label>Name <input id="executor-integration-name" maxlength="128" required spellcheck="false" autocomplete="off" placeholder="integration-name"></label>
+        <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control</option></select></label>
         <div id="executor-integration-mcp-fields">
-          <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control · Network</option></select></label>
           <label id="executor-integration-url-wrap">Server URL <input id="executor-integration-url" type="url" placeholder="https://example.org/mcp" autocomplete="off"></label>
           <label id="executor-integration-command-wrap">Command <input id="executor-integration-command" placeholder="/usr/bin/server" spellcheck="false"></label>
           <fieldset class="executor-mcp-auth-settings">
@@ -309,6 +315,7 @@ description: My Skill
         <label>Pairing code <input id="executor-pair-code" name="code" maxlength="32" required autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH"></label>
         <div class="dialog-actions"><button type="button" data-close-executor-dialog="executor-pair-dialog">Cancel</button><button class="primary-action" type="submit">Inspect request</button></div>
       </form>
+      <p id="executor-pair-status" role="status" aria-live="polite"></p>
       <div id="executor-pair-review" hidden>
         <dl class="executor-detail-grid">
           <div><dt>Requested name</dt><dd id="executor-pair-requested-name">—</dd></div>

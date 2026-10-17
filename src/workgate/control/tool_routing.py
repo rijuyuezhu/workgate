@@ -35,6 +35,7 @@ _AUDIT_CONTROL_TOOLS = frozenset({"audit_tail"})
 _JOB_CONTROL_TOOLS = frozenset({"job"})
 _AGENT_MCP_CONTROL_TOOLS = frozenset(
     {
+        "agent_config_status",
         "list_agent_mcp_servers",
         "search_agent_mcp_tools",
         "inspect_agent_mcp_tool",
@@ -215,6 +216,18 @@ class ControlToolRouter:
                 include_full_payloads=bool(
                     args.get("include_full_payloads", False)
                 ),
+            )
+        if tool_name == "agent_config_status":
+            return await self._agent_bridge.config_status()
+        if tool_name == "list_agent_skills":
+            return await self._agent_bridge.list_skills(args.get("session_id"))
+        if tool_name == "activate_agent_skill":
+            return await self._agent_bridge.activate_skill(
+                args.get("session_id"), str(args["name"])
+            )
+        if tool_name == "read_agent_skill_file":
+            return await self._agent_bridge.read_skill_file(
+                args.get("session_id"), str(args["name"]), str(args["path"])
             )
         if tool_name == "list_agent_mcp_servers":
             return await self._agent_bridge.list_servers(args.get("session_id"))

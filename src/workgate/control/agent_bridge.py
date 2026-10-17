@@ -1,24 +1,41 @@
 """Control-owned Agent Bridge routing across network and executor-local transports."""
 
 import asyncio
+from dataclasses import asdict
 from typing import Any
 
 from ..agent_bridge.discovery import McpDiscovery
 from ..agent_bridge.management import ManagedMcpConfig, manage_mcp_manifest
 from ..agent_bridge.mcp import AgentMcpClientManager
-from ..agent_bridge.models import AgentCapabilityRegistry
+from ..agent_bridge.models import (
+    AgentCapabilityRegistry,
+    SkillScanResult,
+    SkillSource,
+)
 from ..agent_bridge.service import (
+    agent_config_status_payload,
     build_network_agent_registry_from_settings,
     call_agent_mcp_tool_payload,
     list_agent_mcp_servers_payload,
     list_agent_mcp_tools_payload,
 )
+from ..agent_bridge.skills import (
+    DEFAULT_MAX_SKILLS,
+    activate_skill,
+    read_agent_skill_file,
+    scan_agent_skills,
+)
+from ..agent_bridge.state import load_agent_manifest
 from ..config.control import ControlConfig
 from ..errors import PublicToolValueError
 from ..schemas.result_models.agent import (
+    ActivateAgentSkillOutput,
+    AgentConfigStatusOutput,
     CallAgentMcpToolOutput,
     ListAgentMcpServersOutput,
     ListAgentMcpToolsOutput,
+    ListAgentSkillsOutput,
+    ReadAgentSkillFileOutput,
 )
 from .sessions import ControlSessionCoordinator
 
@@ -32,6 +49,131 @@ class ControlAgentBridgeService:
         self._settings = settings
         self._sessions = sessions
         self._discovery = McpDiscovery(self._discovery_rows)
+
+    def _control_skills(self) -> tuple[SkillSource, SkillScanResult]:
+        """Read only the Control-owned root, never an Executor's filesystem."""
+        manifest = load_agent_manifest(
+            self._settings.agent_config_dir, read_only=True
+        )
+        source = SkillSource(
+            "control",
+            self._settings.agent_config_dir,
+            manifest.data.skills.directory,
+        )
+        if manifest.status == "invalid_config":
+            return source, SkillScanResult(
+                warnings=["Control Skill manifest invalid"]
+            )
+        if not manifest.data.skills.enabled:
+            return source, SkillScanResult()
+        return source, scan_agent_skills(
+            source.config_dir,
+            source.directory,
+            source_name="control",
+            source_path=str(source.path),
+            excluded_names=frozenset(manifest.data.skills.disabled),
+        )
+
+    async def config_status(self) -> AgentConfigStatusOutput:
+        """Keep public Control Skill counts consistent with Control Skill listing."""
+        registry = await asyncio.to_thread(self._network_registry)
+        status = agent_config_status_payload(registry)
+        skills = await self.list_skills(None)
+        status.skills = {
+            "count": len(skills.skills),
+            "warnings": skills.warnings,
+            "sources": skills.sources,
+        }
+        return status
+
+    async def list_skills(
+        self, session_id: str | None
+    ) -> ListAgentSkillsOutput:
+        """Merge Session sources; support Control-only lookup without an Executor."""
+        executor = (
+            ListAgentSkillsOutput.model_validate(
+                await self._sessions.call_session_tool(
+                    "list_agent_skills", {"session_id": session_id}
+                )
+            )
+            if session_id is not None
+            else ListAgentSkillsOutput(sources=[], skills=[], warnings=[])
+        )
+        source, scan = await asyncio.to_thread(self._control_skills)
+        skills = list(executor.skills)
+        names = {row["name"] for row in skills}
+        warnings = list(executor.warnings)
+        for name, record in scan.skills.items():
+            if name in names:
+                if len(warnings) < 100:
+                    warnings.append(
+                        f"control: skipped duplicate Skill {name!r}; "
+                        "a higher-priority source already provides it"
+                    )
+            elif len(skills) < DEFAULT_MAX_SKILLS:
+                skills.append(asdict(record))
+            elif len(warnings) < 100:
+                warnings.append("Combined Skill list truncated")
+                break
+        warnings.extend(scan.warnings[: max(0, 100 - len(warnings))])
+        return ListAgentSkillsOutput(
+            sources=[*executor.sources, source.public_row()],
+            skills=skills,
+            warnings=warnings[:100],
+        )
+
+    async def _skill_owner(self, session_id: str | None, name: str):
+        """Resolve afresh under Session authority or Control-only scope."""
+        if session_id is not None:
+            executor = ListAgentSkillsOutput.model_validate(
+                await self._sessions.call_session_tool(
+                    "list_agent_skills", {"session_id": session_id}
+                )
+            )
+            if any(row["name"] == name for row in executor.skills):
+                return None
+        source, scan = await asyncio.to_thread(self._control_skills)
+        record = scan.skills.get(name)
+        if record is None:
+            raise ValueError(f"Unknown agent skill: {name}")
+        return source, record
+
+    async def activate_skill(
+        self, session_id: str | None, name: str
+    ) -> ActivateAgentSkillOutput:
+        selected = await self._skill_owner(session_id, name)
+        if selected is None:
+            payload = await self._sessions.call_session_tool(
+                "activate_agent_skill", {"session_id": session_id, "name": name}
+            )
+            return ActivateAgentSkillOutput.model_validate(payload)
+        source, record = selected
+        return ActivateAgentSkillOutput.model_validate(
+            await asyncio.to_thread(activate_skill, source.config_dir, record)
+        )
+
+    async def read_skill_file(
+        self, session_id: str | None, name: str, path: str
+    ) -> ReadAgentSkillFileOutput:
+        selected = await self._skill_owner(session_id, name)
+        if selected is None:
+            payload = await self._sessions.call_session_tool(
+                "read_agent_skill_file",
+                {"session_id": session_id, "name": name, "path": path},
+            )
+            return ReadAgentSkillFileOutput.model_validate(payload)
+        source, record = selected
+        return ReadAgentSkillFileOutput.model_validate(
+            await asyncio.to_thread(
+                read_agent_skill_file,
+                source.config_dir,
+                name,
+                path,
+                source.directory,
+                source_name="control",
+                source_path=str(source.path),
+            )
+        )
 
     def _network_registry(
         self,
@@ -56,7 +198,11 @@ class ControlAgentBridgeService:
         return session_id
 
     async def _resolve_server_owner(
-        self, server: str, session_id: str | None
+        self,
+        server: str,
+        session_id: str | None,
+        *,
+        include_disabled: bool = False,
     ) -> tuple[AgentCapabilityRegistry, str]:
         registry = await asyncio.to_thread(
             self._network_registry, probe_mcp_tools=False
@@ -69,30 +215,32 @@ class ControlAgentBridgeService:
             {"session_id": session_id, "probe_mcp_tools": False},
         )
         executor_rows = ListAgentMcpServersOutput.model_validate(payload).root
-        executor_has = server in executor_rows
-        if control_has and executor_has:
-            raise ValueError(
-                "Agent MCP server name is ambiguous across control and the "
-                f"selected executor: {server}"
-            )
+        executor_row = executor_rows.get(server)
+        # Disabled entries do not mask lower-priority sources, as with Skills.
+        # Management still needs to address a disabled Executor entry.
+        if executor_row is not None and (
+            include_disabled
+            or not isinstance(executor_row, dict)
+            or executor_row.get("enabled") is not False
+        ):
+            return registry, "executor"
         if control_has:
             return registry, "control"
-        if executor_has:
-            return registry, "executor"
         return registry, "unknown"
 
     @staticmethod
     def _merge_server_rows(
         control_rows: dict[str, Any], executor_rows: dict[str, Any]
     ) -> dict[str, Any]:
-        duplicates = sorted(set(control_rows) & set(executor_rows))
-        if duplicates:
-            names = ", ".join(duplicates)
-            raise ValueError(
-                "Agent MCP server names must be unique across control and the "
-                f"selected executor; duplicates: {names}"
-            )
-        return {**control_rows, **executor_rows}
+        merged = dict(control_rows)
+        for name, row in executor_rows.items():
+            if (
+                name not in merged
+                or not isinstance(row, dict)
+                or row.get("enabled") is not False
+            ):
+                merged[name] = row
+        return merged
 
     async def list_servers(
         self, session_id: str | None = None
@@ -133,20 +281,33 @@ class ControlAgentBridgeService:
         control = list_agent_mcp_tools_payload(registry).tools
         if session_id is None:
             return ListAgentMcpToolsOutput(tools=control)
+        # Tool listing omits disabled/unavailable servers. Resolve masking
+        # from the configured Executor inventory, not discovered tool rows.
+        inventory = await self._sessions.call_session_tool(
+            "agent_mcp.list_servers",
+            {"session_id": session_id, "probe_mcp_tools": False},
+        )
+        executor_names = {
+            name
+            for name, row in ListAgentMcpServersOutput.model_validate(
+                inventory
+            ).root.items()
+            if not isinstance(row, dict) or row.get("enabled") is not False
+        }
         payload = await self._sessions.call_session_tool(
             "agent_mcp.list_tools", {"session_id": session_id, "server": None}
         )
         executor = ListAgentMcpToolsOutput.model_validate(payload).tools
-        control_servers = {str(row.get("server", "")) for row in control}
-        executor_servers = {str(row.get("server", "")) for row in executor}
-        duplicates = sorted(control_servers & executor_servers - {""})
-        if duplicates:
-            names = ", ".join(duplicates)
-            raise ValueError(
-                "Agent MCP server names must be unique across control and the "
-                f"selected executor; duplicates: {names}"
-            )
-        return ListAgentMcpToolsOutput(tools=[*control, *executor])
+        return ListAgentMcpToolsOutput(
+            tools=[
+                *(
+                    row
+                    for row in control
+                    if row.get("server") not in executor_names
+                ),
+                *executor,
+            ]
+        )
 
     async def _discovery_rows(
         self, session_id: str | None, server: str | None
@@ -181,7 +342,12 @@ class ControlAgentBridgeService:
                 owner_type="network",
             )
             if session_id is None:
-                return control
+                return {
+                    "servers": [
+                        {**row, "owner": "control"}
+                        for row in control["servers"]
+                    ]
+                }
             executor = await self._sessions.call_session_tool(
                 "agent_mcp.manage", {"session_id": session_id, "action": "list"}
             )
@@ -194,29 +360,40 @@ class ControlAgentBridgeService:
                 raise ValueError(
                     "executor returned invalid MCP management catalog"
                 )
-            names = {row["name"] for row in control["servers"]}
-            duplicates = names & {
-                str(row["name"])
-                for row in executor_servers
-                if isinstance(row, dict) and isinstance(row.get("name"), str)
+            # Management lists every configured owner, unlike effective
+            # discovery. Explicit owner labels disambiguate colliding names.
+            return {
+                "servers": [
+                    *(
+                        {**row, "owner": "control"}
+                        for row in control["servers"]
+                    ),
+                    *(
+                        {**row, "owner": "executor"}
+                        for row in executor_servers
+                        if isinstance(row, dict)
+                        and isinstance(row.get("name"), str)
+                    ),
+                ]
             }
-            if duplicates:
-                raise ValueError(
-                    f"MCP server names are ambiguous: {', '.join(sorted(duplicates))}"
-                )
-            return {"servers": [*control["servers"], *executor_servers]}
 
         if not name:
             raise ValueError(f"name is required for {action}")
         if action == "register":
             if config is None:
                 raise ValueError("config is required for register")
-            _, existing = await self._resolve_server_owner(name, session_id)
-            if existing != "unknown":
-                raise ValueError(f"MCP server already exists: {name}")
             owner = "executor" if config.type == "stdio" else "control"
+            _, existing = await self._resolve_server_owner(
+                name,
+                session_id if owner == "executor" else None,
+                include_disabled=True,
+            )
+            if existing == owner:
+                raise ValueError(f"MCP server already exists: {name}")
         else:
-            _, owner = await self._resolve_server_owner(name, session_id)
+            _, owner = await self._resolve_server_owner(
+                name, session_id, include_disabled=True
+            )
             if owner == "unknown":
                 raise ValueError(f"Unknown agent MCP server: {name}")
         if action == "refresh":

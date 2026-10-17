@@ -147,12 +147,14 @@ def manage_skill(
     name: str | None = None,
     content: str | None = None,
     expected_revision: str | None = None,
+    entry_only: bool = False,
 ) -> dict[str, Any]:
     """Inspect or mutate only the canonical managed source, never global/project."""
     if action not in {
         "list",
         "get",
         "create",
+        "stage",
         "update",
         "enable",
         "disable",
@@ -162,9 +164,12 @@ def manage_skill(
         raise ValueError("Unsupported Skill management action")
     if action != "list" and not name:
         raise ValueError("Skill name required")
-    if action in {"create", "update", "validate"} and content is None:
+    if action in {"create", "stage", "update", "validate"} and content is None:
         raise ValueError("SKILL.md content required")
-    if action not in {"create", "update", "validate"} and content is not None:
+    if (
+        action not in {"create", "stage", "update", "validate"}
+        and content is not None
+    ):
         raise ValueError("SKILL.md content is not valid for this action")
     if (
         action in {"update", "enable", "disable", "delete"}
@@ -172,10 +177,12 @@ def manage_skill(
     ):
         raise ValueError("Expected revision required for Skill mutation")
     if (
-        action in {"list", "create", "get", "validate"}
+        action in {"list", "create", "stage", "get", "validate"}
         and expected_revision is not None
     ):
         raise ValueError("Expected revision is not valid for this action")
+    if entry_only and action != "delete":
+        raise ValueError("Entry-only removal applies only to delete")
     if name:
         validate_skill_name(name)
         if name.startswith("."):
@@ -192,7 +199,14 @@ def manage_skill(
     config_dir = Path(config_dir)
     if config_dir.is_symlink():
         raise ValueError("Symlinked Agent configuration directory")
-    writing = action in {"create", "update", "enable", "disable", "delete"}
+    writing = action in {
+        "create",
+        "stage",
+        "update",
+        "enable",
+        "disable",
+        "delete",
+    }
     if writing:
         config_dir.mkdir(parents=True, exist_ok=True)
         ensure_private_directory(config_dir)
@@ -221,6 +235,9 @@ def manage_skill(
                 "configured_enabled": configured,
                 "revision": _revision(data, configured),
                 "content": data.decode("utf-8"),
+                "has_assets": any(
+                    child.name != "SKILL.md" for child in folder.iterdir()
+                ),
             }
 
         if action == "list":
@@ -252,12 +269,18 @@ def manage_skill(
                 "truncated": len(entries) > MAX_MANAGED_SKILLS,
             }
         assert name is not None
-        folder = _skill_path(root, name, required=action != "create")
+        folder = _skill_path(
+            root, name, required=action not in {"create", "stage"}
+        )
         if action == "get":
             return {"skill": row(name)}
-        if action == "create":
+        if action in {"create", "stage"}:
             if folder.exists():
-                raise ValueError("Executor-managed Skill already exists")
+                raise ValueError("Managed Skill already exists")
+            if action == "stage" and name in disabled:
+                raise ValueError(
+                    "Target Skill has an existing disabled setting"
+                )
             if (
                 root.is_dir()
                 and sum(1 for p in root.iterdir() if p.is_dir())
@@ -265,11 +288,45 @@ def manage_skill(
             ):
                 raise ValueError("Managed Skill limit reached")
             root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # A staged Skill is disabled *before* its directory appears. A
+            # concurrent scanner cannot activate half of a cross-owner move.
+            previous_manifest: str | None = None
+            if action == "stage":
+                previous_manifest = (
+                    loaded.config_path.read_text(encoding="utf-8")
+                    if loaded.config_path.exists()
+                    else None
+                )
+                raw = (
+                    json.loads(previous_manifest)
+                    if previous_manifest
+                    else {"version": 1}
+                )
+                raw.setdefault("skills", {})["disabled"] = sorted(
+                    disabled | {name}
+                )
+                AgentBridgeManifest.model_validate(raw)
+                atomic_write_private_text(
+                    loaded.config_path,
+                    json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+                )
+                disabled.add(name)
             staged = root / (".creating-" + uuid.uuid4().hex)
-            staged.mkdir(mode=0o700)
             try:
+                staged.mkdir(mode=0o700)
                 atomic_write_private_text(staged / "SKILL.md", content or "")
                 staged.rename(folder)
+            except BaseException:
+                # If staging never became visible, roll the disabled marker
+                # back. Never enable a directory which may be left behind.
+                if not folder.exists():
+                    if previous_manifest is None:
+                        loaded.config_path.unlink(missing_ok=True)
+                    else:
+                        atomic_write_private_text(
+                            loaded.config_path, previous_manifest
+                        )
+                raise
             finally:
                 if staged.exists():
                     shutil.rmtree(staged)
@@ -298,6 +355,12 @@ def manage_skill(
             )
         else:
             _no_links(folder)
+            if entry_only and any(
+                child.name != "SKILL.md" for child in folder.iterdir()
+            ):
+                raise ValueError(
+                    "Skill contains auxiliary files; move the complete bundle separately"
+                )
             tombstone = root / (".deleting-" + uuid.uuid4().hex)
             folder.rename(tombstone)
             try:

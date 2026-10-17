@@ -3175,10 +3175,10 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 .executor-manage-row[data-state="enabled"] { background: #f4fbf7; }
 .executor-manage-row[data-state="disabled"] { background: #f7f8fa; }
-.executor-manage-row[data-state="overridden"] { background: #fcf8f8; }
+.executor-manage-row[data-state="overridden"] { background: #fffaf0; }
 .executor-manage-row[data-state="overridden"] strong { color: #858d9a; text-decoration: line-through; }
-.executor-manage-pill[data-state="overridden"] { background: #fce7eb; color: #a4414e; }
-.executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #b93e4d; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #b93e4d !important; }
+.executor-manage-pill[data-state="overridden"] { background: #fff3dd; color: #8b5b12; }
+.executor-row-warning { flex: none; display: grid; place-items: center; height: 16px; width: 16px; border: 1.5px solid #a77120; border-radius: 50%; font-size: 11px !important; font-weight: 800; color: #a77120 !important; }
 
 #executors-panel .executor-overview-body[hidden] { display: none !important; }
 /* Executor management workspace: a quiet selector + one readable work area. */
@@ -3301,3 +3301,73 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executor-mcp-oauth-actions p { font-size: 11px; line-height: 1.6; }
 #executor-mcp-oauth-actions code { overflow-wrap: anywhere; }
 @media (max-width: 620px) { .executor-auth-inputs { grid-template-columns: minmax(0,1fr); } .executor-auth-secret-add { grid-template-columns: minmax(0,1fr); } }
+
+/* Shared inline feedback for Executor management. Ordinary empty/loading text
+   stays unboxed; only actionable outcomes receive semantic color and icon. */
+.executor-notice {
+  --notice-color: #345d95;
+  --notice-border: #a9c3ea;
+  --notice-bg: #f0f5fd;
+  position: relative;
+  display: block;
+  margin: 0;
+  padding: 10px 12px 10px 36px;
+  border: 1px solid var(--notice-border);
+  border-radius: 6px;
+  background: var(--notice-bg);
+  color: var(--notice-color) !important;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.executor-notice[hidden] { display: none !important; }
+.executor-notice::before {
+  content: "i";
+  position: absolute;
+  top: 11px;
+  left: 12px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+.executor-notice[data-tone="warning"] {
+  --notice-color: #8b5b12;
+  --notice-border: #e8b963;
+  --notice-bg: #fff8e9;
+}
+.executor-notice[data-tone="warning"]::before { content: "!"; }
+.executor-notice[data-tone="error"] {
+  --notice-color: #a13547;
+  --notice-border: #e7a2ac;
+  --notice-bg: #fff1f2;
+}
+.executor-notice[data-tone="error"]::before { content: "×"; }
+.executor-notice[data-tone="success"] {
+  --notice-color: #176b4e;
+  --notice-border: #a5d8bf;
+  --notice-bg: #eef9f2;
+}
+.executor-notice[data-tone="success"]::before { content: "✓"; }
+.executor-manage-group > .executor-notice { margin: 12px; }
+#executor-state.executor-notice { max-width: min(420px, 100%); }
+#executor-integration-test-result.executor-notice { display: block; }
+.executor-overview-body .executor-metric-error.executor-notice {
+  text-align: left;
+  margin-top: 8px;
+}
+
+#executor-action-status:empty, #executor-pair-status:empty { display: none; }
+#executor-action-status.executor-notice { margin-bottom: 14px; }
+#executor-pair-status.executor-notice { margin: 12px 0; }
+#executor-integration-status:empty,
+#executor-integration-test-result:empty,
+#executor-mcp-auth-status:empty { display: none; }
+#executors-panel .executor-manage-row[data-state="overridden"] strong { color: #7e8694; }
+#executors-panel .executor-manage-pill[data-state="overridden"] { color: #936017; }
+#executors-panel .executor-manage-pill[data-state="overridden"]::before { background: #c99231; }

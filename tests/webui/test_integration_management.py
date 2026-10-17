@@ -1,5 +1,7 @@
 """Real owner-scoped Integration API CRUD, validation and ACL tests."""
 
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from tests.support.paired import build_paired_http_app
@@ -20,6 +22,9 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
         agent_bridge_enabled=True,
     )
     app, harness = build_paired_http_app(settings)
+    harness.control.config = replace(
+        harness.control.config, agent_config_dir=tmp_path / "control-agent"
+    )
 
     def get(client, owner, kind, **extra):
         return client.get(
@@ -184,10 +189,20 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
                 "control",
                 "skill",
                 "create",
-                name="bad",
+                name="control-managed",
                 content=CONTENT,
             ).status_code
-            == 400
+            == 200
+        )
+        assert (
+            get(client, "control", "skill").json()["data"]["skills"][0]["name"]
+            == "control-managed"
+        )
+        assert (
+            change(
+                client, "control", "skill", "delete", "control-managed"
+            ).status_code
+            == 200
         )
         assert (
             post(
