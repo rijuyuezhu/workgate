@@ -494,6 +494,8 @@ def executor_admin_routes(
                 )
             return _json_ok(result)
         except RuntimeError, TimeoutError, ConnectionError:
+            if request.method == "POST" and owner == "executor":
+                runtime.agent_bridge.invalidate_all_discovery()
             return _json_error(
                 "AuthUnavailable",
                 "MCP auth service unavailable",
@@ -1247,6 +1249,12 @@ def executor_admin_routes(
                 )
             return _json_ok(result)
         except RuntimeError, TimeoutError, ConnectionError:
+            if (
+                request.method == "POST"
+                and owner == "executor"
+                and kind == "mcp"
+            ):
+                runtime.agent_bridge.invalidate_all_discovery()
             return _json_error(
                 "ManagementUnavailable",
                 "Executor management unavailable",
