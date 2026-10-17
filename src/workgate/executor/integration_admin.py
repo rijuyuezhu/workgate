@@ -41,6 +41,7 @@ async def manage_executor_integration(
             name=name,
             content=_optional_string(args, "content"),
             expected_revision=_optional_string(args, "expected_revision"),
+            entry_only=args.get("entry_only") is True,
         )
     if op == "ui.mcp.auth":
         if not name:

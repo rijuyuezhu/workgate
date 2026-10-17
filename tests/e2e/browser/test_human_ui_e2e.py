@@ -265,7 +265,7 @@ def test_control_skill_owner_in_existing_editor_real_chromium(
     expect(row).to_be_visible()
     row.get_by_role("button", name="Manage").click()
     expect(owner).to_have_value("control")
-    expect(owner).to_be_disabled()
+    expect(owner).to_be_enabled()
     expect(page.locator("#executor-integration-content")).to_be_enabled()
     expect(page.locator("#executor-integration-content")).to_have_value(first)
     page.locator("#executor-integration-content").fill(first + "No copies.\n")
@@ -283,6 +283,29 @@ def test_control_skill_owner_in_existing_editor_real_chromium(
     page.locator("#executor-integration-toggle").click()
     expect(row).to_contain_text("Enabled")
     row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
+    owner.select_option("executor")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    expect(control_group).not_to_contain_text("browser-control-skill")
+    executor_group = page.locator(
+        "#executor-skills-body .executor-manage-group"
+    ).filter(has=page.get_by_role("heading", name="Executor", exact=True))
+    executor_row = executor_group.locator(".executor-manage-row").filter(
+        has_text="browser-control-skill"
+    )
+    expect(executor_row).to_be_visible()
+    executor_row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
+    expect(page.locator("#executor-integration-content")).to_have_value(
+        first + "No copies.\n"
+    )
+    owner.select_option("control")
+    page.locator("#executor-integration-save").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    expect(row).to_be_visible()
+    row.get_by_role("button", name="Manage").click()
+    expect(page.locator("#executor-integration-content")).to_be_enabled()
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#executor-integration-delete").click()
     expect(control_group).not_to_contain_text("browser-control-skill")

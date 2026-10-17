@@ -45,6 +45,20 @@ class _IntegrationMoveBody(BaseModel):
     config: ManagedMcpConfig
 
 
+class _SkillMoveBody(BaseModel):
+    """Move a managed Skill using the existing Owner selector and Apply."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: Literal["control", "executor"]
+    executor_id: str | None = Field(default=None, max_length=128)
+    destination_owner: Literal["control", "executor"]
+    destination_executor_id: str | None = Field(default=None, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    expected_revision: str = Field(min_length=64, max_length=64)
+    content: str = Field(min_length=1, max_length=131072)
+
+
 class _IntegrationAuthBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -749,6 +763,189 @@ def executor_admin_routes(
             }
         )
 
+    async def skill_move(request: Request) -> Response:
+        """Transfer a single-file Skill via disabled staging and CAS removal."""
+        try:
+            require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            body = _SkillMoveBody.model_validate(await request.json())
+        except ValidationError, ValueError, TypeError:
+            return _json_error(
+                "InvalidMove", "Invalid Skill movement request", status_code=400
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        source = (
+            body.owner,
+            body.executor_id if body.owner == "executor" else None,
+        )
+        target = (
+            body.destination_owner,
+            body.destination_executor_id
+            if body.destination_owner == "executor"
+            else None,
+        )
+        if source == target:
+            return _json_error(
+                "SameLocation", "Use ordinary Apply", status_code=400
+            )
+
+        async def op(
+            location, action, *, content=None, revision=None, entry_only=False
+        ):
+            owner, executor_id = location
+            if owner == "control":
+                return await asyncio.to_thread(
+                    manage_skill,
+                    runtime.config.agent_config_dir,
+                    action,
+                    name=body.name,
+                    content=content,
+                    expected_revision=revision,
+                    entry_only=entry_only,
+                )
+            record = runtime.control_state.snapshot_executors().get(
+                executor_id or ""
+            )
+            if record is None or record.revoked_at is not None:
+                raise ValueError("Unknown source or destination Executor")
+            if not await runtime.executor_transport.is_online(
+                record.executor_id
+            ):
+                raise ConnectionError("Executor offline")
+            args = {"action": action, "name": body.name}
+            if content is not None:
+                args["content"] = content
+            if revision is not None:
+                args["expected_revision"] = revision
+            if entry_only:
+                args["entry_only"] = True
+            response = await runtime.executor_transport.call(
+                record.executor_id,
+                "ui.skill.manage",
+                args,
+                timeout_s=12,
+            )
+            if not response.ok or not isinstance(response.result, dict):
+                raise ValueError(f"Executor rejected Skill {action}")
+            return response.result
+
+        staged_revision = None
+
+        async def rollback():
+            if staged_revision is None:
+                return False
+            try:
+                await op(
+                    target, "delete", revision=staged_revision, entry_only=True
+                )
+                return True
+            except (
+                ValueError,
+                KeyError,
+                RuntimeError,
+                TimeoutError,
+                OSError,
+                ConnectionError,
+            ):
+                return False
+
+        try:
+            before = (await op(source, "get"))["skill"]
+            if before["revision"] != body.expected_revision:
+                return _json_error(
+                    "SourceChanged",
+                    "Skill changed; reload before Apply",
+                    status_code=409,
+                )
+            if before.get("has_assets"):
+                return _json_error(
+                    "BundleMoveUnsupported",
+                    "Skill contains auxiliary files; cannot move only SKILL.md",
+                    status_code=409,
+                )
+            staged = (await op(target, "stage", content=body.content))["skill"]
+            staged_revision = staged["revision"]
+            enabled = before["enabled"] is True
+        except ValueError, KeyError, ValidationError:
+            return _json_error(
+                "MoveRejected",
+                "Source changed or target Skill already exists",
+                status_code=409,
+            )
+        except TimeoutError, OSError, RuntimeError, ConnectionError:
+            return _json_error(
+                "MoveUnavailable",
+                "Inspect both locations before retrying",
+                status_code=503,
+            )
+
+        try:
+            await op(
+                source,
+                "delete",
+                revision=body.expected_revision,
+                entry_only=True,
+            )
+        except ValueError, KeyError:
+            recovered = await rollback()
+            return _json_error(
+                "SourceChanged",
+                "Source changed or gained auxiliary files; target rolled back"
+                if recovered
+                else "Source changed; inspect staged target before retrying",
+                status_code=409 if recovered else 503,
+            )
+        except TimeoutError, OSError, RuntimeError, ConnectionError:
+            audit(
+                "skill_move_uncertain",
+                name=body.name,
+                source=source[0],
+                destination=target[0],
+            )
+            return _json_error(
+                "MoveUncertain",
+                "Source removal unconfirmed; inspect both locations",
+                status_code=503,
+            )
+
+        if enabled:
+            try:
+                await op(target, "enable", revision=staged_revision)
+            except (
+                ValueError,
+                KeyError,
+                RuntimeError,
+                TimeoutError,
+                OSError,
+                ConnectionError,
+            ):
+                audit(
+                    "skill_move_partial",
+                    name=body.name,
+                    source=source[0],
+                    destination=target[0],
+                )
+                return _json_error(
+                    "MoveNeedsEnable",
+                    "Skill moved but remains disabled; enable at destination",
+                    status_code=503,
+                )
+        audit(
+            "skill_move",
+            name=body.name,
+            source=source[0],
+            destination=target[0],
+            source_executor_id=source[1],
+            destination_executor_id=target[1],
+        )
+        return _json_ok({"name": body.name, "moved": True})
+
     async def integrations(request: Request) -> Response:
         """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
         _require_executor_admin_scope()
@@ -1031,6 +1228,11 @@ def executor_admin_routes(
         Route(
             api_prefix + "/integrations/move",
             integration_move,
+            methods=["POST"],
+        ),
+        Route(
+            api_prefix + "/integrations/skill-move",
+            skill_move,
             methods=["POST"],
         ),
         Route(

@@ -372,7 +372,7 @@ export function createExecutorsController({
         !executor.online || (edit.kind !== "skill" && state.management?.executorMcp?.can_manage === false));
     }
     field.value = edit.owner === "control" ? "control" : (edit.executorId === current ? "executor" : `executor:${edit.executorId}`);
-    field.disabled = edit.kind === "skill" && Boolean(edit.item);
+    field.disabled = false;
   }
 
   function setEditorType() {
@@ -385,11 +385,16 @@ export function createExecutorsController({
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
     const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
+    elements.executorIntegrationToggle.hidden = !editing.item || (skill && moving);
     elements.executorMcpAuthManagement.hidden = skill || !editing.item || moving;
     elements.executorIntegrationTestWrap.hidden = skill || !editing.item || moving;
     elements.executorIntegrationUrl.required = !skill && owner === "control";
     elements.executorIntegrationCommand.required = !skill && owner === "executor";
-    if (skill) return;
+    if (skill) {
+      if (moving) editorStatus("Changing Skill location; Apply moves SKILL.md. Skills with auxiliary files cannot be moved yet.");
+      else if (editing.item && elements.executorIntegrationStatus.textContent.startsWith("Changing Skill location")) editorStatus("");
+      return;
+    }
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
     elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
@@ -434,7 +439,6 @@ export function createExecutorsController({
     elements.executorIntegrationTestResult.textContent = "";
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
-    elements.executorIntegrationContent.disabled = Boolean(item);
     elements.executorIntegrationToggle.disabled = Boolean(item);
     elements.executorIntegrationDelete.disabled = Boolean(item);
     elements.executorIntegrationValidate.disabled = Boolean(item);
@@ -452,7 +456,6 @@ export function createExecutorsController({
         elements.executorIntegrationContent.value = data.skill?.content || "";
         elements.executorIntegrationContent.disabled = false;
         elements.executorIntegrationValidate.disabled = false;
-        elements.executorIntegrationContent.disabled = false;
       } else {
         const config = data.editable_config;
         if (!config || data.requires_replacement) throw new Error("This legacy server requires replacement; it cannot be edited safely in the WebUI.");
@@ -482,7 +485,7 @@ export function createExecutorsController({
     const edit = state.editor;
     if (!edit) return;
     const destination = chosenLocation();
-    const moving = Boolean(edit.item && edit.kind === "mcp" && action === "update"
+    const moving = Boolean(edit.item && action === "update"
       && (edit.owner !== destination.owner || (edit.owner === "executor" && destination.executorId !== edit.executorId)));
     const body = {owner: edit.owner, kind: edit.kind, action,
                   executor_id: edit.executorId, name: elements.executorIntegrationName.value.trim()};
@@ -501,9 +504,10 @@ export function createExecutorsController({
         destination_executor_id: destination.executorId,
         name: body.name,
         expected_revision: edit.revision,
-        config,
+        ...(edit.kind === "skill" ? {content: body.content} : {config}),
       } : body;
-      const result = await request(moving ? "/integrations/move" : "/integrations", {
+      const url = moving ? (edit.kind === "skill" ? "/integrations/skill-move" : "/integrations/move") : "/integrations";
+      const result = await request(url, {
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
       });
       if (state.editor !== edit) return;
