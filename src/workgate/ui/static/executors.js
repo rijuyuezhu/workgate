@@ -287,22 +287,7 @@ export function createExecutorsController({
     elements.executorDiagnosticsState.textContent = data.status === "available"
       ? "On-demand snapshot · does not probe MCP servers"
       : "Executor offline or diagnostics unavailable";
-    if (!local) return;
-    const metrics = ["cpu_percent", "memory_percent", "disk_percent"];
-    const readings = document.createElement("div");
-    readings.className = "executor-metrics";
-    for (const metric of metrics) {
-      const value = local.health?.[metric];
-      const item = document.createElement("div");
-      item.className = "executor-metric";
-      const label = document.createElement("span");
-      label.textContent = metric.split("_")[0].toUpperCase();
-      const amount = document.createElement("strong");
-      amount.textContent = typeof value === "number" ? `${value.toFixed(1)}%` : "—";
-      item.append(label, amount);
-      readings.append(item);
-    }
-    body.append(readings);
+    if (!local || !selectedExecutor()?.online) return;
     addGroup(body, "Agent Bridge", [
       {title: "Manifest", detail: local.bridge?.status || "Unavailable"},
       {title: "Agent runtime", detail: "Health not reported separately"},
@@ -359,8 +344,8 @@ export function createExecutorsController({
       }));
       addGroup(container, title, rows.length ? rows : stateRows("No entries configured"));
     };
-    renderGroup(mcp, "Control · Network", snap?.control, "control", "mcp");
     renderGroup(mcp, "Executor · Local", snap?.executorMcp, "executor", "mcp");
+    renderGroup(mcp, "Control · Network", snap?.control, "control", "mcp");
     renderGroup(skills, "Executor-managed", snap?.skills, "executor", "skill");
     const readOnly = (state.diagnostic?.executor?.skills?.selected || [])
       .filter((skill) => skill.source === "global")
@@ -643,7 +628,6 @@ export function createExecutorsController({
       if (generation === state.diagnosticGeneration) {
         state.diagnosticLoading = false;
         renderDiagnostics();
-        renderManagement();
       }
     }
   }
@@ -724,10 +708,12 @@ export function createExecutorsController({
       state.managementId = "";
       state.management = null;
       renderDiagnostics();
+      renderManagement();
       if (state.selectedId) {
         resetMetrics();
         void loadDiagnostics();
         void refreshMetrics();
+        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
       }
     } else {
       if (selectedExecutor()?.revoked_at && state.diagnosticId === state.selectedId) {
@@ -737,13 +723,18 @@ export function createExecutorsController({
         state.diagnosticLoading = false;
         state.diagnosticError = "";
         renderDiagnostics();
-      renderManagement();
+        renderManagement();
       }
       const showMetrics = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
       if (showMetrics !== state.metricOnline) {
         resetMetrics();
         state.metricOnline = showMetrics;
+        state.managementGeneration += 1;
+        state.managementId = "";
+        state.management = null;
         renderDiagnostics();
+        renderManagement();
+        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
         if (showMetrics) {
           void loadDiagnostics(true);
           void refreshMetrics();

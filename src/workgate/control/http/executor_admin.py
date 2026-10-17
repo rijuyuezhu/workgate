@@ -1,7 +1,6 @@
 """Authenticated owner administration for final executors and pairing."""
 
 import asyncio
-import math
 import uuid
 from typing import Any, Literal, cast
 

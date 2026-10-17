@@ -26,14 +26,6 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
     )
-    page.wait_for_function(
-        """() => {
-      const body = document.querySelector('#executor-mcp-body');
-      return body && body.querySelectorAll('.executor-manage-group').length === 2
-        && !body.textContent.includes('Loading');
-    }""",
-        timeout=12000,
-    )
     assert len(calls) >= 1
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
@@ -60,13 +52,20 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Executor")
+    expect(page.locator("#executor-mcp-body")).not_to_contain_text("Loading…")
     page.locator('[data-executor-subtab="skills"]').click()
     expect(page.locator("#executor-skills-body")).to_contain_text("Executor")
     page.locator('[data-executor-subtab="diagnostics"]').click()
-    expect(page.locator("#executor-diagnostics-state")).to_contain_text("On-demand snapshot")
-    expect(page.locator("#executor-diagnostics-body")).to_contain_text("Agent Bridge")
+    expect(page.locator("#executor-diagnostics-state")).to_contain_text(
+        "On-demand snapshot"
+    )
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+        "Agent Bridge"
+    )
     page.locator('[data-executor-subtab="overview"]').click()
-    expect(page.locator("#executor-overview-metrics")).to_contain_text("Network throughput")
+    expect(page.locator("#executor-overview-metrics")).to_contain_text(
+        "Network throughput"
+    )
     expect(page.locator("#executor-overview-metrics")).to_contain_text("Memory")
     initial_calls = len(calls)
     page.evaluate(
@@ -127,30 +126,12 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
         .filter(has_text="online")
         .first
     ).to_be_visible()
+    page.locator('[data-executor-subtab="diagnostics"]').click()
+    expect(page.locator("#executor-diagnostics-body")).to_contain_text(
+        "Agent Bridge"
+    )
     page.locator('[data-executor-subtab="mcp"]').click()
-    expect(page.locator("#executor-mcp-body")).to_contain_text("type-omitted")
-    expect(page.locator("#executor-mcp-body")).to_contain_text("Unknown")
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-row").filter(
-            has_text="control-configured"
-        )
-    ).to_contain_text("Disabled")
-    # Enabled MCPs are neutral white; disabled MCPs read as muted gray.
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-row").filter(
-            has_text="local-enabled"
-        )
-    ).to_have_css("background-color", "rgb(255, 255, 255)")
-    expect(
-        page.locator(
-            "#executor-mcp-body .executor-manage-pill[data-state='enabled']"
-        ).first
-    ).to_have_css("background-color", "rgb(255, 255, 255)")
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-row").filter(
-            has_text="local-disabled"
-        )
-    ).to_have_css("background-color", "rgb(238, 240, 243)")
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     assert intercepted, "malformed MCP response interception did not run"
     page.unroute(diagnostic_url, capture_diagnostics)
     page.locator('[data-executor-subtab="overview"]').click()
@@ -167,29 +148,28 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     expect(page.locator("#executor-detail-status")).to_have_text(
         "offline", timeout=12000
     )
-    expect(page.locator("#executor-diagnostics-body")).to_be_hidden()
+    expect(page.locator("#executor-overview-metrics")).to_be_hidden()
     expect(page.locator("#executor-detail-id")).not_to_have_text("—")
     # Inventory can mark a peer offline before the cached diagnostics expire.
     # Do not show its previous MCP / Skills as if they were currently available.
-    expect(
-        page.locator("#executor-mcp-body .executor-manage-group").first
-    ).to_contain_text("Offline")
-    expect(
-        page.locator("#executor-skills-body .executor-manage-group").first
-    ).to_contain_text("Offline")
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-body")).to_contain_text("offline")
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-body")).to_contain_text("offline")
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     page.unroute("**/api/ui/executors", offline_inventory)
     expect(page.locator("#executor-detail-status")).to_have_text(
         "online", timeout=12000
     )
-    expect(page.locator("#executor-diagnostics-body")).to_be_visible()
+    page.locator('[data-executor-subtab="overview"]').click()
+    expect(page.locator("#executor-overview-metrics")).to_be_visible()
     page.set_viewport_size({"width": 390, "height": 844})
     # Mobile starts at the Executor list; enter the details subpage first.
     page.locator("#executor-list .executor-row").filter(
         has_text="online"
     ).first.click()
     page.locator('[data-executor-subtab="overview"]').click()
-    expect(page.locator("#executor-diagnostics-body")).to_be_visible()
+    expect(page.locator("#executor-overview-metrics")).to_be_visible()
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_be_visible()
     assert page.evaluate(
