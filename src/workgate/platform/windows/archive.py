@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import ExitStack, suppress
 from ctypes import wintypes
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 
 from .nt_relative import (
     _api,
@@ -586,6 +586,21 @@ def list_tree(
     return output, truncated
 
 
+def _copy_exact_file(
+    source: BinaryIO, destination: BinaryIO, size: int
+) -> None:
+    """Copy at most one pinned source size, rejecting growth and truncation."""
+    remaining = size
+    while remaining:
+        chunk = source.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise RuntimeError("Windows directory copy source was truncated")
+        destination.write(chunk)
+        remaining -= len(chunk)
+    if source.read(1):
+        raise RuntimeError("Windows directory copy source grew during copy")
+
+
 def copy_directory(
     source: Path,
     destination: Path,
@@ -601,7 +616,6 @@ def copy_directory(
     """
     import msvcrt
     import secrets
-    import shutil
 
     from .security import (
         _verify_regular_handle,
@@ -706,10 +720,8 @@ def copy_directory(
                                             ),
                                             "wb",
                                         ) as writer:
-                                            shutil.copyfileobj(
-                                                reader,
-                                                writer,
-                                                length=1024 * 1024,
+                                            _copy_exact_file(
+                                                reader, writer, before.st_size
                                             )
                                             writer.flush()
                                             os.fsync(writer.fileno())
