@@ -587,10 +587,6 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
         calls.append(args.mode)
 
     monkeypatch.setattr(server_cli, "run_control_from_args", run_from_args)
-    # The supervised Child invokes the existing role handler directly, without
-    # starting a nested Parent. Parent routing is tested separately.
-    monkeypatch.setattr(cli, "is_child", lambda: True)
-
     cli.main(["control", "--mode", "stdio"])
 
     assert calls == ["stdio"]

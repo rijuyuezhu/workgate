@@ -237,9 +237,9 @@ def test_inherited_socket_not_environment_marker_is_required(monkeypatch):
 
 def test_root_cli_supervises_only_running_roles(monkeypatch):
     calls = []
-    monkeypatch.setattr(main, "is_child", lambda: False)
+    monkeypatch.setattr(supervisor, "is_child", lambda: False)
     monkeypatch.setattr(
-        main, "run_parent", lambda commands: calls.append(commands)
+        supervisor, "run_parent", lambda commands: calls.append(commands)
     )
     main.main(["control", "--mode", "http"])
     main.main(["executor", "run"])

@@ -4,6 +4,7 @@ Only the direct role child inherits its private IPC socket. The Parent owns
 process lifetime; the Child continues to own all runtime and configuration.
 """
 
+import argparse
 import os
 import selectors
 import signal
@@ -33,6 +34,18 @@ def is_child() -> bool:
         return stat.S_ISSOCK(os.fstat(fd).st_mode)
     except KeyError, ValueError, OSError:
         return False
+
+
+def supervise_cli_role(role: str, args: argparse.Namespace) -> bool:
+    """Run a root CLI role under Parent, never nesting inside a Child.
+
+    Direct CLI handler calls without root argv remain usable for tests.
+    """
+    arguments = getattr(args, "_workgate_argv", None)
+    if arguments is None or is_child():
+        return False
+    run_parent([ChildCommand(role, tuple(child_command(*arguments)))])
+    return True
 
 
 def request_restart() -> None:
