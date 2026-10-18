@@ -8,6 +8,7 @@ from ...oauth.http.routes import oauth_public_routes
 from ...ui.http.routes import UI_API_PREFIX, human_ui_routes
 from ..executor_bootstrap import executor_bootstrap_routes
 from ..runtime import ControlRuntime
+from .config_inspection import config_inspection_routes
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
 from .stream_routes import terminal_stream_routes
@@ -36,6 +37,7 @@ def control_http_routes(
 
     ui_routes, ui_public_routes = human_ui_routes(settings)
     if runtime is not None:
+        ui_routes.extend(config_inspection_routes(api_prefix=UI_API_PREFIX))
         ui_routes.extend(
             executor_admin_routes(
                 runtime.executor_fleet,

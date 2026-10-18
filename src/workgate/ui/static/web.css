@@ -3579,3 +3579,14 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .topology-stage { position: relative; width: 100%; height: 100%; }
 .topology-graph[data-layout="grid"] .topology-stage { height: auto; min-height: 265px; }
 .topology-graph[data-scrollable="true"] { overflow: auto; }
+
+/* On-demand config detail: separate from the normal, read-only inventory. */
+#executors-panel .executor-config-view { margin: 12px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+#executors-panel .executor-config-view[hidden] { display: none !important; }
+#executors-panel .executor-config-section { margin-top: 10px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+#executors-panel .executor-config-section summary { cursor: pointer; padding: 10px 13px; font-weight: 650; }
+#executors-panel .executor-config-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+#executors-panel .executor-config-table th, #executors-panel .executor-config-table td { text-align: left; vertical-align: top; padding: 8px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+#executors-panel .executor-config-table td:first-child { font-weight: 600; }
+#executors-panel .executor-config-value { white-space: pre-wrap; font-family: var(--font-mono, monospace); }
+#executors-panel .executor-config-overridden td:last-child, #executors-panel .executor-config-warning { color: var(--warning, #986300); }

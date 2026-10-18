@@ -25,6 +25,8 @@ On Linux the defaults are:
 ~/.config/workgate/executor/config.yaml  # executor connect/run
 ```
 
+The authenticated WebUI configuration inspector uses this same precedence and reads from the role's *actual* selected startup file. A managed Executor may instead start from its service-generated private `config.json`; the inspector shows that path, not a guessed default YAML. This view requires an explicit `config:admin` OAuth grant (excluded from default scopes) and never modifies configuration.
+
 Control accepts control/shared settings; executor accepts executor/shared
 settings. `workgate colocate` runs both ordinary child processes with
 role-specific configuration and state directories. Each role's `--help`

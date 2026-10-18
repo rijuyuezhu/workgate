@@ -121,6 +121,10 @@
           <div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong id="dashboard-network-down">—</strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong id="dashboard-network-up">—</strong><small>sent</small></div></div>
           <div class="dashboard-network-bar" aria-label="Relative incoming and outgoing traffic"><span id="dashboard-network-rx-bar"></span><i id="dashboard-network-tx-bar"></i></div>
           <div class="dashboard-metric-foot"><span>Downlink</span><span>Uplink</span></div>
+          <section class="executor-subtab-pane" data-executor-pane="config" aria-label="Executor configuration" hidden>
+            <div class="executor-section-heading"><h3>Configuration</h3><button id="executor-config-refresh" type="button">Refresh</button></div>
+            <div id="executor-config-body" class="executor-subtab-content"></div>
+          </section>
         </article>
       </div>
       <div class="dashboard-executors-row">
@@ -193,12 +197,17 @@
           <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
         </div>
         <div class="executors-actions">
+          <button id="executor-control-config-open" type="button">Control config</button>
           <button id="executor-topology-open" type="button">Topology</button>
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
       <p id="executor-action-status" role="status" aria-live="polite"></p>
+      <section id="executor-control-config-view" class="executor-config-view" hidden aria-label="Control configuration">
+        <div class="executor-section-heading"><h3>Control configuration</h3><button id="executor-control-config-close" type="button">Close</button></div>
+        <div id="executor-control-config-body"></div>
+      </section>
       <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control integrations">
         <div class="executor-section-heading">
           <h3>Control MCP</h3>
@@ -272,6 +281,7 @@
             <button type="button" role="tab" data-executor-subtab="overview" aria-selected="true">Overview</button>
             <button type="button" role="tab" data-executor-subtab="mcp" aria-selected="false">MCP</button>
             <button type="button" role="tab" data-executor-subtab="skills" aria-selected="false">Skills</button>
+            <button type="button" role="tab" data-executor-subtab="config" aria-selected="false">Config</button>
           </nav>
           <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Executor overview">
             <div id="executor-overview-metrics" class="executor-overview-body"></div>

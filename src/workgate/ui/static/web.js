@@ -502,6 +502,7 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     reloadApp: () => load(),
+    onAuthorizeConfiguration: () => void startOAuth({ configAdmin: true }),
     onInventory: (rows) => {
       const targets = rows
         .filter((row) => !row.revoked_at)
@@ -544,7 +545,10 @@ void (async () => {
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
-    if (view !== "executors") executors.closeTopology();
+    if (view !== "executors") {
+      executors.closeTopology();
+      executors.clearConfiguration();
+    }
     if (view !== "tasks") {
       guiViewer.close();
       integrationsViewer.close();
@@ -774,7 +778,7 @@ void (async () => {
     return pending;
   }
 
-  async function startOAuth() {
+  async function startOAuth({ configAdmin = false } = {}) {
     if (!oauthAvailable()) {
       showAuthentication(
         "OAuth unavailable",
@@ -823,7 +827,7 @@ void (async () => {
       authorize.searchParams.set("response_type", "code");
       authorize.searchParams.set("client_id", registered.client_id);
       authorize.searchParams.set("redirect_uri", redirectUri);
-      authorize.searchParams.set("scope", String(oauth.scope || ""));
+      authorize.searchParams.set("scope", String(oauth.scope || "") + (configAdmin ? " config:admin" : ""));
       authorize.searchParams.set("resource", String(oauth.resource || ""));
       authorize.searchParams.set("code_challenge", challenge);
       authorize.searchParams.set("code_challenge_method", "S256");
