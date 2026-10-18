@@ -2734,3 +2734,56 @@ def test_abandon_invalid_unpack_receipt_fails_closed(tmp_path, monkeypatch):
         )
 
     assert receipt_path.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["NUL", "CON.txt", "file:alternate-stream", r"sub\\..\\escape"]
+)
+def test_windows_archive_unpack_rejects_reserved_members(
+    tmp_path, monkeypatch, name
+):
+    from io import BytesIO
+
+    import workgate.platform.path as platform_path
+    from workgate.platform.host import HostOS
+
+    _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        platform_path, "host_os", lambda _system=None: HostOS.WINDOWS
+    )
+    archive = tmp_path / "reserved.tar"
+    with tarfile.open(archive, "w") as tar:
+        payload = b"malicious"
+        entry = tarfile.TarInfo(name=name)
+        entry.size = len(payload)
+        tar.addfile(entry, BytesIO(payload))
+    with (
+        tarfile.open(archive, "r") as tar,
+        pytest.raises(ValueError, match="unsafe Windows archive member"),
+    ):
+        transfer_ops._safe_members(tar, tmp_path / "staging", _context())
+
+
+def test_windows_archive_unpack_rejects_case_insensitive_collisions(
+    tmp_path, monkeypatch
+):
+    from io import BytesIO
+
+    import workgate.platform.path as platform_path
+    from workgate.platform.host import HostOS
+
+    _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        platform_path, "host_os", lambda _system=None: HostOS.WINDOWS
+    )
+    archive = tmp_path / "collision.tar"
+    with tarfile.open(archive, "w") as tar:
+        for name in ("assets/Note.TXT", "assets/note.txt"):
+            entry = tarfile.TarInfo(name=name)
+            entry.size = 1
+            tar.addfile(entry, BytesIO(b"x"))
+    with (
+        tarfile.open(archive, "r") as tar,
+        pytest.raises(ValueError, match="duplicate archive member"),
+    ):
+        transfer_ops._safe_members(tar, tmp_path / "staging", _context())

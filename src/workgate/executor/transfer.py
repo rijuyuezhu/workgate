@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from ..config.executor import ExecutorConfig
+from ..platform.path import archive_member_key
 from ..protocol.transfer import (
     DEFAULT_TRANSFER_CHUNK_BYTES,
     normalize_chunk_size,
@@ -2003,7 +2004,7 @@ def _safe_members(
             raise ValueError(
                 f"sparse archive members are not supported: {member.name}"
             )
-        normalized_name = str(member_path)
+        normalized_name = archive_member_key(member.name)
         if normalized_name in seen_paths:
             raise ValueError(f"duplicate archive member path: {member.name}")
         seen_paths.add(normalized_name)
