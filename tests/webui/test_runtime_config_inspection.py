@@ -3,9 +3,11 @@
 import argparse
 import json
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from starlette.requests import Request
+from starlette.routing import Route
 
 from workgate.config.inspection import capture_startup_config
 from workgate.config.roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
@@ -43,7 +45,7 @@ async def _request(*, scope=None, executor_id="", runtime=None):
                 "app": app,
             }
         )
-        route = config_inspection_routes(api_prefix="/api/ui")[0]
+        route = cast(Route, config_inspection_routes(api_prefix="/api/ui")[0])
         return await route.endpoint(req)
     finally:
         reset_oauth_claims(token)
