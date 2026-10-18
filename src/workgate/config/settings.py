@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from ..app_paths import app_paths, ensure_private_directory
 from ..persistence import StateLayout
+from ..platform.shell import default_python, default_shell
 
 AUDIT_LOG_STATE_DIR_NAME = "audit_log"
 AUDIT_PAYLOAD_STATE_DIR_NAME = "payloads"
@@ -289,7 +290,7 @@ class Settings(BaseSettings):
     """Agent MCP tool-call timeout in seconds."""
 
     # Tool executables.
-    shell_executable: str = "/bin/bash"
+    shell_executable: str = Field(default_factory=default_shell)
     """Shell executable for bounded and persistent POSIX sessions."""
     tmux_bin: str = "tmux"
     """tmux executable required for persistent shells on POSIX systems."""
@@ -297,7 +298,7 @@ class Settings(BaseSettings):
     """ripgrep executable."""
     git_bin: str = "git"
     """Git executable used for patch validation and application."""
-    python_bin: str = "python3"
+    python_bin: str = Field(default_factory=default_python)
     """Python executable for user commands."""
 
     @property
