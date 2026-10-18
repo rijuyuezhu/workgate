@@ -7,7 +7,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path, PurePath
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import JsonValue
@@ -18,6 +18,7 @@ from ..jobs.managed import (
     start_managed_job_without_session_admission,
 )
 from ..persistence import StateStore
+from ..platform.path import remote_path_name
 from ..protocol.transfer import normalize_chunk_size
 from ..schemas.result_models.jobs import JobStartOutput
 from ..schemas.result_models.session import (
@@ -334,7 +335,7 @@ class ControlSessionCopyService:
                     ),
                 },
             }
-            destination_name = PurePath(dst_path).name or "artifact"
+            destination_name = remote_path_name(dst_path) or "artifact"
             return await start_managed_job_without_session_admission(
                 src_session_id,
                 SESSION_COPY_MANAGED_KIND,
