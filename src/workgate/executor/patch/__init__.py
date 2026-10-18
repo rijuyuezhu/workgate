@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config.executor import ExecutorConfig
+from ...platform.host import HostOS, host_os
 from ...schemas.result_models.patch import ApplyPatchOutput
 from ..path import assert_text_input_size, display_path
 from ..temp_file import write_temp_text_file
@@ -105,6 +106,10 @@ async def apply_patch_execute(
 ) -> ApplyPatchOutput:
     """Validate and apply one patch under explicit executor/session authority."""
     assert_text_input_size("patch", patch, config.max_file_write_bytes)
+    if host_os() is HostOS.WINDOWS:
+        raise NotImplementedError(
+            "Windows apply_patch needs a native handle-safe patch publisher (#383)"
+        )
     session = store.touch_session(session_id)
     resolved_cwd = store.resolve_session_path(session, cwd, must_exist=True)
     if not resolved_cwd.is_dir():

@@ -148,9 +148,16 @@ the same pathname in a separate open. Binary/image preview samples also use
 no-follow native handles. The HTTP WebUI dispatch is covered in regression
 tests and basic operations run on native Windows 3.14.
 
+The apply_patch executor tool is explicitly disabled on Windows before
+touching session/patch state or invoking git apply. Git's path-based patch
+publication cannot yet be restricted by the native NT verified-handle API;
+the POSIX Git patch path is unchanged.
+
 **Still blocked (Draft #395):** Windows directory/link copy, symlink or
-junction delete/move, recursive ordinary filesystem enumeration, and patch
-and Skill/MCP file operations still require native handle-safe semantics.
+junction delete/move, recursive ordinary filesystem enumeration, and
+Skill/MCP file operations still require native handle-safe semantics.
+Native apply_patch will remain fail-closed until its actual file mutation
+and rollback guarantees can be implemented and verified.
 Independent untrusted writers can still race final target replacement between
 an identity check and rename; further native concurrent-mutation and
 crash/restart testing must establish the intended guarantee before this

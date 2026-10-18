@@ -426,3 +426,35 @@ def test_envelope_preserves_crlf_and_cr_line_endings(tmp_path: Path) -> None:
     patch = "*** Begin Patch\n*** Update File: cr.txt\n@@\n one\n-two\n+TWO\n*** End Patch\n"
     normalized = normalize_patch_text(patch, str(tmp_path))
     assert " one\r" in normalized
+
+
+@pytest.mark.asyncio
+async def test_windows_apply_patch_refuses_unsafe_git_mutation_before_side_effects(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    import workgate.executor.patch as patch_module
+    from workgate.platform.host import HostOS
+
+    original = tmp_path / "existing.txt"
+    original.write_text("unchanged", encoding="utf-8")
+    monkeypatch.setattr(patch_module, "host_os", lambda: HostOS.WINDOWS)
+
+    class UntouchedStore:
+        def touch_session(self, session_id):
+            raise AssertionError(
+                "Windows patch must fail before touching session"
+            )
+
+    with pytest.raises(NotImplementedError, match="handle-safe"):
+        await patch_module.apply_patch_execute(
+            cast(Any, SimpleNamespace(max_file_write_bytes=1000)),
+            cast(Any, UntouchedStore()),
+            "*** Begin Patch\n*** Delete File: existing.txt\n*** End Patch",
+            str(tmp_path),
+            "sess_windows_unsafe",
+        )
+    assert original.read_text(encoding="utf-8") == "unchanged"
+    assert not list(tmp_path.glob("*.diff"))
