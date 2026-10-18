@@ -2,7 +2,6 @@
 
 import os
 import sys
-from typing import Any
 
 
 def _env_name(*parts: str) -> str:
@@ -77,8 +76,3 @@ def user_subprocess_env(
             ):
                 env.pop(name, None)
     return env
-
-
-def new_process_group_kwargs() -> dict[str, Any]:
-    """Start children in a separate POSIX process group."""
-    return {"start_new_session": True}
