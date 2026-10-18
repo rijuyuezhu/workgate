@@ -205,8 +205,17 @@ and failure cleanup. No partial destination is published during staging.
 **Still blocked (Draft #395):** Windows symlink/link copy remains unsupported
 pending no-follow reparse recreation. Native apply_patch remains fail-closed pending a
 handle-safe publisher that does not delegate unchecked path mutations to git.
+scripts/validation/windows-transfer-smoke.py exercises the real Executor
+transfer begin/read/write/finish/abort and directory pack/unpack APIs on native
+Windows Python 3.14, including a separate Windows Python process resuming
+a partial chunk transfer from durable receipts, final digest verification,
+no-clobber semantics, archive integrity rejection and recursive directory
+transfer. This does not yet establish full cross-executor Control integration
+or true abrupt-kill recovery.
+
 Cross-scope filesystem scanning beyond the Agent Bridge discovery entrypoints,
-concurrent untrusted replacement/share violations, process crash/restart recovery and
-full cross-executor Windows integration still require review and tests.
+concurrent untrusted replacement/share violations, abrupt process crash
+recovery, and full cross-executor Windows integration still require review
+and tests.
 Do not merge until the remaining acceptance checks converge. Windows
 CI/release integration belongs to #391.
