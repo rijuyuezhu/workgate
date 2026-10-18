@@ -8,15 +8,30 @@ import json
 import os
 import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol
 
 import yaml
 from pydantic import ValidationError
 
 from ..utils.private_files import atomic_write_private_bytes, private_file_lock
-from .inspection import StartupConfigInspection
 from .roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
 from .settings import _CONFIG_PATH_FIELDS, Settings, _default_setting_values
+
+
+class ConfigSnapshot(Protocol):
+    """Only the attributes file editing needs from a running role snapshot."""
+
+    @property
+    def role(self) -> Literal["control", "executor"]: ...
+
+    @property
+    def config_path(self) -> Path | None: ...
+
+    @property
+    def env_values(self) -> dict[str, Any]: ...
+
+    @property
+    def cli_values(self) -> dict[str, Any]: ...
 
 
 class ConfigEditError(Exception):
@@ -28,7 +43,7 @@ class ConfigEditError(Exception):
         self.status = status
 
 
-def _target(snapshot: StartupConfigInspection) -> Path:
+def _target(snapshot: ConfigSnapshot) -> Path:
     path = snapshot.config_path
     if path is None:
         raise ConfigEditError("NoConfigFile", 409)
@@ -52,7 +67,7 @@ def _target(snapshot: StartupConfigInspection) -> Path:
     return path
 
 
-def revision_for(snapshot: StartupConfigInspection) -> str | None:
+def revision_for(snapshot: ConfigSnapshot) -> str | None:
     try:
         return hashlib.sha256(_target(snapshot).read_bytes()).hexdigest()
     except ConfigEditError, OSError:
@@ -73,9 +88,7 @@ def _mapping(content: bytes) -> dict[str, Any]:
     return data
 
 
-def _validate(
-    snapshot: StartupConfigInspection, candidate: dict[str, Any]
-) -> None:
+def _validate(snapshot: ConfigSnapshot, candidate: dict[str, Any]) -> None:
     role_names = (
         CONTROL_SETTING_NAMES
         if snapshot.role == "control"
@@ -165,7 +178,7 @@ def _encode(
 
 
 def save_config(
-    snapshot: StartupConfigInspection, *, revision: str, changes: dict[str, Any]
+    snapshot: ConfigSnapshot, *, revision: str, changes: dict[str, Any]
 ) -> str:
     """Save requested set/unset operations under a file lock, or fail closed."""
     if (

@@ -110,6 +110,7 @@ class StartupConfigInspection:
                         else "str"
                     ),
                     "nullable": spec.is_nullable,
+                    "default_value": _json_value(spec.default),
                     "effective_value": effective[name],
                     "source": source,
                     "file_present": name in file_values,

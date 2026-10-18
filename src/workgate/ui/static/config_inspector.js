@@ -26,7 +26,7 @@ export function createConfigurationView({ root, request }) {
       const filename = data.config_path ? data.config_path.split(/[\\/]/).pop() : "No config file";
       const file = text("span", filename, "executor-config-file");
       file.title = data.config_path || "";
-      metadata.append(file);
+      metadata.append(file, text("span", `${data.fields.length} settings`, "executor-config-count"));
       if (data.file_changed_since_startup) metadata.append(text("span", "File changed", "executor-config-warning"));
       if (data.file_error) metadata.append(text("span", "File unavailable", "executor-config-warning"));
       if (!data.editable && data.edit_reason) metadata.append(text("span", data.edit_reason, "muted"));
@@ -53,16 +53,19 @@ export function createConfigurationView({ root, request }) {
         discard.hidden = pending.size === 0;
         filterLabel.textContent = `Only changed (${pending.size})`;
         let visible = 0;
-        for (const [name, {item, field, fileCode, proposed, base}] of rows) {
+        for (const [name, {item, field, oldValue, arrow, newValue}] of rows) {
           const action = pending.get(name);
+          const oldText = field.file_present ? display(field.file_value) : "unset";
+          const newText = action?.op === "remove" ? "unset" : action ? display(action.value) : "";
           item.classList.toggle("executor-config-changed", !!action);
           item.hidden = changedOnly.checked && !action;
           if (!item.hidden) visible++;
-          fileCode.textContent = action ? (action.op === "remove" ? "unset" : display(action.value)) : (field.file_present ? display(field.file_value) : "unset");
-          fileCode.classList.toggle("executor-config-unset", action ? action.op === "remove" : !field.file_present);
-          base.hidden = !action;
-          if (action) base.textContent = `Was ${field.file_present ? display(field.file_value) : "unset"}`;
-          proposed.hidden = !action;
+          oldValue.textContent = oldText;
+          oldValue.classList.toggle("executor-config-unset", !field.file_present);
+          arrow.hidden = !action;
+          newValue.hidden = !action;
+          newValue.textContent = newText;
+          newValue.classList.toggle("executor-config-unset", !!action && action.op === "remove");
         }
         for (const {details, count, names} of sections.values()) {
           const shown = names.filter(name => !changedOnly.checked || pending.has(name)).length;
@@ -117,11 +120,13 @@ export function createConfigurationView({ root, request }) {
         if (!groups.has(field.section)) groups.set(field.section, []);
         groups.get(field.section).push(field);
       }
+      const headings = text("div", "", "executor-config-headings");
+      headings.append(text("span", "Setting"), text("span", "Config"), text("span", "Default"));
       const list = text("div", "", "executor-config-list");
       for (const [section, fields] of groups) {
         const details = document.createElement("details");
         details.className = "executor-config-section executor-manage-group";
-        details.open = section === groups.keys().next().value;
+        details.open = true;
         const summary = document.createElement("summary");
         const count = text("span", String(fields.length), "executor-config-count");
         summary.append(text("strong", section), count);
@@ -131,22 +136,22 @@ export function createConfigurationView({ root, request }) {
           const item = text("div", "", "executor-config-row");
           const name = text("span", field.name, "executor-config-name"); name.title = field.description || "";
           const info = text("div", "", "executor-config-info");
-          const primary = text("div", "", "executor-config-primary");
-          const fileCode = text("code", field.file_present ? display(field.file_value) : "unset", "executor-config-value");
-          fileCode.classList.toggle("executor-config-unset", !field.file_present);
-          primary.append(fileCode, text("span", "File", "executor-config-source"));
-          info.append(primary);
-          const base = text("span", "", "executor-config-original");
-          base.hidden = true;
-          info.append(base);
-          const proposed = text("span", "Pending", "executor-config-pending");
-          proposed.hidden = true;
-          info.append(proposed);
-          const runtime = text("div", "", "executor-config-file-value");
-          runtime.append(text("span", "Running"), text("code", display(field.effective_value)), text("span", field.source, "executor-config-source"));
-          info.append(runtime);
-          item.append(name, info);
-          rows.set(field.name, {item, field, fileCode, proposed, base});
+          const fileValue = text("div", "", "executor-config-transition");
+          const oldValue = text("code", field.file_present ? display(field.file_value) : "unset", "executor-config-value");
+          const arrow = text("span", "→", "executor-config-arrow"); arrow.hidden = true;
+          const newValue = text("code", "", "executor-config-value"); newValue.hidden = true;
+          fileValue.append(oldValue, arrow, newValue);
+          info.append(fileValue);
+          const expected = field.file_present ? field.file_value : field.default_value;
+          if (JSON.stringify(field.effective_value) !== JSON.stringify(expected)) {
+            const effective = text("div", "", "executor-config-effective");
+            effective.append(text("span", "Effective"), text("code", display(field.effective_value)), text("span", field.source, "executor-config-source"));
+            info.append(effective);
+          }
+          const defaultCell = text("div", "", "executor-config-default");
+          defaultCell.append(text("span", "Default", "executor-config-mobile-heading"), text("code", display(field.default_value)));
+          item.append(name, info, defaultCell);
+          rows.set(field.name, {item, field, oldValue, arrow, newValue});
           if (data.editable) {
             const edit = text("button", "Edit", "executor-config-edit"); edit.type = "button";
             item.append(edit);
@@ -157,7 +162,7 @@ export function createConfigurationView({ root, request }) {
             edit.addEventListener("click", () => {
               close(); edit.hidden = true; editor.hidden = false;
               const action = pending.get(field.name);
-              const start = action && action.op === "set" ? action.value : field.file_present ? field.file_value : field.effective_value;
+              const start = action && action.op === "set" ? action.value : field.file_present ? field.file_value : field.default_value;
               let input;
               if (field.type === "bool" || (field.choices && field.choices.length)) {
                 input = document.createElement("select");
@@ -198,7 +203,7 @@ export function createConfigurationView({ root, request }) {
         }
         list.append(details);
       }
-      root.append(list, empty); updateToolbar();
+      root.append(headings, list, empty); updateToolbar();
     } catch (error) {
       if (revision !== generation) return;
       root.replaceChildren(text("span", error.status === 403 ? "Access denied" : "Configuration unavailable", "muted"));

@@ -32,6 +32,12 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             h.navigate("executors")
             page.locator("#executor-control-config-open").click()
             control = page.locator("#executor-control-config-body")
+            expect(control.locator(".executor-config-row")).to_have_count(64)
+            expect(
+                control.locator(".executor-config-default code")
+            ).to_have_count(64)
+            assert control.locator("details:not([open])").count() == 0
+            assert control.locator(".executor-config-effective").count() == 0
             row = control.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("log_level")')
             )
@@ -39,11 +45,11 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             port = control.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("port")')
             )
-            expect(port.locator(".executor-config-primary code")).to_have_text(
-                "unset"
-            )
-            expect(port.locator(".executor-config-file-value")).to_contain_text(
-                "Running"
+            expect(
+                port.locator(".executor-config-transition code").first
+            ).to_have_text("unset")
+            expect(port.locator(".executor-config-default code")).to_have_text(
+                "8765"
             )
             only_changed = control.locator(".executor-config-filter input")
             only_changed.check()
@@ -55,11 +61,12 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             row.locator("select.executor-config-input").select_option("info")
             row.get_by_role("button", name="Set", exact=True).click()
             expect(row).to_have_class(re.compile("executor-config-changed"))
-            expect(row.locator(".executor-config-primary code")).to_have_text(
-                "info"
+            expect(row.locator(".executor-config-transition")).to_contain_text(
+                "warning→info"
             )
-            expect(row.locator(".executor-config-original")).to_have_text(
-                "Was warning"
+            expect(row.locator(".executor-config-arrow")).to_have_text("→")
+            expect(row.locator(".executor-config-default code")).to_have_text(
+                "warning"
             )
             expect(
                 control.locator(".executor-config-filter span")
@@ -79,12 +86,18 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             page.locator("#executor-list button").first.click()
             page.locator('[data-executor-subtab="config"]').click()
             executor = page.locator("#executor-config-body")
+            expect(executor.locator(".executor-config-row")).to_have_count(47)
+            expect(
+                executor.locator(".executor-config-default code")
+            ).to_have_count(47)
+            assert executor.locator("details:not([open])").count() == 0
             expect(executor).to_contain_text("max_jobs")
             row = executor.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("max_jobs")')
             )
             # Open the Safety group to reveal its member rows.
-            row.locator("xpath=ancestor::details/summary").click()
+            # Groups are expanded by default, so all fields are accessible.
+            expect(row).to_be_visible()
             row.get_by_role("button", name="Edit").click()
             row.locator("input.executor-config-input").fill("32")
             row.get_by_role("button", name="Set", exact=True).click()
@@ -93,9 +106,14 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             expect(executor).to_contain_text("Saved · Restart to apply")
             assert '"max_jobs": 32' in (tmp_path / "executor.json").read_text()
             assert h.executor.pid == executor_pid
-            expect(executor).to_contain_text(
-                "18"
-            )  # Current Child has not been restarted.
+            expect(
+                row.locator(".executor-config-transition code").first
+            ).to_have_text("32")
+            expect(row.locator(".executor-config-arrow")).to_be_hidden()
+            expect(row.locator(".executor-config-default code")).to_have_text(
+                "1000"
+            )
+            assert executor.locator(".executor-config-effective").count() == 0
             h.assert_clean_browser()
             failed = False
         finally:

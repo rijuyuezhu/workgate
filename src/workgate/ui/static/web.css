@@ -3595,14 +3595,19 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-config-section > summary::before { content: '›'; color: #8c94a6; font-size: 17px; line-height: 12px; transform: rotate(0); }
 #executors-panel .executor-config-section[open] > summary::before { transform: rotate(90deg); }
 #executors-panel .executor-config-count { font-weight: 400; color: #9ba4b3; }
-#executors-panel .executor-config-row { display: grid; grid-template-columns: minmax(130px, 35%) minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 10px 15px; min-height: 43px; border-top: 1px solid #edf0f5; }
+#executors-panel .executor-config-row { display: grid; grid-template-columns: minmax(120px, 32%) minmax(0, 1.5fr) minmax(90px, 1fr) auto; align-items: start; gap: 12px; padding: 10px 15px; min-height: 43px; border-top: 1px solid #edf0f5; }
 #executors-panel .executor-config-name { min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; color: #31394f; line-height: 1.5; }
 #executors-panel .executor-config-info { display: grid; gap: 3px; min-width: 0; }
-#executors-panel .executor-config-primary { display: flex; align-items: start; justify-content: space-between; gap: 8px; min-width: 0; }
-#executors-panel .executor-config-value, #executors-panel .executor-config-file-value code { color: #414b60; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
+#executors-panel .executor-config-headings { display: grid; grid-template-columns: minmax(120px, 32%) minmax(0, 1.5fr) minmax(90px, 1fr) 44px; gap: 12px; padding: 2px 15px 9px; color: #8e97a7; font-size: 11px; }
+#executors-panel .executor-config-transition { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; min-width: 0; }
+#executors-panel .executor-config-arrow { color: #b38327; font-size: 15px; line-height: 1; }
+#executors-panel .executor-config-default { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+#executors-panel .executor-config-default code { color: #8993a4; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+#executors-panel .executor-config-arrow[hidden],
+#executors-panel .executor-config-value[hidden] { display: none; }
+#executors-panel .executor-config-mobile-heading { display: none; }
+#executors-panel .executor-config-value { color: #414b60; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
 #executors-panel .executor-config-source { color: #9ba4b3; font-size: 10px; white-space: nowrap; text-transform: uppercase; padding-top: 2px; }
-#executors-panel .executor-config-file-value { display: flex; flex-wrap: wrap; gap: 6px; color: #9ba4b3; font-size: 10px; min-width: 0; }
-#executors-panel .executor-config-file-value code { color: #8b94a5; }
 #executors-panel.control-config-open > .section-heading,
 #executors-panel.control-config-open > #executor-action-status,
 #executors-panel.control-config-open > .executors-layout,
@@ -3616,8 +3621,11 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   #executors-panel .executor-config-row { grid-template-columns: minmax(0, 1fr) auto; gap: 2px; padding: 10px 12px; }
   #executors-panel .executor-config-name { grid-column: 1; }
   #executors-panel .executor-config-info { grid-row: 2; grid-column: 1 / -1; }
+  #executors-panel .executor-config-default { grid-row: 3; grid-column: 1 / -1; }
   #executors-panel .executor-config-edit { grid-column: 2; grid-row: 1; }
-  #executors-panel .executor-config-primary { justify-content: space-between; }
+  #executors-panel .executor-config-headings { display: none; }
+  #executors-panel .executor-config-mobile-heading { display: inline; color: #9aa4b2; font-size: 10px; }
+  #executors-panel .executor-config-default { gap: 10px; }
 }
 /* Editing is local to the chosen setting; bulk save never applies/restarts. */
 #executors-panel .executor-config-edit { padding: 2px 8px; font-size: 11px; align-self: start; }
@@ -3635,16 +3643,13 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-config-row[hidden],
 #executors-panel .executor-config-section[hidden],
 #executors-panel .executor-config-empty[hidden],
-#executors-panel .executor-config-original[hidden],
-#executors-panel .executor-config-pending[hidden] { display: none; }
+#executors-panel .executor-config-headings[hidden] { display: none; }
 #executors-panel .executor-config-row.executor-config-changed {
   background: #fffaf0;
   outline: 1px solid #e1b650;
   outline-offset: -1px;
   box-shadow: inset 3px 0 0 #d8a129;
 }
-#executors-panel .executor-config-original { font-size: 10px; color: #8a93a3; overflow-wrap: anywhere; }
-#executors-panel .executor-config-pending { font-size: 10px; font-weight: 600; color: #a16e16; }
 #executors-panel .executor-config-filter { display: inline-flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #646e80; font-size: 12px; cursor: pointer; }
 #executors-panel .executor-config-filter input { margin: 0; accent-color: #c4932d; }
 #executors-panel .executor-config-filter[hidden] { display: none; }
