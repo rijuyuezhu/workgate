@@ -213,17 +213,29 @@
       </section>
       <section id="executor-topology" class="executor-topology" aria-label="Peer topology" hidden>
         <div class="topology-heading">
-          <div><button id="topology-back" type="button">← Executors</button><h2>Peer topology</h2></div>
-          <span id="topology-summary" class="muted" role="status">No links tested</span>
+          <div><button id="topology-back" type="button">← Executors</button><h2>Peer Direct topology</h2></div>
+          <span id="topology-summary" class="muted" role="status">No pairs</span>
         </div>
         <div class="topology-toolbar">
-          <button id="topology-reset" type="button">All nodes</button>
-          <label>Source <select id="topology-source" aria-label="Source Executor"></select></label>
-          <label>Destination <select id="topology-destination" aria-label="Destination Executor"></select></label>
-          <button id="topology-show-pair" type="button">Show pair</button>
-          <button id="topology-refresh" type="button">Refresh evidence</button>
+          <div class="topology-pair-picker">
+            <span class="topology-toolbar-label">Inspect a connection</span>
+            <label>From <select id="topology-source" aria-label="Source Executor"></select></label>
+            <label>To <select id="topology-destination" aria-label="Destination Executor"></select></label>
+            <button id="topology-show-pair" type="button">Inspect</button>
+          </div>
+          <div class="topology-view-actions">
+            <button id="topology-reset" type="button">All nodes</button>
+            <button id="topology-refresh" type="button">Refresh</button>
+          </div>
         </div>
-        <p id="topology-instructions" class="muted">Select a node to focus its connections or select a pair above. Reading the graph never runs a connection test.</p>
+        <p id="topology-instructions" class="muted">Click a line to inspect the connection, or a node to focus its links.</p>
+        <div class="topology-legend" aria-label="Peer Direct link states">
+          <span><i data-status="verified"></i>Direct OK</span>
+          <span><i data-status="one-way"></i>One-way</span>
+          <span><i data-status="unreachable"></i>Failed or blocked</span>
+          <span><i data-status="untested"></i>Not tested</span>
+          <span><i data-status="stale"></i>Expired result</span>
+        </div>
         <div id="topology-graph" class="topology-graph" aria-label="Executor connection graph">
           <div id="topology-stage" class="topology-stage">
             <svg id="topology-edges" class="topology-edges" aria-label="Executor connection edges"></svg>

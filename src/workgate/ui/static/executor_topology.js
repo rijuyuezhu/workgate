@@ -6,12 +6,12 @@ const UNKNOWN = Object.freeze({ status: "unknown" });
 const EVIDENCE_FRESH_MS = 300_000;
 const MAX_RESULTS = 512;
 const STATUS_TEXT = Object.freeze({
-  peer_succeeded: "Peer verified",
-  unreachable: "Unreachable",
-  ineligible: "Ineligible",
-  stale: "Stale",
-  untested: "Untested",
-  unknown: "Unavailable",
+  peer_succeeded: "Direct OK",
+  unreachable: "Failed",
+  ineligible: "Not eligible",
+  stale: "Expired",
+  untested: "Not tested",
+  unknown: "Unknown",
 });
 const pairKey = (a, b) => [a, b].sort().join("::");
 const directedKey = (a, b) => a + "\u0000" + b;
@@ -29,20 +29,30 @@ function pairStatus(forward, reverse) {
 
 function readablePairStatus(status) {
   return {
-    verified: "Both directions verified",
-    "one-way": "One direction verified",
-    stale: "Historical evidence",
-    unreachable: "At least one direction failed",
-    ineligible: "At least one direction ineligible",
-    unknown: "Evidence unavailable",
-    untested: "Untested",
-  }[status] || "Untested";
+    verified: "Direct OK both ways",
+    "one-way": "Direct OK one way",
+    stale: "Expired result",
+    unreachable: "Direct failed",
+    ineligible: "Direct not eligible",
+    unknown: "Unknown",
+    untested: "Not tested",
+  }[status] || "Not tested";
 }
 
 function timestamp(value) {
   const time = Date.parse(value || "");
-  return Number.isFinite(time) ? new Date(time).toLocaleString() : "Not tested";
+  return Number.isFinite(time) ? new Date(time).toLocaleString() : "";
 }
+
+const REASONS = Object.freeze({
+  executor_offline: "Executor offline",
+  measurement_expired: "Measurement expired",
+  overlay_unavailable: "Tailscale unavailable",
+  tailnet_mismatch: "Different tailnets",
+  receiver_unavailable: "Destination unavailable",
+  peer_handshake_failed: "Handshake failed",
+  evidence_unavailable: "Evidence unavailable",
+});
 
 function nodePositions(rows, mode, focusId) {
   if (mode === "pair") {
@@ -226,7 +236,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
         const visible = newSvg("line", { ...coords, class: "topology-edge-line" });
         const hit = newSvg("line", { ...coords, class: "topology-edge-hit" });
         const title = newSvg("title", {});
-        title.textContent = `${names(a)} ↔ ${names(b)}: ${readablePairStatus(edgeOutcome(a, b))}`;
+        title.textContent = `${names(a)} ↔ ${names(b)}: ${readablePairStatus(edgeOutcome(a, b))}. Click to inspect.`;
         line.append(visible, hit, title);
         line.addEventListener("click", () => pickPair(a, b));
         line.addEventListener("keydown", (event) => {
@@ -279,12 +289,12 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     const modeLabel = state.mode === "grid" ? "Nodes only" :
       state.mode === "focus" ? `Focused on ${names(state.focusId)}` :
         state.mode === "pair" ? "Selected pair" : "All pairs";
-    summary.textContent = `${state.rows.length} Executors · ${currentPairs.length} links · ${modeLabel}`;
+    summary.textContent = `${state.rows.length} Executors, ${currentPairs.length} pairs (${modeLabel})`;
     instructions.textContent = state.mode === "grid"
-      ? "Select a node to see all its connections, or choose a pair above. No tests run automatically."
-      : pannable ? "Scroll within the graph for other Executors. Choose an edge for details; testing is always manual."
-        : "Dashed means untested or unavailable. Select a line for directional details; only Test connection runs a probe.";
-    reset.textContent = state.rows.length <= SMALL_LIMIT ? "Show all links" : "All nodes";
+      ? "Click a node to show its links, or inspect a pair above."
+      : pannable ? "Scroll inside the graph and click a line to inspect it."
+        : "Click a line to inspect it, or click a node to focus its links.";
+    reset.textContent = state.rows.length <= SMALL_LIMIT ? "All pairs" : "All nodes";
     reset.disabled = state.mode === (state.rows.length <= SMALL_LIMIT ? "all" : "grid");
   }
 
@@ -294,16 +304,32 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     wrapper.className = "topology-direction";
     wrapper.dataset.status = row.status;
     const main = document.createElement("div");
+    main.className = "topology-direction-main";
     const label = document.createElement("strong");
     label.textContent = `${names(from)} → ${names(to)}`;
-    const detail = document.createElement("span");
-    const reason = row.reason ? ` · ${String(row.reason).replaceAll("_", " ")}` : "";
-    const fallback = row.fallback ? " · Control relay not tested" : "";
-    detail.textContent = `${STATUS_TEXT[row.status] || STATUS_TEXT.unknown} · ${timestamp(row.tested_at)}${reason}${fallback}`;
-    main.append(label, detail);
+    const status = document.createElement("span");
+    status.className = "topology-direction-status";
+    status.textContent = STATUS_TEXT[row.status] || STATUS_TEXT.unknown;
+    const heading = document.createElement("div");
+    heading.className = "topology-direction-title";
+    heading.append(label, status);
+    main.append(heading);
+    const details = [timestamp(row.tested_at),
+      row.reason && row.reason !== "measurement_expired" ? REASONS[row.reason] || String(row.reason).replaceAll("_", " ") : "",
+      row.fallback ? "Relay not tested" : ""].filter(Boolean);
+    if (details.length) {
+      const meta = document.createElement("div");
+      meta.className = "topology-direction-meta";
+      for (const item of details) {
+        const detail = document.createElement("span");
+        detail.textContent = item;
+        meta.append(detail);
+      }
+      main.append(meta);
+    }
     const test = document.createElement("button");
     test.type = "button";
-    test.textContent = "Test connection";
+    test.textContent = "Test";
     test.disabled = Boolean(state.activeTest);
     test.setAttribute("aria-label", `Test connection from ${names(from)} to ${names(to)}`);
     test.addEventListener("click", () => void testDirection(from, to));

@@ -154,7 +154,12 @@ def test_two_node_topology_complete_edge_and_explicit_directional_probe(
     expect(
         page.locator("#topology-direction-rows .topology-direction")
     ).to_have_count(2)
-    expect(page.locator("#topology-pair-status")).to_have_text("Untested")
+    expect(page.locator("#topology-pair-status")).to_have_text("Not tested")
+    expect(page.locator(".topology-legend")).to_contain_text("Direct OK")
+    expect(page.locator(".topology-legend")).to_contain_text(
+        "Failed or blocked"
+    )
+    assert "·" not in page.locator("#topology-inspector").inner_text()
     page.screenshot(path=str(h.artifacts / "topology-2-desktop.png"))
 
     page.get_by_role(
@@ -162,7 +167,7 @@ def test_two_node_topology_complete_edge_and_explicit_directional_probe(
         name=f"Test connection from {rows[0]['name']} to {rows[1]['name']}",
     ).click()
     expect(page.locator("#topology-pair-status")).to_have_text(
-        "One direction verified"
+        "Direct OK one way"
     )
     assert methods.count("POST") == 1
     expect(page.locator("#topology-edges g")).to_have_attribute(
@@ -173,10 +178,10 @@ def test_two_node_topology_complete_edge_and_explicit_directional_probe(
         name=f"Test connection from {rows[1]['name']} to {rows[0]['name']}",
     ).click()
     expect(page.locator("#topology-pair-status")).to_have_text(
-        "One direction verified"
+        "Direct OK one way"
     )
     expect(page.locator("#topology-direction-rows")).to_contain_text(
-        "Control relay not tested"
+        "Relay not tested"
     )
     assert methods.count("POST") == 2
     # A pending probe cannot leave its status message on a newly focused node.
@@ -201,7 +206,7 @@ def test_two_node_topology_complete_edge_and_explicit_directional_probe(
       Date.now = () => now + 301000;
     }""")
     expect(page.locator("#topology-pair-status")).to_have_text(
-        "Historical evidence", timeout=10000
+        "Expired result", timeout=10000
     )
     assert methods.count("POST") == 3
     page.locator("#topology-back").click()
@@ -231,8 +236,15 @@ def test_five_nodes_all_ten_pairs_even_offline_unprobed(
         for i in range(10)
     )
     assert methods.count("POST") == 0
-    expect(page.locator("#topology-summary")).to_contain_text("10 links")
+    expect(page.locator("#topology-summary")).to_contain_text("10 pairs")
+    assert "·" not in page.locator("#topology-summary").inner_text()
     page.screenshot(path=str(h.artifacts / "topology-5-desktop.png"))
+    edges.first.click()
+    expect(page.locator("#topology-inspector")).to_be_visible()
+    expect(edges).to_have_count(10)
+    expect(page.locator("#topology-edges g.selected")).to_have_count(1)
+    page.screenshot(path=str(h.artifacts / "topology-5-selected.png"))
+    assert methods.count("POST") == 0
 
     page.locator("#topology-source").select_option(rows[0]["executor_id"])
     page.locator("#topology-destination").select_option(rows[-1]["executor_id"])
