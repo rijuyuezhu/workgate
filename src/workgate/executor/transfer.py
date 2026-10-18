@@ -1978,6 +1978,11 @@ def transfer_pack_dir(
     context: TransferContext,
 ) -> TransferPackDirOutput:
     """Pack a directory into a bounded temporary archive for transfer."""
+    if host_os() is HostOS.WINDOWS:
+        raise NotImplementedError(
+            "Windows directory archive packing requires handle-relative "
+            "directory enumeration (#383)"
+        )
     _prune_transfer_scratch(context)
     if compression not in {"gz", "none"}:
         raise ValueError("compression must be 'gz' or 'none'")
@@ -2333,6 +2338,11 @@ def transfer_unpack_archive(
     context: TransferContext,
 ) -> TransferUnpackArchiveOutput:
     """Validate in staging and transactionally replace a directory destination."""
+    if host_os() is HostOS.WINDOWS:
+        raise NotImplementedError(
+            "Windows directory archive extraction and atomic publication "
+            "require native handle-relative tree operations (#383)"
+        )
     if transfer_id is not None:
         receipt_path = _unpack_receipt_path(context, transfer_id)
         if receipt_path.exists():

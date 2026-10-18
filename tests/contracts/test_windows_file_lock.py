@@ -156,6 +156,10 @@ def test_windows_private_lock_file_is_verified_before_locking(
         ]
     assert calls[-2:] == [("lock", 6, 1), ("lock", 7, 1)]
     assert path.read_bytes() == b"\0"
+    # Existing initialized sentinel must be reused without truncating it.
+    with private_files.private_file_lock(path):
+        pass
+    assert path.read_bytes() == b"\0"
 
 
 def test_windows_existing_insecure_lock_is_rejected_during_preparation(
@@ -177,3 +181,29 @@ def test_windows_existing_insecure_lock_is_rejected_during_preparation(
     ):
         pass
     assert path.read_bytes() == b"\0"
+
+
+def test_windows_open_lock_retries_only_transient_missing_file(
+    monkeypatch, tmp_path
+):
+    from workgate.platform.windows import security
+
+    monkeypatch.setattr(private_files, "host_os", lambda: HostOS.WINDOWS)
+    path = tmp_path / "lock"
+    path.write_bytes(b"\0")
+    calls = []
+
+    def fake_open(_path, *, create, exclusive=False):
+        calls.append(create)
+        if len(calls) == 1:
+            raise FileNotFoundError(
+                "simulated concurrent lock-file initialization"
+            )
+        return private_files.os.open(path, private_files.os.O_RDWR)
+
+    monkeypatch.setattr(security, "open_private_file", fake_open)
+    with private_files._open_lock_handle(
+        path, timeout_s=1, retry_interval_s=0
+    ) as handle:
+        assert handle.read(1) == b"\0"
+    assert calls == [False, False]

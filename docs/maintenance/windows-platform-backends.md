@@ -85,10 +85,14 @@ modules are excluded from Linux-only coverage reporting, like other native OS
 backends; the native script is the substantive platform test. Full Windows CI
 belongs to #391.
 
-**Still blocked (Draft #395):** transfer/archive directory extraction and
-publication need broader native handle/identity coverage; Skill/MCP files,
-patching, remaining no-follow fallbacks, unsupported sharing and rollback
-cases require review and real Windows tests. Creation of missing ancestors, directory transfer publication and
+**Still blocked (Draft #395):** Windows directory archive packing and
+unpacking now explicitly fail before filesystem mutation. The existing
+`tarfile.add` and directory-staging publication paths have pathname races,
+so claiming support for them without NT handle-relative enumeration and
+transactional directory publication would be unsafe. Regular file transfer
+copy/chunk completion already uses handle-relative publication. Skill/MCP
+files, patching, remaining no-follow fallbacks, unsupported sharing and
+rollback cases require review and real Windows tests. Creation of missing ancestors, directory transfer publication and
 adversarial concurrent filesystem mutation still need fuller integration
 verification. This slice does not assert full Windows support and must not
 be merged while security acceptance remains incomplete.

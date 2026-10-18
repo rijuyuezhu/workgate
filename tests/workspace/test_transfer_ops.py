@@ -2829,3 +2829,30 @@ def test_windows_transfer_file_handles_use_native_verified_opens(
         ("regular", "ordinary.txt", True),
         ("private", "private-partial", True, True),
     ]
+
+
+def test_windows_archive_pack_requires_verified_native_directory_walk(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+
+    root = _workspace(tmp_path, monkeypatch)
+    directory = root / "pack"
+    directory.mkdir()
+    (directory / "keep.txt").write_text("untouched")
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    with pytest.raises(NotImplementedError, match="handle-relative"):
+        transfer_pack_dir(str(directory))
+    assert (directory / "keep.txt").read_text() == "untouched"
+
+
+def test_windows_archive_unpack_rejects_before_creating_staging(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+
+    root = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    with pytest.raises(NotImplementedError, match="handle-relative"):
+        transfer_unpack_archive("not-present.tar", str(root / "destination"))
+    assert not (root / "destination").exists()
