@@ -7,7 +7,7 @@ are independently exercised by tests/control/test_peer_links.py.
 
 import copy
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -56,13 +56,16 @@ def graph_fixture(harness: BrowserHarness, size: int):
             query = parse_qs(urlsplit(request.url).query)
             src = query["source_executor_id"][0]
             dst = query["destination_executor_id"][0]
-            status = measurements.get((src, dst), "untested")
+            result = measurements.get((src, dst), "untested")
+            status = result["status"] if isinstance(result, dict) else result
             data = {
                 "source_executor_id": src,
                 "destination_executor_id": dst,
                 "status": status,
                 "directional": True,
-                "tested_at": datetime.now(UTC).isoformat()
+                "tested_at": result["tested_at"]
+                if isinstance(result, dict)
+                else datetime.now(UTC).isoformat()
                 if status != "untested"
                 else None,
                 "reason": "peer_handshake_failed"
@@ -88,6 +91,14 @@ def graph_fixture(harness: BrowserHarness, size: int):
                 "status": status,
                 "source_executor_id": src,
                 "destination_executor_id": dst,
+                "directional": True,
+                "tested_at": datetime.now(UTC).isoformat(),
+                "reason": "peer_handshake_failed"
+                if status == "unreachable"
+                else None,
+                "fallback": "control_relay_not_tested"
+                if status == "unreachable"
+                else None,
             }
         route.fulfill(
             status=200,
@@ -259,6 +270,143 @@ def test_five_nodes_all_ten_pairs_even_offline_unprobed(
     expect(edges.first).to_have_attribute("data-status", "stale")
     page.locator("#topology-reset").click()
     expect(edges).to_have_count(10)
+    assert methods.count("POST") == 0
+    h.assert_clean_browser()
+
+
+def test_probe_result_beats_a_pending_old_get_and_keyboard_focus_survives(
+    browser_harness: BrowserHarness,
+):
+    h = browser_harness
+    h.login()
+    rows, _, methods = open_graph(h, 2)
+    page = h.page
+    # Wait until the initial evidence has been read before intercepting a refresh.
+    page.wait_for_function(
+        """() => document.querySelector('#topology-edges g')?.dataset.status === 'untested'"""
+    )
+    page.evaluate(
+        """({from, to}) => {
+          const original = window.fetch.bind(window);
+          window.__heldEvidence = {pending: false, release: null};
+          window.fetch = async (...args) => {
+            const url = new URL(String(args[0]), location.href);
+            if (url.pathname.endsWith('/executors/peer-link') &&
+                url.searchParams.get('source_executor_id') === from &&
+                url.searchParams.get('destination_executor_id') === to) {
+              // Snapshot cached evidence before the explicit POST.
+              const oldResponse = await original(...args);
+              window.__heldEvidence.pending = true;
+              return new Promise(resolve => {
+                window.__heldEvidence.release = () => resolve(oldResponse);
+              });
+            }
+            return original(...args);
+          };
+        }""",
+        {"from": rows[0]["executor_id"], "to": rows[1]["executor_id"]},
+    )
+    edge = page.locator("#topology-edges g[role=button]").first
+    edge.focus()
+    edge.press("Enter")
+    page.locator("#topology-refresh").click()
+    page.wait_for_function("window.__heldEvidence?.pending === true")
+    test = page.get_by_role(
+        "button",
+        name=f"Test connection from {rows[0]['name']} to {rows[1]['name']}",
+    )
+    test.focus()
+    test.press("Enter")
+    expect(page.locator("#topology-pair-status")).to_have_text(
+        "Direct OK one way"
+    )
+    expect(test).to_be_focused()
+    page.evaluate("window.__heldEvidence.release()")
+    page.wait_for_timeout(250)
+    expect(page.locator("#topology-pair-status")).to_have_text(
+        "Direct OK one way"
+    )
+    expect(test).to_be_focused()
+    assert methods.count("POST") == 1
+    h.assert_clean_browser()
+
+
+def test_inflight_probe_survives_closing_topology_without_stale_notice(
+    browser_harness: BrowserHarness,
+):
+    h = browser_harness
+    h.login()
+    rows, _, methods = open_graph(h, 2)
+    page = h.page
+    page.evaluate("""() => {
+      const original = window.fetch.bind(window);
+      window.__heldPost = {pending: false, release: null};
+      window.fetch = async (...args) => {
+        if (new URL(String(args[0]), location.href).pathname.endsWith('/executors/peer-link') &&
+            String(args[1]?.method || 'GET').toUpperCase() === 'POST') {
+          const response = await original(...args);
+          window.__heldPost.pending = true;
+          return new Promise(resolve => {
+            window.__heldPost.release = () => resolve(response);
+          });
+        }
+        return original(...args);
+      };
+    }""")
+    edge = page.locator("#topology-edges g[role=button]").first
+    edge.focus()
+    edge.press("Enter")
+    page.get_by_role(
+        "button",
+        name=f"Test connection from {rows[0]['name']} to {rows[1]['name']}",
+    ).click()
+    page.wait_for_function("window.__heldPost?.pending === true")
+    page.locator("#topology-back").click()
+    page.locator("#executor-topology-open").click()
+    expect(page.locator("#topology-pair-status")).to_have_text("Not tested")
+    page.evaluate("window.__heldPost.release()")
+    expect(page.locator("#topology-pair-status")).to_have_text(
+        "Direct OK one way"
+    )
+    expect(page.locator("#topology-feedback")).to_have_text("")
+    assert methods.count("POST") == 1
+    h.assert_clean_browser()
+
+
+def test_direction_expires_even_if_pair_summary_does_not_change(
+    browser_harness: BrowserHarness,
+):
+    h = browser_harness
+    h.login()
+    rows, measurements, methods = open_graph(h, 2)
+    a, b = rows[0]["executor_id"], rows[1]["executor_id"]
+    measurements[a, b] = {
+        "status": "peer_succeeded",
+        "tested_at": (datetime.now(UTC) - timedelta(seconds=5)).isoformat(),
+    }
+    measurements[b, a] = {
+        "status": "unreachable",
+        "tested_at": (datetime.now(UTC) - timedelta(seconds=299)).isoformat(),
+    }
+    page = h.page
+    edge = page.locator("#topology-edges g[role=button]").first
+    edge.focus()
+    edge.press("Enter")
+    page.locator("#topology-refresh").click()
+    states = page.locator("#topology-direction-rows .topology-direction-status")
+    expect(states).to_have_text(["Direct OK", "Failed"])
+    expect(page.locator("#topology-pair-status")).to_have_text(
+        "Direct OK one way"
+    )
+    page.evaluate("""() => {
+      const now = Date.now();
+      Date.now = () => now + 3000;
+    }""")
+    # Inventory polling must update the inspector despite unchanged pair status.
+    expect(states).to_have_text(["Direct OK", "Expired"], timeout=10000)
+    expect(page.locator("#topology-pair-status")).to_have_text(
+        "Direct OK one way"
+    )
     assert methods.count("POST") == 0
     h.assert_clean_browser()
 

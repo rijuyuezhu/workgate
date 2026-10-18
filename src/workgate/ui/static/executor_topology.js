@@ -120,7 +120,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   const state = {
     rows: [], mode: "all", focusId: "", pair: null, open: false,
     centerOnDraw: false,
-    results: new Map(), pending: new Map(),
+    results: new Map(), pending: new Map(), revisions: new Map(),
     activeTest: "", requestGeneration: 0, renderedStatus: "",
   };
 
@@ -214,7 +214,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     edgeLayer.replaceChildren();
     nodeLayer.replaceChildren();
     const currentPairs = pairs();
-    state.renderedStatus = currentPairs.map(([a, b]) => edgeOutcome(a, b)).join("|");
+    state.renderedStatus = currentPairs.flatMap(([a, b]) => [observed(a, b).status, observed(b, a).status]).join("|");
     const width = 1000;
     const height = 660;
     edgeLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -330,7 +330,10 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     const test = document.createElement("button");
     test.type = "button";
     test.textContent = "Test";
-    test.disabled = Boolean(state.activeTest);
+    // Keep the keyboard focusable while a test is running; the handler guards repeats.
+    test.setAttribute("aria-disabled", String(Boolean(state.activeTest)));
+    test.dataset.source = from;
+    test.dataset.destination = to;
     test.setAttribute("aria-label", `Test connection from ${names(from)} to ${names(to)}`);
     test.addEventListener("click", () => void testDirection(from, to));
     wrapper.append(main, test);
@@ -338,6 +341,9 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   }
 
   function renderInspector() {
+    const focused = directionRows.contains(document.activeElement) ? document.activeElement : null;
+    const focusedDirection = focused?.dataset?.source && focused?.dataset?.destination
+      ? [focused.dataset.source, focused.dataset.destination] : null;
     inspector.hidden = !state.pair || !state.pair.every((id) => state.rows.some((row) => row.executor_id === id));
     if (inspector.hidden) {
       directionRows.replaceChildren();
@@ -350,6 +356,11 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     badge.dataset.status = status;
     badge.textContent = readablePairStatus(status);
     directionRows.replaceChildren(directionEvidence(a, b), directionEvidence(b, a));
+    if (focusedDirection) {
+      const button = [...directionRows.querySelectorAll("button")].find((item) =>
+        item.dataset.source === focusedDirection[0] && item.dataset.destination === focusedDirection[1]);
+      button?.focus({ preventScroll: true });
+    }
   }
 
   function render() {
@@ -376,15 +387,16 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     if (!force && state.results.has(key)) return;
     if (state.pending.has(key)) return state.pending.get(key);
     const stamp = state.requestGeneration;
+    const revision = state.revisions.get(key) || 0;
     const pending = request(`/executors/peer-link?source_executor_id=${encodeURIComponent(a)}&destination_executor_id=${encodeURIComponent(b)}`)
       .then((data) => {
-        if (stamp !== state.requestGeneration) return;
+        if (stamp !== state.requestGeneration || revision !== (state.revisions.get(key) || 0)) return;
         state.results.delete(key);
         state.results.set(key, data && typeof data.status === "string" ? data : UNKNOWN);
         if (state.results.size > MAX_RESULTS) state.results.delete(state.results.keys().next().value);
       }).catch((error) => {
         if (error.authenticationRequired) onAuthenticationRequired();
-        if (stamp !== state.requestGeneration) return;
+        if (stamp !== state.requestGeneration || revision !== (state.revisions.get(key) || 0)) return;
         state.results.delete(key);
         state.results.set(key, { status: "unknown", reason: "evidence_unavailable" });
         if (state.results.size > MAX_RESULTS) state.results.delete(state.results.keys().next().value);
@@ -412,19 +424,26 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
 
   async function testDirection(a, b) {
     if (!state.open || state.activeTest) return;
+    const generation = state.requestGeneration;
     const selection = state.pair ? pairKey(...state.pair) : "";
-    const isSelected = () => state.open && state.pair && pairKey(...state.pair) === selection;
+    const isSelected = () => state.open && generation === state.requestGeneration &&
+      state.pair && pairKey(...state.pair) === selection;
     state.activeTest = directedKey(a, b);
     feedback.textContent = `Checking ${names(a)} → ${names(b)}…`;
     renderInspector();
     try {
-      await request("/executors/peer-link", {
+      const measured = await request("/executors/peer-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source_executor_id: a, destination_executor_id: b }),
       });
-      state.results.delete(directedKey(a, b));
-      await fetchDirection(a, b, true);
+      // The POST is authoritative. Older GETs cannot overwrite its evidence.
+      const key = directedKey(a, b);
+      state.revisions.set(key, (state.revisions.get(key) || 0) + 1);
+      state.results.delete(key);
+      state.results.set(key, measured);
+      if (state.results.size > MAX_RESULTS) state.results.delete(state.results.keys().next().value);
+      if (state.open) render();
       if (isSelected()) feedback.textContent = `Measurement finished for ${names(a)} → ${names(b)}.`;
     } catch (error) {
       if (error.authenticationRequired) onAuthenticationRequired();
@@ -455,7 +474,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     if (state.open) {
       // The Control's five-minute evidence TTL also expires without further
       // requests; update labels on the existing Executor inventory poll.
-      const currentStatus = pairs().map(([a, b]) => edgeOutcome(a, b)).join("|");
+      const currentStatus = pairs().flatMap(([a, b]) => [observed(a, b).status, observed(b, a).status]).join("|");
       if (before !== after || currentStatus !== state.renderedStatus) render();
       if (before !== after && (changedIds || state.mode !== "grid")) void fetchVisible(true);
     }
@@ -495,6 +514,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     root.hidden = true;
     state.requestGeneration++;
     state.pending.clear();
+    state.revisions.clear();
     feedback.textContent = "";
   }
 
