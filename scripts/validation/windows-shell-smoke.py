@@ -60,7 +60,8 @@ def run() -> None:
             timeout=30,
         )
         # Native child executable failures must be surfaced as shell failures.
-        assert result.returncode != 0, result
+        print("Native child exit via PowerShell:", result.returncode)
+        assert result.returncode == 7, result
         assert "SCRIPT_OK" in result.stdout, result
         assert "directory with spaces" in result.stdout, result
 

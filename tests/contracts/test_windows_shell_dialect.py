@@ -27,7 +27,8 @@ def test_windows_shell_argv_uses_native_flags() -> None:
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Write-Output 'ok'",
+        "Write-Output 'ok'; if (-not $?) { "
+        "if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }",
     ]
     assert dialect.shell_argv("cmd.exe", "echo ok", system="Windows") == [
         "cmd.exe",

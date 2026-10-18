@@ -31,7 +31,19 @@ def shell_argv(
     if host_os(system) is HostOS.WINDOWS:
         if _windows_shell(shell) == "cmd":
             return [shell, "/D", "/S", "/C", command]
-        return [shell, "-NoProfile", "-NonInteractive", "-Command", command]
+        # PowerShell -Command otherwise folds native child exit codes to 1.
+        check_exit = (
+            "; if (-not $?) { "
+            "if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 "
+            "}"
+        )
+        return [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            command + check_exit,
+        ]
     return [shell, "-lc" if login else "-c", command]
 
 
