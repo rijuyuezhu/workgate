@@ -3600,6 +3600,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-config-info { display: grid; gap: 3px; min-width: 0; }
 #executors-panel .executor-config-headings { display: grid; grid-template-columns: minmax(120px, 32%) minmax(0, 1.5fr) minmax(90px, 1fr) 44px; gap: 12px; padding: 2px 15px 9px; color: #8e97a7; font-size: 11px; }
 #executors-panel .executor-config-transition { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; min-width: 0; }
+#executors-panel .executor-config-values { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
 #executors-panel .executor-config-arrow { color: #b38327; font-size: 15px; line-height: 1; }
 #executors-panel .executor-config-default { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 #executors-panel .executor-config-default code { color: #8993a4; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -3608,6 +3609,13 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-config-mobile-heading { display: none; }
 #executors-panel .executor-config-value { color: #414b60; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
 #executors-panel .executor-config-source { color: #9ba4b3; font-size: 10px; white-space: nowrap; text-transform: uppercase; padding-top: 2px; }
+/* The in-use value is secondary to the file and default. Keep code typography
+   consistent; without an explicit reset it inherits a large app-wide style. */
+#executors-panel .executor-config-effective { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; color: #8a94a4; font-size: 11px; line-height: 1.5; }
+#executors-panel .executor-config-live-label { flex: 0 0 auto; color: #8a94a4; }
+#executors-panel .executor-config-effective code { min-width: 0; background: none; padding: 0; color: #657187; font-size: 11px; font-weight: 400; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+#executors-panel .executor-config-effective .executor-config-source { padding: 0; font-size: 10px; line-height: 1.5; }
+
 #executors-panel.control-config-open > .section-heading,
 #executors-panel.control-config-open > #executor-action-status,
 #executors-panel.control-config-open > .executors-layout,
@@ -3624,8 +3632,12 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   #executors-panel .executor-config-default { grid-row: 3; grid-column: 1 / -1; }
   #executors-panel .executor-config-edit { grid-column: 2; grid-row: 1; }
   #executors-panel .executor-config-headings { display: none; }
-  #executors-panel .executor-config-mobile-heading { display: inline; color: #9aa4b2; font-size: 10px; }
-  #executors-panel .executor-config-default { gap: 10px; }
+  #executors-panel .executor-config-mobile-heading { display: inline; color: #9aa4b2; font-size: 11px; line-height: 1.5; }
+  #executors-panel .executor-config-live-label { flex: initial; }
+  #executors-panel .executor-config-transition,
+  #executors-panel .executor-config-default,
+  #executors-panel .executor-config-effective { display: grid; grid-template-columns: 49px minmax(0, 1fr); gap: 6px; align-items: baseline; }
+  #executors-panel .executor-config-info { gap: 4px; }
 }
 /* Editing is local to the chosen setting; bulk save never applies/restarts. */
 #executors-panel .executor-config-edit { padding: 2px 8px; font-size: 11px; align-self: start; }

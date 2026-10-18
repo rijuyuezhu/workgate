@@ -81,3 +81,88 @@ async def test_model_save_denied_without_write_scope(tmp_path):
     finally:
         reset_oauth_claims(token)
     assert path.read_text() == "port: 8765\n"
+
+
+@pytest.mark.asyncio
+async def test_model_remote_config_inspection_and_save_use_executor_transport(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from workgate.config.settings import Settings
+    from workgate.control.runtime import build_control_runtime
+
+    runtime = build_control_runtime(Settings())
+    calls = []
+    state = {"reply": {"role": "executor", "status": "running", "fields": []}}
+
+    async def fake_call(executor_id, op, arguments, *, timeout_s):
+        calls.append((executor_id, op, arguments, timeout_s))
+        return SimpleNamespace(ok=True, result=state["reply"])
+
+    monkeypatch.setattr(runtime.executor_transport, "call", fake_call)
+    mcp = build_mcp(runtime=runtime)
+    token = bind_oauth_claims({"scope": default_scope()})
+    try:
+        inspected = await mcp.call_tool(
+            "config_inspect", {"executor_id": "exec_demo"}
+        )
+        assert isinstance(inspected, CallToolResult)
+        assert inspected.structured_content == state["reply"]
+        assert calls[-1] == ("exec_demo", "ui.config.inspect", {}, 8)
+
+        change = {"max_jobs": {"op": "set", "value": 32}}
+        state["reply"] = {"revision": "b" * 64}
+        saved = await mcp.call_tool(
+            "config_save",
+            {
+                "executor_id": "exec_demo",
+                "revision": "a" * 64,
+                "changes": change,
+            },
+        )
+        assert isinstance(saved, CallToolResult)
+        assert saved.structured_content == {"revision": "b" * 64}
+        assert calls[-1] == (
+            "exec_demo",
+            "ui.config.save",
+            {"revision": "a" * 64, "changes": change},
+            12,
+        )
+
+        state["reply"] = {"error": "RevisionConflict", "status": 409}
+        with pytest.raises(ToolError, match="RevisionConflict"):
+            await mcp.call_tool(
+                "config_save",
+                {
+                    "executor_id": "exec_demo",
+                    "revision": "a" * 64,
+                    "changes": change,
+                },
+            )
+    finally:
+        reset_oauth_claims(token)
+
+
+@pytest.mark.asyncio
+async def test_model_remote_config_needs_executor_grant(monkeypatch):
+    from workgate.config.settings import Settings
+    from workgate.control.runtime import build_control_runtime
+
+    runtime = build_control_runtime(Settings())
+    mcp = build_mcp(runtime=runtime)
+    token = bind_oauth_claims({"scope": "shell:read shell:write"})
+    try:
+        with pytest.raises(ToolError, match="executor:use"):
+            await mcp.call_tool("config_inspect", {"executor_id": "exec_demo"})
+        with pytest.raises(ToolError, match="executor:use"):
+            await mcp.call_tool(
+                "config_save",
+                {
+                    "executor_id": "exec_demo",
+                    "revision": "a" * 64,
+                    "changes": {"max_jobs": {"op": "set", "value": 32}},
+                },
+            )
+    finally:
+        reset_oauth_claims(token)

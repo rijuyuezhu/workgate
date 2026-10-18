@@ -53,6 +53,37 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             expect(port.locator(".executor-config-default code")).to_have_text(
                 "8765"
             )
+            # The live port comes from CLI, not from the config file. On a
+            # narrow viewport all three labels and their values stay aligned.
+            page.set_viewport_size({"width": 390, "height": 844})
+            live = port.locator(".executor-config-effective")
+            expect(live.locator(".executor-config-live-label")).to_have_text(
+                "In use"
+            )
+            expect(live.locator(".executor-config-source")).to_have_text("cli")
+            assert (
+                live.locator("code").evaluate(
+                    "node => getComputedStyle(node).fontSize"
+                )
+                == "11px"
+            )
+            label_x = [
+                node.evaluate("element => element.getBoundingClientRect().x")
+                for node in (
+                    port.locator(
+                        ".executor-config-transition .executor-config-mobile-heading"
+                    ),
+                    port.locator(
+                        ".executor-config-default .executor-config-mobile-heading"
+                    ),
+                    live.locator(".executor-config-live-label"),
+                )
+            ]
+            assert max(label_x) - min(label_x) < 2
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= window.innerWidth"
+            )
+            page.set_viewport_size({"width": 1360, "height": 900})
             non_default = (
                 control.locator(".executor-config-filter")
                 .filter(has_text="Non-default")

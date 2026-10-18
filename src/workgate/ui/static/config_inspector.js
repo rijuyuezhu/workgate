@@ -162,15 +162,20 @@ export function createConfigurationView({ root, request }) {
           const name = text("span", field.name, "executor-config-name"); name.title = field.description || "";
           const info = text("div", "", "executor-config-info");
           const fileValue = text("div", "", "executor-config-transition");
+          fileValue.append(text("span", "Config", "executor-config-mobile-heading"));
           const oldValue = text("code", field.file_present ? display(field.file_value) : "unset", "executor-config-value");
           const arrow = text("span", "→", "executor-config-arrow"); arrow.hidden = true;
           const newValue = text("code", "", "executor-config-value"); newValue.hidden = true;
-          fileValue.append(oldValue, arrow, newValue);
+          const fileValues = text("span", "", "executor-config-values");
+          fileValues.append(oldValue, arrow, newValue);
+          fileValue.append(fileValues);
           info.append(fileValue);
           const expected = field.file_present ? field.file_value : field.default_value;
           if (JSON.stringify(field.effective_value) !== JSON.stringify(expected)) {
             const effective = text("div", "", "executor-config-effective");
-            effective.append(text("span", "Effective"), text("code", display(field.effective_value)), text("span", field.source, "executor-config-source"));
+            const inUseValues = text("span", "", "executor-config-values");
+            inUseValues.append(text("code", display(field.effective_value)), text("span", field.source, "executor-config-source"));
+            effective.append(text("span", "In use", "executor-config-live-label"), inUseValues);
             info.append(effective);
           }
           const defaultCell = text("div", "", "executor-config-default");
