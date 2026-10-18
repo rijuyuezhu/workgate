@@ -46,7 +46,7 @@ from .session import (
     api_ui_session_token,
     ui_request_origin,
 )
-from .sessions import api_session_action
+from .sessions import api_session_action, api_session_skills
 from .tasks import api_task_action, api_task_detail, api_tasks
 from .terminals import api_terminal_action, api_terminal_read, api_terminals
 from .todos import api_todos
@@ -333,6 +333,11 @@ def human_ui_routes(
         ),
         Route(
             UI_API_PREFIX + "/tasks/{action}", api_task_action, methods=["POST"]
+        ),
+        Route(
+            UI_API_PREFIX + "/sessions/skills",
+            api_session_skills,
+            methods=["GET"],
         ),
         Route(
             UI_API_PREFIX + "/sessions/{action}",

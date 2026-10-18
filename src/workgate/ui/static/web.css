@@ -3225,22 +3225,22 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-section-heading > button { padding: 7px 11px; }
 #executors-panel .executor-manage-toolbar { justify-content: flex-end; }
 #executors-panel .executor-subtab-content { gap: 15px; }
-#executors-panel .executor-manage-group { border: 1px solid #e7eaf0; background: #fff; border-radius: 8px; }
-#executors-panel .executor-manage-group > h4 {
+:is(#executors-panel, #session-skills) .executor-manage-group { border: 1px solid #e7eaf0; background: #fff; border-radius: 8px; }
+:is(#executors-panel, #session-skills) .executor-manage-group > h4 {
   padding: 12px 15px; font-size: 11px; font-weight: 700;
   background: #fbfcfe; color: #626e84; letter-spacing: .01em;
 }
-#executors-panel .executor-manage-row { min-height: 54px; padding: 11px 15px; gap: 12px; }
-#executors-panel .executor-manage-row > div:first-child { gap: 3px; }
-#executors-panel .executor-manage-row strong { color: #31394f; font-size: 12px; }
-#executors-panel .executor-manage-row span { font-size: 11px; color: #8b93a3; }
-#executors-panel .executor-manage-tail { display: flex; gap: 13px; align-items: center; flex-shrink: 0; }
-#executors-panel .executor-manage-pill {
+:is(#executors-panel, #session-skills) .executor-manage-row { min-height: 54px; padding: 11px 15px; gap: 12px; }
+:is(#executors-panel, #session-skills) .executor-manage-row > div:first-child { gap: 3px; }
+:is(#executors-panel, #session-skills) .executor-manage-row strong { color: #31394f; font-size: 12px; }
+:is(#executors-panel, #session-skills) .executor-manage-row span { font-size: 11px; color: #8b93a3; }
+:is(#executors-panel, #session-skills) .executor-manage-tail { display: flex; gap: 13px; align-items: center; flex-shrink: 0; }
+:is(#executors-panel, #session-skills) .executor-manage-pill {
   display: inline-flex; gap: 6px; align-items: center;
   padding: 0; background: none; color: #8993a2; font-size: 10px !important;
 }
-#executors-panel .executor-manage-pill::before { content: ""; width: 6px; height: 6px; background: #aab2c1; border-radius: 50%; }
-#executors-panel .executor-manage-pill[data-enabled="true"]::before { background: #299b75; }
+:is(#executors-panel, #session-skills) .executor-manage-pill::before { content: ""; width: 6px; height: 6px; background: #aab2c1; border-radius: 50%; }
+:is(#executors-panel, #session-skills) .executor-manage-pill[data-enabled="true"]::before { background: #299b75; }
 #executors-panel .executor-manage-edit { border: 1px solid #e3e5ee; border-radius: 5px; padding: 5px 10px; background: #fff; font-size: 11px; }
 #executors-panel .executor-manage-edit:hover { background: #f5f4ff; border-color: #cbc7ed; }
 #executors-panel .executor-overview-body { gap: 14px; }
@@ -3371,3 +3371,28 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-manage-row[data-state="overridden"] strong { color: #7e8694; }
 #executors-panel .executor-manage-pill[data-state="overridden"] { color: #936017; }
 #executors-panel .executor-manage-pill[data-state="overridden"]::before { background: #c99231; }
+
+/* Session Skills reuse Executor management groups/rows; no mutation controls. */
+.task-session-skills { border-top: 1px solid var(--line); padding: 10px 0 0; }
+.task-session-skills summary { cursor: pointer; font-weight: 650; font-size: 12px; }
+.session-skills-content { padding-top: 9px; }
+.session-skills-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 9px; }
+.session-skills-toolbar .muted { font-size: 11px; }
+.session-skills-toolbar button { padding: 5px 9px; font-size: 11px; }
+.session-skills-list { margin-top: 9px; display: grid; gap: 9px; }
+@media (min-width: 781px) {
+  .session-skills-list { max-height: min(315px, 43vh); overflow-y: auto; scrollbar-gutter: stable; }
+}
+#session-skills .executor-manage-group { overflow: hidden; }
+#session-skills .executor-manage-group > h4 { display: flex; justify-content: space-between; }
+#session-skills .executor-manage-row > div:first-of-type { flex: 1 1 auto; }
+#session-skills .executor-row-mark { flex: 0 0 26px; }
+@media (max-width: 780px) {
+  .task-sessions-main .session-detail-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .task-sessions-main .session-detail-executor-identity { width: 100%; max-width: 100%; padding: 0; border-right: 0; }
+  .task-sessions-main .session-detail-executor-identity strong { overflow-wrap: anywhere; word-break: normal; font-size: 13px; }
+  #session-skills .executor-manage-row { padding: 9px 11px; }
+}
+
+/* Session status notes never compete with the Session title on phones. */
+.task-sessions-main #session-detail-task-created { font-size: 11px; line-height: 1.4; color: #8490a3; }
