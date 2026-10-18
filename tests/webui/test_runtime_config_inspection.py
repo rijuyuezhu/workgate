@@ -154,3 +154,12 @@ async def test_executor_online_uses_one_authorized_rpc(tmp_path):
     assert calls[0][0] == ("exec_test", "ui.config.inspect", {})
     assert calls[0][1] == {"timeout_s": 8}
     assert json.loads(response.body)["data"]["executor_id"] == "exec_test"
+
+
+def test_explicit_config_admin_is_not_required_by_other_audit_details():
+    from workgate.ui.http.audit import _detail_scopes
+
+    scopes = _detail_scopes({"tool": "create_file_link", "operation": "other"})
+    assert SCOPE_CONFIG_ADMIN not in scopes
+    assert "audit:read" in scopes
+    assert "shell:write" in scopes

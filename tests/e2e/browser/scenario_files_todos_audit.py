@@ -930,10 +930,12 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
         )
     ):
         page.locator("#session-audit-refresh").click()
+    result = page.locator("#session-audit-list .audit-entry").first
+    expect(result).to_contain_text("create_file_link")
+    result.click()
     expect(
-        page.locator("#session-audit-list .audit-entry").first
+        page.locator("#session-audit-detail-body .audit-call-panel").first
     ).to_be_visible()
-    page.locator("#session-audit-list .audit-entry").first.click()
     page.locator(
         "#session-audit-detail-body .audit-call-panel"
     ).first.get_by_role("button", name="Raw").click()

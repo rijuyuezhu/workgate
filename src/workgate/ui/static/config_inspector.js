@@ -1,77 +1,90 @@
-// On-demand, admin-only configuration details. No values enter bootstraps or logs.
+// Admin-only runtime settings; neither values nor errors are cached or logged.
 export function createConfigurationView({ root, request, authMode, onAuthorize }) {
   let generation = 0;
-  function clear() { generation++; root.replaceChildren(); }
-  function text(tag, content, className = "") {
+  const text = (tag, value, className = "") => {
     const node = document.createElement(tag);
-    node.textContent = content;
+    node.textContent = value;
     if (className) node.className = className;
     return node;
-  }
-  function display(value) {
-    return value === null ? "null" : value === "" ? '""' : typeof value === "string" ? value : JSON.stringify(value);
+  };
+  const display = value => value === null ? "null" : value === "" ? '""' : typeof value === "string" ? value : JSON.stringify(value);
+  function clear() {
+    generation++;
+    root.replaceChildren();
   }
   async function open(executorId = "") {
-    const selected = ++generation;
-    root.replaceChildren(text("p", "Loading configuration…", "muted"));
+    const revision = ++generation;
+    root.replaceChildren(text("span", "Loading…", "muted"));
     try {
-      const query = executorId ? `?executor_id=${encodeURIComponent(executorId)}` : "";
-      const data = await request(`/config${query}`);
-      if (selected !== generation) return;
+      const path = executorId ? `?executor_id=${encodeURIComponent(executorId)}` : "";
+      const data = await request(`/config${path}`);
+      if (revision !== generation) return;
       root.replaceChildren();
       if (data.status === "offline") {
-        root.append(text("p", "Executor offline. Live configuration was not inspected; no cached credentials are shown.", "muted"));
+        root.append(text("span", "Executor offline", "muted"));
         return;
       }
-      if (data.status !== "running" || !Array.isArray(data.fields)) throw new Error("Live configuration unavailable");
-      const description = text("p", `${data.config_path || "No configuration file selected"} · ${String(data.config_format || "yaml").toUpperCase()} · v${data.startup_version} · Started ${Number.isFinite(Number(data.startup_at)) ? new Date(Number(data.startup_at) * 1000).toLocaleString() : "unknown"}`, "muted");
-      root.append(description);
-      if (data.file_changed_since_startup) root.append(text("p", "The file has changed since startup. Effective values still reflect the running process.", "executor-config-warning"));
-      if (data.file_error) root.append(text("p", data.file_error, "executor-config-warning"));
-      root.append(text("p", "Read-only · Credentials are displayed unmasked for the authorized administrator. Saving or restarting is not available here.", "muted"));
+      if (data.status !== "running" || !Array.isArray(data.fields)) throw new Error("No config");
+
+      const metadata = text("div", "", "executor-config-meta");
+      const filename = data.config_path ? data.config_path.split(/[\\/]/).pop() : "No config file";
+      const file = text("span", filename, "executor-config-file");
+      file.title = data.config_path || "";
+      metadata.append(file);
+      if (data.file_changed_since_startup) metadata.append(text("span", "File changed", "executor-config-warning"));
+      if (data.file_error) metadata.append(text("span", "File unavailable", "executor-config-warning"));
+      root.append(metadata);
+
       const groups = new Map();
       for (const field of data.fields) {
         if (!groups.has(field.section)) groups.set(field.section, []);
         groups.get(field.section).push(field);
       }
+      const list = text("div", "", "executor-config-list");
       for (const [section, fields] of groups) {
         const details = document.createElement("details");
-        details.className = "executor-config-section";
+        details.className = "executor-config-section executor-manage-group";
         details.open = section === groups.keys().next().value;
-        details.append(text("summary", `${section} (${fields.length})`));
-        const table = document.createElement("table");
-        table.className = "executor-config-table";
-        const head = document.createElement("thead");
-        const header = document.createElement("tr");
-        for (const title of ["Setting", "Effective", "File", "Source"]) header.append(text("th", title));
-        head.append(header); table.append(head);
-        const tbody = document.createElement("tbody");
+        const summary = document.createElement("summary");
+        summary.append(text("strong", section), text("span", String(fields.length), "executor-config-count"));
+        details.append(summary);
         for (const field of fields) {
-          const tr = document.createElement("tr");
-          if (field.file_overridden) tr.className = "executor-config-overridden";
-          const name = text("td", field.name);
+          const item = text("div", "", "executor-config-row");
+          const name = text("span", field.name, "executor-config-name");
           name.title = field.description || "";
-          tr.append(name);
-          tr.append(text("td", display(field.effective_value), "executor-config-value"));
-          tr.append(text("td", field.file_present ? display(field.file_value) : "—", "executor-config-value"));
-          tr.append(text("td", field.file_overridden ? `${field.source} (overrides file)` : field.source));
-          tbody.append(tr);
+          const info = text("div", "", "executor-config-info");
+          const primary = text("div", "", "executor-config-primary");
+          primary.append(
+            text("code", display(field.effective_value), "executor-config-value"),
+            text("span", field.source, "executor-config-source"),
+          );
+          info.append(primary);
+          if (field.file_present && display(field.file_value) !== display(field.effective_value)) {
+            const oldValue = text("div", "", "executor-config-file-value");
+            oldValue.append(text("span", "File"), text("code", display(field.file_value)));
+            info.append(oldValue);
+          }
+          item.append(name, info);
+          details.append(item);
         }
-        table.append(tbody); details.append(table); root.append(details);
+        list.append(details);
       }
+      root.append(list);
     } catch (error) {
-      if (selected !== generation) return;
+      if (revision !== generation) return;
       root.replaceChildren();
       if (error.status === 403) {
-        root.append(text("p", "Configuration credentials require an explicitly approved config:admin OAuth grant. Ordinary WebUI access is insufficient.", "muted"));
+        const access = text("div", "", "executor-config-access");
+        access.append(text("span", "Admin access required", "muted"));
         if (authMode === "oauth") {
-          const button = text("button", "Authorize configuration access");
+          const button = text("button", "Authorize");
           button.type = "button";
           button.addEventListener("click", onAuthorize);
-          root.append(button);
+          access.append(button);
         }
+        root.append(access);
       } else {
-        root.append(text("p", "Unable to inspect running configuration. Try again when the service is available.", "muted"));
+        root.append(text("span", "Configuration unavailable", "muted"));
       }
     }
   }

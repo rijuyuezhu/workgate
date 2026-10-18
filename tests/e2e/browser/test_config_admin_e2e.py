@@ -17,9 +17,9 @@ def test_explicit_admin_consent_then_control_and_executor_config(
     h.navigate("executors")
     page.locator("#executor-control-config-open").click()
     body = page.locator("#executor-control-config-body")
-    expect(body).to_contain_text("config:admin OAuth grant")
+    expect(body).to_contain_text("Admin access required")
     assert h.admin_pin not in body.inner_text()
-    body.get_by_role("button", name="Authorize configuration access").click()
+    body.get_by_role("button", name="Authorize").click()
     page.wait_for_url("**/oauth/authorize?*")
     assert (
         "config:admin" in parse_qs(urlparse(page.url).query)["scope"][0].split()
@@ -34,17 +34,15 @@ def test_explicit_admin_consent_then_control_and_executor_config(
     body = page.locator("#executor-control-config-body")
     expect(body).to_contain_text("oauth_admin_pin")
     expect(body).to_contain_text(h.admin_pin)
-    expect(body).to_contain_text("Effective")
+    expect(body.locator(".executor-config-name").first).to_be_visible()
     # Open a nullable setting's group: explicit null is not an absent file field.
-    expect(body.locator("details").first).to_be_visible()
+    expect(body.locator(".executor-config-section").first).to_be_visible()
     expect(page.locator("#executors-panel .executors-layout")).to_be_hidden()
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.evaluate(
         "document.documentElement.scrollWidth <= window.innerWidth"
     )
-    expect(
-        body.locator(".executor-config-table tbody tr").first
-    ).to_be_visible()
+    expect(body.locator(".executor-config-row").first).to_be_visible()
     page.locator("#executor-control-config-close").click()
     expect(page.locator("#executors-panel .executors-layout")).to_be_visible()
     page.set_viewport_size({"width": 1360, "height": 900})
@@ -61,7 +59,7 @@ def test_explicit_admin_consent_then_control_and_executor_config(
     executor = page.locator("#executor-config-body")
     expect(executor).to_be_visible()
     expect(executor).to_contain_text("max_jobs")
-    expect(executor).to_contain_text("Source")
+    expect(executor.locator(".executor-config-source").first).to_be_visible()
     assert executor.evaluate("el => !!el.closest('.executor-details')")
     page.locator('#executor-subtabs [data-executor-subtab="overview"]').click()
     assert not executor.inner_text()
