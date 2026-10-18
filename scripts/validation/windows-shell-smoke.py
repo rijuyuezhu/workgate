@@ -1,16 +1,19 @@
 """Native Windows shell argv and quoting smoke; bounded process containment is #385."""
 
+import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 if os.name != "nt":
     raise RuntimeError("This smoke needs native Windows Python")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from workgate.executor.jobs.runner import run_job_runner_from_args  # noqa: E402
 from workgate.platform.process import new_process_group_kwargs  # noqa: E402
 from workgate.platform.shell import (  # noqa: E402
     default_python,
@@ -158,6 +161,33 @@ def run() -> None:
             )
             assert via_shell.returncode == 7, via_shell
             assert "BATCH_OK:two words" in via_shell.stdout, via_shell
+
+        # Exercise the actual durable job runner, not just shell argv.
+        command_file = folder / "command.txt"
+        log_file = folder / "job.log"
+        status_file = folder / "job-status.json"
+        command_file.write_text(
+            "Write-Output '你好，job'; exit 7", encoding="utf-8"
+        )
+        job_args = SimpleNamespace(
+            command_file=str(command_file),
+            log_file=str(log_file),
+            status_file=str(status_file),
+            cwd=str(folder),
+            shell=default_shell(),
+            max_log_bytes=100_000,
+            blocked_env_name=[],
+            blocked_env_prefix=[],
+        )
+        try:
+            run_job_runner_from_args(job_args)
+        except SystemExit as exc:
+            assert exc.code == 7, exc.code
+        else:
+            raise AssertionError("Windows job runner lost exit code 7")
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert status["exit_code"] == 7 and status["error"] is None, status
+        assert "你好，job" in log_file.read_text(encoding="utf-8")
 
         cmd_unicode = subprocess.run(
             shell_argv("cmd.exe", "echo 你好，cmd — é"),
