@@ -33,6 +33,7 @@ from ..pairing import (
     ExecutorPairingService,
     PairingAttemptView,
 )
+from ..peer_links import LinkProbeBusy
 
 
 class _IntegrationMoveBody(BaseModel):
@@ -110,6 +111,12 @@ class _IntegrationMutationBody(BaseModel):
     expected_revision: str | None = Field(
         default=None, min_length=64, max_length=64
     )
+
+
+class _PeerLinkProbeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_executor_id: str = Field(min_length=1, max_length=128)
+    destination_executor_id: str = Field(min_length=1, max_length=128)
 
 
 class _RenameExecutorBody(BaseModel):
@@ -246,6 +253,62 @@ def executor_admin_routes(
                 else result.bootstrap.model_dump(mode="json"),
             }
         )
+
+    async def peer_link(request: Request) -> Response:
+        """Read cached pair evidence or explicitly initiate a bounded probe."""
+        try:
+            require_oauth_scopes(
+                (SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE)
+                if request.method == "POST"
+                else (SCOPE_EXECUTOR_USE,)
+            )
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            params = (
+                dict(request.query_params)
+                if request.method == "GET"
+                else await request.json()
+            )
+            body = _PeerLinkProbeBody.model_validate(params)
+        except ValueError, ValidationError, TypeError:
+            return _json_error(
+                "InvalidPeerPair", "Invalid Executor pair", status_code=400
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        try:
+            if request.method == "POST":
+                result = await runtime.peer_links.probe(
+                    body.source_executor_id,
+                    body.destination_executor_id,
+                )
+                audit(
+                    "executor_peer_link_probed",
+                    source_executor_id=body.source_executor_id,
+                    destination_executor_id=body.destination_executor_id,
+                    status=result["status"],
+                    reason=result["reason"],
+                )
+            else:
+                result = await runtime.peer_links.read(
+                    body.source_executor_id,
+                    body.destination_executor_id,
+                )
+            return _json_ok(result)
+        except LookupError:
+            return _json_error(
+                "UnknownExecutor", "Executor not found", status_code=404
+            )
+        except LinkProbeBusy as exc:
+            return _json_error("LinkProbeBusy", str(exc), status_code=429)
+        except ValueError:
+            return _json_error(
+                "InvalidPeerPair", "Invalid Executor pair", status_code=400
+            )
 
     async def diagnostics(request: Request) -> Response:
         """Authorized, on-demand Executor diagnostics; never serve raw config."""
@@ -1444,6 +1507,11 @@ def executor_admin_routes(
         ),
         Route(
             api_prefix + "/executors/diagnostics", diagnostics, methods=["GET"]
+        ),
+        Route(
+            api_prefix + "/executors/peer-link",
+            peer_link,
+            methods=["GET", "POST"],
         ),
         Route(
             api_prefix + "/executors/{action}",

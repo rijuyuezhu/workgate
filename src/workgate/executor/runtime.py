@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import JsonValue
 from websockets.exceptions import ConnectionClosedOK
@@ -28,6 +28,7 @@ from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
 from .gui import GuiService, build_gui_service
 from .path import resolve_default_workdir, resolve_path
+from .peer_probe import PeerProbeManager, connect_peer_probe
 from .peer_receiver import PeerReceiverManager
 from .peer_sender import send_peer_transfer
 from .services import RuntimeServices, build_runtime_services
@@ -95,6 +96,8 @@ class ExecutorRuntime:
     """Executor-owned short-lived native desktop GUI observations."""
     peer_receiver: PeerReceiverManager
     """One-time trusted-overlay transfer listeners."""
+    peer_probe: PeerProbeManager
+    """Sessionless, one-use bounded connectivity-check listeners."""
     runtime_state_store: ExecutorRuntimeStateStore
     """Small persisted runtime ownership/update authority."""
     managed_service: bool = False
@@ -257,7 +260,7 @@ class ExecutorRuntime:
         self._profile_lock = profile_lock
         self._started = True
 
-    async def _execute_protocol_command(self, command: ExecutorCommand):
+    async def _execute_protocol_command(self, command: ExecutorCommand) -> Any:
         """Execute one final command under this executor's state context."""
         with (
             use_role_config(self.config),
@@ -401,6 +404,26 @@ class ExecutorRuntime:
         args = dict(command.args)
         if command.session_id is not None:
             args.setdefault("session_id", command.session_id)
+        if command.op.startswith("peer.probe_"):
+            if command.session_id is not None:
+                raise ValueError(
+                    "peer connectivity diagnostics cannot carry session_id"
+                )
+            if command.op == "peer.probe_prepare":
+                return await self.peer_probe.prepare(
+                    _peer_arg(args, "tailnet_id", str)
+                )
+            if command.op == "peer.probe_cancel":
+                await self.peer_probe.cancel(_peer_arg(args, "probe_id", str))
+                return {"cancelled": True}
+            if command.op == "peer.probe_connect":
+                return await connect_peer_probe(
+                    host=_peer_arg(args, "host", str),
+                    port=_peer_arg(args, "port", int),
+                    token=_peer_arg(args, "token", str),
+                    tailnet_id=_peer_arg(args, "tailnet_id", str),
+                )
+            raise ValueError("Unknown peer probe operation")
         if command.op == "transfer.peer_prepare":
             if command.session_id is None:
                 raise ValueError("peer prepare requires a destination session")
@@ -541,7 +564,10 @@ class ExecutorRuntime:
                 try:
                     try:
                         try:
-                            await self.peer_receiver.aclose()
+                            try:
+                                await self.peer_probe.aclose()
+                            finally:
+                                await self.peer_receiver.aclose()
                         finally:
                             await self.gui.aclose()
                     finally:
@@ -635,6 +661,7 @@ def build_executor_runtime(
         browser=browser_service,
         gui=gui_service,
         peer_receiver=PeerReceiverManager(config, services.tool_session_store),
+        peer_probe=PeerProbeManager(),
         runtime_state_store=runtime_state_store,
         managed_service=managed_service,
         runtime_ownership=runtime_ownership,
