@@ -38,9 +38,12 @@ so avoid setting a shared `WORKGATE_CONFIG` or `WORKGATE_STATE_DIR` when
 the roles need separate configuration or state paths.
 
 The normal Control URL is `http://127.0.0.1:8765`, and the MCP URL is
-`http://127.0.0.1:8765/mcp`. The launcher owns the child processes and
-stops both when interrupted or when either child exits; it does not restart
-them or repair failed pairing.
+`http://127.0.0.1:8765/mcp`. One lightweight Parent owns both role Children
+and stops them when interrupted or when either exits. It does not automatically
+restart crashed roles or repair pairing. Each Child has private local IPC to
+request its own restart, which re-reads file settings while preserving the
+Parent's initial CLI/environment overrides. WebUI configuration Apply is a
+separate feature.
 
 ## Linux systemd user service
 
