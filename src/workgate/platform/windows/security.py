@@ -330,7 +330,9 @@ def open_private_file(
             exclusive=exclusive,
             attributes=security,
             append=append,
-            extra_access=0xC0000 if write_security else 0,
+            # Staged ACL-copy files also need DELETE on the *same* handle,
+            # even after source DACL permissions have been applied.
+            extra_access=0xD0000 if write_security else 0,
         )
     try:
         flags = (os.O_WRONLY | os.O_APPEND) if append else os.O_RDWR
@@ -716,38 +718,68 @@ def delete_workspace_file(path: Path) -> None:
             close_handle(kernel, handle)
 
 
+def copy_exact_file(source: Any, destination: Any, size: int) -> None:
+    """Copy the pinned byte length, refusing a changed source size."""
+    remaining = size
+    while remaining:
+        chunk = source.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise RuntimeError("Windows file copy source was truncated")
+        destination.write(chunk)
+        remaining -= len(chunk)
+    if source.read(1):
+        raise RuntimeError("Windows file copy source grew during copy")
+
+
 def copy_workspace_file(source: Path, destination: Path) -> None:
-    """Copy one verified regular object into an exclusively created user file.
+    """Copy one verified regular file, publishing atomically without clobber.
 
-    Preserve the source owner and DACL, and never reopen the destination path
-    to clean up a failed copy.
+    Stage with a private DACL until all content and source ACL metadata have
+    been copied. Failure marks only the *open* stage object for deletion.
     """
-    import shutil
+    import msvcrt
+    import secrets
 
-    with os.fdopen(
-        open_regular_file_no_follow(source, share_write=False), "rb"
-    ) as reader:
-        descriptor = create_workspace_file_no_follow(
-            destination, preserve_owner=True
-        )
-        with os.fdopen(descriptor, "wb") as writer:
-            try:
-                before = os.fstat(reader.fileno())
-                shutil.copyfileobj(reader, writer, length=1024 * 1024)
-                writer.flush()
-                os.fsync(writer.fileno())
-                _copy_workspace_security(reader.fileno(), writer.fileno())
-                after = os.fstat(reader.fileno())
-                if (before.st_size, before.st_mtime_ns) != (
-                    after.st_size,
-                    after.st_mtime_ns,
-                ):
-                    raise RuntimeError(
-                        "Source file changed during native Windows copy"
-                    )
-            except BaseException:
-                delete_open_workspace_file(writer.fileno())
-                raise
+    stage = destination.with_name(
+        f".{destination.name}.copy-{secrets.token_hex(12)}"
+    )
+    with (
+        os.fdopen(
+            open_regular_file_no_follow(source, share_write=False), "rb"
+        ) as reader,
+        os.fdopen(
+            open_private_file(
+                stage, create=True, exclusive=True, write_security=True
+            ),
+            "wb",
+        ) as writer,
+    ):
+        try:
+            before = os.fstat(reader.fileno())
+            copy_exact_file(reader, writer, before.st_size)
+            writer.flush()
+            os.fsync(writer.fileno())
+            after = os.fstat(reader.fileno())
+            if (before.st_size, before.st_mtime_ns) != (
+                after.st_size,
+                after.st_mtime_ns,
+            ):
+                raise RuntimeError(
+                    "Source file changed during native Windows copy"
+                )
+            _copy_workspace_security(reader.fileno(), writer.fileno())
+            # Publish the same already-open stage object; do not reopen its
+            # unpredictable pathname and introduce a source-substitution race.
+            with pinned_parent(destination) as parent:
+                rename_child(
+                    cast(Any, msvcrt).get_osfhandle(writer.fileno()),
+                    parent,
+                    destination.name,
+                    replace=False,
+                )
+        except BaseException:
+            delete_open_workspace_file(writer.fileno())
+            raise
 
 
 def _open_reparse_entry(kernel: Any, parent: int, name: str) -> int:

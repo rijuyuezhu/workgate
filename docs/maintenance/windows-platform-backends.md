@@ -141,8 +141,10 @@ portable tracked-descriptor mapping rather than Linux-only /proc/self/fd.
 
 WebUI regular file copy, move and delete and directory move/delete now use
 native NT object handles rather than path-based Python shutil/os.rename.
-Regular file copying uses a verified source, exclusive destination, and
-owner/DACL-preserving copy with original-handle cleanup. Windows editor
+Regular file copying uses a verified source and owner-private staging,
+shares a bounded exact-size reader with directory copying, and atomically
+publishes the already-open NT staging handle without clobbering. Failures
+delete only the staged object. Windows editor
 content uses a digest from its verified read handle, rather than hashing
 the same pathname in a separate open. Binary/image preview samples also use
 no-follow native handles. The HTTP WebUI dispatch is covered in regression

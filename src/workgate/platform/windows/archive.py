@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import ExitStack, suppress
 from ctypes import wintypes
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, cast
 
 from .nt_relative import (
     _api,
@@ -586,21 +586,6 @@ def list_tree(
     return output, truncated
 
 
-def _copy_exact_file(
-    source: BinaryIO, destination: BinaryIO, size: int
-) -> None:
-    """Copy at most one pinned source size, rejecting growth and truncation."""
-    remaining = size
-    while remaining:
-        chunk = source.read(min(remaining, 1024 * 1024))
-        if not chunk:
-            raise RuntimeError("Windows directory copy source was truncated")
-        destination.write(chunk)
-        remaining -= len(chunk)
-    if source.read(1):
-        raise RuntimeError("Windows directory copy source grew during copy")
-
-
 def copy_directory(
     source: Path,
     destination: Path,
@@ -619,6 +604,7 @@ def copy_directory(
 
     from .security import (
         _verify_regular_handle,
+        copy_exact_file,
         copy_handle_owner_dacl,
         ensure_private_directory,
         open_private_file,
@@ -654,7 +640,8 @@ def copy_directory(
                         | _READ_ATTRIBUTES
                         | 0x20000
                         | 0x40000
-                        | 0x80000,
+                        | 0x80000
+                        | 0x10000,
                         directory=True,
                     )
                     try:
@@ -720,7 +707,7 @@ def copy_directory(
                                             ),
                                             "wb",
                                         ) as writer:
-                                            _copy_exact_file(
+                                            copy_exact_file(
                                                 reader, writer, before.st_size
                                             )
                                             writer.flush()
@@ -774,7 +761,17 @@ def copy_directory(
                         # so no ACL failure can leave a partially protected
                         # destination visible to the user.
                         copy_handle_owner_dacl(original, stage_root)
-                        move_directory(staged_path, destination)
+                        # Publish the already-open, verified stage root.
+                        # No second lookup of its mutable pathname.
+                        from .nt_relative import rename_child
+
+                        with pinned_parent(destination) as destination_parent:
+                            rename_child(
+                                stage_root,
+                                destination_parent,
+                                destination.name,
+                                replace=False,
+                            )
                     finally:
                         close_handle(kernel, stage_root)
             except BaseException:

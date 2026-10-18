@@ -259,10 +259,32 @@ def main() -> int:
         copied_file = Path(tmp) / "ui-copy-target.txt"
         copy_workspace_file(move_to, copied_file)
         assert copied_file.read_bytes() == b"native-workspace"
+        assert not list(Path(tmp).glob(".ui-copy-target.txt.copy-*"))
+        failed_copy = Path(tmp) / "failed-atomic-copy.txt"
+        import workgate.platform.windows.security as native_security
+
+        original_copy = native_security.copy_exact_file
+
+        def interrupt_copy(_reader, _writer, _size):
+            raise RuntimeError("simulated copy interruption")
+
+        native_security.copy_exact_file = interrupt_copy
+        try:
+            try:
+                copy_workspace_file(move_to, failed_copy)
+            except RuntimeError as exc:
+                assert "interruption" in str(exc)
+            else:
+                raise AssertionError("File copy ignored simulated interruption")
+        finally:
+            native_security.copy_exact_file = original_copy
+        assert not failed_copy.exists()
+        assert not list(Path(tmp).glob(".failed-atomic-copy.txt.copy-*"))
         try:
             copy_workspace_file(move_to, copied_file)
         except FileExistsError:
             assert copied_file.read_bytes() == b"native-workspace"
+            assert not list(Path(tmp).glob(".ui-copy-target.txt.copy-*"))
         else:
             raise AssertionError(
                 "Native file copy clobbered existing destination"
@@ -277,6 +299,7 @@ def main() -> int:
             open_private_file(protected_result, create=False), "rb"
         ) as f:
             assert f.read() == b"private-copy"
+        assert not list(Path(tmp).glob(".protected-copy.txt.copy-*"))
         delete_workspace_file(move_to)
         assert not move_to.exists()
 
