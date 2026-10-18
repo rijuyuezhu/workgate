@@ -22,6 +22,7 @@ from typing import Any
 from ..app_paths import ensure_private_directory
 from ..config.executor import EXECUTOR_SETTING_NAMES, ExecutorConfig
 from ..persistence import FileStateStore
+from ..platform.host import HostOS, host_os
 from ..protocol.executor import ExecutorRuntimeOwnership
 from ..utils.private_files import (
     atomic_write_private_bytes,
@@ -214,7 +215,7 @@ class ExecutorServiceManager:
         return result
 
     def backend(self, *, require_available: bool = False) -> str:
-        if self.system == "Linux":
+        if host_os(self.system) is HostOS.LINUX:
             if require_available:
                 if shutil.which("systemctl") is None:
                     raise UnsupportedExecutorServiceError(
@@ -229,7 +230,7 @@ class ExecutorServiceManager:
                         "session or enable the user manager before installing"
                     )
             return "systemd"
-        if self.system == "Darwin":
+        if host_os(self.system) is HostOS.MACOS:
             if require_available and shutil.which("launchctl") is None:
                 raise UnsupportedExecutorServiceError(
                     "launchctl is required on macOS"
