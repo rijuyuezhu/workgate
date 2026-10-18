@@ -32,13 +32,21 @@ export function createConfigurationView({ root, request }) {
       if (!data.editable && data.edit_reason) metadata.append(text("span", data.edit_reason, "muted"));
       root.append(metadata);
 
+      const filters = text("div", "", "executor-config-filters");
       const filter = text("label", "", "executor-config-filter");
       const changedOnly = document.createElement("input");
       changedOnly.type = "checkbox";
       const filterLabel = text("span", "Only changed (0)");
       filter.append(changedOnly, filterLabel);
       filter.hidden = !data.editable;
-      root.append(filter);
+      const nonDefaultFilter = text("label", "", "executor-config-filter");
+      nonDefaultFilter.title = "Show settings whose file, pending, or effective value differs from Default";
+      const nonDefaultOnly = document.createElement("input");
+      nonDefaultOnly.type = "checkbox";
+      const nonDefaultLabel = text("span", "Non-default");
+      nonDefaultFilter.append(nonDefaultOnly, nonDefaultLabel);
+      filters.append(filter, nonDefaultFilter);
+      root.append(filters);
       const toolbar = text("div", "", "executor-config-actions");
       const save = text("button", "Save changes"); save.type = "button";
       const discard = text("button", "Discard"); discard.type = "button";
@@ -47,19 +55,28 @@ export function createConfigurationView({ root, request }) {
       const controls = new Map();
       const empty = text("p", "No unsaved changes", "executor-config-empty");
       empty.hidden = true;
+      const differs = (a, b) => JSON.stringify(a) !== JSON.stringify(b);
+      const isNonDefault = (field, action) =>
+        differs(field.effective_value, field.default_value) ||
+        (action ? action.op === "set" && differs(action.value, field.default_value) :
+          field.file_present && differs(field.file_value, field.default_value));
       const updateToolbar = () => {
         toolbar.hidden = pending.size === 0 && !status.textContent;
         save.disabled = pending.size === 0;
         discard.hidden = pending.size === 0;
         filterLabel.textContent = `Only changed (${pending.size})`;
-        let visible = 0;
+        const visibleNames = new Set();
+        let nonDefaultCount = 0;
         for (const [name, {item, field, oldValue, arrow, newValue}] of rows) {
           const action = pending.get(name);
+          const nonDefault = isNonDefault(field, action);
+          if (nonDefault) nonDefaultCount++;
+          const visible = (!changedOnly.checked || !!action) && (!nonDefaultOnly.checked || nonDefault);
+          item.classList.toggle("executor-config-changed", !!action);
+          item.hidden = !visible;
+          if (visible) visibleNames.add(name);
           const oldText = field.file_present ? display(field.file_value) : "unset";
           const newText = action?.op === "remove" ? "unset" : action ? display(action.value) : "";
-          item.classList.toggle("executor-config-changed", !!action);
-          item.hidden = changedOnly.checked && !action;
-          if (!item.hidden) visible++;
           oldValue.textContent = oldText;
           oldValue.classList.toggle("executor-config-unset", !field.file_present);
           arrow.hidden = !action;
@@ -67,22 +84,30 @@ export function createConfigurationView({ root, request }) {
           newValue.textContent = newText;
           newValue.classList.toggle("executor-config-unset", !!action && action.op === "remove");
         }
+        nonDefaultLabel.textContent = `Non-default (${nonDefaultCount})`;
+        const filtering = changedOnly.checked || nonDefaultOnly.checked;
         for (const {details, count, names} of sections.values()) {
-          const shown = names.filter(name => !changedOnly.checked || pending.has(name)).length;
+          const shown = names.filter(name => visibleNames.has(name)).length;
           details.hidden = shown === 0;
-          count.textContent = changedOnly.checked ? `${shown}/${names.length}` : String(names.length);
-          if (changedOnly.checked && shown) details.open = true;
+          count.textContent = filtering ? `${shown}/${names.length}` : String(names.length);
+          if (filtering && shown) details.open = true;
         }
-        empty.hidden = !changedOnly.checked || visible > 0;
+        empty.textContent = changedOnly.checked && !nonDefaultOnly.checked ? "No unsaved changes" : "No matching settings";
+        empty.hidden = !filtering || visibleNames.size > 0;
       };
-      changedOnly.addEventListener("change", () => {
-        if (!changedOnly.checked) {
-          for (const {details, priorOpen} of sections.values()) details.open = priorOpen;
-        } else {
+      let wasFiltering = false;
+      const updateFilters = () => {
+        const filtering = changedOnly.checked || nonDefaultOnly.checked;
+        if (filtering && !wasFiltering) {
           for (const section of sections.values()) section.priorOpen = section.details.open;
+        } else if (!filtering && wasFiltering) {
+          for (const {details, priorOpen} of sections.values()) details.open = priorOpen;
         }
+        wasFiltering = filtering;
         updateToolbar();
-      });
+      };
+      changedOnly.addEventListener("change", updateFilters);
+      nonDefaultOnly.addEventListener("change", updateFilters);
       const stage = (field, action) => {
         const same = action.op === "remove" ? !field.file_present : field.file_present && JSON.stringify(action.value) === JSON.stringify(field.file_value);
         if (same) pending.delete(field.name);

@@ -37,10 +37,12 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
                 control.locator(".executor-config-default code")
             ).to_have_count(64)
             assert control.locator("details:not([open])").count() == 0
-            assert control.locator(".executor-config-effective").count() == 0
             row = control.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("log_level")')
             )
+            # The configured log level still equals its default, regardless
+            # of other fields overridden by the browser test environment.
+            expect(row.locator(".executor-config-effective")).to_have_count(0)
             # Every role-owned field appears, even when missing from YAML.
             port = control.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("port")')
@@ -51,7 +53,20 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             expect(port.locator(".executor-config-default code")).to_have_text(
                 "8765"
             )
-            only_changed = control.locator(".executor-config-filter input")
+            non_default = (
+                control.locator(".executor-config-filter")
+                .filter(has_text="Non-default")
+                .locator("input")
+            )
+            non_default.check()
+            # The file explicitly sets log_level to its default (warning).
+            expect(row).to_be_hidden()
+            non_default.uncheck()
+            only_changed = (
+                control.locator(".executor-config-filter")
+                .filter(has_text="Only changed")
+                .locator("input")
+            )
             only_changed.check()
             expect(control.locator(".executor-config-empty")).to_have_text(
                 "No unsaved changes"
@@ -69,8 +84,18 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
                 "warning"
             )
             expect(
-                control.locator(".executor-config-filter span")
-            ).to_have_text("Only changed (1)")
+                control.locator(".executor-config-filter").filter(
+                    has_text="Only changed"
+                )
+            ).to_contain_text("Only changed (1)")
+            non_default.check()
+            expect(row).to_be_visible()
+            only_changed.check()
+            expect(
+                control.locator(".executor-config-row:visible")
+            ).to_have_count(1)
+            only_changed.uncheck()
+            non_default.uncheck()
             only_changed.check()
             expect(
                 control.locator(".executor-config-row:visible")
@@ -92,6 +117,16 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             ).to_have_count(47)
             assert executor.locator("details:not([open])").count() == 0
             expect(executor).to_contain_text("max_jobs")
+            exec_non_default = (
+                executor.locator(".executor-config-filter")
+                .filter(has_text="Non-default")
+                .locator("input")
+            )
+            exec_non_default.check()
+            expect(
+                executor.locator(".executor-config-row:visible")
+            ).not_to_have_count(47)
+            exec_non_default.uncheck()
             row = executor.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("max_jobs")')
             )
@@ -113,7 +148,6 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             expect(row.locator(".executor-config-default code")).to_have_text(
                 "1000"
             )
-            assert executor.locator(".executor-config-effective").count() == 0
             h.assert_clean_browser()
             failed = False
         finally:

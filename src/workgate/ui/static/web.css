@@ -3650,7 +3650,8 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   outline-offset: -1px;
   box-shadow: inset 3px 0 0 #d8a129;
 }
-#executors-panel .executor-config-filter { display: inline-flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #646e80; font-size: 12px; cursor: pointer; }
+#executors-panel .executor-config-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 12px; }
+#executors-panel .executor-config-filter { display: inline-flex; align-items: center; gap: 7px; color: #646e80; font-size: 12px; cursor: pointer; }
 #executors-panel .executor-config-filter input { margin: 0; accent-color: #c4932d; }
 #executors-panel .executor-config-filter[hidden] { display: none; }
 #executors-panel .executor-config-empty { margin: 10px 0; font-size: 12px; color: #8790a0; }
