@@ -72,6 +72,7 @@ def test_oauth_supported_scopes_include_feature_scopes():
         "gui:use",
         "audit:read",
         "audit:full",
+        "config:admin",
     ]
 
 

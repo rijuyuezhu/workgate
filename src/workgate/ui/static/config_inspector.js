@@ -9,7 +9,7 @@ export function createConfigurationView({ root, request, authMode, onAuthorize }
     return node;
   }
   function display(value) {
-    return value == null ? "—" : typeof value === "string" ? value : JSON.stringify(value);
+    return value === null ? "null" : value === "" ? '""' : typeof value === "string" ? value : JSON.stringify(value);
   }
   async function open(executorId = "") {
     const selected = ++generation;

@@ -121,10 +121,6 @@
           <div class="dashboard-network-values"><div><span class="download-arrow">↓</span><strong id="dashboard-network-down">—</strong><small>received</small></div><div><span class="upload-arrow">↑</span><strong id="dashboard-network-up">—</strong><small>sent</small></div></div>
           <div class="dashboard-network-bar" aria-label="Relative incoming and outgoing traffic"><span id="dashboard-network-rx-bar"></span><i id="dashboard-network-tx-bar"></i></div>
           <div class="dashboard-metric-foot"><span>Downlink</span><span>Uplink</span></div>
-          <section class="executor-subtab-pane" data-executor-pane="config" aria-label="Executor configuration" hidden>
-            <div class="executor-section-heading"><h3>Configuration</h3><button id="executor-config-refresh" type="button">Refresh</button></div>
-            <div id="executor-config-body" class="executor-subtab-content"></div>
-          </section>
         </article>
       </div>
       <div class="dashboard-executors-row">
@@ -306,6 +302,11 @@
           <section class="executor-subtab-pane" data-executor-pane="skills" aria-label="Skill sources" hidden>
             <div class="executor-section-heading executor-manage-toolbar"><button type="button" id="executor-skills-add">+ Add Skill</button></div>
             <div id="executor-skills-body" class="executor-subtab-content"></div>
+          </section>
+          <section class="executor-subtab-pane" data-executor-pane="config" aria-label="Executor configuration" hidden>
+            <div class="executor-section-heading"><h3>Configuration</h3><button id="executor-config-refresh" type="button">Inspect</button></div>
+            <p class="muted">Inspect the selected Executor's running settings on demand.</p>
+            <div id="executor-config-body" class="executor-subtab-content"></div>
           </section>
         </article>
       </div>

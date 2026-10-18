@@ -3590,3 +3590,18 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-config-table td:first-child { font-weight: 600; }
 #executors-panel .executor-config-value { white-space: pre-wrap; font-family: var(--font-mono, monospace); }
 #executors-panel .executor-config-overridden td:last-child, #executors-panel .executor-config-warning { color: var(--warning, #986300); }
+
+/* Configuration has its own focused subpage, not a giant block above Executors. */
+#executors-panel.control-config-open > .executors-layout,
+#executors-panel.control-config-open > .executor-control-standalone { display: none !important; }
+@media (max-width: 680px) {
+  #executors-panel .executor-config-table thead { display: none; }
+  #executors-panel .executor-config-table tbody, #executors-panel .executor-config-table tr { display: block; }
+  #executors-panel .executor-config-table tr { padding: 10px 12px; border-top: 1px solid var(--line); }
+  #executors-panel .executor-config-table td { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 6px; padding: 4px 0; border: 0; }
+  #executors-panel .executor-config-table td:first-child { display: block; font-size: 12px; padding-bottom: 7px; }
+  #executors-panel .executor-config-table td:not(:first-child)::before { color: var(--muted); font-family: inherit; font-weight: 400; }
+  #executors-panel .executor-config-table td:nth-child(2)::before { content: "Effective"; }
+  #executors-panel .executor-config-table td:nth-child(3)::before { content: "File"; }
+  #executors-panel .executor-config-table td:nth-child(4)::before { content: "Source"; }
+}

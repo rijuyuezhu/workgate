@@ -58,6 +58,7 @@ export function createExecutorsController({
     controlConfigView.clear();
     executorConfigView.clear();
     document.getElementById("executor-control-config-view").hidden = true;
+    document.getElementById("executors-panel").classList.remove("control-config-open");
   }
 
   function selectedExecutor() {
@@ -186,7 +187,6 @@ export function createExecutorsController({
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
     if (tab !== "config") executorConfigView.clear();
-    else void executorConfigView.open(state.selectedId);
     if (tab === "overview") void refreshMetrics();
     if (tab === "mcp" || tab === "skills") void loadManagement();
   }
@@ -1111,11 +1111,11 @@ export function createExecutorsController({
     topology.bind();
     document.getElementById("executor-control-config-open").addEventListener("click", () => {
       document.getElementById("executor-control-config-view").hidden = false;
+      document.getElementById("executors-panel").classList.add("control-config-open");
       void controlConfigView.open();
     });
     document.getElementById("executor-control-config-close").addEventListener("click", () => {
-      controlConfigView.clear();
-      document.getElementById("executor-control-config-view").hidden = true;
+      clearConfiguration();
     });
     document.getElementById("executor-config-refresh").addEventListener("click", () => {
       if (state.selectedId && activeSubtab() === "config") void executorConfigView.open(state.selectedId);
