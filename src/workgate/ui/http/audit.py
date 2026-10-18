@@ -25,7 +25,6 @@ from ...oauth.core.scopes import (
     SCOPE_SHELL_EXECUTE,
     SCOPE_SHELL_WRITE,
     SUPPORTED_OAUTH_SCOPES,
-    default_scope,
 )
 from ...utils.image_types import detect_image_type
 from .common import (
@@ -379,11 +378,9 @@ def _detail_scopes(entry: dict[str, Any]) -> tuple[str, ...]:
     if operation == "transfer":
         required.add(SCOPE_FILE_SHARE)
     if operation == "other":
-        # Unknown tools retain the broad ordinary Audit protection, not newly
-        # introduced explicit-only grants (such as config:admin).
         required.update(
             scope
-            for scope in default_scope().split()
+            for scope in SUPPORTED_OAUTH_SCOPES
             if scope != SCOPE_AUDIT_FULL
         )
     return tuple(scope for scope in SUPPORTED_OAUTH_SCOPES if scope in required)

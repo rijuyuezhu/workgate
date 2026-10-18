@@ -10,7 +10,6 @@ SCOPE_BROWSER_USE = "browser:use"
 SCOPE_GUI_USE = "gui:use"
 SCOPE_AUDIT_READ = "audit:read"
 SCOPE_AUDIT_FULL = "audit:full"
-SCOPE_CONFIG_ADMIN = "config:admin"
 
 SUPPORTED_OAUTH_SCOPES = (
     SCOPE_SHELL_READ,
@@ -23,7 +22,6 @@ SUPPORTED_OAUTH_SCOPES = (
     SCOPE_GUI_USE,
     SCOPE_AUDIT_READ,
     SCOPE_AUDIT_FULL,
-    SCOPE_CONFIG_ADMIN,
 )
 
 SUPPORTED_OAUTH_SCOPE_SET = frozenset(SUPPORTED_OAUTH_SCOPES)
@@ -36,10 +34,7 @@ def supported_scopes() -> list[str]:
 
 def default_scope() -> str:
     """Return the default scope grant."""
-    # Raw runtime credentials must never be granted by ordinary login.
-    return " ".join(
-        scope for scope in SUPPORTED_OAUTH_SCOPES if scope != SCOPE_CONFIG_ADMIN
-    )
+    return " ".join(SUPPORTED_OAUTH_SCOPES)
 
 
 def dedupe_scopes(scopes: list[str] | tuple[str, ...]) -> list[str]:

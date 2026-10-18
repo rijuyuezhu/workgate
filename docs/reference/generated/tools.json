@@ -2430,8 +2430,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -2547,8 +2546,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -4612,8 +4610,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -6626,8 +6623,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -7402,8 +7398,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -7457,8 +7452,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -7994,8 +7988,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -8091,8 +8084,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -8552,8 +8544,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }
@@ -9612,8 +9603,7 @@
               "browser:use",
               "gui:use",
               "audit:read",
-              "audit:full",
-              "config:admin"
+              "audit:full"
             ],
             "type": "oauth2"
           }

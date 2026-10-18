@@ -10,7 +10,6 @@ from workgate.config.inspection import (
 from workgate.config.roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
 from workgate.config.settings import load_settings
 from workgate.oauth.core.scopes import (
-    SCOPE_CONFIG_ADMIN,
     default_scope,
     normalize_requested_scope,
     supported_scopes,
@@ -83,15 +82,10 @@ def test_executor_service_json_uses_actual_selection(tmp_path, monkeypatch):
     assert "port" not in rows
 
 
-def test_scope_must_be_explicitly_requested():
-    assert SCOPE_CONFIG_ADMIN in supported_scopes()
-    assert SCOPE_CONFIG_ADMIN not in default_scope().split()
-    assert (
-        SCOPE_CONFIG_ADMIN
-        in normalize_requested_scope(
-            default_scope() + " " + SCOPE_CONFIG_ADMIN
-        ).split()
-    )
+def test_config_uses_existing_scope_model():
+    assert "config:admin" not in supported_scopes()
+    assert "shell:read" in default_scope().split()
+    assert "executor:use" in normalize_requested_scope(None).split()
 
 
 def test_env_overrides_file_and_restart_resnapshots(tmp_path, monkeypatch):

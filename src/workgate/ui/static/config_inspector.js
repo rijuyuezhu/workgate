@@ -1,5 +1,5 @@
-// Admin-only runtime settings; neither values nor errors are cached or logged.
-export function createConfigurationView({ root, request, authMode, onAuthorize }) {
+// Runtime settings; neither values nor errors are cached or logged.
+export function createConfigurationView({ root, request }) {
   let generation = 0;
   const text = (tag, value, className = "") => {
     const node = document.createElement(tag);
@@ -73,19 +73,7 @@ export function createConfigurationView({ root, request, authMode, onAuthorize }
     } catch (error) {
       if (revision !== generation) return;
       root.replaceChildren();
-      if (error.status === 403) {
-        const access = text("div", "", "executor-config-access");
-        access.append(text("span", "Admin access required", "muted"));
-        if (authMode === "oauth") {
-          const button = text("button", "Authorize");
-          button.type = "button";
-          button.addEventListener("click", onAuthorize);
-          access.append(button);
-        }
-        root.append(access);
-      } else {
-        root.append(text("span", "Configuration unavailable", "muted"));
-      }
+      root.append(text("span", error.status === 403 ? "Access denied" : "Configuration unavailable", "muted"));
     }
   }
   return { open, clear };

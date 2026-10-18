@@ -9,7 +9,6 @@ export function createExecutorsController({
   authMode,
   isAuthenticated,
   reloadApp,
-  onAuthorizeConfiguration = () => {},
   onInventory,
   onNavigate = () => {},
 }) {
@@ -41,12 +40,10 @@ export function createExecutorsController({
   });
 
   const controlConfigView = createConfigurationView({
-    root: document.getElementById("executor-control-config-body"), request, authMode,
-    onAuthorize: onAuthorizeConfiguration,
+    root: document.getElementById("executor-control-config-body"), request,
   });
   const executorConfigView = createConfigurationView({
-    root: document.getElementById("executor-config-body"), request, authMode,
-    onAuthorize: onAuthorizeConfiguration,
+    root: document.getElementById("executor-config-body"), request,
   });
 
   const skillFileEditor = createSkillFileEditor({
@@ -104,6 +101,7 @@ export function createExecutorsController({
     if (changed) { resetMetrics(); executorConfigView.clear(); }
     renderList();
     renderDetails();
+    if (changed && activeSubtab() === "config") void executorConfigView.open(state.selectedId);
     renderManagement();
     void loadSkillSources(true);
     void refreshMetrics();
@@ -186,7 +184,8 @@ export function createExecutorsController({
     if (!selectedExecutor() || !["overview", "mcp", "skills", "config"].includes(tab)) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
-    if (tab !== "config") executorConfigView.clear();
+    if (tab === "config") void executorConfigView.open(state.selectedId);
+    else executorConfigView.clear();
     if (tab === "overview") void refreshMetrics();
     if (tab === "mcp" || tab === "skills") void loadManagement();
   }
@@ -1116,9 +1115,6 @@ export function createExecutorsController({
     });
     document.getElementById("executor-control-config-close").addEventListener("click", () => {
       clearConfiguration();
-    });
-    document.getElementById("executor-config-refresh").addEventListener("click", () => {
-      if (state.selectedId && activeSubtab() === "config") void executorConfigView.open(state.selectedId);
     });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) return;

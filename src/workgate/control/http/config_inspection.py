@@ -1,4 +1,4 @@
-"""Admin-only, on-demand live configuration inspection; no writes or logs."""
+"""Read-only live configuration inspection; no writes or logs."""
 
 from typing import Any
 
@@ -7,8 +7,8 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
 from ...config.inspection import current_startup_config
-from ...oauth.core.context import current_oauth_claims
-from ...oauth.core.scopes import SCOPE_CONFIG_ADMIN, scope_set
+from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
+from ...oauth.core.scopes import SCOPE_EXECUTOR_USE, SCOPE_SHELL_READ
 
 
 def _answer(data: Any, *, status_code: int = 200) -> JSONResponse:
@@ -19,27 +19,18 @@ def _answer(data: Any, *, status_code: int = 200) -> JSONResponse:
     )
 
 
-def _authorized() -> bool:
-    # The generic OAuth default, normal WebUI login and auth_mode=none must
-    # NEVER expose raw credentials. Explicit administrator consent is required.
-    claims = current_oauth_claims()
-    return claims is not None and SCOPE_CONFIG_ADMIN in scope_set(
-        str(claims.get("scope") or "")
-    )
-
-
 def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
     async def inspect(request: Request) -> Response:
-        if not _authorized():
-            return _answer(
-                {
-                    "ok": False,
-                    "error": "ConfigAdminRequired",
-                    "message": "Explicit config:admin authorization is required",
-                },
-                status_code=403,
-            )
         executor_id = request.query_params.get("executor_id", "").strip()
+        try:
+            required = (
+                (SCOPE_SHELL_READ, SCOPE_EXECUTOR_USE)
+                if executor_id
+                else (SCOPE_SHELL_READ,)
+            )
+            require_oauth_scopes(required)
+        except MissingOAuthScopeError:
+            return _answer({"ok": False, "error": "Forbidden"}, status_code=403)
         if not executor_id:
             snapshot = current_startup_config("control")
             if snapshot is None:

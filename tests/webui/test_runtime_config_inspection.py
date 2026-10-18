@@ -1,4 +1,4 @@
-"""Explicit admin scope guards every raw runtime setting on the wire."""
+"""Existing WebUI read permissions protect live runtime configuration."""
 
 import argparse
 import json
@@ -14,7 +14,11 @@ from workgate.config.roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
 from workgate.config.settings import load_settings
 from workgate.control.http.config_inspection import config_inspection_routes
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
-from workgate.oauth.core.scopes import SCOPE_CONFIG_ADMIN, default_scope
+from workgate.oauth.core.scopes import (
+    SCOPE_EXECUTOR_USE,
+    SCOPE_SHELL_READ,
+    default_scope,
+)
 
 
 def _capture(role, config_file):
@@ -52,17 +56,11 @@ async def _request(*, scope=None, executor_id="", runtime=None):
 
 
 @pytest.mark.asyncio
-async def test_default_webui_claims_and_anonymous_are_denied_without_secret(
-    tmp_path,
-):
+async def test_existing_read_scope_denies_unrelated_grants(tmp_path):
     file = tmp_path / "control.yaml"
     file.write_text("oauth_admin_pin: raw-secret\n")
     _capture("control", file)
-    for scopes in (
-        None,
-        default_scope(),
-        "shell:read shell:write executor:use",
-    ):
+    for scopes in ("", "audit:read", "executor:use", "shell:write"):
         response = await _request(scope=scopes)
         assert response.status_code == 403
         assert response.headers["cache-control"] == "no-store"
@@ -70,13 +68,11 @@ async def test_default_webui_claims_and_anonymous_are_denied_without_secret(
 
 
 @pytest.mark.asyncio
-async def test_explicit_config_admin_can_see_actual_credentials_no_store(
-    tmp_path,
-):
+async def test_regular_webui_grant_reads_actual_credentials_no_store(tmp_path):
     file = tmp_path / "control.yaml"
     file.write_text("oauth_admin_pin: raw-secret\nlog_level: info\n")
     _capture("control", file)
-    response = await _request(scope=default_scope() + " " + SCOPE_CONFIG_ADMIN)
+    response = await _request(scope=default_scope())
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["pragma"] == "no-cache"
@@ -106,7 +102,7 @@ async def test_executor_offline_discloses_no_stale_secret(tmp_path):
         executor_transport=FakeTransport(),
     )
     response = await _request(
-        scope=SCOPE_CONFIG_ADMIN, executor_id="exec_test", runtime=runtime
+        scope=default_scope(), executor_id="exec_test", runtime=runtime
     )
     assert response.status_code == 200
     assert json.loads(response.body)["data"] == {
@@ -147,7 +143,7 @@ async def test_executor_online_uses_one_authorized_rpc(tmp_path):
         executor_transport=FakeTransport(),
     )
     response = await _request(
-        scope=SCOPE_CONFIG_ADMIN, executor_id="exec_test", runtime=runtime
+        scope=default_scope(), executor_id="exec_test", runtime=runtime
     )
     assert response.status_code == 200
     assert len(calls) == 1
@@ -156,10 +152,26 @@ async def test_executor_online_uses_one_authorized_rpc(tmp_path):
     assert json.loads(response.body)["data"]["executor_id"] == "exec_test"
 
 
-def test_explicit_config_admin_is_not_required_by_other_audit_details():
-    from workgate.ui.http.audit import _detail_scopes
+@pytest.mark.asyncio
+async def test_executor_requires_existing_executor_use_and_read_grants(
+    tmp_path,
+):
+    file = tmp_path / "executor.json"
+    file.write_text('{"max_jobs": 42}')
+    _capture("executor", file)
+    # Authorization is checked before querying executor state or attempting RPC.
+    for scopes in (SCOPE_SHELL_READ, SCOPE_EXECUTOR_USE, "audit:read"):
+        response = await _request(scope=scopes, executor_id="exec_test")
+        assert response.status_code == 403
+    assert "config:admin" not in default_scope().split()
 
-    scopes = _detail_scopes({"tool": "create_file_link", "operation": "other"})
-    assert SCOPE_CONFIG_ADMIN not in scopes
-    assert "audit:read" in scopes
-    assert "shell:write" in scopes
+
+@pytest.mark.asyncio
+async def test_auth_mode_none_keeps_existing_bypass_semantics(tmp_path):
+    # Middleware grants the no-auth mode a claims=None request, just as other
+    # WebUI read operations do; this route must not create its own user tiers.
+    file = tmp_path / "control.yaml"
+    file.write_text("port: 8766\n")
+    _capture("control", file)
+    response = await _request(scope=None)
+    assert response.status_code == 200

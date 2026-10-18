@@ -61,7 +61,7 @@ In **Tasks → Sessions**, select an active execution session and click **Open G
 
 In **Executors**, choose **Control config** or select an Executor's **Config** subtab to inspect the *running* role's settings. These are read-only views: they show each effective value, its startup source (default, file, environment, or CLI), and the current value in the selected YAML or managed-service JSON file. File changes since the Child started are flagged; the effective values do **not** change until the appropriate runtime restarts. An offline Executor cannot provide current configuration.
 
-Raw credential values are deliberately **not masked** for a fully authorized administrator. Normal WebUI sessions and default OAuth scopes cannot read them. Choose **Authorize configuration access** and separately approve the optional `config:admin` OAuth grant using the administrator PIN. Responses are never cached by the WebUI API; close the detail when finished and sign out on shared devices. The page does not save or apply settings—editing and Parent-managed restart are separate features.
+Configuration loads when you open the selected Executor’s **Config** subtab. Values, including credentials, appear unmasked under the existing WebUI read permissions. Responses are not cached. The page does not save or apply settings—editing and restarting are separate features.
 
 ### Audit
 
