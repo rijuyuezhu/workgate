@@ -619,6 +619,7 @@ description: My Skill
               </div>
               <div class="session-detail-actions">
                 <button id="session-gui-open" type="button" disabled>Open GUI</button>
+                <button id="session-integrations-open" type="button" disabled>MCP / Skills</button>
                 <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
               </div>
             </div>
@@ -675,6 +676,37 @@ description: My Skill
               </form>
             </div>
             <img id="session-gui-image" class="session-gui-image" alt="Selected native GUI window screenshot; focus to send keys in manual mode" tabindex="-1" hidden>
+          </section>
+
+          <section id="session-integrations" class="session-resource session-integrations" hidden>
+            <div class="session-integrations-heading">
+              <button id="session-integrations-back" type="button">← Back to session</button>
+              <h3>MCP / Skills</h3>
+            </div>
+            <div id="session-integrations-tabs" class="executor-subtabs" role="tablist" aria-label="Session integrations">
+              <button type="button" data-session-integrations-tab="mcp" role="tab" aria-selected="true" aria-controls="session-integrations-mcp">MCP</button>
+              <button type="button" data-session-integrations-tab="skills" role="tab" aria-selected="false" aria-controls="session-integrations-skills">Skills</button>
+            </div>
+            <section id="session-integrations-mcp" class="session-integrations-pane" role="tabpanel">
+              <div class="session-integrations-toolbar">
+                <span id="session-integrations-mcp-status" class="muted" role="status">MCPs for this Session</span>
+                <div class="session-integrations-actions">
+                  <button id="session-integrations-mcp-refresh" type="button">Refresh</button>
+                  <button id="session-integrations-mcp-manage" type="button">Manage in Executors</button>
+                </div>
+              </div>
+              <div id="session-integrations-mcp-list" class="session-integrations-list"></div>
+            </section>
+            <section id="session-integrations-skills" class="session-integrations-pane" role="tabpanel" hidden>
+              <div class="session-integrations-toolbar">
+                <span id="session-integrations-skills-status" class="muted" role="status">Effective Skills for this Session</span>
+                <div class="session-integrations-actions">
+                  <button id="session-integrations-skills-refresh" type="button">Refresh</button>
+                  <button id="session-integrations-skills-manage" type="button">Manage in Executors</button>
+                </div>
+              </div>
+              <div id="session-integrations-skills-list" class="session-integrations-list"></div>
+            </section>
           </section>
 
           <section class="session-resource session-audit">

@@ -15,6 +15,7 @@ void (async () => {
     { createFilesController },
     { createTasksController },
     { createGuiViewer },
+    { createSessionIntegrationsViewer },
     { createMobileNavigation },
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
@@ -25,6 +26,7 @@ void (async () => {
     import(assetUrl("files.js")),
     import(assetUrl("tasks.js")),
     import(assetUrl("gui_view.js")),
+    import(assetUrl("session_integrations.js")),
     import(assetUrl("mobile_navigation.js")),
   ]);
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -445,8 +447,17 @@ void (async () => {
   });
   files.bind();
 
-  const guiViewer = createGuiViewer({ request });
+  const guiViewer = createGuiViewer({ request, onOpen: () => integrationsViewer.close() });
+  const integrationsViewer = createSessionIntegrationsViewer({
+    request,
+    onOpen: () => guiViewer.close(),
+    onManage: (executorId, kind) => {
+      document.querySelector('.nav-item[data-view="executors"]').click();
+      void executors.openManagement(executorId, kind);
+    },
+  });
   guiViewer.bind();
+  integrationsViewer.bind();
 
   const tasks = createTasksController({
     elements,
@@ -460,7 +471,10 @@ void (async () => {
     onInventory: (items) => dashboard.renderTasks(items),
     initialTaskId: deepLink.taskId,
     initialSessionId: deepLink.sessionId,
-    onSessionChange: (session) => guiViewer.selectSession(session),
+    onSessionChange: (session) => {
+      guiViewer.selectSession(session);
+      integrationsViewer.selectSession(session);
+    },
     onNavigate: (step, options) => mobileNavigation.go("tasks", step, options),
   });
   tasks.bind();
@@ -528,7 +542,10 @@ void (async () => {
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
-    if (view !== "tasks") guiViewer.close();
+    if (view !== "tasks") {
+      guiViewer.close();
+      integrationsViewer.close();
+    }
     mobileNavigation.sync(view);
     if (view === "executors" && (config.authMode !== "oauth" || authenticated)) {
       executors.activate();

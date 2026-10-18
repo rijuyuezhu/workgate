@@ -3225,22 +3225,22 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-section-heading > button { padding: 7px 11px; }
 #executors-panel .executor-manage-toolbar { justify-content: flex-end; }
 #executors-panel .executor-subtab-content { gap: 15px; }
-#executors-panel .executor-manage-group { border: 1px solid #e7eaf0; background: #fff; border-radius: 8px; }
-#executors-panel .executor-manage-group > h4 {
+:is(#executors-panel, #session-integrations) .executor-manage-group { border: 1px solid #e7eaf0; background: #fff; border-radius: 8px; }
+:is(#executors-panel, #session-integrations) .executor-manage-group > h4 {
   padding: 12px 15px; font-size: 11px; font-weight: 700;
   background: #fbfcfe; color: #626e84; letter-spacing: .01em;
 }
-#executors-panel .executor-manage-row { min-height: 54px; padding: 11px 15px; gap: 12px; }
-#executors-panel .executor-manage-row > div:first-child { gap: 3px; }
-#executors-panel .executor-manage-row strong { color: #31394f; font-size: 12px; }
-#executors-panel .executor-manage-row span { font-size: 11px; color: #8b93a3; }
-#executors-panel .executor-manage-tail { display: flex; gap: 13px; align-items: center; flex-shrink: 0; }
-#executors-panel .executor-manage-pill {
+:is(#executors-panel, #session-integrations) .executor-manage-row { min-height: 54px; padding: 11px 15px; gap: 12px; }
+:is(#executors-panel, #session-integrations) .executor-manage-row > div:first-child { gap: 3px; }
+:is(#executors-panel, #session-integrations) .executor-manage-row strong { color: #31394f; font-size: 12px; }
+:is(#executors-panel, #session-integrations) .executor-manage-row span { font-size: 11px; color: #8b93a3; }
+:is(#executors-panel, #session-integrations) .executor-manage-tail { display: flex; gap: 13px; align-items: center; flex-shrink: 0; }
+:is(#executors-panel, #session-integrations) .executor-manage-pill {
   display: inline-flex; gap: 6px; align-items: center;
   padding: 0; background: none; color: #8993a2; font-size: 10px !important;
 }
-#executors-panel .executor-manage-pill::before { content: ""; width: 6px; height: 6px; background: #aab2c1; border-radius: 50%; }
-#executors-panel .executor-manage-pill[data-enabled="true"]::before { background: #299b75; }
+:is(#executors-panel, #session-integrations) .executor-manage-pill::before { content: ""; width: 6px; height: 6px; background: #aab2c1; border-radius: 50%; }
+:is(#executors-panel, #session-integrations) .executor-manage-pill[data-enabled="true"]::before { background: #299b75; }
 #executors-panel .executor-manage-edit { border: 1px solid #e3e5ee; border-radius: 5px; padding: 5px 10px; background: #fff; font-size: 11px; }
 #executors-panel .executor-manage-edit:hover { background: #f5f4ff; border-color: #cbc7ed; }
 #executors-panel .executor-overview-body { gap: 14px; }
@@ -3371,3 +3371,37 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-manage-row[data-state="overridden"] strong { color: #7e8694; }
 #executors-panel .executor-manage-pill[data-state="overridden"] { color: #936017; }
 #executors-panel .executor-manage-pill[data-state="overridden"]::before { background: #c99231; }
+
+/* Like Open GUI, Session integrations have a dedicated drill-down canvas. */
+.task-sessions-layout.integrations-open { grid-template-columns: minmax(0, 1fr); }
+.task-sessions-layout.integrations-open > .session-executions,
+.task-sessions-layout.integrations-open .session-execution-detail,
+.task-sessions-layout.integrations-open .session-audit,
+.task-sessions-layout.integrations-open #session-gui { display: none; }
+.task-sessions-layout:not(.integrations-open) #session-integrations { display: none; }
+.task-sessions-layout.integrations-open .task-sessions-main { overflow-y: auto; }
+.session-integrations { padding: 16px 20px !important; }
+.session-integrations-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.session-integrations-heading h3 { margin: 0; font-size: 15px; }
+.session-integrations .executor-subtabs { margin: 14px 0; }
+.session-integrations-pane[hidden] { display: none !important; }
+.session-integrations-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.session-integrations-toolbar .muted { font-size: 11px; }
+.session-integrations-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-integrations-actions button { padding: 6px 9px; font-size: 11px; }
+.session-integrations-list { display: grid; gap: 12px; margin-top: 12px; }
+#session-integrations .executor-manage-group { overflow: hidden; }
+#session-integrations .executor-manage-row strong { flex: 1 1 auto; min-width: 0; }
+#session-integrations .executor-manage-pill { margin-left: auto; }
+@media (max-width: 780px) {
+  #tasks-panel:has(.task-sessions-layout.integrations-open) > .mobile-subpage-bar { display: none; }
+  #tasks-panel .task-sessions-layout.integrations-open .task-sessions-main { display: flex; }
+  .session-integrations { padding: 14px !important; }
+  .session-integrations-toolbar { align-items: flex-start; }
+  #session-integrations .executor-manage-row { padding: 10px 12px; }
+  .task-sessions-main .session-detail-heading { display: grid; grid-template-columns: minmax(135px, .46fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+  .task-sessions-main .session-detail-executor-identity { max-width: 100%; width: 100%; min-width: 0; padding-right: 10px; border-right: 1px solid var(--line); }
+  .task-sessions-main .session-detail-executor-identity strong { overflow-wrap: anywhere; word-break: normal; font-size: 13px; }
+}
+/* Small, passive confirmation for implicit Task creation. */
+.task-sessions-main #session-detail-task-created { font-size: 11px; line-height: 1.4; color: #8490a3; }
