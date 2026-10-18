@@ -25,7 +25,7 @@ On Linux the defaults are:
 ~/.config/workgate/executor/config.yaml  # executor connect/run
 ```
 
-The authenticated WebUI configuration inspector uses this same precedence and reads from the role's *actual* selected startup file. A managed Executor may instead start from its service-generated private `config.json`; the inspector shows that path, not a guessed default YAML. This view uses the existing read permissions and never modifies configuration.
+The authenticated WebUI configuration inspector uses this same precedence and reads from the role's *actual* selected startup file. A managed Executor may instead start from its service-generated private `config.json`; the inspector shows that path, not a guessed default YAML. Authorized users can edit file-owned settings in the WebUI or through the Control `config_inspect`/`config_save` MCP tools. Saving requires existing write permission, checks the current file SHA-256 revision, validates the whole candidate role configuration, and atomically replaces only that role's selected file with a private `.bak` copy. CLI/ENV overrides remain read-only, and the live Child is never restarted or reconfigured by Save. Applying a saved file belongs to #358.
 
 Control accepts control/shared settings; executor accepts executor/shared
 settings. `workgate colocate` runs both ordinary child processes with

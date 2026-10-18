@@ -1377,6 +1377,15 @@ def audit_tool_call_start(
                 if key in input
             }
             if tool == "manage_agent_skill" and isinstance(input, dict)
+            else {
+                "executor_id": input.get("executor_id"),
+                "changed_fields": sorted(input.get("changes", {}))
+                if tool == "config_save"
+                and isinstance(input.get("changes"), dict)
+                else [],
+            }
+            if tool in {"config_inspect", "config_save"}
+            and isinstance(input, dict)
             else input
         ),
     }
@@ -1427,6 +1436,8 @@ def audit_tool_call_end(
         fields["error"] = error
     else:
         fields["output"] = (
-            {"redacted": True} if tool == "manage_agent_skill" else output
+            {"redacted": True}
+            if tool in {"manage_agent_skill", "config_inspect", "config_save"}
+            else output
         )
     audit("tool_call_end", **fields)

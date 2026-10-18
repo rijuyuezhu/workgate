@@ -27,6 +27,7 @@ from ..http.shared_routes import control_http_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from ..server import run_uvicorn
 from ..tool_timeouts import tool_timeout_s
+from .config_management import register_config_management
 from .instructions import SERVER_INSTRUCTIONS
 from .live_workspace import register_live_workspace
 from .transport_security import transport_security_settings
@@ -106,6 +107,7 @@ def build_mcp(
     context = McpToolContext(settings=settings)
     catalog.register_mcp(mcp, context)
     register_live_workspace(mcp, runtime)
+    register_config_management(mcp, runtime)
     return mcp
 
 
