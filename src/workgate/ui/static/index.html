@@ -301,12 +301,46 @@
             <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite"></div>
           </div>
         </div>
+        <div id="executor-skill-files-entry" hidden>
+          <button id="executor-skill-files-open" type="button" disabled>Bundle files…</button>
+        </div>
         <label id="executor-integration-skill-wrap" hidden>SKILL.md (Markdown) <textarea id="executor-integration-content" rows="12" spellcheck="false" placeholder="---
 description: My Skill
 ---
 # Instructions"></textarea></label>
         <div class="dialog-actions"><button type="button" id="executor-integration-cancel">Cancel</button><button id="executor-integration-delete" class="danger-action" type="button" hidden>Delete</button><button id="executor-integration-toggle" type="button" hidden>Disable</button><button id="executor-integration-validate" type="button" hidden>Validate</button><button class="primary-action" type="submit" id="executor-integration-save">Save</button></div>
       </form>
+    </dialog>
+
+    <dialog id="executor-skill-files-dialog" class="executor-dialog executor-skill-files-dialog">
+      <div class="dialog-heading">
+        <div><h2>Skill files</h2><p id="executor-skill-files-title" class="muted"></p></div>
+        <button id="executor-skill-files-close" class="dialog-close" type="button" aria-label="Close Skill files">×</button>
+      </div>
+      <p id="executor-skill-files-status" class="muted" role="status"></p>
+      <div class="executor-skill-files-layout">
+        <div class="executor-skill-files-sidebar">
+          <label for="executor-skill-files-list">Files</label>
+          <select id="executor-skill-files-list" size="9" aria-label="Skill auxiliary files"></select>
+          <div class="executor-skill-files-actions">
+            <button id="executor-skill-files-new" type="button">+ New file</button>
+            <button id="executor-skill-files-refresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <form id="executor-skill-files-form" class="executor-skill-files-editor">
+          <label for="executor-skill-files-path">Relative path
+            <input id="executor-skill-files-path" required maxlength="4096" spellcheck="false" autocomplete="off" placeholder="examples/checklist.md">
+          </label>
+          <label for="executor-skill-files-content">UTF-8 text (max 128 KiB)
+            <textarea id="executor-skill-files-content" rows="13" maxlength="131072" spellcheck="false"></textarea>
+          </label>
+          <div class="dialog-actions">
+            <button id="executor-skill-files-delete" class="danger-action" type="button" hidden>Delete</button>
+            <button id="executor-skill-files-reload" type="button" hidden>Reload</button>
+            <button id="executor-skill-files-save" class="primary-action" type="submit">Create file</button>
+          </div>
+        </form>
+      </div>
     </dialog>
 
     <dialog id="executor-pair-dialog" class="executor-dialog">

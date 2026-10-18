@@ -1,4 +1,5 @@
 import { renderResourceCards } from "./dashboard.js";
+import { createSkillFileEditor } from "./skill_file_editor.js";
 
 export function createExecutorsController({
   elements,
@@ -29,6 +30,11 @@ export function createExecutorsController({
     managementGeneration: 0,
     editor: null,
   };
+
+  const skillFileEditor = createSkillFileEditor({
+    request,
+    onClose: () => void loadManagement(true),
+  });
 
   function selectedExecutor() {
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
@@ -409,6 +415,9 @@ export function createExecutorsController({
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
     const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
+    elements.executorSkillFilesEntry.hidden = !skill || !editing.item
+      || editing.owner !== "executor" || !selectedExecutor()?.online || moving;
+    elements.executorSkillFilesOpen.disabled = !editing.filesReady || editing.busy || moving;
     elements.executorIntegrationToggle.hidden = !editing.item || moving;
     // Delete always acts on the original owner. Hide it while the selector
     // points elsewhere, so a user cannot mistake it for deleting the target.
@@ -461,6 +470,7 @@ export function createExecutorsController({
       elements.executorMcpOAuthClear, ...elements.executorMcpSecretList.querySelectorAll("button")]) {
       button.disabled = !ready;
     }
+    elements.executorSkillFilesOpen.disabled = !ready || !edit.filesReady;
     elements.executorIntegrationOwner.disabled = !ready;
     elements.executorIntegrationCancel.disabled = busy && edit.applying;
     elements.executorIntegrationClose.disabled = busy && edit.applying;
@@ -472,7 +482,11 @@ export function createExecutorsController({
     state.editor = { owner, kind, executorId: state.selectedId, name: item?.name || "", revision: item?.revision || "", item,
                      enabled: item?.enabled !== false };
     const edit = state.editor;
+    edit.filesReady = false;
     elements.executorIntegrationForm.reset();
+    // A prior committed Apply may have closed the dialog while both were locked.
+    elements.executorIntegrationClose.disabled = false;
+    elements.executorIntegrationCancel.disabled = false;
     elements.executorIntegrationTitle.textContent = `${item ? "Edit" : "Add"} ${kind === "skill" ? "Skill" : "MCP server"}`;
     elements.executorIntegrationName.value = edit.name;
     elements.executorIntegrationSave.disabled = Boolean(item);
@@ -517,6 +531,7 @@ export function createExecutorsController({
         elements.executorIntegrationContent.value = data.skill?.content || "";
         elements.executorIntegrationContent.disabled = false;
         elements.executorIntegrationValidate.disabled = false;
+        edit.filesReady = true;
       } else {
         const config = data.editable_config;
         if (!config || data.requires_replacement) throw new Error("This legacy server requires replacement; it cannot be edited safely in the WebUI.");
@@ -1045,6 +1060,7 @@ export function createExecutorsController({
     state.managementId = "";
     state.management = null;
     state.editor = null;
+    skillFileEditor.close(true);
     elements.executorIntegrationDialog.close();
     closeDialog(elements.executorPairDialog);
     closeDialog(elements.executorRenameDialog);
@@ -1097,12 +1113,21 @@ export function createExecutorsController({
       if (globalThis.confirm("Clear locally stored OAuth state? This does not revoke tokens at the provider."))
         void mutateAuth("clear_oauth");
     });
+    skillFileEditor.bind();
+    elements.executorSkillFilesOpen.addEventListener("click", () => {
+      const edit = state.editor;
+      if (!edit || edit.kind !== "skill" || edit.owner !== "executor"
+        || !edit.item || !edit.filesReady || edit.busy || chosenLocation().owner !== "executor"
+        || chosenLocation().executorId !== edit.executorId) return;
+      skillFileEditor.open({ executorId: edit.executorId, name: edit.name });
+    });
     elements.executorIntegrationClose.addEventListener("click", () => elements.executorIntegrationDialog.close());
     elements.executorIntegrationCancel.addEventListener("click", () => elements.executorIntegrationDialog.close());
     elements.executorIntegrationDialog.addEventListener("cancel", (event) => {
       if (state.editor?.busy && state.editor.applying) event.preventDefault();
     });
     elements.executorIntegrationDialog.addEventListener("close", () => {
+      skillFileEditor.close(true);
       const inspect = Boolean(state.editor?.needsInspection);
       state.editor = null;
       elements.executorMcpSecretValue.value = "";
