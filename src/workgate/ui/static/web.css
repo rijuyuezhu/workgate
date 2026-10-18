@@ -3405,3 +3405,38 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 }
 /* Small, passive confirmation for implicit Task creation. */
 .task-sessions-main #session-detail-task-created { font-size: 11px; line-height: 1.4; color: #8490a3; }
+
+/* Focused auxiliary editor: the main Skill dialog keeps only one entry point. */
+#executor-skill-files-entry[hidden] { display: none !important; }
+#executor-skill-files-entry button { padding: 7px 11px; font-size: 12px; }
+.executor-skill-files-dialog {
+  width: min(850px, calc(100vw - 30px));
+  max-width: 850px;
+  max-height: min(90dvh, 870px);
+  overflow-y: auto;
+  padding: 20px 22px;
+  border-radius: 9px;
+  border: 1px solid #e3e7f0;
+}
+.executor-skill-files-dialog .dialog-heading { margin-bottom: 12px; }
+.executor-skill-files-dialog .dialog-heading h2 { font-size: 17px; }
+.executor-skill-files-dialog .dialog-heading p { margin-top: 3px; font-size: 11px; }
+#executor-skill-files-status { min-height: 1em; margin: 0 0 10px; font-size: 11px; }
+#executor-skill-files-status[data-error="true"] { color: #a13547; }
+.executor-skill-files-layout { display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr); gap: 16px; }
+.executor-skill-files-sidebar, .executor-skill-files-editor { display: flex; flex-direction: column; min-width: 0; gap: 9px; }
+.executor-skill-files-sidebar label, .executor-skill-files-editor label { display: grid; gap: 5px; font-size: 11px; font-weight: 650; color: #58657c; }
+#executor-skill-files-list { width: 100%; min-height: 220px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+#executor-skill-files-list option { padding: 5px; }
+.executor-skill-files-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.executor-skill-files-actions button, .executor-skill-files-editor .dialog-actions button { padding: 6px 9px; font-size: 11px; }
+.executor-skill-files-editor input, .executor-skill-files-editor textarea { width: 100%; min-width: 0; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+#executor-skill-files-content { flex: 1 1 auto; min-height: 235px; resize: vertical; }
+.executor-skill-files-editor .dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+@media (max-width: 780px) {
+  .executor-skill-files-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 15px; border-radius: 0; }
+  .executor-skill-files-layout { grid-template-columns: minmax(0, 1fr); gap: 13px; }
+  #executor-skill-files-list { min-height: 95px; max-height: 15dvh; }
+  #executor-skill-files-content { min-height: 27dvh; }
+  .executor-skill-files-editor .dialog-actions { flex-direction: row; }
+}

@@ -63,6 +63,21 @@ class _SkillMoveBody(BaseModel):
     content: str = Field(min_length=1, max_length=131072)
 
 
+class _SkillFileBody(BaseModel):
+    """One file under the chosen Executor-managed Skill, never a source root."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    executor_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    action: Literal["list", "get", "create", "update", "delete"]
+    path: str | None = Field(default=None, max_length=4096)
+    content: str | None = Field(default=None, max_length=131072)
+    expected_revision: str | None = Field(
+        default=None, min_length=64, max_length=64
+    )
+
+
 class _IntegrationAuthBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1007,6 +1022,83 @@ def executor_admin_routes(
         )
         return _json_ok({"name": body.name, "moved": True})
 
+    async def skill_files(request: Request) -> Response:
+        """Edit text files under one Executor-owned managed Skill bundle."""
+        try:
+            require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            data = (
+                dict(request.query_params)
+                if request.method == "GET"
+                else await request.json()
+            )
+            body = _SkillFileBody.model_validate(data)
+        except ValidationError, ValueError, TypeError:
+            return _json_error(
+                "InvalidSkillFileRequest",
+                "Invalid Skill file fields",
+                status_code=400,
+            )
+        if (request.method == "GET") != (body.action in {"list", "get"}):
+            return _json_error(
+                "InvalidSkillFileMethod",
+                "Use GET for reads and POST for changes",
+                status_code=405,
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        executor = runtime.control_state.snapshot_executors().get(
+            body.executor_id
+        )
+        if executor is None or executor.revoked_at is not None:
+            return _json_error(
+                "UnknownExecutor", "Unknown Executor", status_code=404
+            )
+        if not await runtime.executor_transport.is_online(body.executor_id):
+            return _json_error(
+                "OfflineExecutor", "Executor offline", status_code=503
+            )
+        try:
+            response = await runtime.executor_transport.call(
+                body.executor_id,
+                "ui.skill.files",
+                body.model_dump(exclude_none=True),
+                timeout_s=12,
+            )
+        except RuntimeError, OSError:
+            return _json_error(
+                "SkillFilesUnavailable",
+                "Executor file service unavailable; refresh before retrying",
+                status_code=503,
+            )
+        if not response.ok:
+            return _json_error(
+                "SkillFileRejected",
+                "Skill file operation rejected; reload before editing",
+                status_code=409,
+            )
+        if not isinstance(response.result, dict):
+            return _json_error(
+                "SkillFilesUnavailable",
+                "Executor file response unavailable",
+                status_code=503,
+            )
+        if request.method == "POST":
+            audit(
+                "skill_file_management",
+                executor_id=body.executor_id,
+                name=body.name,
+                action=body.action,
+                path=body.path,
+                ok=True,
+            )
+        return _json_ok(response.result)
+
     async def integrations(request: Request) -> Response:
         """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
         _require_executor_admin_scope()
@@ -1324,6 +1416,11 @@ def executor_admin_routes(
         Route(api_prefix + "/executors", executors, methods=["GET"]),
         Route(
             api_prefix + "/integrations", integrations, methods=["GET", "POST"]
+        ),
+        Route(
+            api_prefix + "/integrations/skill-files",
+            skill_files,
+            methods=["GET", "POST"],
         ),
         Route(
             api_prefix + "/integrations/move",

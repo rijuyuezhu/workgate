@@ -335,6 +335,7 @@ class ExecutorRuntime:
             "ui.mcp.manage",
             "ui.mcp.test",
             "ui.skill.manage",
+            "ui.skill.files",
         }:
             if command.session_id is not None:
                 raise ValueError(

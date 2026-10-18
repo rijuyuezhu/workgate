@@ -74,6 +74,7 @@ def _ui_asset_revision() -> str:
         "web.js",
         "dashboard.js",
         "executors.js",
+        "skill_file_editor.js",
         "audit_view.js",
         "audit.js",
         "tasks.js",

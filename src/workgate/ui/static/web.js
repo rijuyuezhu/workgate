@@ -229,6 +229,8 @@ void (async () => {
     executorIntegrationDelete: document.getElementById("executor-integration-delete"),
     executorIntegrationContent: document.getElementById("executor-integration-content"),
     executorIntegrationSkillWrap: document.getElementById("executor-integration-skill-wrap"),
+    executorSkillFilesEntry: document.getElementById("executor-skill-files-entry"),
+    executorSkillFilesOpen: document.getElementById("executor-skill-files-open"),
     executorIntegrationMcpFields: document.getElementById("executor-integration-mcp-fields"),
     executorIntegrationUrlWrap: document.getElementById("executor-integration-url-wrap"),
     executorIntegrationCommandWrap: document.getElementById("executor-integration-command-wrap"),
