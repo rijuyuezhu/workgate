@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 _PARENT_FD = "WORKGATE_PARENT_IPC_FD"
-_STOP_TIMEOUT_SECONDS = 5
+_STOP_TIMEOUT_SECONDS = 3
 
 
 def child_command(*args: str) -> list[str]:
