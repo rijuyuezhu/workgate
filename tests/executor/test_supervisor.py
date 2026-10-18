@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,7 @@ def _launch(
             "exit"
             if role == exit_role
             else "ignore-term"
-            if role == ignore_term_role
+            if role == ignore_term_role or ignore_term_role == "both"
             else "wait",
         ]
         commands.append([role, command])
@@ -181,6 +182,50 @@ def test_parent_kills_unresponsive_child_after_bounded_grace(tmp_path):
     stdout, stderr = process.communicate(timeout=12)
     assert process.returncode == 143, (stdout, stderr)
     _pid_gone(int(rows[0][1]))
+
+
+def test_colocate_shutdown_has_one_bounded_grace_for_both_children(tmp_path):
+    process, record, _ = _launch(
+        tmp_path, ("control", "executor"), ignore_term_role="both"
+    )
+    rows = _lines(record, 2)
+    started = time.monotonic()
+    try:
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=9)
+        elapsed = time.monotonic() - started
+        assert process.returncode == 143, (stdout, stderr)
+        # An outer service manager may kill the Parent after five seconds;
+        # its two children cannot each consume the full three-second grace.
+        assert elapsed < 5, f"Parent took {elapsed:.2f}s to stop both roles"
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+    for row in rows:
+        _pid_gone(int(row[1]))
+
+
+def test_repeated_sigterm_during_shutdown_still_reaps_child(tmp_path):
+    process, record, _ = _launch(
+        tmp_path, ("executor",), ignore_term_role="executor"
+    )
+    rows = _lines(record, 1)
+    pid = int(rows[0][1])
+    try:
+        process.send_signal(signal.SIGTERM)
+        time.sleep(0.2)
+        assert process.poll() is None  # Child is still within graceful stop.
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=9)
+        assert process.returncode == 143, (stdout, stderr)
+        _pid_gone(pid)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
+        with suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)  # Clean up even if the test fails.
 
 
 def test_failed_second_spawn_reaps_first_child(tmp_path):

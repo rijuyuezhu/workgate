@@ -12,6 +12,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -78,16 +79,20 @@ class _Child:
     buffer: bytes = b""
 
 
-def _stop(child: _Child) -> None:
-    if child.process.poll() is None:
-        with suppress(ProcessLookupError):
-            child.process.terminate()
-    try:
-        child.process.wait(timeout=_STOP_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        with suppress(ProcessLookupError):
-            child.process.kill()
-        child.process.wait()
+def _stop(children: list[_Child]) -> None:
+    """Signal every Child first, then wait within one shared grace period."""
+    deadline = time.monotonic() + _STOP_TIMEOUT_SECONDS
+    for child in children:
+        if child.process.poll() is None:
+            with suppress(ProcessLookupError):
+                child.process.terminate()
+    for child in children:
+        try:
+            child.process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            with suppress(ProcessLookupError):
+                child.process.kill()
+            child.process.wait()
 
 
 def supervise(commands: list[ChildCommand]) -> int:
@@ -101,6 +106,7 @@ def supervise(commands: list[ChildCommand]) -> int:
     environment.pop(_PARENT_FD, None)
     children: dict[str, _Child] = {}
     previous_sigterm = signal.getsignal(signal.SIGTERM)
+    previous_sigint = signal.getsignal(signal.SIGINT)
 
     def terminate(_signal: int, _frame: Any) -> None:
         raise SystemExit(143)
@@ -157,19 +163,25 @@ def supervise(commands: list[ChildCommand]) -> int:
                     if message != b"restart" or child.buffer:
                         raise RuntimeError("unsupported Parent IPC request")
                     child.channel.sendall(b"accepted\n")
-                    _stop(child)
+                    _stop([child])
                     retire(child)
                     spawn(child.command)
         except KeyboardInterrupt:
             return 130
         finally:
-            signal.signal(signal.SIGTERM, previous_sigterm)
-            for child in children.values():
-                _stop(child)
-                if child.channel.fileno() != -1:
-                    with suppress(KeyError):
-                        selector.unregister(child.channel)
-                    child.channel.close()
+            # A repeated stop signal must not abort Child reaping midway.
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                _stop(list(children.values()))
+                for child in children.values():
+                    if child.channel.fileno() != -1:
+                        with suppress(KeyError):
+                            selector.unregister(child.channel)
+                        child.channel.close()
+            finally:
+                signal.signal(signal.SIGTERM, previous_sigterm)
+                signal.signal(signal.SIGINT, previous_sigint)
 
 
 def run_parent(commands: list[ChildCommand]) -> None:
