@@ -127,10 +127,24 @@ directory handles and removes a failed partial upload by its still-open handle.
 The temporary scratch pruner uses native protected-file handle deletion. The
 original Linux/macOS file APIs remain unchanged.
 
-**Still blocked (Draft #395):** Text-file write/edit, patch, WebUI
-copy/move/delete and Skill/MCP related file operations still need their own
-native directory-handle-safe mutations; no safety or parity acceptance can be
-claimed until these entry points and their failure recovery are verified.
+Native text-file write, edit_lines and hashline edit now use NT-handle
+relative atomic publication. File snapshots for edits read and hash the
+same verified open file; the publisher checks expected SHA-256 and compares
+file identity before replacement. Existing Windows file owner SID and
+protected/unprotected DACL are copied onto the replacement before
+FileRenameInformationEx with POSIX replacement semantics, allowing the prior
+verified target handle to remain open. New files use exclusive rename without
+clobbering existing files. Native Windows 3.14 smoke verifies an existing
+protected private file retains both owner and protected DACL after text
+replacement, and refuses stale hashes. The macOS WebUI upload mock uses a
+portable tracked-descriptor mapping rather than Linux-only /proc/self/fd.
+
+**Still blocked (Draft #395):** Patch, WebUI copy/move/delete and Skill/MCP
+related file operations still need native directory-handle-safe mutations.
+Independent untrusted writers can still race final target replacement between
+an identity check and the rename; process-level native concurrent-mutation
+and crash/restart testing must establish the intended guarantee before this
+is declared fully safe.
 Native concurrent replacement and sharing races, process-level crash/restart
 recovery, and cross-executor copy/download/upload integration also require
 further testing. The tests in this slice exercise native Win32 filesystem

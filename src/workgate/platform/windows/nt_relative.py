@@ -251,8 +251,17 @@ class _FileRenameInfo(ctypes.Structure):
     ]
 
 
-def rename_child(source: int, destination_parent: int, name: str) -> None:
+def rename_child(
+    source: int,
+    destination_parent: int,
+    name: str,
+    *,
+    replace: bool = True,
+    posix_semantics: bool = False,
+) -> None:
     """Rename an open source handle into a verified directory handle."""
+    if posix_semantics and not replace:
+        raise ValueError("POSIX rename semantics require replacement")
     if (
         not name
         or name in {".", ".."}
@@ -265,7 +274,7 @@ def rename_child(source: int, destination_parent: int, name: str) -> None:
         _FileRenameInfo.FileName.offset + len(encoded)
     )
     info = _FileRenameInfo.from_buffer(buffer)
-    info.ReplaceIfExists = 1
+    info.ReplaceIfExists = 3 if posix_semantics else int(replace)
     info.RootDirectory = destination_parent
     info.FileNameLength = len(encoded)
     ctypes.memmove(
@@ -286,7 +295,13 @@ def rename_child(source: int, destination_parent: int, name: str) -> None:
         ctypes.c_int,
     )
     result = int(
-        set_information(source, ctypes.byref(status), buffer, len(buffer), 10)
+        set_information(
+            source,
+            ctypes.byref(status),
+            buffer,
+            len(buffer),
+            65 if posix_semantics else 10,
+        )
     )
     if result < 0:
         _nt_error(result)

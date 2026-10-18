@@ -834,15 +834,17 @@ def test_browser_windows_upload_uses_verified_native_open_and_same_handle_cleanu
         executor_ui_files_module, "host_os", lambda: HostOS.WINDOWS
     )
     calls = []
+    open_paths = {}
 
     def native_create(path):
         calls.append(("create", path.name))
-        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        open_paths[descriptor] = path
+        return descriptor
 
     def native_dispose(descriptor):
         calls.append(("dispose-open-handle", descriptor))
-        opened = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
-        opened.unlink()
+        open_paths[descriptor].unlink()
 
     monkeypatch.setattr(
         security, "create_workspace_file_no_follow", native_create

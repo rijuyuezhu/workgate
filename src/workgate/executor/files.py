@@ -84,7 +84,9 @@ def _resolve_file_path(
         base=base,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
-        follow_final_symlink=follow_final_symlink,
+        follow_final_symlink=(
+            follow_final_symlink and host_os() is not HostOS.WINDOWS
+        ),
     )
 
 
@@ -102,8 +104,44 @@ def _display_file(
     return display_path(path, base)
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
+def _read_edit_source(path: Path, max_bytes: int) -> tuple[int, str, str]:
+    """Read size, UTF-8 contents and hash from one verified Windows file object."""
+    from ..platform.windows.security import open_regular_file_no_follow
+
+    with os.fdopen(
+        open_regular_file_no_follow(path, share_write=False), "rb"
+    ) as source:
+        size = os.fstat(source.fileno()).st_size
+        if size > max_bytes:
+            raise ValueError(
+                f"Refusing to edit {size} bytes; max is {max_bytes}"
+            )
+        contents = source.read(max_bytes + 1)
+        if len(contents) > max_bytes:
+            raise ValueError(
+                f"Refusing to edit {len(contents)} bytes; max is {max_bytes}"
+            )
+        return (
+            size,
+            contents.decode("utf-8"),
+            hashlib.sha256(contents).hexdigest(),
+        )
+
+
+def _atomic_write_text(
+    path: Path, content: str, *, expected_sha256: str | None = None
+) -> None:
     """Atomically replace one user text file while preserving its existing mode."""
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import atomic_write_workspace_bytes
+
+        atomic_write_workspace_bytes(
+            path,
+            content.encode("utf-8"),
+            overwrite=True,
+            expected_sha256=expected_sha256,
+        )
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     previous_mode = path.stat().st_mode & 0o777 if path.exists() else None
     descriptor, temporary_name = tempfile.mkstemp(
@@ -380,15 +418,27 @@ def _write_file_local(
         raise ValueError("expected_sha256 must be a lowercase SHA-256 digest")
     p = _resolve_file_path(config, binding, path)
     with path_lock(p):
-        exists = p.exists()
-        if exists and not overwrite:
-            raise FileExistsError(str(p))
-        if expected_sha256 is not None and (
-            not exists or not p.is_file() or file_sha256(p) != expected_sha256
-        ):
-            raise ValueError("File changed; reload before saving")
-        created = not exists
-        _atomic_write_text(p, content)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import atomic_write_workspace_bytes
+
+            created = atomic_write_workspace_bytes(
+                p,
+                data,
+                overwrite=overwrite,
+                expected_sha256=expected_sha256,
+            )
+        else:
+            exists = p.exists()
+            if exists and not overwrite:
+                raise FileExistsError(str(p))
+            if expected_sha256 is not None and (
+                not exists
+                or not p.is_file()
+                or file_sha256(p) != expected_sha256
+            ):
+                raise ValueError("File changed; reload before saving")
+            created = not exists
+            _atomic_write_text(p, content)
     return WriteFileOutput(
         path=_display_file(config, binding, p), bytes=len(data), created=created
     )
@@ -697,18 +747,24 @@ def _hashline_file_snapshot(
 ) -> _HashlineFileSnapshot:
     """Resolve a hashline path and capture current file state."""
     p = _resolve_file_path(config, binding, path, must_exist=True)
-    size = p.stat().st_size
-    if size > config.max_file_write_bytes:
-        raise ValueError(
-            f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
+    if host_os() is HostOS.WINDOWS:
+        _, original, current_sha256 = _read_edit_source(
+            p, config.max_file_write_bytes
         )
-    original = p.read_text(encoding="utf-8")
+    else:
+        size = p.stat().st_size
+        if size > config.max_file_write_bytes:
+            raise ValueError(
+                f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
+            )
+        original = p.read_text(encoding="utf-8")
+        current_sha256 = file_sha256(p)
     return _HashlineFileSnapshot(
         path_obj=p,
         relative_path=_display_file(config, binding, p),
         original=original,
         original_lines=tuple(original.splitlines(keepends=True)),
-        current_sha256=file_sha256(p),
+        current_sha256=current_sha256,
     )
 
 
@@ -845,7 +901,11 @@ def _apply_hashline_file_hunks(
             tofile=snapshot.relative_path,
         )
     )
-    _atomic_write_text(snapshot.path_obj, updated)
+    _atomic_write_text(
+        snapshot.path_obj,
+        updated,
+        expected_sha256=snapshot.current_sha256,
+    )
     return tuple(updated_lines), diff
 
 
@@ -1020,14 +1080,20 @@ def _edit_lines_local(
 
     p = _resolve_file_path(config, binding, path, must_exist=True)
     with path_lock(p):
-        size = p.stat().st_size
-        if size > config.max_file_write_bytes:
-            raise ValueError(
-                f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
+        if host_os() is HostOS.WINDOWS:
+            _, original, current_sha256 = _read_edit_source(
+                p, config.max_file_write_bytes
             )
+        else:
+            size = p.stat().st_size
+            if size > config.max_file_write_bytes:
+                raise ValueError(
+                    f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
+                )
+            current_sha256 = file_sha256(p)
+            original = p.read_text(encoding="utf-8")
 
         relative_path = _display_file(config, binding, p)
-        current_sha256 = file_sha256(p)
         _validate_snapshot_for_edit(
             store=store,
             binding=binding,
@@ -1038,7 +1104,6 @@ def _edit_lines_local(
             snapshot_id=snapshot_id,
         )
 
-        original = p.read_text(encoding="utf-8")
         original_lines = original.splitlines(keepends=True)
         total_lines = len(original_lines)
         if end_line > total_lines:
@@ -1075,7 +1140,7 @@ def _edit_lines_local(
                 tofile=relative_path,
             )
         )
-        _atomic_write_text(p, updated)
+        _atomic_write_text(p, updated, expected_sha256=current_sha256)
 
         replacement_line_count = len(replacement_lines)
         context_start = max(1, start_line - 3)

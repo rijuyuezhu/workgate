@@ -33,6 +33,7 @@ from workgate.platform.windows.nt_relative import (
     rename_child,
 )
 from workgate.platform.windows.security import (
+    atomic_write_workspace_bytes,
     create_workspace_file_no_follow,
     delete_open_workspace_file,
     delete_private_file,
@@ -180,6 +181,52 @@ def main() -> int:
             partial.write(b"partial")
             delete_open_workspace_file(partial.fileno())
         assert not fail_upload.exists()
+        atomic_target = Path(tmp) / "write-atomic.txt"
+        assert atomic_write_workspace_bytes(
+            atomic_target, b"initial", overwrite=False
+        )
+        assert atomic_target.read_bytes() == b"initial"
+        try:
+            atomic_write_workspace_bytes(
+                atomic_target, b"forbidden", overwrite=False
+            )
+        except FileExistsError:
+            assert atomic_target.read_bytes() == b"initial"
+        else:
+            raise AssertionError(
+                "Windows exclusive atomic text write clobbered a file"
+            )
+        import hashlib
+
+        old_sha = hashlib.sha256(b"initial").hexdigest()
+        assert not atomic_write_workspace_bytes(
+            atomic_target,
+            b"updated",
+            overwrite=True,
+            expected_sha256=old_sha,
+        )
+        assert atomic_target.read_bytes() == b"updated"
+        try:
+            atomic_write_workspace_bytes(
+                atomic_target,
+                b"bad",
+                overwrite=True,
+                expected_sha256=old_sha,
+            )
+        except ValueError:
+            assert atomic_target.read_bytes() == b"updated"
+        else:
+            raise AssertionError("Windows stale snapshot text write succeeded")
+        assert not list(Path(tmp).glob(".write-atomic.txt.*.tmp"))
+        protected = private / "protected-atomic-workspace.txt"
+        write_private_bytes(protected, b"private-original")
+        assert not atomic_write_workspace_bytes(
+            protected, b"private-replaced", overwrite=True
+        )
+        from workgate.platform.windows.security import open_private_file
+
+        with os.fdopen(open_private_file(protected, create=False), "rb") as f:
+            assert f.read() == b"private-replaced"
         public = Path(tmp) / "source.txt"
         public.write_bytes(b"public")
         with os.fdopen(open_regular_file_no_follow(public), "rb") as handle:

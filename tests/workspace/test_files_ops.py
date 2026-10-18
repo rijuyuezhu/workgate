@@ -998,3 +998,85 @@ def test_windows_read_snapshot_hashes_same_handle_after_path_swap(
     assert result.file_sha256 == hashlib.sha256(b"trusted").hexdigest()
     assert seen[0]["file_sha256"] == hashlib.sha256(b"trusted").hexdigest()
     assert target.read_bytes() == b"attacker"
+
+
+def test_windows_text_write_uses_native_atomic_and_preserves_leaf_symlink(
+    tmp_path, monkeypatch
+):
+    from workgate.executor import path as executor_path
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    clear_settings_cache()
+    monkeypatch.setattr(files_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(executor_path, "host_os", lambda: HostOS.WINDOWS)
+    target = tmp_path / "target.txt"
+    target.write_bytes(b"preserved")
+    link = tmp_path / "link.txt"
+    link.symlink_to(target)
+    calls = []
+
+    def native_write(path, data, *, overwrite, expected_sha256=None):
+        calls.append((path, data, overwrite, expected_sha256))
+        if path.is_symlink():
+            raise PermissionError("native nofollow rejected symlink")
+        created = not path.exists()
+        path.write_bytes(data)
+        return created
+
+    monkeypatch.setattr(security, "atomic_write_workspace_bytes", native_write)
+    with pytest.raises(PermissionError, match="nofollow"):
+        write_file_execute("link.txt", "forbidden")
+    assert calls[0][0] == link
+    assert target.read_bytes() == b"preserved"
+    assert link.is_symlink()
+
+    digest = "a" * 64
+    result = write_file_execute(
+        "created.txt", "hello", overwrite=False, expected_sha256=digest
+    )
+    assert result.created is True
+    assert calls[-1] == (tmp_path / "created.txt", b"hello", False, digest)
+
+
+def test_windows_edit_lines_reads_and_hashes_same_handle_then_uses_cas_write(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import os
+
+    from workgate.executor import path as executor_path
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    clear_settings_cache()
+    monkeypatch.setattr(files_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(executor_path, "host_os", lambda: HostOS.WINDOWS)
+    target = tmp_path / "original.txt"
+    original = b"first\nsecond\n"
+    target.write_bytes(original)
+    calls = []
+
+    def native_open(path, *, share_write=True):
+        assert path == target
+        calls.append(("read", share_write))
+        return os.open(path, os.O_RDONLY)
+
+    def native_publish(path, data, *, overwrite, expected_sha256=None):
+        assert overwrite is True
+        assert expected_sha256 == hashlib.sha256(original).hexdigest()
+        calls.append("publish")
+        path.write_bytes(data)
+        return False
+
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_open)
+    monkeypatch.setattr(
+        security, "atomic_write_workspace_bytes", native_publish
+    )
+    result = _edit_lines("original.txt", 2, 2, "SECOND")
+    assert target.read_bytes() == b"first\nSECOND\n"
+    assert result.replacement_line_count == 1
+    assert calls.count("publish") == 1
+    assert calls[0] == ("read", False)

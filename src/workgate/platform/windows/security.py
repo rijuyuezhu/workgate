@@ -427,23 +427,43 @@ def _verify_regular_handle(kernel: Any, handle: int) -> None:
         raise ValueError("Transfer requires a regular file")
 
 
-def replace_workspace_file(source: Path, destination: Path) -> None:
-    """Publish a protected staging file into a workspace via verified NT handles."""
+def replace_workspace_file(
+    source: Path,
+    destination: Path,
+    *,
+    private_source: bool = True,
+    replace: bool = True,
+    posix_semantics: bool = False,
+) -> None:
+    """Publish a verified file via NT handles; honor exclusive new-file renames."""
     kernel, advapi = _libs()
     sid = _sid(kernel, advapi)
     with (
         pinned_parent(source) as source_parent,
         pinned_parent(destination) as destination_parent,
     ):
-        source_handle = _open(
-            kernel,
-            advapi,
-            source_parent,
-            source.name,
-            sid,
-            directory=False,
-            extra_access=0x10000,
-        )
+        if private_source:
+            source_handle = _open(
+                kernel,
+                advapi,
+                source_parent,
+                source.name,
+                sid,
+                directory=False,
+                extra_access=0x10000,
+            )
+        else:
+            source_handle = open_child(
+                source_parent,
+                source.name,
+                access=_GENERIC_READ | 0x10000,
+                directory=False,
+            )
+            try:
+                _verify_regular_handle(kernel, source_handle)
+            except BaseException:
+                close_handle(kernel, source_handle)
+                raise
         try:
             try:
                 existing = open_child(
@@ -459,7 +479,13 @@ def replace_workspace_file(source: Path, destination: Path) -> None:
                     _verify_regular_handle(kernel, existing)
                 finally:
                     close_handle(kernel, existing)
-            rename_child(source_handle, destination_parent, destination.name)
+            rename_child(
+                source_handle,
+                destination_parent,
+                destination.name,
+                replace=replace,
+                posix_semantics=posix_semantics,
+            )
         finally:
             close_handle(kernel, source_handle)
 
@@ -490,7 +516,9 @@ def open_regular_file_no_follow(
             raise
 
 
-def create_workspace_file_no_follow(path: Path) -> int:
+def create_workspace_file_no_follow(
+    path: Path, *, preserve_owner: bool = False
+) -> int:
     """Exclusively create one regular user file with verified native parent handles.
 
     Uses the destination directory's native inherited ACL; private state files
@@ -503,7 +531,10 @@ def create_workspace_file_no_follow(path: Path) -> int:
         handle = open_child(
             parent,
             path.name,
-            access=_GENERIC_READ | _GENERIC_WRITE | 0x10000,
+            access=_GENERIC_READ
+            | _GENERIC_WRITE
+            | 0x10000
+            | (0xC0000 if preserve_owner else 0),
             directory=False,
             create=True,
             exclusive=True,
@@ -526,3 +557,148 @@ def delete_open_workspace_file(descriptor: int) -> None:
     handle = cast(Any, msvcrt).get_osfhandle(descriptor)
     _verify_regular_handle(kernel, handle)
     delete_child(handle)
+
+
+def _copy_workspace_security(source_fd: int, destination_fd: int) -> None:
+    """Preserve existing file owner, DACL, and protection during replacement."""
+    import msvcrt
+
+    kernel, advapi = _libs()
+    source = cast(Any, msvcrt).get_osfhandle(source_fd)
+    destination = cast(Any, msvcrt).get_osfhandle(destination_fd)
+    get_security = _api(
+        advapi,
+        "GetSecurityInfo",
+        wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.LPVOID),
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.LPVOID),
+    )
+    set_security = _api(
+        advapi,
+        "SetSecurityInfo",
+        wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+    )
+    control_info = _api(
+        advapi,
+        "GetSecurityDescriptorControl",
+        wintypes.BOOL,
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.USHORT),
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    free = _api(kernel, "LocalFree", wintypes.HANDLE, wintypes.HANDLE)
+    owner = wintypes.LPVOID()
+    dacl = wintypes.LPVOID()
+    descriptor = wintypes.LPVOID()
+    code = get_security(
+        source,
+        1,
+        5,
+        ctypes.byref(owner),
+        None,
+        ctypes.byref(dacl),
+        None,
+        ctypes.byref(descriptor),
+    )
+    if code:
+        raise OSError(code, cast(Any, ctypes).FormatError(code))
+    try:
+        control = wintypes.USHORT()
+        revision = wintypes.DWORD()
+        if not control_info(
+            descriptor, ctypes.byref(control), ctypes.byref(revision)
+        ):
+            _fail()
+        # Preserve the protected/unprotected DACL control, not only its ACEs.
+        protection = 0x80000000 if control.value & 0x1000 else 0x20000000
+        code = set_security(
+            destination, 1, 5 | protection, owner, None, dacl, None
+        )
+        if code:
+            raise OSError(code, cast(Any, ctypes).FormatError(code))
+    finally:
+        free(ctypes.cast(descriptor, wintypes.HANDLE))
+
+
+def atomic_write_workspace_bytes(
+    path: Path,
+    data: bytes,
+    *,
+    overwrite: bool,
+    expected_sha256: str | None = None,
+) -> bool:
+    """Atomically publish user bytes via NT handles, preserving an existing DACL."""
+    import hashlib
+    import secrets
+
+    previous_fd: int | None = None
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            previous_fd = open_regular_file_no_follow(path, share_write=False)
+        if previous_fd is not None and not overwrite:
+            raise FileExistsError(str(path))
+        if expected_sha256 is not None:
+            if previous_fd is None:
+                raise ValueError("File changed; reload before saving")
+            with os.fdopen(os.dup(previous_fd), "rb") as reader:
+                if (
+                    hashlib.file_digest(reader, "sha256").hexdigest()
+                    != expected_sha256
+                ):
+                    raise ValueError("File changed; reload before saving")
+
+        temp = path.with_name(f".{path.name}.{secrets.token_hex(12)}.tmp")
+        descriptor = create_workspace_file_no_follow(
+            temp, preserve_owner=previous_fd is not None
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            try:
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+                if previous_fd is not None:
+                    _copy_workspace_security(previous_fd, output.fileno())
+                if expected_sha256 is not None:
+                    assert previous_fd is not None
+                    # A cooperating or hostile writer might have swapped the file
+                    # after snapshot validation. Do not publish over a different
+                    # object even when it happens to have the same contents.
+                    current_fd = open_regular_file_no_follow(
+                        path, share_write=False
+                    )
+                    try:
+                        if not os.path.samestat(
+                            os.fstat(previous_fd), os.fstat(current_fd)
+                        ):
+                            raise ValueError(
+                                "File changed; reload before saving"
+                            )
+                    finally:
+                        os.close(current_fd)
+                replace_workspace_file(
+                    temp,
+                    path,
+                    private_source=False,
+                    replace=overwrite,
+                    posix_semantics=overwrite,
+                )
+            except BaseException:
+                delete_open_workspace_file(output.fileno())
+                raise
+        return previous_fd is None
+    finally:
+        if previous_fd is not None:
+            os.close(previous_fd)
