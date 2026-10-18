@@ -18,11 +18,26 @@ from workgate.platform.shell import (  # noqa: E402
     shell_env_prefix,
     shell_join_argv,
 )
+from workgate.utils.processes import user_subprocess_env  # noqa: E402
 
 
 def run() -> None:
     assert default_shell() == "powershell.exe"
     assert default_python() == sys.executable
+    os.environ["workgate_hidden_native"] = "secret"  # noqa: SIM112
+    os.environ["pRiVaTe_native_test"] = "secret"  # noqa: SIM112
+    try:
+        cleaned = user_subprocess_env(
+            blocked_prefixes=("PRIVATE_",), frozen=False
+        )
+        assert not any(
+            name.upper() in {"WORKGATE_HIDDEN_NATIVE", "PRIVATE_NATIVE_TEST"}
+            for name in cleaned
+        )
+    finally:
+        os.environ.pop("workgate_hidden_native", None)
+        os.environ.pop("pRiVaTe_native_test", None)
+
     with tempfile.TemporaryDirectory(prefix="workgate-ps-") as tmp:
         folder = Path(tmp) / "directory with spaces"
         folder.mkdir()
