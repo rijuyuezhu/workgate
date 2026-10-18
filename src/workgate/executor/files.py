@@ -282,6 +282,7 @@ def read_file_explicit(
     display_file: Callable[[Path], str],
     snapshot_store: ToolSessionStore | None = None,
     snapshot_session_id: str | None = None,
+    hash_full_file: bool = False,
 ) -> ReadFileOutput:
     """Read and optionally ground a file from explicit path and snapshot dependencies."""
     p = resolve_file(path)
@@ -293,7 +294,9 @@ def read_file_explicit(
         with os.fdopen(descriptor, "rb") as fh:
             size = os.fstat(fh.fileno()).st_size
             data = fh.read(max_file_read_bytes + 1)
-            if snapshot_store is not None and snapshot_session_id is not None:
+            if hash_full_file or (
+                snapshot_store is not None and snapshot_session_id is not None
+            ):
                 fh.seek(0)
                 native_digest = hashlib.file_digest(fh, "sha256").hexdigest()
     else:
@@ -362,7 +365,9 @@ def read_file_explicit(
         ),
         session_id=record.session_id if record is not None else None,
         snapshot_id=record.snapshot_id if record is not None else None,
-        file_sha256=record.file_sha256 if record is not None else None,
+        file_sha256=(
+            record.file_sha256 if record is not None else native_digest
+        ),
         seen_ranges=seen_range_models if record is not None else [],
         truncated=truncated,
         content=text,
@@ -377,6 +382,7 @@ def _read_file_local(
     start_line: int | None = None,
     end_line: int | None = None,
     line_ranges: Sequence[_ReadLineRange] | None = None,
+    hash_full_file: bool = False,
 ) -> ReadFileOutput:
     """Read and ground a local file from explicit Files dependencies."""
     return read_file_explicit(
@@ -395,6 +401,7 @@ def _read_file_local(
         display_file=lambda value: _display_file(config, binding, value),
         snapshot_store=store if binding is not None else None,
         snapshot_session_id=binding.session_id if binding is not None else None,
+        hash_full_file=hash_full_file,
     )
 
 
@@ -1179,9 +1186,31 @@ def _delete_file_or_dir_local(
         follow_final_symlink=False,
     )
     with path_lock(p):
-        if not os.path.lexists(p):
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.archive import (
+                remove_directory_tree,
+                verify_directory,
+            )
+            from ..platform.windows.security import delete_workspace_file
+
+            if p.is_symlink() or p.is_junction():
+                raise NotImplementedError(
+                    "Windows symlink/junction deletion requires native link unlink"
+                )
+            if p.is_dir():
+                verify_directory(p)
+                if not recursive:
+                    raise IsADirectoryError(
+                        "Set recursive=true to delete a directory"
+                    )
+                remove_directory_tree(p)
+                deleted = "directory"
+            else:
+                delete_workspace_file(p)
+                deleted = "file"
+        elif not os.path.lexists(p):
             raise FileNotFoundError(str(p))
-        if p.is_symlink():
+        elif p.is_symlink():
             p.unlink()
             deleted = "link"
         elif p.is_dir():

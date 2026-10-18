@@ -881,3 +881,138 @@ def test_browser_windows_upload_uses_verified_native_open_and_same_handle_cleanu
         "create",
         "dispose-open-handle",
     ]
+
+
+def test_browser_windows_file_copy_move_rename_and_delete_use_native_backend(
+    monkeypatch, tmp_path
+):
+    import shutil
+
+    import workgate.executor.files as executor_files_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive, security
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "first.txt").write_bytes(b"first")
+    (workspace / "old-dir").mkdir()
+    (workspace / "old-dir" / "keep").write_bytes(b"child")
+    client = _client(monkeypatch, workspace)
+    monkeypatch.setattr(
+        executor_ui_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    monkeypatch.setattr(
+        executor_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    calls = []
+
+    def native_copy(source, target):
+        calls.append(("copy", source.name))
+        shutil.copyfile(source, target)
+
+    def native_move(source, target, **kwargs):
+        calls.append(("move", source.name, kwargs))
+        source.rename(target)
+
+    def native_delete(path):
+        calls.append(("delete", path.name))
+        path.unlink()
+
+    monkeypatch.setattr(security, "copy_workspace_file", native_copy)
+    monkeypatch.setattr(security, "replace_workspace_file", native_move)
+    monkeypatch.setattr(security, "delete_workspace_file", native_delete)
+    monkeypatch.setattr(
+        archive,
+        "move_directory",
+        lambda source, target: (
+            calls.append(("directory-move", source.name)),
+            source.rename(target),
+        ),
+    )
+    monkeypatch.setattr(archive, "verify_directory", lambda path: None)
+    monkeypatch.setattr(
+        archive,
+        "remove_directory_tree",
+        lambda path: (
+            calls.append(("directory-delete", path.name)),
+            shutil.rmtree(path),
+        ),
+    )
+    copied = client.post(
+        "/api/ui/files/copy",
+        json={"path": "first.txt", "destination": "copied.txt"},
+    )
+    moved = client.post(
+        "/api/ui/files/move",
+        json={"path": "copied.txt", "destination": "moved.txt"},
+    )
+    renamed = client.post(
+        "/api/ui/files/rename",
+        json={"path": "old-dir", "name": "new-dir"},
+    )
+    deleted_file = client.post(
+        "/api/ui/files/delete",
+        json={"path": "moved.txt", "recursive": False},
+    )
+    deleted_dir = client.post(
+        "/api/ui/files/delete",
+        json={"path": "new-dir", "recursive": True},
+    )
+    assert all(
+        response.status_code == 200
+        for response in (copied, moved, renamed, deleted_file, deleted_dir)
+    )
+    assert calls[0] == ("copy", "first.txt")
+    assert calls[1] == (
+        "move",
+        "copied.txt",
+        {"private_source": False, "replace": False},
+    )
+    assert ("directory-move", "old-dir") in calls
+    assert ("delete", "moved.txt") in calls
+    assert ("directory-delete", "new-dir") in calls
+    assert (workspace / "first.txt").read_bytes() == b"first"
+    assert not (workspace / "moved.txt").exists()
+
+
+def test_browser_windows_content_hashes_same_native_handle_not_path(
+    monkeypatch, tmp_path
+):
+    import hashlib
+
+    import workgate.executor.files as executor_files_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "document.txt").write_bytes(b"verified content\n")
+    client = _client(monkeypatch, workspace)
+    monkeypatch.setattr(
+        executor_ui_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    monkeypatch.setattr(
+        executor_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    opened = []
+
+    def native_open(path, *, share_write=True):
+        opened.append(path.name)
+        return os.open(path, os.O_RDONLY)
+
+    def deny_path_hash(_path):
+        raise AssertionError(
+            "Windows editor rehashed pathname instead of open file"
+        )
+
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_open)
+    monkeypatch.setattr(executor_ui_files_module, "file_sha256", deny_path_hash)
+    response = client.get(
+        "/api/ui/files/content", params={"path": "document.txt"}
+    )
+    assert response.status_code == 200
+    assert (
+        response.json()["data"]["file_sha256"]
+        == hashlib.sha256(b"verified content\n").hexdigest()
+    )
+    assert opened.count("document.txt") >= 2

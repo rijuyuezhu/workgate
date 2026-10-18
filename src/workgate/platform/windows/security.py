@@ -702,3 +702,54 @@ def atomic_write_workspace_bytes(
     finally:
         if previous_fd is not None:
             os.close(previous_fd)
+
+
+def delete_workspace_file(path: Path) -> None:
+    """Delete the exact regular-file object opened relative to verified parents."""
+    kernel, _advapi = _libs()
+    with pinned_parent(path) as parent:
+        handle = open_child(
+            parent,
+            path.name,
+            access=0x80 | 0x10000,
+            directory=False,
+        )
+        try:
+            _verify_regular_handle(kernel, handle)
+            delete_child(handle)
+        finally:
+            close_handle(kernel, handle)
+
+
+def copy_workspace_file(source: Path, destination: Path) -> None:
+    """Copy one verified regular object into an exclusively created user file.
+
+    Preserve the source owner and DACL, and never reopen the destination path
+    to clean up a failed copy.
+    """
+    import shutil
+
+    with os.fdopen(
+        open_regular_file_no_follow(source, share_write=False), "rb"
+    ) as reader:
+        descriptor = create_workspace_file_no_follow(
+            destination, preserve_owner=True
+        )
+        with os.fdopen(descriptor, "wb") as writer:
+            try:
+                before = os.fstat(reader.fileno())
+                shutil.copyfileobj(reader, writer, length=1024 * 1024)
+                writer.flush()
+                os.fsync(writer.fileno())
+                _copy_workspace_security(reader.fileno(), writer.fileno())
+                after = os.fstat(reader.fileno())
+                if (before.st_size, before.st_mtime_ns) != (
+                    after.st_size,
+                    after.st_mtime_ns,
+                ):
+                    raise RuntimeError(
+                        "Source file changed during native Windows copy"
+                    )
+            except BaseException:
+                delete_open_workspace_file(writer.fileno())
+                raise

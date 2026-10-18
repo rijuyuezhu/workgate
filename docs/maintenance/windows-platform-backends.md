@@ -139,11 +139,21 @@ protected private file retains both owner and protected DACL after text
 replacement, and refuses stale hashes. The macOS WebUI upload mock uses a
 portable tracked-descriptor mapping rather than Linux-only /proc/self/fd.
 
-**Still blocked (Draft #395):** Patch, WebUI copy/move/delete and Skill/MCP
-related file operations still need native directory-handle-safe mutations.
+WebUI regular file copy, move and delete and directory move/delete now use
+native NT object handles rather than path-based Python shutil/os.rename.
+Regular file copying uses a verified source, exclusive destination, and
+owner/DACL-preserving copy with original-handle cleanup. Windows editor
+content uses a digest from its verified read handle, rather than hashing
+the same pathname in a separate open. Binary/image preview samples also use
+no-follow native handles. The HTTP WebUI dispatch is covered in regression
+tests and basic operations run on native Windows 3.14.
+
+**Still blocked (Draft #395):** Windows directory/link copy, symlink or
+junction delete/move, recursive ordinary filesystem enumeration, and patch
+and Skill/MCP file operations still require native handle-safe semantics.
 Independent untrusted writers can still race final target replacement between
-an identity check and the rename; process-level native concurrent-mutation
-and crash/restart testing must establish the intended guarantee before this
+an identity check and rename; further native concurrent-mutation and
+crash/restart testing must establish the intended guarantee before this
 is declared fully safe.
 Native concurrent replacement and sharing races, process-level crash/restart
 recovery, and cross-executor copy/download/upload integration also require

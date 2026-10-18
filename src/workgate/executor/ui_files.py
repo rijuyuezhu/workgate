@@ -142,8 +142,15 @@ class UiFilesService:
     @staticmethod
     def _file_sample(path: Path) -> tuple[bytes, bytes]:
         sample_bytes = max(4_096, UI_FILE_BINARY_PREVIEW_BYTES)
-        with path.open("rb") as handle:
-            probe = handle.read(sample_bytes + 3)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import open_regular_file_no_follow
+
+            descriptor = open_regular_file_no_follow(path)
+            with os.fdopen(descriptor, "rb") as handle:
+                probe = handle.read(sample_bytes + 3)
+        else:
+            with path.open("rb") as handle:
+                probe = handle.read(sample_bytes + 3)
         return probe[:sample_bytes], probe[sample_bytes:]
 
     def preview(self, path: str) -> dict[str, Any]:
@@ -178,7 +185,20 @@ class UiFilesService:
                         f"{self.config.max_file_read_bytes} bytes"
                     ),
                 }
-            data = resolved.read_bytes()
+            if host_os() is HostOS.WINDOWS:
+                from ..platform.windows.security import (
+                    open_regular_file_no_follow,
+                )
+
+                descriptor = open_regular_file_no_follow(resolved)
+                with os.fdopen(descriptor, "rb") as handle:
+                    data = handle.read(self.config.max_file_read_bytes + 1)
+                if len(data) > self.config.max_file_read_bytes:
+                    raise ValueError(
+                        "Image changed or exceeds inline preview limit"
+                    )
+            else:
+                data = resolved.read_bytes()
             return {
                 "kind": "image",
                 "path": self._display(resolved),
@@ -232,7 +252,13 @@ class UiFilesService:
             raise ValueError(
                 "Binary files cannot be edited in the built-in editor"
             )
-        result = _read_file_local(self.config, self.store, None, str(resolved))
+        result = _read_file_local(
+            self.config,
+            self.store,
+            None,
+            str(resolved),
+            hash_full_file=host_os() is HostOS.WINDOWS,
+        )
         if result.truncated:
             raise ValueError(
                 "File exceeds the configured editor read limit; use a terminal or external editor"
@@ -240,7 +266,11 @@ class UiFilesService:
         return {
             "kind": "text",
             **result.model_dump(mode="json"),
-            "file_sha256": file_sha256(resolved),
+            "file_sha256": (
+                result.file_sha256
+                if host_os() is HostOS.WINDOWS
+                else file_sha256(resolved)
+            ),
         }
 
     def _ensure_mutable(
@@ -387,7 +417,16 @@ class UiFilesService:
                 raise FileNotFoundError(str(source))
             kind = self._entry_kind(source)
             self._validate_copy_destination(source, destination, kind)
-            self._copy_entry_locked(source, destination, kind)
+            if host_os() is HostOS.WINDOWS:
+                if kind != "file":
+                    raise NotImplementedError(
+                        "Windows directory/link copy needs native handle-safe traversal"
+                    )
+                from ..platform.windows.security import copy_workspace_file
+
+                copy_workspace_file(source, destination)
+            else:
+                self._copy_entry_locked(source, destination, kind)
         return {
             "action": "copy",
             "source": self._display(source),
@@ -409,17 +448,38 @@ class UiFilesService:
                 raise FileNotFoundError(str(source))
             kind = self._entry_kind(source)
             self._validate_copy_destination(source, destination, kind)
-            try:
-                os.rename(source, destination)
-            except OSError as exc:
-                if exc.errno != errno.EXDEV:
-                    raise
-                self._copy_entry_locked(source, destination, kind)
+            if host_os() is HostOS.WINDOWS:
+                if kind == "file":
+                    from ..platform.windows.security import (
+                        replace_workspace_file,
+                    )
+
+                    replace_workspace_file(
+                        source,
+                        destination,
+                        private_source=False,
+                        replace=False,
+                    )
+                elif kind == "dir":
+                    from ..platform.windows.archive import move_directory
+
+                    move_directory(source, destination)
+                else:
+                    raise NotImplementedError(
+                        "Windows symlink move requires native link handling"
+                    )
+            else:
                 try:
-                    self._remove_entry(source)
-                except BaseException:
-                    self._remove_entry(destination)
-                    raise
+                    os.rename(source, destination)
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+                    self._copy_entry_locked(source, destination, kind)
+                    try:
+                        self._remove_entry(source)
+                    except BaseException:
+                        self._remove_entry(destination)
+                        raise
         return {
             "action": action,
             "source": self._display(source),

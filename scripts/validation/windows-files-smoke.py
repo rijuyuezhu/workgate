@@ -34,9 +34,11 @@ from workgate.platform.windows.nt_relative import (
 )
 from workgate.platform.windows.security import (
     atomic_write_workspace_bytes,
+    copy_workspace_file,
     create_workspace_file_no_follow,
     delete_open_workspace_file,
     delete_private_file,
+    delete_workspace_file,
     open_regular_file_no_follow,
     replace_workspace_file,
 )
@@ -227,6 +229,43 @@ def main() -> int:
 
         with os.fdopen(open_private_file(protected, create=False), "rb") as f:
             assert f.read() == b"private-replaced"
+        move_from = Path(tmp) / "ui-move-source.txt"
+        move_from.write_bytes(b"native-workspace")
+        move_to = Path(tmp) / "ui-move-target.txt"
+        replace_workspace_file(
+            move_from, move_to, private_source=False, replace=False
+        )
+        assert not move_from.exists()
+        assert move_to.read_bytes() == b"native-workspace"
+        copied_file = Path(tmp) / "ui-copy-target.txt"
+        copy_workspace_file(move_to, copied_file)
+        assert copied_file.read_bytes() == b"native-workspace"
+        try:
+            copy_workspace_file(move_to, copied_file)
+        except FileExistsError:
+            assert copied_file.read_bytes() == b"native-workspace"
+        else:
+            raise AssertionError(
+                "Native file copy clobbered existing destination"
+            )
+        protected_copy = private / "source-to-copy.txt"
+        write_private_bytes(protected_copy, b"private-copy")
+        protected_result = Path(tmp) / "protected-copy.txt"
+        copy_workspace_file(protected_copy, protected_result)
+        from workgate.platform.windows.security import open_private_file
+
+        with os.fdopen(
+            open_private_file(protected_result, create=False), "rb"
+        ) as f:
+            assert f.read() == b"private-copy"
+        delete_workspace_file(move_to)
+        assert not move_to.exists()
+
+        directory_to_remove = Path(tmp) / "ui-delete-directory"
+        directory_to_remove.mkdir()
+        (directory_to_remove / "child.txt").write_bytes(b"recursive")
+        remove_directory_tree(directory_to_remove)
+        assert not directory_to_remove.exists()
         public = Path(tmp) / "source.txt"
         public.write_bytes(b"public")
         with os.fdopen(open_regular_file_no_follow(public), "rb") as handle:
