@@ -12,7 +12,12 @@ def default_shell() -> str:
 
 
 def default_python() -> str:
-    return sys.executable if host_os() is HostOS.WINDOWS else "python3"
+    if host_os() is not HostOS.WINDOWS:
+        return "python3"
+    # In a frozen WorkGate bundle, sys.executable is WorkGate.exe, not Python.
+    if getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None):
+        return "python"
+    return sys.executable
 
 
 def _windows_shell(shell: str) -> str:

@@ -84,3 +84,11 @@ def test_default_shell_and_python_follow_host(monkeypatch) -> None:
     monkeypatch.setattr(dialect, "host_os", lambda: HostOS.LINUX)
     assert dialect.default_shell() == "/bin/bash"
     assert dialect.default_python() == "python3"
+
+
+def test_frozen_windows_python_default_does_not_invoke_workgate_executable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(dialect, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(dialect.sys, "frozen", True, raising=False)
+    assert dialect.default_python() == "python"

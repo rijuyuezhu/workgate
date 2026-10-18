@@ -11,6 +11,7 @@ if os.name != "nt":
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from workgate.platform.process import new_process_group_kwargs  # noqa: E402
 from workgate.platform.shell import (  # noqa: E402
     default_python,
     default_shell,
@@ -24,6 +25,15 @@ from workgate.utils.processes import user_subprocess_env  # noqa: E402
 def run() -> None:
     assert default_shell() == "powershell.exe"
     assert default_python() == sys.executable
+    try:
+        new_process_group_kwargs()
+    except RuntimeError as exc:
+        assert "bounded process containment is unsupported" in str(exc)
+    else:
+        raise AssertionError(
+            "Windows bounded execution bypassed #385 containment"
+        )
+
     os.environ["workgate_hidden_native"] = "secret"  # noqa: SIM112
     os.environ["pRiVaTe_native_test"] = "secret"  # noqa: SIM112
     try:
@@ -133,6 +143,21 @@ def run() -> None:
             )
             assert result.returncode == 7, result
             assert "BATCH_OK:two words" in result.stdout, result
+
+            via_shell = subprocess.run(
+                shell_argv(
+                    default_shell(),
+                    shell_join_argv(
+                        [str(batch), "two words"], shell=default_shell()
+                    ),
+                ),
+                cwd=folder,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert via_shell.returncode == 7, via_shell
+            assert "BATCH_OK:two words" in via_shell.stdout, via_shell
 
         cmd_unicode = subprocess.run(
             shell_argv("cmd.exe", "echo 你好，cmd — é"),

@@ -19,6 +19,7 @@ from ..errors import (
     ShellExecutableNotFoundError,
     process_start_not_found_error,
 )
+from ..platform.host import HostOS, host_os
 from ..platform.posix.tmux import require_tmux, resolve_tmux, tmux_env_overrides
 from ..platform.process import (
     new_process_group_kwargs,
@@ -26,6 +27,7 @@ from ..platform.process import (
 )
 from ..platform.shell import (
     default_shell,
+    shell_argv,
     shell_env_prefix,
     shell_join_argv,
 )
@@ -292,7 +294,9 @@ def _command_with_env(
 
 
 def _bounded_runner_argv(shell: str, command: str) -> list[str]:
-    """Build the internal descendant-reaping runner invocation."""
+    """Use shell-native argv; POSIX keeps its descendant-reaping runner."""
+    if host_os() is HostOS.WINDOWS:
+        return shell_argv(shell, command, system="Windows")
     return bounded_runner_argv(
         shell,
         command,
