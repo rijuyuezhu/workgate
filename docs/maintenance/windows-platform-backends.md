@@ -118,10 +118,22 @@ owner/DACL. Plain user-file destinations are preserved when their transfer
 receipts are retired. Native tests check verified private deletion and refusal
 to recursively delete a non-private directory.
 
-**Still blocked (Draft #395):** Final security review must cover remaining
-workspace filesystem entry points, native concurrent replacement and sharing
-races, process-level crash/restart recovery, and integration with Skill/MCP and
-patch operations. The tests in this slice exercise native Win32 filesystem
+### Native ordinary-file access
+
+Windows Executor read-file operations now use one verified NT no-follow handle;
+a file snapshot hashes that same object, not a potentially substituted pathname.
+WebUI binary upload exclusively creates the user file relative to verified
+directory handles and removes a failed partial upload by its still-open handle.
+The temporary scratch pruner uses native protected-file handle deletion. The
+original Linux/macOS file APIs remain unchanged.
+
+**Still blocked (Draft #395):** Text-file write/edit, patch, WebUI
+copy/move/delete and Skill/MCP related file operations still need their own
+native directory-handle-safe mutations; no safety or parity acceptance can be
+claimed until these entry points and their failure recovery are verified.
+Native concurrent replacement and sharing races, process-level crash/restart
+recovery, and cross-executor copy/download/upload integration also require
+further testing. The tests in this slice exercise native Win32 filesystem
 primitives; full Windows Executor/Control integration and CI/release support
 remain separate work (#390–#392). Do not merge this Draft until the full
 acceptance scope is verified.

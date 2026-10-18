@@ -819,3 +819,63 @@ def test_webui_image_preview_editor_revision_and_mkdir(monkeypatch, tmp_path):
     assert made.json()["data"]["action"] == "mkdir"
     assert (workspace / "new-directory").is_dir()
     assert duplicate.status_code == 400
+
+
+def test_browser_windows_upload_uses_verified_native_open_and_same_handle_cleanup(
+    monkeypatch, tmp_path
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    client = _client(monkeypatch, workspace)
+    monkeypatch.setattr(
+        executor_ui_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    calls = []
+
+    def native_create(path):
+        calls.append(("create", path.name))
+        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+
+    def native_dispose(descriptor):
+        calls.append(("dispose-open-handle", descriptor))
+        opened = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+        opened.unlink()
+
+    monkeypatch.setattr(
+        security, "create_workspace_file_no_follow", native_create
+    )
+    monkeypatch.setattr(security, "delete_open_workspace_file", native_dispose)
+
+    accepted = client.post(
+        "/api/ui/files/upload",
+        json={"path": "native.bin", "data_base64": "YWI="},
+    )
+    assert accepted.status_code == 200
+    assert (workspace / "native.bin").read_bytes() == b"ab"
+    duplicate = client.post(
+        "/api/ui/files/upload",
+        json={"path": "native.bin", "data_base64": "Yw=="},
+    )
+    assert duplicate.status_code == 400
+    assert (workspace / "native.bin").read_bytes() == b"ab"
+
+    def reject_flush(_descriptor):
+        raise OSError("forced Windows upload flush failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(executor_ui_files_module.os, "fsync", reject_flush)
+        rejected = client.post(
+            "/api/ui/files/upload",
+            json={"path": "partial.bin", "data_base64": "ZA=="},
+        )
+    assert rejected.status_code == 400
+    assert not (workspace / "partial.bin").exists()
+    assert [call[0] for call in calls] == [
+        "create",
+        "create",
+        "create",
+        "dispose-open-handle",
+    ]

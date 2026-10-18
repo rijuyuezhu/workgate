@@ -488,3 +488,41 @@ def open_regular_file_no_follow(
         except BaseException:
             close_handle(kernel, handle)
             raise
+
+
+def create_workspace_file_no_follow(path: Path) -> int:
+    """Exclusively create one regular user file with verified native parent handles.
+
+    Uses the destination directory's native inherited ACL; private state files
+    instead go through open_private_file, which sets an explicit protected ACL.
+    """
+    import msvcrt
+
+    kernel, _advapi = _libs()
+    with pinned_parent(path) as parent:
+        handle = open_child(
+            parent,
+            path.name,
+            access=_GENERIC_READ | _GENERIC_WRITE | 0x10000,
+            directory=False,
+            create=True,
+            exclusive=True,
+        )
+        try:
+            _verify_regular_handle(kernel, handle)
+            return cast(Any, msvcrt).open_osfhandle(
+                handle, os.O_WRONLY | cast(Any, os).O_BINARY
+            )
+        except BaseException:
+            close_handle(kernel, handle)
+            raise
+
+
+def delete_open_workspace_file(descriptor: int) -> None:
+    """Delete the *same open file object* on write failure, never reopen its path."""
+    import msvcrt
+
+    kernel, _advapi = _libs()
+    handle = cast(Any, msvcrt).get_osfhandle(descriptor)
+    _verify_regular_handle(kernel, handle)
+    delete_child(handle)

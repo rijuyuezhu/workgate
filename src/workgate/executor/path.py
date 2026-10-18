@@ -112,7 +112,12 @@ def prune_temp_dir(
         if now - modified < max(0.0, minimum_age_s):
             continue
         try:
-            item.unlink()
+            if host_os() is HostOS.WINDOWS:
+                from ..platform.windows.security import delete_private_file
+
+                delete_private_file(item)
+            else:
+                item.unlink()
         except OSError:
             continue
 

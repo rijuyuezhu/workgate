@@ -884,3 +884,117 @@ def test_hashline_edit_rejects_overlapping_hunks(tmp_path, monkeypatch):
             "+GAMMA",
             session_id=session_id,
         )
+
+
+def test_windows_read_file_uses_same_native_nofollow_handle_for_snapshot(
+    monkeypatch, tmp_path
+):
+    import os
+
+    import workgate.executor.files as files_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    source = tmp_path / "source.txt"
+    source.write_text("native read\n", encoding="utf-8")
+    native_opens = []
+
+    monkeypatch.setattr(files_module, "host_os", lambda: HostOS.WINDOWS)
+
+    def native_read(path):
+        native_opens.append(path)
+        return os.open(path, os.O_RDONLY)
+
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_read)
+    result = files_module.read_file_explicit(
+        "source.txt",
+        max_file_read_bytes=100,
+        resolve_file=lambda name: tmp_path / name,
+        display_file=lambda path: path.name,
+    )
+    assert result.content == "native read\n"
+    assert native_opens == [source]
+
+
+def test_windows_file_reader_does_not_hash_swapped_path_after_native_open(
+    monkeypatch, tmp_path
+):
+    import os
+
+    import workgate.executor.files as files_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    path = tmp_path / "source.txt"
+    path.write_bytes(b"original")
+    swapped = tmp_path / "replacement.txt"
+    swapped.write_bytes(b"attacker")
+
+    monkeypatch.setattr(files_module, "host_os", lambda: HostOS.WINDOWS)
+
+    def open_then_replace(source):
+        fd = os.open(source, os.O_RDONLY)
+        path.rename(tmp_path / "original-moved")
+        swapped.rename(path)
+        return fd
+
+    monkeypatch.setattr(
+        security, "open_regular_file_no_follow", open_then_replace
+    )
+    result = files_module.read_file_explicit(
+        "source.txt",
+        max_file_read_bytes=100,
+        resolve_file=lambda name: tmp_path / name,
+        display_file=lambda target: target.name,
+    )
+    assert result.content == "original"
+    assert path.read_bytes() == b"attacker"
+
+
+def test_windows_read_snapshot_hashes_same_handle_after_path_swap(
+    monkeypatch, tmp_path
+):
+    import hashlib
+    import os
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    import workgate.executor.files as files_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    target = tmp_path / "source.txt"
+    target.write_bytes(b"trusted")
+    fake = tmp_path / "replacement.txt"
+    fake.write_bytes(b"attacker")
+    seen = []
+
+    def native_open(path):
+        fd = os.open(path, os.O_RDONLY)
+        target.rename(tmp_path / "trusted-moved.txt")
+        fake.rename(target)
+        return fd
+
+    class Snapshot:
+        def record_file_snapshot(self, **kwargs):
+            seen.append(kwargs)
+            return SimpleNamespace(
+                session_id=kwargs["session_id"],
+                snapshot_id="native-test",
+                file_sha256=kwargs["file_sha256"],
+            )
+
+    monkeypatch.setattr(files_module, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_open)
+    result = files_module.read_file_explicit(
+        "source.txt",
+        max_file_read_bytes=100,
+        resolve_file=lambda name: tmp_path / name,
+        display_file=lambda path: path.name,
+        snapshot_store=cast(Any, Snapshot()),
+        snapshot_session_id="sess_native",
+    )
+    assert result.content == "trusted"
+    assert result.file_sha256 == hashlib.sha256(b"trusted").hexdigest()
+    assert seen[0]["file_sha256"] == hashlib.sha256(b"trusted").hexdigest()
+    assert target.read_bytes() == b"attacker"

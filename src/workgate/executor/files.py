@@ -3,6 +3,7 @@
 import codecs
 import contextlib
 import difflib
+import hashlib
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config.executor import ExecutorConfig
+from ..platform.host import HostOS, host_os
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditContextOutput,
@@ -245,9 +247,21 @@ def read_file_explicit(
 ) -> ReadFileOutput:
     """Read and optionally ground a file from explicit path and snapshot dependencies."""
     p = resolve_file(path)
-    size = p.stat().st_size
-    with p.open("rb") as fh:
-        data = fh.read(max_file_read_bytes + 1)
+    native_digest: str | None = None
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_regular_file_no_follow
+
+        descriptor = open_regular_file_no_follow(p)
+        with os.fdopen(descriptor, "rb") as fh:
+            size = os.fstat(fh.fileno()).st_size
+            data = fh.read(max_file_read_bytes + 1)
+            if snapshot_store is not None and snapshot_session_id is not None:
+                fh.seek(0)
+                native_digest = hashlib.file_digest(fh, "sha256").hexdigest()
+    else:
+        size = p.stat().st_size
+        with p.open("rb") as fh:
+            data = fh.read(max_file_read_bytes + 1)
 
     truncated = False
     if len(data) > max_file_read_bytes:
@@ -284,7 +298,9 @@ def read_file_explicit(
         snapshot_store.record_file_snapshot(
             session_id=snapshot_session_id,
             path=relative_path,
-            file_sha256=file_sha256(p),
+            file_sha256=native_digest
+            if native_digest is not None
+            else file_sha256(p),
             total_lines=total_lines,
             seen_ranges=seen_ranges,
         )
@@ -332,7 +348,11 @@ def _read_file_local(
         line_ranges=line_ranges,
         max_file_read_bytes=config.max_file_read_bytes,
         resolve_file=lambda value: _resolve_file_path(
-            config, binding, value, must_exist=True
+            config,
+            binding,
+            value,
+            must_exist=True,
+            follow_final_symlink=host_os() is not HostOS.WINDOWS,
         ),
         display_file=lambda value: _display_file(config, binding, value),
         snapshot_store=store if binding is not None else None,

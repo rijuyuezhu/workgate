@@ -11,6 +11,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from ..platform.host import HostOS, host_os
 from ..utils.path_locks import path_locks
 from .files import (
     FilesConfig,
@@ -468,17 +469,33 @@ class UiFilesService:
             raise ValueError(f"Upload exceeds {limit} bytes")
         destination = self._destination_entry(path)
         with path_locks([destination]):
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            flags |= getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(destination, flags, 0o666)
-            try:
+            if host_os() is HostOS.WINDOWS:
+                from ..platform.windows.security import (
+                    create_workspace_file_no_follow,
+                    delete_open_workspace_file,
+                )
+
+                fd = create_workspace_file_no_follow(destination)
                 with os.fdopen(fd, "wb") as output:
-                    output.write(data)
-                    output.flush()
-                    os.fsync(output.fileno())
-            except BaseException:
-                destination.unlink(missing_ok=True)
-                raise
+                    try:
+                        output.write(data)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    except BaseException:
+                        delete_open_workspace_file(output.fileno())
+                        raise
+            else:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(destination, flags, 0o666)
+                try:
+                    with os.fdopen(fd, "wb") as output:
+                        output.write(data)
+                        output.flush()
+                        os.fsync(output.fileno())
+                except BaseException:
+                    destination.unlink(missing_ok=True)
+                    raise
         return {"path": self._display(destination), "bytes": len(data)}
 
     def mkdir(self, path: str) -> dict[str, Any]:

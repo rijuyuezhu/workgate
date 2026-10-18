@@ -168,3 +168,32 @@ def test_windows_no_follow_resolution_keeps_ancestor_junction_syntax(
     )
     assert resolved == link / "item.txt"
     assert resolved.parent == link
+
+
+def test_windows_scratch_prune_deletes_only_through_verified_private_handle(
+    monkeypatch, tmp_path
+):
+    import workgate.executor.path as executor_path
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    abandoned = scratch / "old.tmp"
+    abandoned.write_bytes(b"temporary")
+    seen = []
+
+    def native_delete(path):
+        seen.append(path)
+        path.unlink()
+
+    monkeypatch.setattr(executor_path, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(security, "delete_private_file", native_delete)
+    executor_path.prune_temp_dir(
+        max_files=0,
+        max_bytes=0,
+        directory=scratch,
+        minimum_age_s=0,
+    )
+    assert seen == [abandoned]
+    assert not abandoned.exists()

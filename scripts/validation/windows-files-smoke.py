@@ -16,7 +16,7 @@ if sys.platform != "win32":
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from workgate.app_paths import ensure_private_directory, resolve_app_paths
-from workgate.executor.path import resolve_path
+from workgate.executor.path import prune_temp_dir, resolve_path
 from workgate.platform.path import path_lock_key, remote_path_name
 from workgate.platform.windows.archive import (
     extract_archive,
@@ -33,6 +33,8 @@ from workgate.platform.windows.nt_relative import (
     rename_child,
 )
 from workgate.platform.windows.security import (
+    create_workspace_file_no_follow,
+    delete_open_workspace_file,
     delete_private_file,
     open_regular_file_no_follow,
     replace_workspace_file,
@@ -90,6 +92,15 @@ def main() -> int:
         nested = ensure_private_directory(private / "new" / "nested")
         assert nested.is_dir()
         secret = private / "secret"
+        scratch = ensure_private_directory(private / "scratch")
+        write_private_bytes(scratch / "orphan.tmp", b"unclaimed")
+        prune_temp_dir(
+            max_files=0,
+            max_bytes=0,
+            directory=scratch,
+            minimum_age_s=0,
+        )
+        assert not (scratch / "orphan.tmp").exists()
         disposable = private / "cancelled-transfer.tmp"
         write_private_bytes(disposable, b"aborted")
         delete_private_file(disposable)
@@ -148,6 +159,27 @@ def main() -> int:
         replace_workspace_file(staging, workspace_file)
         assert not staging.exists()
         assert workspace_file.read_bytes() == b"from-staging"
+        upload = Path(tmp) / "user-upload.bin"
+        with os.fdopen(create_workspace_file_no_follow(upload), "wb") as writer:
+            writer.write(b"uploaded")
+            writer.flush()
+            os.fsync(writer.fileno())
+        assert upload.read_bytes() == b"uploaded"
+        try:
+            create_workspace_file_no_follow(upload)
+        except FileExistsError:
+            pass
+        else:
+            raise AssertionError(
+                "NT exclusive workspace file creation overwrote data"
+            )
+        fail_upload = Path(tmp) / "partial-upload.bin"
+        with os.fdopen(
+            create_workspace_file_no_follow(fail_upload), "wb"
+        ) as partial:
+            partial.write(b"partial")
+            delete_open_workspace_file(partial.fileno())
+        assert not fail_upload.exists()
         public = Path(tmp) / "source.txt"
         public.write_bytes(b"public")
         with os.fdopen(open_regular_file_no_follow(public), "rb") as handle:
