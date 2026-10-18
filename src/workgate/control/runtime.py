@@ -20,6 +20,7 @@ from .jobs import ControlJobService
 from .object_store_transfer import S3ObjectTransferService
 from .pairing import ExecutorPairingService
 from .payload_store import PayloadStore
+from .peer_links import ControlPeerLinkService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
@@ -49,6 +50,8 @@ class ControlRuntime:
     """Control authority for execution-session lifecycle and executor routing."""
     session_copy_service: ControlSessionCopyService
     """Control orchestration for copies between existing execution sessions."""
+    peer_links: ControlPeerLinkService
+    """On-demand, short-lived and non-durable peer link evidence."""
     transfer_gateway: ControlTransferGateway
     """Process-local raw-byte capabilities bound to trusted executors."""
     download_service: ControlDownloadService
@@ -145,6 +148,7 @@ class ControlRuntime:
         await close_async(self.human_ui_runtime.aclose)
         await close_async(self.oauth_state.aclose)
         await close_async(self.session_copy_service.aclose)
+        await close_async(self.peer_links.aclose)
         try:
             self.transfer_gateway.close()
         except BaseException as exc:
@@ -282,6 +286,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         executor_fleet=executor_fleet,
         session_coordinator=session_coordinator,
         session_copy_service=session_copy_service,
+        peer_links=ControlPeerLinkService(control_state, executor_transport),
         transfer_gateway=transfer_gateway,
         download_service=download_service,
         job_service=job_service,
